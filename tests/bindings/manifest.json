@@ -332,6 +332,32 @@
       ],
       "returns": "InviteLinkParts"
     },
+    "inviteLinkCheck": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        },
+        {
+          "name": "nowMs",
+          "type": "number"
+        }
+      ],
+      "returns": "InviteLinkParts"
+    },
+    "inviteLifeMs": {
+      "arguments": [
+        {
+          "name": "role",
+          "type": "InviteRole"
+        }
+      ],
+      "returns": "number"
+    },
+    "inviteClockToleranceMs": {
+      "arguments": [],
+      "returns": "number"
+    },
     "checkEmoji": {
       "arguments": [],
       "returns": "list<EmojiWord>"
@@ -1093,6 +1119,192 @@
         ],
         "returns": "Learned"
       },
+      "learnStart": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "founding",
+            "type": "bytes"
+          }
+        ],
+        "returns": "LearnProgress"
+      },
+      "learnSlice": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "commits",
+            "type": "list<ServedCommit>"
+          }
+        ],
+        "returns": "LearnProgress"
+      },
+      "learnFinish": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          }
+        ],
+        "returns": "Learned"
+      },
+      "learnAbandon": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          }
+        ],
+        "returns": "void"
+      },
+      "codeCheckStart": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedStart"
+          }
+        ],
+        "returns": "void"
+      },
+      "codeCheckSlice": {
+        "arguments": [
+          {
+            "name": "commits",
+            "type": "list<PlacedCommit>"
+          }
+        ],
+        "returns": "void"
+      },
+      "joinRoomChecked": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedEnd"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "CodeJoin"
+      },
+      "recoverChecked": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedEnd"
+          },
+          {
+            "name": "chains",
+            "type": "list<ServedEnvelope>"
+          },
+          {
+            "name": "account",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "CodeJoin"
+      },
+      "sessionCheckStart": {
+        "arguments": [
+          {
+            "name": "founding",
+            "type": "bytes"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "sessionCheckSlice": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "commits",
+            "type": "list<ServedCommit>"
+          }
+        ],
+        "returns": "void"
+      },
+      "joinSessionChecked": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "current",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "recoveryPlanStart": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedStart"
+          }
+        ],
+        "returns": "void"
+      },
+      "recoveryPlanSlice": {
+        "arguments": [
+          {
+            "name": "commits",
+            "type": "list<PlacedCommit>"
+          }
+        ],
+        "returns": "void"
+      },
+      "recoveryPlanFinish": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedEnd"
+          }
+        ],
+        "returns": "RecoveryPlan"
+      },
       "groupPast": {
         "arguments": [
           {
@@ -1479,6 +1691,19 @@
         ],
         "returns": "void"
       },
+      "joinLink": {
+        "arguments": [
+          {
+            "name": "link",
+            "type": "text"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "JoinLink"
+      },
       "joinRequest": {
         "arguments": [
           {
@@ -1799,11 +2024,13 @@
       "link": "text",
       "expiresAt": "number",
       "offer": "bytes",
-      "signature": "bytes"
+      "signature": "bytes",
+      "mac": "bytes"
     },
     "SignedOffer": {
       "offer": "bytes",
-      "signature": "bytes"
+      "signature": "bytes",
+      "mac": "bytes"
     },
     "SignedRequest": {
       "request": "bytes",
@@ -1818,7 +2045,14 @@
       "app": "text",
       "hub": "text",
       "roomId": "bytes",
-      "inviteId": "bytes"
+      "inviteId": "bytes",
+      "expiresAt": "number"
+    },
+    "JoinLink": {
+      "hub": "text",
+      "roomId": "bytes",
+      "inviteId": "bytes",
+      "expiresAt": "number"
     },
     "EmojiWord": {
       "emoji": "text",
@@ -1986,6 +2220,27 @@
       "rows": "list<bytes>",
       "links": "list<bytes>",
       "sessions": "list<ServedGroup>"
+    },
+    "ServedStart": {
+      "room": "bytes",
+      "founding": "bytes",
+      "anchor": "bytes",
+      "rows": "list<bytes>",
+      "sessions": "list<bytes>"
+    },
+    "PlacedCommit": {
+      "group": "bytes",
+      "commit": "ServedCommit"
+    },
+    "ServedEnd": {
+      "current": "bytes",
+      "sessions": "list<bytes>",
+      "rows": "list<bytes>",
+      "links": "list<bytes>"
+    },
+    "LearnProgress": {
+      "epoch": "number",
+      "upto": "number"
     },
     "UnverifiedSession": {
       "index": "number",

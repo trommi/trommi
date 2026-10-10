@@ -4,7 +4,7 @@
 //! The code is 32 bytes that the host holds only while it founds a room, joins with the code, recovers or
 //! replaces the code; a device keeps nothing of it but the key that authenticates the room's sealed keys.
 
-use crate::records::{room_id, SignedHubAuth};
+use crate::records::{group_id, room_id, SignedHubAuth};
 use crate::{CoreError, ErrorCode};
 use trommi_core::crypto::Secret;
 use trommi_core::hub_auth::{self, HubAddress, CHALLENGE_LEN};
@@ -55,6 +55,108 @@ record! {
         /// Every live session group, main sessions before helper sessions.
         pub sessions: Vec<ServedGroup>,
     }
+}
+
+record! {
+    /// What a hub serves to begin the check of a room in steps: everything but the Commits.
+    pub struct ServedStart {
+        /// The room, 32 bytes.
+        pub room: Vec<u8>,
+        /// The room group's founding GroupInfo (epoch 0).
+        pub founding: Vec<u8>,
+        /// The GroupInfo of the anchor's epoch ([`recovery_anchor`] names the epoch).
+        pub anchor: Vec<u8>,
+        /// Every SealedKey of the room.
+        pub rows: Vec<Vec<u8>>,
+        /// The founding GroupInfo of every live session group, main sessions before helper sessions.
+        pub sessions: Vec<Vec<u8>>,
+    }
+}
+
+record! {
+    /// One Commit of a room's logs, with the group it belongs to: the room group or a session group named at
+    /// the start.
+    pub struct PlacedCommit {
+        /// The group.
+        pub group: Vec<u8>,
+        /// The Commit.
+        pub commit: ServedCommit,
+    }
+}
+
+record! {
+    /// What a hub serves to end the check of a room: the states it offers as current, and the keys.
+    pub struct ServedEnd {
+        /// The GroupInfo the hub offers as the room group's current one.
+        pub current: Vec<u8>,
+        /// The same for every session group, in the order of the start's sessions (`bad-format` for another
+        /// number of them).
+        pub sessions: Vec<Vec<u8>>,
+        /// Every SealedKey of the room.
+        pub rows: Vec<Vec<u8>>,
+        /// Every RecoveryLink of the room.
+        pub links: Vec<Vec<u8>>,
+    }
+}
+
+record! {
+    /// Where a walk of a group's past stands.
+    pub struct LearnProgress {
+        /// The epoch the walk has reached: the next Commit it takes builds on it.
+        pub epoch: u64,
+        /// The epoch the walk ends at: the one this device's own knowledge of the group begins at.
+        pub upto: u64,
+    }
+}
+
+/// Runs `call` with the start of a room check as the core reads it.
+pub(crate) fn with_start<R>(
+    served: &ServedStart,
+    call: impl FnOnce(&core::ServedStart<'_>) -> Result<R, CoreError>,
+) -> Result<R, CoreError> {
+    let sessions: Vec<&[u8]> = served.sessions.iter().map(Vec::as_slice).collect();
+    call(&core::ServedStart {
+        room: room_id(&served.room)?,
+        founding: &served.founding,
+        anchor: &served.anchor,
+        rows: &served.rows,
+        sessions: &sessions,
+    })
+}
+
+/// Runs `call` with placed Commits as the core reads them.
+pub(crate) fn with_placed<R>(
+    served: &[PlacedCommit],
+    call: impl FnOnce(&[core::PlacedCommit<'_>]) -> Result<R, CoreError>,
+) -> Result<R, CoreError> {
+    let placed = served
+        .iter()
+        .map(|placed| {
+            Ok(core::PlacedCommit {
+                group: group_id(&placed.group)?,
+                commit: core::ServedCommit {
+                    change: placed.commit.change,
+                    commit: &placed.commit.commit,
+                    recovery_auth: placed.commit.recovery_auth.as_deref(),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, CoreError>>()?;
+    call(&placed)
+}
+
+/// Runs `call` with the end of a room check as the core reads it.
+pub(crate) fn with_end<R>(
+    served: &ServedEnd,
+    call: impl FnOnce(&core::ServedEnd<'_>) -> Result<R, CoreError>,
+) -> Result<R, CoreError> {
+    let sessions: Vec<&[u8]> = served.sessions.iter().map(Vec::as_slice).collect();
+    call(&core::ServedEnd {
+        current: &served.current,
+        sessions: &sessions,
+        rows: &served.rows,
+        links: &served.links,
+    })
 }
 
 /// A served group as the core reads it, borrowed from the record.

@@ -7,9 +7,9 @@ use trommi_core::ids::GroupId;
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, added_at, enrol, found_main, found_room, json, new_device, new_device_on, now,
-    post_all, post_ok, post_refused, process, publish_some, reopen, sync_all, take_welcomes, write,
-    MemoryStorage, TestDevice,
+    add_human, add_to_session, added_at, enrol, found_main, found_room, json, learn, new_device,
+    new_device_on, now, post_all, post_ok, post_refused, process, publish_some, reopen, sync_all,
+    take_welcomes, write, MemoryStorage, TestDevice,
 };
 
 fn chat(group: &GroupId, text: &str) -> Draft {
@@ -273,4 +273,200 @@ fn a_device_does_not_merge_its_own_commit_that_adds_a_key_again_of_which_it_hold
         assert_eq!(device.group(&main).unwrap().epoch, epoch);
         assert_eq!(device.chain_head(&main, &c.id()).unwrap().seq, 2);
     }
+}
+
+/// `adder` lets `device` into `group` again (3.7); the device processes its removal and joins again from its
+/// Welcome; then everyone reads up.
+fn let_in_again(hub: &mut Hub, adder: &mut TestDevice, device: &mut TestDevice, group: &GroupId) {
+    let package = device.key_package(now()).unwrap();
+    adder
+        .readmit_human(group, &device.id(), &package, now())
+        .unwrap();
+    post_ok(hub, adder);
+    let at = added_at(hub);
+    let item = hub.log_after(device.cursor()).remove(0);
+    assert!(matches!(
+        process(device, &item),
+        Ok(Processed::Commit { removed: true, .. })
+    ));
+    assert_eq!(take_welcomes(hub, device, at).len(), 1);
+}
+
+#[test]
+fn a_device_that_learns_the_past_holds_the_cut_of_the_last_removal() {
+    let mut c = new_device();
+    let (mut hub, room, main, mut a, mut agent) = room_with(&mut c);
+    sync_all(&hub, &mut c);
+    write(&mut hub, &mut c, &chat(&main, "one"));
+    for device in [&mut a, &mut agent, &mut c] {
+        sync_all(&hub, device);
+    }
+    // Let in again with the Cut at number 1, it writes number 2, which everyone takes.
+    let_in_again(&mut hub, &mut a, &mut c, &main);
+    for device in [&mut a, &mut agent, &mut c] {
+        sync_all(&hub, device);
+    }
+    let two = write(&mut hub, &mut c, &chat(&main, "two"));
+    for device in [&mut a, &mut agent, &mut c] {
+        sync_all(&hub, device);
+    }
+    // It signs number 3, which is held back, and is let in again with the Cut at number 2.
+    let three = c
+        .seal(&chat(&main, "three, held back"), None, &[], now())
+        .unwrap();
+    let held_back = c
+        .outbox()
+        .into_iter()
+        .find(|entry| entry.id == three.outbox_id)
+        .unwrap()
+        .parts
+        .remove(0);
+    c.envelope_abandon(three.outbox_id).unwrap();
+    let_in_again(&mut hub, &mut a, &mut c, &main);
+    for device in [&mut a, &mut agent, &mut c] {
+        sync_all(&hub, device);
+    }
+    let cut = Head {
+        seq: 2,
+        hash: two.envelope_hash,
+    };
+    assert_eq!(a.chain_cut(&main, &c.id()).unwrap(), Some(cut));
+
+    // A human device that comes later learns the session's past: it holds the Cut of the last removal, and
+    // the envelope held back stays refused.
+    let mut d = new_device();
+    add_human(&mut hub, &mut a, &mut d);
+    publish_some(&mut hub, &mut d, 4);
+    sync_all(&hub, &mut a);
+    add_to_session(&mut hub, &mut a, &mut d, &main);
+    sync_all(&hub, &mut d);
+    learn(&hub, &mut d, &room).unwrap();
+    assert!(learn(&hub, &mut d, &main).unwrap().epochs > 2);
+    assert_eq!(d.chain_cut(&main, &c.id()).unwrap(), Some(cut));
+    let got = d
+        .receive_envelope(&held_back, d.cursor(), true, None, now())
+        .unwrap();
+    assert_eq!(
+        (got.outcome, got.code),
+        (EnvelopeOutcome::Refused, Some(Error::RemovedSender))
+    );
+}
+
+#[test]
+fn a_human_device_removed_from_a_session_joins_it_again_with_the_code() {
+    use trommi_core::codec;
+    use trommi_core::ids::Hash32;
+    use trommi_core::mls::profile::{CommitNote, Cut};
+    use trommi_tests::forge::Forger;
+    use trommi_tests::{add_forger, found_room_on, join_session, test_keys};
+
+    // A human device that obeys MLS only removes another human device's leaf from the main session: a
+    // Commit no device builds, and none refuses (5.2.2). The removed device stays a human device of the
+    // room and holds the group as one it was removed from.
+    let store = MemoryStorage::new();
+    let handle = store.handle();
+    let (mut a, mut c, mut agent) = (new_device(), new_device_on(store), new_device());
+    let mut hub = Hub::new(false);
+    let room = found_room_on(&mut hub, &mut a);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    add_human(&mut hub, &mut a, &mut c);
+    publish_some(&mut hub, &mut c, 4);
+    publish_some(&mut hub, &mut agent, 4);
+    enrol(&mut hub, &mut a, &mut agent);
+    sync_all(&hub, &mut c);
+    let packages = hub.claim(&[c.id(), agent.id()]).unwrap();
+    let packages = [packages, vec![forger.key_package()]].concat();
+    let session = a.found_session(&agent.id(), &packages, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let main = GroupId::session(room.room_id(), session);
+    let mut forged = forger.join(&hub.welcomes.last().unwrap().bytes);
+    for device in [&mut a, &mut c, &mut agent] {
+        sync_all(&hub, device);
+    }
+    let state = a.room_history().unwrap().newest().clone();
+    let cut = a.cut_of(&main, &c.id()).unwrap();
+    let note = CommitNote {
+        room_epoch: state.epoch,
+        room_state: state.state,
+        time: now(),
+        cuts: vec![cut],
+        join: false,
+    };
+    let removal = forger.commit_removing(&mut forged, &codec::encode(&note).unwrap(), &[c.id()]);
+    forger.post_commit(&mut hub, &main, &removal).unwrap();
+    let item = hub.log_after(c.cursor()).remove(0);
+    assert!(matches!(
+        process(&mut c, &item),
+        Ok(Processed::Commit { removed: true, .. })
+    ));
+    sync_all(&hub, &mut a);
+    assert_eq!(c.group(&main).err(), Some(Error::NotFound));
+    assert_eq!(
+        cut,
+        Cut {
+            device: c.id(),
+            seq: 0,
+            hash: Hash32::ZERO
+        }
+    );
+
+    // It holds the code and joins from outside (5.2.7, 8.4): its record of the group's past is whole.
+    let keys = test_keys();
+    join_session(&hub, &mut c, &keys, &main).unwrap();
+    post_ok(&mut hub, &mut c);
+    for device in [&mut a, &mut c] {
+        sync_all(&hub, device);
+    }
+    assert_eq!(c.group(&main).unwrap().epoch, hub.epoch(&main).unwrap());
+    assert!(c.group_past(&main).unwrap().unwrap().learned);
+    assert_eq!(
+        c.chain_cut(&main, &c.id()).unwrap(),
+        Some(Head {
+            seq: cut.seq,
+            hash: cut.hash
+        })
+    );
+    let epoch = c.group(&main).unwrap().epoch;
+    assert!(c.content_key(&main, epoch).is_ok());
+    // A restart finds the records whole.
+    drop(c);
+    let c = reopen(handle.reopened()).unwrap();
+    assert!(c.group_past(&main).unwrap().unwrap().learned);
+    assert_eq!(c.group(&main).unwrap().epoch, epoch);
+}
+
+#[test]
+fn what_a_device_writes_after_its_chain_went_back_to_its_cut_makes_its_heads_due() {
+    use trommi_core::crypto::SecretBytes;
+    use trommi_core::device::HEADS_EVERY_MS;
+
+    let mut c = new_device();
+    let (mut hub, _, main, mut a, mut agent) = room_with(&mut c);
+    sync_all(&hub, &mut c);
+    let one = write(&mut hub, &mut c, &chat(&main, "one"));
+    for device in [&mut a, &mut agent, &mut c] {
+        sync_all(&hub, device);
+    }
+    // It signs `heads` as number 2, which is not published, and is let in again with the Cut at number 1.
+    let value = c.heads_due(&main, now()).unwrap().unwrap();
+    let heads = Draft::Register {
+        group: main,
+        name: "heads".into(),
+        value: Some(SecretBytes::new(value)),
+    };
+    let sealed = c.seal(&heads, None, &[], now()).unwrap();
+    assert_eq!(sealed.seq, one.seq + 1);
+    let_in_again(&mut hub, &mut a, &mut c, &main);
+    for device in [&mut a, &mut agent, &mut c] {
+        sync_all(&hub, device);
+    }
+    assert_eq!(c.chain_head(&main, &c.id()).unwrap().seq, one.seq);
+    c.envelope_abandon(sealed.outbox_id).unwrap();
+    // Its next envelope is number 2 again, a chat: that is a change, and its heads are due.
+    let again = write(&mut hub, &mut c, &chat(&main, "again"));
+    assert_eq!(again.seq, sealed.seq);
+    sync_all(&hub, &mut c);
+    let later = now() + HEADS_EVERY_MS;
+    assert!(c.heads_due(&main, later).unwrap().is_some());
 }
