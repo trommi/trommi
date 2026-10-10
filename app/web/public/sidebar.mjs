@@ -72,7 +72,7 @@ export function cornerNote(model, base) {
   const crowns = model.all ? (model.desks ?? []).map(d => ({ desk: d, a: model.everyone.find(a => a.starred && !a.archived && model.deskOf(a) === d.id) })).filter(x => x.a) : []
   // (All desks, and the desk last looked at has no crown: the note still goes to a crowned session, another desk's)
   const crown = crownOf(model) ?? crowns[0]?.a ?? null, far = crown && crowns.length === 1 && crown !== crownOf(model)
-  const chooser = crowns.length > 1 ? html`<div class="note-to-pick" role="menu" aria-label="Send to" hidden>${crowns.map(x => html`<button type="button" role="menuitem" class="note-to-row" data-action="corner-note#sendTo" data-to="${x.a.id}">${raw(sketchSvg('desk'))}<span><b>${x.desk.name || 'Desk'}</b><small>${x.a.name}</small></span></button>`)}</div>` : ''
+  const chooser = crowns.length > 1 ? html`<div class="note-to-pick" role="menu" aria-label="Send to" hidden>${crowns.map(x => html`<button type="button" role="menuitem" class="note-to-row" data-action="corner-note#sendTo" data-to="${x.a.id}">${raw(sketchSvg('desk'))}<span><b>${x.desk.name || 'Personal'}</b><small>${x.a.name}</small></span></button>`)}</div>` : ''
   const text = note?.text ?? '', files = note?.attachments ?? []
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
 <button type="button" class="corner-note-head" data-action="corner-note#open" data-tip="${text || files.length ? 'Your note: open it (N)' : 'New note (N)'}" aria-label="${text || files.length ? 'Your note: open it' : 'New note'}" aria-expanded="false">${NOTE_ICON}</button>
@@ -415,9 +415,9 @@ const DEFAULT_DESK = 'main'
 
 /** The desks with what waits on each: [{ id, name, open, knocks }]. */
 function desksOf(model) {
-  const desks = model.state.desks?.length ? model.state.desks : [{ id: DEFAULT_DESK, name: 'Desk' }]
+  const desks = model.state.desks?.length ? model.state.desks : [{ id: DEFAULT_DESK, name: 'Personal' }]
   const deskOf = card => { const d = model.byAgent.get(card.agent)?.desk; return desks.some(x => x.id === d) ? d : desks[0].id }
-  return desks.map(d => { const mine = (model.allFresh ?? model.fresh).filter(c => deskOf(c) === d.id); return { id: d.id, name: d.name || 'Desk', open: mine.length, knocks: mine.some(c => ['high', 'critical'].includes(c.urgency)) } })
+  return desks.map(d => { const mine = (model.allFresh ?? model.fresh).filter(c => deskOf(c) === d.id); return { id: d.id, name: d.name || 'Personal', open: mine.length, knocks: mine.some(c => ['high', 'critical'].includes(c.urgency)) } })
 }
 
 /** Whether this tab shows the demo room (app.mjs: ?mock=1, remembered for the tab; ?mock=0 ends it). */
@@ -510,7 +510,7 @@ const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? '
 /** The head's words: the place's name (never empty: "Desk" when a desk has none) and the chevron that opens the desk
  *  list (always there, so New desk is reachable with one desk too). Kept current by the live stream (#desk-place):
  *  a room's desks arrive after the page was drawn. */
-const placeName = model => String(model?.deskName ?? '').trim() || 'Desk'
+const placeName = model => String(model?.deskName ?? '').trim() || 'Personal'
 /** The pill's words (the menu's button on a wide screen): the desk's drawing and the place's name (#pill-place, live). */
 const pillPlace = (model, current = null) => { const s = current ? model.byAgent.get(current) : null; return s ? html`<span class="pill-place" id="pill-place">${avatar(s, { crown: false })}<b>${s.name}</b></span>` : html`<span class="pill-place" id="pill-place"><span class="desk-lamp">${deskLamp(model)}</span><b>${placeName(model)}</b></span>` }
 const deskPlace = model => html`<span class="desk-place" id="desk-place"><span class="desk-name" data-size="${nameSize(placeName(model))}">${placeName(model)}</span></span>`
