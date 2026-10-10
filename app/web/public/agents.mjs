@@ -304,6 +304,7 @@ export function register(t) {
     const client = hub.client, members = client?.model?.members
     const me = client?.model?.room?.my_device_id
     const { all, devices } = deletionOf(m, a, { me, human: d => members?.get(d)?.device_role === 'human' })
+    const ids = new Set(all.map(x => x.id))
     try {
       for (const c of m.state.cards) if (ids.has(c.agent) && c.status === 'open' && c.kind !== 'permission') await hub.shred(c.id, '')
       for (const x of all) await hub.editSession({ agent: x.id, archived: true, deleting: true })
