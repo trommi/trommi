@@ -288,7 +288,7 @@ struct MenuPill: View {
       HStack(spacing: 7) {
         PenMark("sketch:desk", color: Ink.fg).frame(width: 22, height: 22)
           .overlay(alignment: .topLeading) { if (v?.fresh.count ?? 0) > 0 { Circle().fill(Ink.yellow).frame(width: 7, height: 7).offset(x: 3, y: 1) } }
-        Text(v?.deskName ?? "Desk").font(Face.display(17, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
+        Text(v?.deskName ?? "Personal").font(Face.display(17, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.muted)
         // (a dot: no live connection to the hub. The demo has no hub, so it never shows one)
         if !model.live && !model.demo { Circle().fill(Ink.lead).frame(width: 7, height: 7).accessibilityLabel("Not connected") }
@@ -297,7 +297,7 @@ struct MenuPill: View {
       .padding(.horizontal, 14).frame(height: 44)
       .glass(Capsule(), interactive: true)
     }
-    .accessibilityLabel("\(v?.deskName ?? "Desk"), Menu")
+    .accessibilityLabel("\(v?.deskName ?? "Personal"), Menu")
     .alert("New Desk", isPresented: $askDesk) {
       TextField("Name", text: $deskName)
       Button("Cancel", role: .cancel) {}
@@ -365,7 +365,7 @@ struct Sidebar: View {
       HStack(spacing: 12) {
         PenMark("sketch:desk", color: Ink.fg).frame(width: 34, height: 34)
           .overlay(alignment: .topLeading) { if (v?.fresh.count ?? 0) > 0 { Circle().fill(Ink.yellow).frame(width: 8, height: 8).offset(x: 4, y: 2) } }
-        Text(v?.deskName ?? "Desk").font(Face.display(26, .heavy)).foregroundStyle(Ink.fg).lineLimit(1).minimumScaleFactor(0.6)
+        Text(v?.deskName ?? "Personal").font(Face.display(26, .heavy)).foregroundStyle(Ink.fg).lineLimit(1).minimumScaleFactor(0.6)
         Spacer(minLength: 4)
         PenMark("sketch:unfold", color: Ink.muted).frame(width: 18, height: 18).rotationEffect(.degrees(switching ? 180 : 0))
       }
@@ -375,7 +375,7 @@ struct Sidebar: View {
     }
     .buttonStyle(.plain)
     .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 6)
-    .accessibilityLabel("Desk: \(v?.deskName ?? "Desk"). Choose the desk")
+    .accessibilityLabel("Desk: \(v?.deskName ?? "Personal"). Choose the desk")
   }
 
   @ViewBuilder private func deskList(_ v: DeskModel.View?) -> some View {

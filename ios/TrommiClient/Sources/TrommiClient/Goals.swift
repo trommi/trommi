@@ -48,7 +48,7 @@ public enum GoalsSync {
     var d = board.human.desks.compactMap { (id, v) -> (id: String, name: String, goals: String, order: Double?, created: Double)? in
       guard v.truthy else { return nil }
       let name = String(jsTrim(Substring(v["name"].string ?? "")))
-      return (id, name.isEmpty ? "Desk" : name, v["goals"].string.map(clean) ?? "", v["order"].double.flatMap { $0.isFinite ? $0 : nil }, v["created_at"].double ?? 0)
+      return (id, name.isEmpty ? "Personal" : name, v["goals"].string.map(clean) ?? "", v["order"].double.flatMap { $0.isFinite ? $0 : nil }, v["created_at"].double ?? 0)
     }
     let ordered = d.contains { $0.order != nil }
     d.sort { a, b in

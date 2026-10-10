@@ -333,9 +333,9 @@ public func goalsFold(_ text: String) -> (shown: String, more: Int) {
   return (lines.prefix(GOALS_SHOWN).joined(separator: "\n"), lines.count - GOALS_SHOWN)
 }
 /** The register a desk has after its goals were written (app.mjs hub.desk({ id, goals })): every other field kept, the
- *  field gone when the text is empty; a desk that is not there yet starts as "Desk". */
+ *  field gone when the text is empty; a desk that is not there yet starts as the first desk, "Personal". */
 public func deskRegister(_ have: JV?, goals: String, now: UInt64 = nowMs()) -> JV {
-  var v = have?.object ?? ["name": .str("Desk"), "created_at": .n(now - 1)]
+  var v = have?.object ?? ["name": .str("Personal"), "created_at": .n(0)]
   let text = cleanGoals(goals)
   v["goals"] = text.isEmpty ? nil : .str(text)
   return .obj(v)
@@ -392,7 +392,7 @@ public final class DeskModel {
     var d = m.human.desks.compactMap { (id, v) -> DeskDesc? in
       guard v.object != nil else { return nil }
       let name = (v["name"].string ?? "").trimmingCharacters(in: .whitespaces)
-      return DeskDesc(id: id, name: name.isEmpty ? "Desk" : name, created: clampedU64(v["created_at"].double), order: v["order"].int, crown: v.has("crown") ? v["crown"] : nil, goals: cleanGoals(v["goals"].string ?? ""))
+      return DeskDesc(id: id, name: name.isEmpty ? "Personal" : name, created: clampedU64(v["created_at"].double), order: v["order"].int, crown: v.has("crown") ? v["crown"] : nil, goals: cleanGoals(v["goals"].string ?? ""))
     }
     let ordered = d.contains { $0.order != nil }
     d.sort { a, b in
@@ -596,7 +596,7 @@ public final class DeskModel {
       for s in units[i].subs { if let j = ix[s] { units[i].unheard += units[j].unheard; units[j].unheard = 0 } }
     }
     let cut = units.filter { u in u.link?.state == "cut" && !(u.parent.flatMap { ix[$0] }.map { units[$0].link?.state == "cut" && units[$0].agent.agentDeviceId == u.agent.agentDeviceId } ?? false) }
-    let name = all ? "All desks" : desks.first { $0.id == deskId }?.name ?? "Desk"
+    let name = all ? "All desks" : desks.first { $0.id == deskId }?.name ?? "Personal"
     return View(deskId: deskId, all: all, deskName: name, here: here, fresh: fresh, reads: reads, revising: revising, snoozed: snoozed, done: done, units: units, cut: cut,
                 unheard: units.reduce(0) { $0 + $1.unheard }, knocking: fresh.filter { $0.isKnock }.count, working: units.filter { $0.online && $0.running }.count, allFreshCount: allFresh.count,
                 goals: all ? "" : desks.first { $0.id == deskId }?.goals ?? "")
