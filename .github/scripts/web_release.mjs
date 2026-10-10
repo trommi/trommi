@@ -10,9 +10,7 @@
 //                    constants for the dev server and the tests, and the runtime refuses a module whose named
 //                    exports are not handlers ("Incorrect type for map entry 'FAVICON'")
 //   wrangler.jsonc   app/web/wrangler.jsonc without its build step (the deploy delivers these files and builds
-//                    nothing) and without the R2 bucket (the connector's release is a GitHub release now; the
-//                    worker answers /connector/… and /plugins/… with 404 when no bucket is bound), with entry.js
-//                    as the script and app.trommi.com as the worker's address
+//                    nothing), with entry.js as the script and app.trommi.com as the worker's address
 //   manifest.json    what this release is (product, repository, version, commit, hub, hsts) and every file
 //                    above with its size and SHA-256
 //   checksums.txt    the same hashes and manifest.json's, in the form of sha256sum: `sha256sum -c checksums.txt`
@@ -54,7 +52,6 @@ function jsonc(text) {
 const config = jsonc(fs.readFileSync(path.join(REPO, 'app/web/wrangler.jsonc'), 'utf8'))
 delete config.build
 delete config.$schema
-delete config.r2_buckets
 if (config.main !== 'worker.js' || config.assets?.directory !== './public') fail('app/web/wrangler.jsonc no longer names worker.js and ./public; this script must follow it')
 config.main = 'entry.js'
 // The worker's address. Named here so that a delivery never depends on what was clicked in the dashboard.
