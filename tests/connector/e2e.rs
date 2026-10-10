@@ -455,3 +455,134 @@ async fn the_opener_admits_a_helper_device_and_lets_it_back_in_after_it_lost_its
     human.sync().await;
     assert!(human.findings.is_empty(), "{:?}", human.findings);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_agent_reads_an_object_two_senders_wrote_in_turns() {
+    let (_hub, mut human, mut first, group) = room().await;
+    let options = json!([{ "key": "a", "label": "A" }, { "key": "b", "label": "B" }]);
+    let card = first
+        .client
+        .send_card(
+            fields(json!({
+                "card_type": "decision", "title": "A or B?", "body": "first", "urgency": "normal",
+                "options": options, "allows_multiple": false,
+            })),
+            None,
+        )
+        .await
+        .expect("a card");
+    // In turns: the human answers, takes it back; the agent revises; the human answers the new version.
+    human.sync().await;
+    human
+        .answer(
+            &card,
+            json!({ "answer_action": "answer", "choices": ["a"] }),
+            &["a"],
+            false,
+        )
+        .await
+        .expect("answered");
+    assert_eq!(first.command().await.choices, ["a"]);
+    human.take_back(&card).await.expect("taken back");
+    assert_eq!(first.command().await.command, "decide_again");
+    first
+        .client
+        .revise(&card, fields(json!({ "body": "second" })), None)
+        .await
+        .expect("revised");
+    human.sync().await;
+    human
+        .answer(
+            &card,
+            json!({ "answer_action": "answer", "choices": ["b"] }),
+            &["b"],
+            false,
+        )
+        .await
+        .expect("answered again");
+    assert_eq!(first.command().await.choices, ["b"]);
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+
+    // Another connector takes the session over and reads its past: every envelope in the hub's one order.
+    let session = group.session_id().expect("a session group");
+    let second = join(&mut human, Some(session)).await;
+    human
+        .take_over(&group, first.client.device_id(), &second.admitted)
+        .await;
+    let client = second.client.clone();
+    eventually(
+        "the new agent holds the card as the turns left it",
+        || async {
+            let core = client.core.lock().await;
+            core.model.cards.get(&card).is_some_and(|c| {
+                c.object_state == "answered"
+                    && c.object_version == 2
+                    && c.s("body") == "second"
+                    && c.answer.as_ref().is_some_and(|a| a.choice_strs() == ["b"])
+                    && c.answers.len() == 2
+            })
+        },
+    )
+    .await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_removal_is_verified_only_by_the_commit_the_device_processes_itself() {
+    let (_hub, mut human, mut first, group) = room().await;
+    let session = group.session_id().expect("a session group");
+    let stood_at = first.client.core.lock().await.cursor;
+    let second = join(&mut human, Some(session)).await;
+    human
+        .take_over(&group, first.client.device_id(), &second.admitted)
+        .await;
+
+    // The hub stops taking the first device at once: that alone is a claim, and is told as one.
+    let claimed = loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(90), first.events.recv())
+            .await
+            .expect("an event in time")
+            .expect("the client lives");
+        if let ClientEvent::Removed { verified, .. } = event {
+            break verified;
+        }
+    };
+    eprintln!(
+        "the removal came as {}",
+        if claimed { "verified" } else { "a claim" }
+    );
+    // (the Commit may have reached it before the hub cut it off; then it is verified already)
+    if !claimed {
+        // Commits that have nothing to do with it verify nothing.
+        assert!(!first.client.verify_removal(&[]).await.expect("checked"));
+        // The Commits the hub is to serve a removed device, here fetched by the human device: the device
+        // checks them itself and finds the one that took it out.
+        let commits = human.commits_after(stood_at).await;
+        assert!(first
+            .client
+            .verify_removal(&commits)
+            .await
+            .expect("the Commits verify"));
+        let verified = loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(90), first.events.recv())
+                    .await
+                    .expect("an event in time")
+                    .expect("the client lives");
+            if let ClientEvent::Removed { verified, .. } = event {
+                break verified;
+            }
+        };
+        assert!(verified, "told again, as verified");
+    }
+    // A forged list changes nothing for a device that is in: the second one stays.
+    let mut forged = human.commits_after(0).await;
+    for item in &mut forged {
+        item["change"] = json!(item["change"].as_u64().unwrap_or(0) + 1_000);
+    }
+    let _ = second.client.verify_removal(&forged).await;
+    assert_ne!(
+        second.client.core.lock().await.model.room.connection,
+        "removed"
+    );
+}
