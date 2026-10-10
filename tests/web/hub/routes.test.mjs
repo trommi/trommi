@@ -128,13 +128,13 @@ test('KeyPackages: uploaded, claimed one each, the last-resort one when none is 
 
 test('an invite: Offer, Request, Reveal relayed by invite id; the new device needs no token', async t => {
   const { fake, hub, room_id } = await scene(t)
-  const invite_id = id(16), offer = utf8({ room_id, invite_id, expires_at: Date.now() + 600_000 }), signature = new Uint8Array(64)
-  assert.deepEqual(await hub.postInvite(offer, signature), { invite_id })
-  assert.deepEqual(await hub.postInvite(offer, signature), { invite_id })
+  const invite_id = id(16), offer = utf8({ room_id, invite_id, expires_at: Date.now() + 600_000 }), signature = new Uint8Array(64), mac = new Uint8Array(32).fill(7)
+  assert.deepEqual(await hub.postInvite(offer, signature, mac), { invite_id })
+  assert.deepEqual(await hub.postInvite(offer, signature, mac), { invite_id })
 
   const joiner = client(fake, null)
   const seen = await joiner.getInvite(invite_id)
-  assert.deepEqual([seen.offer, seen.signature, seen.requests], [offer, signature, null])
+  assert.deepEqual([seen.offer, seen.signature, seen.mac, seen.requests], [offer, signature, mac, null], 'the MAC served beside the Offer as it was posted')
   await assert.rejects(joiner.getReveal(invite_id), e => e.code === 'not-found')
   const request = { request: utf8('request'), mac: new Uint8Array(32), signature: new Uint8Array(64).fill(1) }
   const { request_hash } = await joiner.postInviteRequest(invite_id, request)
@@ -150,7 +150,7 @@ test('the Reveal reaches the new device as the inviter put it', async t => {
   const reveals = new Map()
   const { fake, hub, room_id } = await scene(t, { readers: { reveal: bytes => reveals.get(Buffer.from(bytes).toString('hex')) } })
   const invite_id = id(16)
-  await hub.postInvite(utf8({ room_id, invite_id, expires_at: Date.now() + 600_000 }), new Uint8Array(64))
+  await hub.postInvite(utf8({ room_id, invite_id, expires_at: Date.now() + 600_000 }), new Uint8Array(64), new Uint8Array(32))
   const joiner = client(fake, null)
   const { request_hash } = await joiner.postInviteRequest(invite_id, { request: utf8('request'), mac: new Uint8Array(32), signature: new Uint8Array(64) })
   const reveal = new Uint8Array(randomBytes(80)), signature = new Uint8Array(randomBytes(64))

@@ -139,8 +139,15 @@ interface Launch { url: string | URL; client: string | null; timeout_ms: number;
  * room) and what the step gave besides (a new account's Emergency Kit). The timeout is for a worker that does not come up
  * at all ('ready'); a step may take as long as it takes (a join waits for the other device).
  */
+let reloadOnShow = false
 function launch({ url, client, timeout_ms, early = null, worker: given, first, onEvent }: Launch): Promise<{ remote: RemoteClient | null; value: unknown }> {
   const worker = early?.worker ?? given ?? new Worker(url, { type: 'module', name: 'trommi-core' })
+  // the page goes: the worker's streams end now, whatever the browser does with the worker and its connections
+  // after (a page that comes back from the back-forward cache is loaded anew: its streams are gone)
+  if (typeof addEventListener === 'function' && typeof document !== 'undefined') {
+    addEventListener('pagehide', () => { try { worker.postMessage({ t: 'pagehide' } satisfies ToWorker) } catch {} })
+    if (!reloadOnShow) { reloadOnShow = true; addEventListener('pageshow', e => { if ((e as PageTransitionEvent).persisted) location.reload() }) }
+  }
   return new Promise((resolve, reject) => {
     let remote: RemoteClient | null = null
     let settled = false, up = false

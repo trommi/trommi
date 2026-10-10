@@ -439,3 +439,10 @@ dialog.ob-gate #room-screen { position: static; }
 .ob-paste .ob-form { margin-top: 0; gap: 12px; }
 .ob-paste .ob-error { margin: -4px 0; }
 .scan[data-state="tap"] .scan-still svg { display: none; }
+/* A device's Rename and Remove: closed, only the word shows (what is inside takes no room at all); opened on a
+   narrow screen, the box takes the whole width of the card, so nothing runs past the window's edge. */
+.room-remove details:not([open]) > :not(summary) { display: none; }
+@media (max-width: 600px) {
+  .room-device:has(.room-remove details[open]) > .room-remove { grid-column: 1 / -1; }
+  .room-remove details[open] :is(input, button) { max-width: 100%; box-sizing: border-box; }
+}

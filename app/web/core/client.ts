@@ -813,7 +813,7 @@ export class Client {
     this.needHuman()
     if (takeover && (device_role !== 'agent' || !session_id || !this.model.sessions.get(session_id)?.group_id)) fail('bad-argument', 'a takeover invite names an existing session and is for an agent')
     const opened = await this.engine.do(d => d.inviteOpen(device_role, takeover ? unhex(session_id!) : null, originOf(app_url), this.hub.hub_url, this.now()))
-    await this.hub.postInvite(opened.offer, opened.signature)
+    await this.hub.postInvite(opened.offer, opened.signature, opened.mac)
     const invite_id = hex(opened.inviteId)
     const pub: Invite = { invite_id, device_role, link: opened.link, label: label ?? '', session_id: takeover ? session_id : null, with_history: takeover ? with_history !== false : !!with_history, takeover: !!takeover,
       desk: device_role === 'agent' && !takeover && typeof desk === 'string' && desk ? desk.slice(0, 64) : null, confirm_code: true, expires_at: opened.expiresAt, check_code: null, invite_state: 'open', newcomer: null, error: null }
