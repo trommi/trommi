@@ -63,6 +63,10 @@ impl Refused {
                 out.insert(k.clone(), x.clone());
             }
         }
+        // (the wait is in the `retry-after` header and here, for a client that reads only the body)
+        if let Some(seconds) = self.retry_after {
+            v["retry_after"] = json!(seconds);
+        }
         v
     }
 }

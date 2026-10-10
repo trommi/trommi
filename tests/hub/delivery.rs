@@ -1617,8 +1617,12 @@ fn key_packages_are_handed_out_once_and_the_last_resort_one_when_none_is_left() 
     )
     .refused(400, "bad-key-package");
     let many: Vec<String> = (0..100).map(|_| b64(&bea.key_package(false))).collect();
-    bea.put(&w.hub, "/v2/key-packages", &json!({ "single_use": many }))
-        .refused(429, "too-many");
+    // a whole fresh set beside what was left: the oldest go
+    assert_eq!(
+        bea.put(&w.hub, "/v2/key-packages", &json!({ "single_use": many }))
+            .ok()["unused"],
+        100
+    );
 }
 
 #[test]

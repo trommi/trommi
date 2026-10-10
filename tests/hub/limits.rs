@@ -65,13 +65,28 @@ fn counts_per_device() {
             .ok()["unused"],
         100
     );
-    w.ada
-        .put(
-            hub,
-            "/v2/key-packages",
-            &json!({ "single_use": [b64(&w.ada.key_package(false))] }),
-        )
-        .refused(429, "too-many");
+    // one more: the oldest goes, a hundred stay (a device that signs in again brings a fresh set)
+    assert_eq!(
+        w.ada
+            .put(
+                hub,
+                "/v2/key-packages",
+                &json!({ "single_use": [b64(&w.ada.key_package(false))] })
+            )
+            .ok()["unused"],
+        100
+    );
+    // a refusal that names a wait names it in the header and in the body
+    let slowed = TestHub::start_with(&[("HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE", "1")]);
+    slowed
+        .post("/v2/account/passkey/challenge", &json!({}))
+        .ok();
+    let told = slowed.post("/v2/account/passkey/challenge", &json!({}));
+    told.refused(429, "rate-limited");
+    assert_eq!(
+        told.header("retry-after").map(str::to_string),
+        told.json()["retry_after"].as_u64().map(|s| s.to_string())
+    );
     // a device has ten push registrations
     boundary(
         "push registrations per device",

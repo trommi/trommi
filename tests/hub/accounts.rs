@@ -1008,7 +1008,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
             .as_i64()
             .unwrap()
     };
-    let auth: [u8; 32] = random();
+    let (auth, mail_kit): ([u8; 32], [u8; 32]) = (random(), random());
     let password = |w: &World| json!({ "auth_key": b64(&auth), "sealed_copy": copy(8), "kdf": kdf(), "revision": revision(w) });
     w.ada
         .call(hub, "PUT", "/v2/account/password", &password(&w))
@@ -1018,7 +1018,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
             hub,
             "PUT",
             "/v2/account/email",
-            &json!({ "email": "other@example.org", "revision": revision(&w) }),
+            &json!({ "email": "other@example.org", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
         )
         .refused(409, "account-exists");
     w.ada
@@ -1026,7 +1026,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
             hub,
             "PUT",
             "/v2/account/email",
-            &json!({ "email": "not an address", "revision": revision(&w) }),
+            &json!({ "email": "not an address", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
         )
         .refused(400, "bad-email");
     w.ada
@@ -1036,26 +1036,35 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
             "/v2/account/email",
             &json!({ "email": "Ada@Example.org", "revision": revision(&w) }),
         )
+        .refused(400, "incomplete");
+    w.ada
+        .call(
+            hub,
+            "PUT",
+            "/v2/account/email",
+            &json!({ "email": "Ada@Example.org", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
+        )
         .ok();
     w.ada
         .call(
             hub,
             "PUT",
             "/v2/account/email",
-            &json!({ "email": "ada2@example.org", "revision": revision(&w) }),
+            &json!({ "email": "ada2@example.org", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
         )
         .refused(403, "forbidden");
     w.ada
         .call(hub, "PUT", "/v2/account/password", &password(&w))
         .ok();
     assert_eq!(login(hub, "ada@example.org", &auth).ok()["account"], id);
-    // the kit is still the one made under the id
+    // with the e-mail came the kit made anew under it (8.8.2): the one from before opens nothing, and the
+    // account says which form its kit has
+    recover_by_id(hub, &id, &next_kit).refused(401, "wrong-recovery");
     assert_eq!(
-        recover_by_id(hub, &id, &next_kit).ok()["email"],
+        recover_by_id(hub, &id, &mail_kit).ok()["email"],
         "ada@example.org"
     );
-    // the kit keeps the salt it was made with: the e-mail given later changes nothing about it
-    assert_eq!(w.ada.get(hub, "/v2/account").ok()["kit_form"], "id");
+    assert_eq!(w.ada.get(hub, "/v2/account").ok()["kit_form"], "email");
     // one field names the account, by e-mail or by id, for the password as for the kit; the id as a person
     // types it: case, spaces and dashes do not matter, anything else is no id
     let by = |route: &str, name: &str, key: &[u8; 32]| {
@@ -1077,8 +1086,8 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
             "{name}"
         );
         assert_eq!(
-            by("recover", name, &next_kit).ok()["rooms"][0]["sealed_copy"],
-            copy(5),
+            by("recover", name, &mail_kit).ok()["rooms"][0]["sealed_copy"],
+            copy(1),
             "{name}"
         );
     }
@@ -1113,5 +1122,40 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     assert_eq!(
         (slowed.status, slowed.header("retry-after")),
         (429, Some("1"))
+    );
+}
+
+#[test]
+fn the_account_id_has_the_text_of_the_cores_vectors() {
+    let vectors: Value =
+        serde_json::from_str(include_str!("../../spec/vectors/account.json")).unwrap();
+    let id = trommi_hub::util::unhex(vectors["account_id"].as_str().unwrap()).unwrap();
+    let text = vectors["account_id_text"].as_str().unwrap();
+    assert_eq!(trommi_hub::accounts::id_text(&id), text);
+    assert_eq!(
+        trommi_hub::accounts::parse_id(text).map(|i| i.to_vec()),
+        Some(id.clone())
+    );
+    // the hub also takes what a person types: case, spaces and dashes aside (clients hand the core the tidy form)
+    assert_eq!(
+        trommi_hub::accounts::parse_id(&text.to_uppercase().replace('-', " ")).map(|i| i.to_vec()),
+        Some(id)
+    );
+    // what is no id for the core for another reason than those is none for the hub
+    for refused in vectors["refused_id_texts"].as_array().unwrap() {
+        let text = refused["text"].as_str().unwrap();
+        let tidy: String = text
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '-')
+            .collect();
+        if tidy.len() != 32 || !tidy.bytes().all(|b| b.is_ascii_hexdigit()) {
+            assert!(trommi_hub::accounts::parse_id(text).is_none(), "{text}");
+        }
+    }
+    // a minted id is a UUID in that text
+    let minted = trommi_hub::accounts::id_text(&trommi_hub::accounts::new_id());
+    assert_eq!(
+        (minted.len(), &minted[8..9], &minted[23..24]),
+        (36, "-", "-")
     );
 }
