@@ -44,6 +44,9 @@ async function fromPage(id, clientId) {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url)
   if (url.origin !== self.location.origin || event.request.method !== 'GET') return
+  // The hub may answer on the app's own origin (under /v2/): its requests are not this worker's, the live stream
+  // least of all. They go to the network as the page or the core worker sent them.
+  if (url.pathname.startsWith('/v2/')) return
   const att = /^\/att\/([0-9a-f]{32})$/.exec(url.pathname)
   if (att) {
     event.respondWith((async () => {

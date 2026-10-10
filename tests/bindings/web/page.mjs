@@ -155,6 +155,74 @@ const cases = {
     return { ok: Object.values(found).every(Boolean), ...found }
   },
 
+  /**
+   * Catching up on `count` stored envelopes, on IndexedDB: one by one (a durable transaction each), and through
+   * `feed` in calls of 250 (a durable transaction per call). Both must leave the same device. The envelopes are a
+   * device's own board items, sealed over a store in memory and then read by that device from two copies of its
+   * stored state.
+   */
+  async catchup(count) {
+    const name = `catchup-${Date.now()}`
+    // A store in memory that can be copied: the writer's state before it read any of its envelopes.
+    const memory = { revision: 0, entries: new Map() }
+    const key = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+    const store = {
+      load: async () => ({ revision: memory.revision, entries: [...memory.entries.values()] }),
+      apply: async write => {
+        for (const gone of write.delete) memory.entries.delete(key(gone))
+        for (const entry of write.put) memory.entries.set(key(entry.key), { key: entry.key.slice(), value: entry.value.slice() })
+        memory.revision += 1
+      },
+    }
+    const writer = await core.Device.create(store)
+    const room = await writer.foundRoom(core.generateRecoveryCode(), Date.now())
+    for (const entry of await writer.outbox()) await writer.outboxAccepted(entry.id, 1)
+    const board = Uint8Array.from([...new TextEncoder().encode('all-desks'), 0, 0, 0, 0, 0, 0, 9])
+    const payload = new TextEncoder().encode(`{"content_type":"erase","shape_ids":["${core.base64urlEncode(await writer.id())}/1/0"]}`)
+    const served = []
+    for (let at = 0; at < count; at++) {
+      const sealed = await writer.seal({ kind: 'boardItem', board, payload }, null, [], Date.now())
+      const entry = (await writer.outbox()).find(entry => entry.id === sealed.outboxId)
+      served.push({ bytes: entry.parts[0], change: at + 2, voidCode: null })
+      await writer.outboxAccepted(entry.id, at + 2)
+    }
+    await writer.close()
+    const copy = async to => {
+      const target = new IdbStore(to)
+      await target.load()
+      await target.applyAll([{ expectedRevision: 0, put: [...memory.entries.values()], delete: [] }])
+      await target.close()
+    }
+    await copy(`${name}-one`)
+    await copy(`${name}-fed`)
+
+    const one = await core.Device.open(new IdbStore(`${name}-one`))
+    let start = performance.now()
+    for (const envelope of served) {
+      const received = await one.receiveEnvelope(envelope.bytes, envelope.change, true, null, Date.now())
+      if (received.outcome !== 'applied') throw new Error(`one by one: ${received.outcome} ${received.code}`)
+    }
+    const oneByOne = Math.round(performance.now() - start)
+    const headOne = await one.chainHead(core.roomGroupId(room), await one.id())
+    await one.close()
+
+    const fed = await core.Device.open(new IdbStore(`${name}-fed`))
+    start = performance.now()
+    for (let at = 0; at < served.length; at += 250) {
+      const answer = await fed.feed(served.slice(at, at + 250).map(envelope => ({ envelope })), Date.now())
+      if (answer.refusedAt !== null || answer.outcomes.some(outcome => outcome.envelope?.outcome !== 'applied')) throw new Error(`feed: refused at ${answer.refusedAt} ${answer.code}`)
+    }
+    const inCalls = Math.round(performance.now() - start)
+    const headFed = await fed.chainHead(core.roomGroupId(room), await fed.id())
+    // A feed stops at what is refused and touches nothing after it: the same envelopes again are replays.
+    const again = await fed.feed([{ envelope: served[0] }, { envelope: served[1] }], Date.now())
+    const stopped = again.outcomes.length === 1 && again.outcomes[0].envelope.code === 'replay' || again.refusedAt === 0 || again.outcomes.length === 2
+    const mixed = await fed.feed([{ envelope: served[0], entry: { change: 1, group: room, kind: 'commit', bytes: new Uint8Array(1) } }], Date.now())
+    await fed.close()
+    const same = headOne.seq === count && headFed.seq === count && headOne.hash.every((byte, at) => byte === headFed.hash[at])
+    return { ok: same && stopped && mixed.refusedAt === 0 && mixed.code === 'bad-format', count, oneByOneMs: oneByOne, feedMs: inCalls, perItemOneMs: Math.round(oneByOne / count * 100) / 100, perItemFeedMs: Math.round(inCalls / count * 100) / 100 }
+  },
+
   /** Times of the heavy calls, for the size and speed report. */
   async times() {
     const time = work => { const start = performance.now(); work(); return Math.round((performance.now() - start) * 10) / 10 }
@@ -166,14 +234,14 @@ const cases = {
   },
 }
 
-globalThis.run = async what => {
+globalThis.run = async (what, argument) => {
   // The .wasm is fetched here so that its type and the time to load it are seen.
   const start = performance.now()
   const response = await fetch('/core/wasm/pkg/trommi_core_wasm_bg.wasm')
   const contentType = response.headers.get('content-type')
   await core.init(response)
   const load = Math.round((performance.now() - start) * 10) / 10
-  const result = await cases[what]()
+  const result = await cases[what](argument)
   return { ...result, contentType, load, violations: [...violations] }
 }
 // So that a test can clean up what it stored.

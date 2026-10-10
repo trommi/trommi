@@ -79,6 +79,9 @@ export interface Store {
   /** The bytes of `write` are the device's: a store copies what it keeps, they are overwritten afterwards. Like
    *  `load`, it must not call its device, nor wait for a call of it: the device waits for the store. */
   apply(write: StoreWrite): Promise<void>
+  /** Optional: several writes of one call, in order, in ONE atomic and durable step; each names the revision the
+   *  one before it left. Without it they are applied one by one. */
+  applyAll?(writes: StoreWrite[]): Promise<void>
   /** Called once when the device closes, also when it closes itself after a failed write. */
   close?(): void | Promise<void>
 }
@@ -600,6 +603,25 @@ export interface Finding {
   code: ErrorCode
 }
 
+/** One thing of the hub's one order for `feed`: a log entry, or a stored envelope. Exactly one of the two. */
+export interface FeedItem {
+  entry?: LogEntry | null
+  envelope?: ServedEnvelope | null
+}
+
+export interface FeedOutcome {
+  processed: Processed | null
+  envelope: ReceivedEnvelope | null
+}
+
+export interface Fed {
+  outcomes: FeedOutcome[]
+  /** The place of the refused item, from 0; null when all were taken. */
+  refusedAt: number | null
+  code: ErrorCode | null
+  message: string | null
+}
+
 /** An envelope's readable part, read without a device. */
 export interface EnvelopeInfo {
   envelopeHash: Uint8Array
@@ -735,6 +757,12 @@ export class Device {
   observeRoom(groupInfo: Uint8Array, expectedState?: Uint8Array | null): Promise<void>
   observeSession(groupInfo: Uint8Array): Promise<void>
   processLogEntry(entry: LogEntry, nowMs: number): Promise<Processed>
+  /**
+   * Catching up: several log entries and stored envelopes, in the order of their change numbers, in one call. It
+   * stops at the first that is refused (`refusedAt`, `code`); nothing after it was touched. The writes of the
+   * whole call are stored in one transaction before it resolves. A few hundred items per call is a good size.
+   */
+  feed(items: FeedItem[], nowMs: number): Promise<Fed>
   sendHandover(group: Uint8Array, recipient: Uint8Array): Promise<number[]>
   handoversSent(): Promise<HandoverSent[]>
   handoverRead(group: Uint8Array, recipient: Uint8Array): Promise<void>
