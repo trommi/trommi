@@ -796,8 +796,9 @@ async fn a_release_of_two_programs_and_nothing_else_is_taken() {
     assert!(!b.root.join("releases/hub-v6/trommi-hub.service").exists());
 }
 
-/// The machine went down after the swap to hub-v6 and before its health was known.
-async fn cut_off(name: &str, six_is_well: bool) -> Bench {
+/// The updater or the machine went down after the swap to hub-v6 and before its health was known. `six_runs`: the
+/// updater went down, hub-v6 runs on; otherwise the machine went down and no hub runs.
+async fn cut_off(name: &str, six_is_well: bool, six_runs: bool) -> Bench {
     let b = bench(name).await;
     b.publish(make(5).release());
     assert!(deploy(&b.updater(), 5).await.ok);
@@ -822,13 +823,13 @@ async fn cut_off(name: &str, six_is_well: bool) -> Bench {
         br#"{"tag":"hub-v6","old":"hub-v5","old_previous":null}"#,
     )
     .unwrap();
-    *b.world.hub.lock().unwrap() = None;
+    *b.world.hub.lock().unwrap() = six_runs.then(|| (commit_of(6), six_is_well));
     b
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
-    let b = cut_off("cut", false).await;
+    let b = cut_off("cut", false, false).await;
     let updater = b.updater();
     assert_eq!(updater.status().await["deploy_cut_off"], true);
     updater.started().await;
@@ -844,18 +845,38 @@ async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_deploy_cut_off_after_the_new_hub_was_in_place_and_well_counts_as_done() {
-    let b = cut_off("cutwell", true).await;
+    let b = cut_off("cutwell", true, true).await;
+    let starts = b.world.starts.load(Ordering::SeqCst);
+    let stops = b.world.stops.load(Ordering::SeqCst);
     b.updater().started().await;
     assert_eq!(b.link("current").as_deref(), Some("hub-v6"));
     assert_eq!(b.link("previous").as_deref(), Some("hub-v5"));
     assert_eq!(b.hub_commit(), Some(commit_of(6)));
+    assert!(!b.root.join("deploy-journal.json").exists());
+    assert_eq!(
+        b.world.stops.load(Ordering::SeqCst),
+        stops,
+        "the hub that runs is not stopped"
+    );
+    // the start every start of the updater makes (a no-op for a unit that runs) and nothing more
+    assert!(b.world.starts.load(Ordering::SeqCst) <= starts + 1);
+}
+
+/// A cut-off release is never started by a recovery: its first start may have been refused for want of a copy of
+/// the database, and a second start would go ahead without one. It is kept only if it runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cut_off_release_that_does_not_run_is_not_started_but_put_back() {
+    let b = cut_off("cutdown", true, false).await;
+    b.updater().started().await;
+    assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
+    assert_eq!(b.hub_commit(), Some(commit_of(5)));
     assert!(!b.root.join("deploy-journal.json").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_release_already_found_not_well_is_never_taken_at_a_later_start() {
     // the updater went down while it was putting hub-v5 back; hub-v6 would answer as well by now
-    let b = cut_off("rejected", true).await;
+    let b = cut_off("rejected", true, true).await;
     std::fs::write(
         b.root.join("deploy-journal.json"),
         br#"{"tag":"hub-v6","old":"hub-v5","old_previous":null,"rejected":true}"#,
@@ -870,7 +891,7 @@ async fn a_release_already_found_not_well_is_never_taken_at_a_later_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cut_off_deploy_is_settled_before_the_next_one_begins() {
-    let b = cut_off("cutnext", false).await;
+    let b = cut_off("cutnext", false, false).await;
     b.publish(make(7).release());
     // no start of the updater in between: the call itself finds the note
     let outcome = deploy(&b.updater(), 7).await;

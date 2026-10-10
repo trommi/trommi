@@ -278,6 +278,8 @@ on_exit() {
   code=$?
   trap - EXIT
   [ "$code" = 0 ] && exit 0
+  # the updater's lock, held from the conversion's start: let go of it before any updater is started again
+  exec 8>&- 2>/dev/null || true
   if [ "$CONVERTING" != 1 ] && [ "$STOPPED" = 1 ]; then
     printf '\n!!! A step failed. Starting the updater that was stopped for this run again (it starts the hub).\n' >&2
     if systemctl start trommi-hub-updater.service; then
@@ -341,7 +343,10 @@ if [ "$STATE" = as-root ]; then
     || stop "the installation has no updater to go back to; nothing was changed"
   [ -f "$SAVE.part/releases/$(sed -n 's|^current releases/||p' "$SAVE.part/links")/trommi-hub.service" ] \
     || stop "the hub that runs has no unit file to go back to; nothing was changed"
+  # on disk before anything is handed over: a power cut after this point finds a whole copy to go back to
+  sync -f "$SAVE.part" && sync "$SAVE.part"
   mv -T "$SAVE.part" "$SAVE"
+  sync "$ETC"
   ok "$(tr '\n' ';' < "$SAVE/links")"
 
   step "Stop the hub (it is down from here until the new updater starts it, about a minute)"
@@ -356,9 +361,10 @@ if [ "$STATE" = as-root ]; then
   done
   # the updater before this one expects to be root: it is no fallback any more (the copy above still has it)
   rm -f "${DEPLOY:?}/updater-previous"
-  chown -hR trommi-updater:trommi-updater "$DEPLOY"
-  # the updater as root wrote some of this for everyone to change (state.json): only its owner may
+  # the updater as root wrote some of this for everyone to change (state.json): only its owner may. Done while the
+  # tree is still root's; handing it over is the last thing root does inside it.
   chmod -R go-w "$DEPLOY"
+  chown -hR trommi-updater:trommi-updater "$DEPLOY"
   if [ -d "$ROOT/backups" ]; then chown -R trommi:trommi "$ROOT/backups"; fi
   # the lock went along with its file: let go of it, the new updater takes it itself
   exec 8>&-
@@ -424,7 +430,7 @@ else
   put "trommi-hub-updater-$TARGET" trommi-hub-updater 0755
   put manifest.json manifest.json 0644
   put manifest.json.sig manifest.json.sig 0644
-  as_updater sh -c 'sync; mv -T "$1" "$2"' sh "$part" "$DEPLOY/releases/$TAG"
+  as_updater sh -c 'sync "$1"/* "$1" && mv -T "$1" "$2" && sync "$(dirname "$2")"' sh "$part" "$DEPLOY/releases/$TAG"
   ok "in place"
 fi
 if [ "$STATE" = installed ] && as_updater test -x "$DEPLOY/updater/trommi-hub-updater"; then

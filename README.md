@@ -177,7 +177,7 @@ devices. If tailscaled cannot be asked, nobody is served.
 | older release | refused before anything is fetched |
 | the new hub does not become well in 60 s, or says another commit | the release before is put back and started; `rolled-back`; the copy of the database made before the new release started lies in `/srv/trommi/backups` and is not restored by itself |
 | the disk is full | a fetch that cannot be written changes nothing; if the copy of the database cannot be made, the new release is not started and the release before is put back |
-| the machine or the updater goes down in the middle | a note written before the swap is found at the next start (the hub is started by the updater, never by itself, so a release whose health was never known does not serve): if the new release is in place, proves and is well, it stays; otherwise the release before is put back |
+| the machine or the updater goes down in the middle | a note written before the swap is found at the next start (the hub is started by the updater, never by itself, so a release whose health was never known does not serve): if the new release is in place, proves, runs and is well, it stays; otherwise (also after a reboot, when it does not run) the release before is put back: a recovery never starts a release whose health was never known |
 | two calls at once | one after the other; the second finds its release running (`unchanged`) or older (`refused`) |
 | the server restarts (it reboots by itself for updates) | the updater starts at boot and starts the hub; a call that finds no connection is tried again for three minutes, then the run fails without having changed anything |
 | a new updater is on trial, or another deploy runs | `busy`; the run tries again for three minutes |
