@@ -876,8 +876,16 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
     for device in [&mut a, &mut b] {
         assert_eq!(settle_joining(&hub, device)[0].offending, [other.id()]);
     }
+    // The repair removes the device and adds the opener the group lacks: the main session's agent leaf
+    // (5.2.8). The Remove alone would leave the group stale.
     let cuts = trommi_tests::cuts_for(&a, &group);
-    a.clean_session(&group, &cuts, None, now()).unwrap();
+    assert_eq!(
+        a.clean_session(&group, &cuts, None, now()),
+        Err(Error::StaleSession)
+    );
+    let of_agent = hub.claim(&[agent.id()]).unwrap().remove(0);
+    a.clean_session(&group, &cuts, Some((&agent.id(), &of_agent)), now())
+        .unwrap();
     post_ok(&mut hub, &mut a);
     settle(&hub, &mut b);
     assert!(b.content_key(&group, 2).is_ok());

@@ -882,3 +882,82 @@ fn a_human_device_gives_a_helper_session_its_new_opener() {
     // none for it and does not judge the Commit.
     assert_eq!(verdict(Parent::Unknown), Err(Error::RoomBehind));
 }
+
+#[test]
+fn a_helper_session_that_lacks_its_opener_is_stale_until_it_is_added() {
+    let history = history();
+    let helper = session(MAIN, HELPER);
+    let seated = Parent::Seat(Some(device(AGENT)));
+    let leaves = |bytes: &[u8]| bytes.iter().map(|byte| device(*byte)).collect();
+    let stale = |parent: Parent, bytes: &[u8]| {
+        staleness(&history, history.newest(), &helper, parent, &leaves(bytes))
+    };
+    // The main session has an agent leaf that is no leaf here: stale, and the predicate says why.
+    let lacking = stale(seated, &[H1, H2, SUB]);
+    assert!(lacking.is_stale());
+    assert_eq!(
+        (lacking.disallowed, lacking.missing_opener),
+        (vec![], Some(device(AGENT)))
+    );
+    assert!(!stale(seated, &[H1, H2, AGENT, SUB]).is_stale());
+    // While the main session has no agent leaf the helper session waits without an opener (5.2.3, 5.3.3);
+    // so it does under a main session the verifier holds for none, and a main session is never stale so.
+    assert!(!stale(Parent::Seat(None), &[H1, H2, SUB]).is_stale());
+    assert!(!stale(Parent::NotAMainSession, &[H1, H2, SUB]).is_stale());
+    let main = session(SessionId::ZERO, MAIN);
+    assert!(!staleness(
+        &history,
+        history.newest(),
+        &main,
+        seated,
+        &leaves(&[H1, H2])
+    )
+    .is_stale());
+    // An outdated opener leaf and the missing opener are named together.
+    let both = stale(Parent::Seat(Some(device(OTHER_AGENT))), &[H1, AGENT]);
+    assert_eq!(
+        (both.disallowed, both.missing_opener),
+        (vec![device(AGENT)], Some(device(OTHER_AGENT)))
+    );
+
+    let verdict = |before: &SessionBefore, facts: &CommitFacts| {
+        session_verdict(&history, &SESSIONS, before, facts)
+    };
+    let waiting = before(helper, &[H1, H2, SUB], 2);
+    let group = helper.group_id();
+    // Nothing is taken but the Commit that adds the opener: no update, no Add of a human device, no Remove.
+    assert_eq!(
+        verdict(&waiting, &facts(group, 4, H1, 2)),
+        Err(Error::StaleSession)
+    );
+    let small = before(helper, &[H1, SUB], 2);
+    assert_eq!(
+        verdict(&small, &adding(facts(group, 4, H1, 2), &[H2])),
+        Err(Error::StaleSession)
+    );
+    // The repair: the Add of the main session's agent leaf alone, by any human device of the group.
+    for human in [H1, H2] {
+        assert_eq!(
+            verdict(&waiting, &adding(facts(group, 4, human, 2), &[AGENT])),
+            Ok(())
+        );
+    }
+    // Or with the Remove of an outdated opener leaf in one Commit; the Remove alone leaves the group stale.
+    let outdated = before(helper, &[H1, H2, OTHER_AGENT, SUB], 2);
+    let sessions = Sessions {
+        seat: seated,
+        elsewhere: None,
+        helpers: 1,
+    };
+    let mut gone_history = history.clone();
+    gone_history.record(state(3, &[H1, H2], &[AGENT])).unwrap();
+    let verdict = |facts: &CommitFacts| session_verdict(&gone_history, &sessions, &outdated, facts);
+    let remove = removing(facts(group, 4, H1, 3), &[OTHER_AGENT]);
+    assert_eq!(verdict(&remove), Err(Error::StaleSession));
+    assert_eq!(verdict(&adding(remove, &[AGENT])), Ok(()));
+    // A helper device commits nothing, stale or not.
+    assert_eq!(
+        verdict(&adding(facts(group, 4, SUB, 3), &[AGENT])),
+        Err(Error::BadCommit)
+    );
+}
