@@ -15,11 +15,10 @@
 #
 # Secrets: the environment `ios` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; APPLE_ASC_KEY,
 # APPLE_ASC_KEY_ID, APPLE_ASC_ISSUER_ID and APPLE_TEAM_ID come from the 1Password Environment. Optional repository
-# variables: IOS_NON_EXEMPT_ENCRYPTION (YES or NO, default YES: the export compliance answer written into the build,
-# ios/README.md "Export compliance"), IOS_EXPORT_COMPLIANCE_CODE (not secret: the code of the app's export compliance
-# documentation in App Store Connect, written into the app's Info.plist as ITSEncryptionExportComplianceCode; with
-# YES the export is refused without it once that documentation exists; left empty, the code of the APPROVED
-# documentation is read from App Store Connect), IOS_TESTFLIGHT_TESTER (an address kept in the group).
+# variables: IOS_NON_EXEMPT_ENCRYPTION (YES or NO, default NO: standard algorithms only and not distributed in France,
+# so exempt; ios/README.md "Export compliance"), IOS_EXPORT_COMPLIANCE_CODE (only with YES: the code of the app's
+# export compliance documentation, written into Info.plist as ITSEncryptionExportComplianceCode; left empty, the code
+# of the APPROVED documentation is read from App Store Connect), IOS_TESTFLIGHT_TESTER (an address kept in the group).
 name: deploy_ios
 
 on:
@@ -134,7 +133,7 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
           COMMIT: ${{ steps.core.outputs.commit }}
-          ITS_NON_EXEMPT_ENCRYPTION: ${{ vars.IOS_NON_EXEMPT_ENCRYPTION || 'YES' }}
+          ITS_NON_EXEMPT_ENCRYPTION: ${{ vars.IOS_NON_EXEMPT_ENCRYPTION || 'NO' }}
           ITS_EXPORT_COMPLIANCE_CODE: ${{ vars.IOS_EXPORT_COMPLIANCE_CODE }}
           TESTFLIGHT_TESTER: ${{ vars.IOS_TESTFLIGHT_TESTER }}
         run: |

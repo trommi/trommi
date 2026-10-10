@@ -10,9 +10,9 @@
 # Environment, from the 1Password Environment: APPLE_ASC_KEY (the .p8 of a team key with the Admin role; it may
 # arrive with its line breaks turned into spaces), APPLE_ASC_KEY_ID, APPLE_ASC_ISSUER_ID, APPLE_TEAM_ID.
 # From the workflow: RUNNER_TEMP, COMMIT (the commit that is built), XCODEGEN (the command), and optionally
-# ITS_NON_EXEMPT_ENCRYPTION (YES or NO, default YES), ITS_EXPORT_COMPLIANCE_CODE (the code of the app's export
-# compliance documentation in App Store Connect; with YES the export needs it once that documentation exists; when
-# empty, the code of the APPROVED documentation is read from App Store Connect, `asc.py export-code`),
+# ITS_NON_EXEMPT_ENCRYPTION (YES or NO, default NO: standard algorithms only, exempt), ITS_EXPORT_COMPLIANCE_CODE
+# (only with YES: the code of the app's export compliance documentation in App Store Connect; when empty, the code of
+# the APPROVED documentation is read from App Store Connect, `asc.py export-code`; with NO neither is used),
 # TESTFLIGHT_TESTER (an address kept in the group), NOTES.
 # Nothing here prints a value of the first four. The key lies in one file under RUNNER_TEMP, mode 600, removed when
 # the script ends (and once more by the workflow, whatever happened).
@@ -64,9 +64,13 @@ printf '%s' "$build" | grep -Eq '^[1-9][0-9]*$' || { echo "::error::no build num
 short=$(printf '%s' "$COMMIT" | cut -c1-7)
 echo "building $BUNDLE_ID $version ($build) from $short"
 
-its=YES
-[ "${ITS_NON_EXEMPT_ENCRYPTION:-YES}" = NO ] && its=NO
-code=${ITS_EXPORT_COMPLIANCE_CODE:-}
+# NO (the default): the app uses standard algorithms only and is not distributed in France, so it is exempt; no
+# export compliance code is written and none is looked up. YES: the code is written (the variable, or App Store
+# Connect's approved documentation).
+its=NO
+[ "${ITS_NON_EXEMPT_ENCRYPTION:-NO}" = YES ] && its=YES
+code=""
+[ "$its" = YES ] && code=${ITS_EXPORT_COMPLIANCE_CODE:-}
 if [ -z "$code" ] && [ "$its" = YES ]; then
   # Not set by the repository variable: the code of the app's APPROVED documentation, read from App Store Connect
   # (read only; the step fails listing the declarations' states if none is approved).
@@ -74,7 +78,6 @@ if [ -z "$code" ] && [ "$its" = YES ]; then
 fi
 if [ -n "$code" ]; then
   # written into the app's Info.plist of this checkout only; App Store Connect matches it against the documentation
-  [ "$its" = YES ] || { echo "::error::ITS_EXPORT_COMPLIANCE_CODE is set but ITS_NON_EXEMPT_ENCRYPTION is NO"; exit 1; }
   printf '%s' "$code" | grep -Eq '^[A-Za-z0-9-]{1,128}$' || { echo "::error::ITS_EXPORT_COMPLIANCE_CODE is not a plain code"; exit 1; }
   info=$repo/ios/TrommiApp/Info.plist
   /usr/libexec/PlistBuddy -c "Delete :ITSEncryptionExportComplianceCode" "$info" 2>/dev/null || true
@@ -98,6 +101,13 @@ app=$archive/Products/Applications/Trommi.app
 plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$app/Info.plist"; }
 echo "$(plist CFBundleIdentifier) $(plist CFBundleShortVersionString) ($(plist CFBundleVersion))"
 [ "$(plist CFBundleIdentifier)" = "$BUNDLE_ID" ] && [ "$(plist CFBundleVersion)" = "$build" ] || { echo "::error::the archive is not $BUNDLE_ID build $build"; exit 1; }
+# the export compliance answer as decided: NO is false and carries no code, YES is true
+want=false; [ "$its" = YES ] && want=true
+[ "$(plist ITSAppUsesNonExemptEncryption)" = "$want" ] || { echo "::error::the archive's ITSAppUsesNonExemptEncryption is not $want"; exit 1; }
+if [ "$its" = NO ] && plist ITSEncryptionExportComplianceCode >/dev/null 2>&1; then
+  echo "::error::the archive carries an export compliance code although the app is exempt (NO)"; exit 1
+fi
+echo "ITSAppUsesNonExemptEncryption: $want"
 if [ -n "$code" ]; then
   [ "$(plist ITSEncryptionExportComplianceCode)" = "$code" ] || { echo "::error::the archive does not carry the export compliance code"; exit 1; }
 fi
