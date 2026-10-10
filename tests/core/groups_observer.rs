@@ -19,7 +19,7 @@ use trommi_tests::hub::Hub;
 use trommi_tests::{
     add_forger, add_human, enrol, found_helper, found_main, found_room_on, join_room, join_session,
     new_device, now, observe, post_ok, post_refused, process, publish_some, reopen, settle,
-    settle_joining, sync, sync_ok, test_keys, MemoryStorage, TestDevice,
+    settle_joining, sync_ok, test_keys, MemoryStorage, TestDevice,
 };
 
 struct World {
@@ -54,6 +54,7 @@ fn world(checks: bool) -> World {
     settle(&hub, &mut agent);
     let mut h1 = new_device();
     observe(&hub, &mut h1);
+    h1.observe_session(hub.group_info(&main).unwrap()).unwrap();
     let helper = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
     for device in [&mut a, &mut b, &mut h1, &mut other] {
         settle(&hub, device);
@@ -318,18 +319,16 @@ enum Forger {
     Helper,
 }
 
-/// A Commit a device has no right to make, built through the device's own operations. Returns who made it,
-/// the group it is for and the code it is refused with.
-type Forgery = fn(&mut World) -> (Forger, GroupId, Error);
+/// A Commit a device has no right to make, asked of the device's own operations. Returns who was asked, the
+/// group it is for, what the operation answered and the code the rules refuse such a Commit with.
+type Forgery = fn(&mut World) -> (Forger, GroupId, Result<u64, Error>, Error);
 
 fn forgeries() -> Vec<(&'static str, Forgery)> {
     vec![
         ("an agent device adds a device to its main session", |w| {
             let (device, package) = stranger();
-            w.agent
-                .add_to_session(&w.main, &device, &package, now())
-                .unwrap();
-            (Forger::Agent, w.main, Error::BadCommit)
+            let built = w.agent.add_to_session(&w.main, &device, &package, now());
+            (Forger::Agent, w.main, built, Error::BadCommit)
         }),
         (
             "an agent device adds a human device to its main session",
@@ -340,40 +339,35 @@ fn forgeries() -> Vec<(&'static str, Forgery)> {
                     settle(&w.hub, device);
                 }
                 let package = c.key_package(now()).unwrap();
-                w.agent
-                    .add_to_session(&w.main, &c.id(), &package, now())
-                    .unwrap();
-                (Forger::Agent, w.main, Error::BadCommit)
+                let built = w.agent.add_to_session(&w.main, &c.id(), &package, now());
+                (Forger::Agent, w.main, built, Error::BadCommit)
             },
         ),
         ("an opener adds an enrolled agent device", |w| {
             let package = w.other.key_package(now()).unwrap();
-            w.agent
-                .add_to_session(&w.helper, &w.other.id(), &package, now())
-                .unwrap();
-            (Forger::Agent, w.helper, Error::BadCommit)
+            let built = w
+                .agent
+                .add_to_session(&w.helper, &w.other.id(), &package, now());
+            (Forger::Agent, w.helper, built, Error::BadCommit)
         }),
         ("a helper device commits", |w| {
             let (device, package) = stranger();
-            w.h1.add_to_session(&w.helper, &device, &package, now())
-                .unwrap();
-            (Forger::Helper, w.helper, Error::BadCommit)
+            let built = w.h1.add_to_session(&w.helper, &device, &package, now());
+            (Forger::Helper, w.helper, built, Error::BadCommit)
         }),
         ("a human device is enrolled as an agent device", |w| {
-            w.a.change_agents(&[w.b.id()], &[], now()).unwrap();
-            (Forger::A, w.room_group, Error::BadCommit)
+            let built = w.a.change_agents(&[w.b.id()], &[], now());
+            (Forger::A, w.room_group, built, Error::BadCommit)
         }),
         ("a second agent device is added to a main session", |w| {
             let package = w.other.key_package(now()).unwrap();
-            w.a.add_to_session(&w.main, &w.other.id(), &package, now())
-                .unwrap();
-            (Forger::A, w.main, Error::BadCommit)
+            let built = w.a.add_to_session(&w.main, &w.other.id(), &package, now());
+            (Forger::A, w.main, built, Error::BadCommit)
         }),
         ("a human device adds a helper device", |w| {
             let (device, package) = stranger();
-            w.a.add_to_session(&w.helper, &device, &package, now())
-                .unwrap();
-            (Forger::A, w.helper, Error::BadCommit)
+            let built = w.a.add_to_session(&w.helper, &device, &package, now());
+            (Forger::A, w.helper, built, Error::BadCommit)
         }),
     ]
 }
@@ -387,25 +381,18 @@ fn forger(world: &mut World, who: Forger) -> &mut TestDevice {
 }
 
 #[test]
-fn the_hub_refuses_forged_roles() {
+fn no_device_builds_a_commit_the_rules_refuse() {
+    // Every Commit a device builds is judged by the rules its receivers apply, from the bytes it would
+    // post, before anything is written: what the hub and the members would refuse is refused here, with
+    // their code, and nothing is left pending or queued. (The rules on the wire: `rules.rs`; a member that
+    // obeys MLS only: `groups_refusals.rs`, `groups_hardening_rules.rs`.)
     for (name, forge) in forgeries() {
         let mut world = world(true);
-        let (who, group, code) = forge(&mut world);
-        let epoch = world.hub.epoch(&group);
         let log_len = world.hub.log.len();
-        let hub = &mut world.hub;
-        let device = match who {
-            Forger::A => &mut world.a,
-            Forger::Agent => &mut world.agent,
-            Forger::Helper => &mut world.h1,
-        };
-        assert_eq!(post_refused(hub, device), [code], "{name}");
-        // Nothing was stored, and the device has put its own state back.
-        assert_eq!(
-            (hub.epoch(&group), hub.log.len()),
-            (epoch, log_len),
-            "{name}"
-        );
+        let (who, group, built, code) = forge(&mut world);
+        assert_eq!(built, Err(code), "{name}");
+        let epoch = world.hub.epoch(&group);
+        let device = forger(&mut world, who);
         assert!(device.outbox().is_empty(), "{name}");
         assert_eq!(
             device
@@ -414,58 +401,12 @@ fn the_hub_refuses_forged_roles() {
             Ok((false, epoch)),
             "{name}"
         );
-    }
-}
-
-#[test]
-fn the_devices_refuse_forged_roles_that_a_hub_let_through() {
-    for (name, forge) in forgeries() {
-        let mut world = world(false);
-        let (who, group, code) = forge(&mut world);
-        let committer = forger(&mut world, who).id();
-        // A hub that checks nothing stores the Commit.
-        let mut hub = std::mem::replace(&mut world.hub, Hub::new(false));
-        post_ok(&mut hub, forger(&mut world, who));
-        let World {
-            a,
-            b,
-            agent,
-            other,
-            h1,
-            ..
-        } = &mut world;
-        let mut refused = 0;
-        for device in [a, b, agent, other, h1] {
-            if device.id() == committer {
-                continue;
-            }
-            let held = device.group(&group).ok().map(|summary| summary.epoch);
-            let roles = device.room_history().unwrap().newest().epoch;
-            let results = sync(&hub, device);
-            let last = results.last().unwrap();
-            if held.is_none() && !group.is_room() {
-                // Not a leaf of that session group: the Commit is not for it.
-                assert_eq!(last, &Ok(Processed::Skipped), "{name}");
-                continue;
-            }
-            // A leaf of the group, or a follower of the room group: the Commit is refused with its code, the
-            // finding is `bad-group`, and the state stays the last good one.
-            let error = last.as_ref().expect_err(name);
-            assert_eq!(error, &code, "{name}");
-            assert_eq!(log_finding(error), LogFinding::BadGroup, "{name}");
-            assert_eq!(
-                device.group(&group).ok().map(|summary| summary.epoch),
-                held,
-                "{name}"
-            );
-            assert_eq!(
-                device.room_history().unwrap().newest().epoch,
-                roles,
-                "{name}"
-            );
-            refused += 1;
+        // The device goes on as before.
+        if matches!(who, Forger::A) {
+            world.a.update(&group, true, now()).unwrap().unwrap();
+            post_ok(&mut world.hub, &mut world.a);
+            assert_eq!(world.hub.log.len(), log_len + 1, "{name}");
         }
-        assert!(refused >= 2, "{name}: {refused} devices judged it");
     }
 }
 
@@ -1190,14 +1131,17 @@ fn bytes_that_are_no_commit_are_refused_as_such() {
         changed.parts[0] = bytes.to_vec();
         assert_eq!(hub.post(&a.id(), &changed), Err(Error::BadCommit), "{name}");
         // A member handed the same bytes as a Commit of the log keeps its state.
-        let result = b.process_log_entry(&LogEntry {
-            change: hub.change() + 1,
-            group: room_group,
-            kind: LogKind::Commit {
-                bytes,
-                recovery_auth: None,
+        let result = b.process_log_entry(
+            &LogEntry {
+                change: hub.change() + 1,
+                group: room_group,
+                kind: LogKind::Commit {
+                    bytes,
+                    recovery_auth: None,
+                },
             },
-        });
+            now(),
+        );
         let error = result.expect_err(name);
         assert_eq!(error, Error::BadCommit, "{name}");
         assert_eq!(log_finding(&error), LogFinding::BadGroup, "{name}");
@@ -1210,22 +1154,28 @@ fn bytes_that_are_no_commit_are_refused_as_such() {
     moved.group = Some(main);
     moved.epoch = hub.epoch(&main).unwrap();
     assert_eq!(hub.post(&a.id(), &moved), Err(Error::BadCommit));
-    let result = b.process_log_entry(&LogEntry {
-        change: hub.change() + 1,
-        group: main,
-        kind: LogKind::Commit {
-            bytes: &entry.parts[0],
-            recovery_auth: None,
+    let result = b.process_log_entry(
+        &LogEntry {
+            change: hub.change() + 1,
+            group: main,
+            kind: LogKind::Commit {
+                bytes: &entry.parts[0],
+                recovery_auth: None,
+            },
         },
-    });
+        now(),
+    );
     assert_eq!(result, Err(Error::BadCommit));
     // A Commit posted by another device than its committer.
     assert_eq!(hub.post(&b.id(), &entry), Err(Error::WrongSender));
     // An application message that is no MLS message is passed over by its receivers (7.0).
-    let result = b.process_log_entry(&LogEntry {
-        change: hub.change() + 1,
-        group: room_group,
-        kind: LogKind::Message { bytes: b"garbage" },
-    });
+    let result = b.process_log_entry(
+        &LogEntry {
+            change: hub.change() + 1,
+            group: room_group,
+            kind: LogKind::Message { bytes: b"garbage" },
+        },
+        now(),
+    );
     assert_eq!(result, Ok(Processed::Skipped));
 }

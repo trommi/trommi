@@ -128,7 +128,7 @@ fn room_verdict_with(
         sessions: &SESSIONS,
         recovery: &AnyJoin,
         max_human_devices: 3,
-        posting: true,
+        room_epoch: history.newest().epoch,
     };
     check_room_commit(
         &verifier,
@@ -160,7 +160,7 @@ fn session_verdict(
         sessions,
         recovery: &AnyJoin,
         max_human_devices: 32,
-        posting: true,
+        room_epoch: history.newest().epoch,
     };
     check_session_commit(
         &verifier,
@@ -391,7 +391,7 @@ fn the_thirty_third_human_device_comes_by_a_join_from_outside_only() {
             sessions: &SESSIONS,
             recovery: &AnyJoin,
             max_human_devices: most,
-            posting: false,
+            room_epoch: history.newest().epoch,
         };
         check_room_commit(
             &verifier,
@@ -732,8 +732,9 @@ fn helper_session_commits_follow_5_2_3_to_5_2_5() {
             Err(Error::BadCommit)
         );
     }
-    // A human device does not remove the opener while it is the main session's agent leaf (5.2.3); a
-    // verifier that does not follow the main session does not judge this.
+    // A human device does not remove the opener while it is the main session's agent leaf (5.2.3). A
+    // verifier that does not know the main session judges nothing of the helper session: `room-behind`,
+    // whatever the Commit does.
     let unseat = removing(facts(group, 1, H1, 2), &[AGENT]);
     assert_eq!(
         session_verdict(&history, &SESSIONS, &live, &unseat),
@@ -743,7 +744,25 @@ fn helper_session_commits_follow_5_2_3_to_5_2_5() {
         seat: Parent::Unknown,
         ..SESSIONS
     };
-    assert_eq!(session_verdict(&history, &unknown, &live, &unseat), Ok(()));
+    assert_eq!(
+        session_verdict(&history, &unknown, &live, &unseat),
+        Err(Error::RoomBehind)
+    );
+    assert_eq!(
+        session_verdict(&history, &unknown, &live, &by_opener),
+        Err(Error::RoomBehind)
+    );
+    // Nor is any agent device the opener for it: the leaf is not one the room state allows.
+    assert_eq!(
+        disallowed_leaves(
+            &history,
+            history.newest(),
+            &helper,
+            Parent::Unknown,
+            &live.leaves
+        ),
+        vec![device(AGENT)]
+    );
     // After a takeover of the main session the old opener's leaf makes the group stale; a human device
     // replaces it with the new one. While the seat is empty the helper devices stay.
     let taken_over = Sessions {
@@ -859,7 +878,7 @@ fn a_human_device_gives_a_helper_session_its_new_opener() {
         Err(Error::BadCommit)
     );
     assert_eq!(verdict(Parent::Seat(None)), Err(Error::BadCommit));
-    // A helper device that does not follow the main session cannot tell which agent device that is, and
-    // takes an enrolled one.
-    assert_eq!(verdict(Parent::Unknown), Ok(()));
+    // A verifier that does not follow the main session cannot tell which agent device that is: it takes
+    // none for it and does not judge the Commit.
+    assert_eq!(verdict(Parent::Unknown), Err(Error::RoomBehind));
 }
