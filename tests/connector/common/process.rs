@@ -75,6 +75,38 @@ impl Seat {
         }
     }
 
+    /// A second machine state of the same device: this seat's home copied as it is now (keys, slots, state),
+    /// with the same session, without the slot claims of `running` (so the twin does not stop it as the
+    /// earlier connector of its session). A process on the seat and one on its twin are one device to the
+    /// hub, as a restart whose old process has not ended yet.
+    pub fn twin(&self, running: u32) -> Seat {
+        let twin = Seat::new(&self.hub_url);
+        let copied = std::process::Command::new("cp")
+            .arg("-a")
+            .arg(format!("{}/.", self.home.path().display()))
+            .arg(twin.home.path())
+            .status()
+            .expect("cp runs");
+        assert!(copied.success(), "the home is copied");
+        let claim = format!(".{running}");
+        let mut dirs = vec![twin.home.path().to_path_buf()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.to_string_lossy().ends_with(&claim) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        Seat {
+            session_key: self.session_key.clone(),
+            folder: twin.home.path().join("project"),
+            ..twin
+        }
+    }
+
     /// The connector's command with this seat's environment and nothing of the machine's.
     pub fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(connector_binary());
