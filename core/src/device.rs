@@ -3416,7 +3416,7 @@ impl<S: Storage> Device<S> {
     /// Joins the group a Welcome is for (12.1.5, 5.2.6). The Welcome must be for one of this device's
     /// KeyPackages, for a group of the expected room that this device does not hold, and committed by the
     /// expected device; one above [`MAX_COMMIT_REQUEST_LEN`] is `too-large` and is not parsed. A room group
-    /// with more than 32 human or 256 agent devices is refused (`too-many`).
+    /// with more human or agent devices than section 16 allows is refused (`too-many`).
     ///
     /// A device that followed the group as an observer becomes its leaf here: what it verified (the room's
     /// roles per epoch with every revocation, a main session's agent leaf over time) becomes its own record,
@@ -3536,7 +3536,7 @@ impl<S: Storage> Device<S> {
             GroupKind::Room(_) => {
                 self.invited(batch, &id, &added_by, welcome)?;
                 let state = rules::room_state_of(staged.group_context(), &leaves)?;
-                // Section 16: a device is added to a room of at most 32 human and 256 agent devices.
+                // Section 16: a device is added to a room within its limits of human and agent devices.
                 if state.humans.len() > MAX_HUMAN_DEVICES
                     || state.room.agents.len() > MAX_AGENT_DEVICES
                 {

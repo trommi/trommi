@@ -63,7 +63,7 @@ pub struct Context<'a> {
     pub sessions: &'a dyn SessionFacts,
     /// The recovery construct's checks.
     pub recovery: &'a dyn RecoveryRules,
-    /// The most human devices the room may hold: 32, or 33 while a recovery runs.
+    /// The most human devices the room may hold: the limit of section 16, or one more while a recovery runs.
     pub max_human_devices: usize,
 }
 

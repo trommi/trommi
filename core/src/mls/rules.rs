@@ -320,10 +320,10 @@ pub struct Verifier<'a> {
     pub sessions: &'a dyn SessionFacts,
     /// The recovery construct's checks.
     pub recovery: &'a dyn RecoveryRules,
-    /// The most human devices the room may hold after the Commit: 32, or 33 while a recovery runs. A verifier
-    /// that cannot know whether one runs (a device) gives 33. Above 32 the rules take only what a recovery
-    /// does, whatever is given here: a join from outside, and in a room that holds more than 32 a Commit
-    /// that adds nobody.
+    /// The most human devices the room may hold after the Commit: the limit of section 16, or one more while
+    /// a recovery runs. A verifier that cannot know whether one runs (a device) gives the larger. Above the
+    /// limit the rules take only what a recovery does, whatever is given here: a join from outside, and in a
+    /// room that holds more than the limit a Commit that adds nobody.
     pub max_human_devices: usize,
     /// The room epoch that was current at the Commit's place in the hub's order (5.2.1, 5.4.1): a session
     /// Commit names exactly this one. For the hub that takes a post, and for whoever processes the log in the
@@ -492,9 +492,10 @@ pub fn check_room_commit(verifier: &Verifier<'_>, judged: &Judged<'_>) -> Result
             Error::BadCommit,
         )?;
     }
-    // Section 16, 8.7: 32 human devices. The 33rd comes only by a join from outside, and a room that holds 33
-    // takes on only Commits that add nobody, so that the recovery's removal passes. Whether a recovery runs
-    // is the hub's to know: it sets the most to 32 outside one, and then no join makes a 33rd.
+    // Section 16, 8.7: the limit of human devices. The one beyond it comes only by a join from outside, and a
+    // room that holds one more takes on only Commits that add nobody, so that the recovery's removal passes.
+    // Whether a recovery runs is the hub's to know: it sets the most to the limit outside one, and then no
+    // join makes a device beyond it.
     let recovering =
         facts.external || (before.humans.len() > MAX_HUMAN_DEVICES && facts.adds.is_empty());
     let most = if recovering {
