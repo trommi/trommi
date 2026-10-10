@@ -47,7 +47,7 @@ const screen = page => page.js(`const text = document.body.innerText.replace(/\\
   const errors = [...document.querySelectorAll('.ob-error, .room-error, [role=alert]')].map(e => e.innerText.trim()).filter(Boolean)
   return { at: location.pathname, text, errors }`).catch(e => ({ at: '?', text: `(the page could not be read: ${e.message.split('\n')[0]})`, errors: [] }))
 
-export async function runRemote({ app, hub, shots = null, open = openProfile }) {
+export async function runRemote({ app, hub, shots = null }) {
   for (const [name, url] of [['--app', app], ['--hub', hub]]) { try { if (!/^https?:$/.test(new URL(url).protocol)) throw 0 } catch { console.error(`remote: ${name} is no http(s) address`); return 2 } }
   app = new URL(app).origin; hub = new URL(hub).origin
   if (isLocal(app) !== isLocal(hub)) { console.error('remote: refused: --app and --hub must both be local (127.0.0.1, localhost) or both remote'); return 2 }
@@ -66,7 +66,7 @@ export async function runRemote({ app, hub, shots = null, open = openProfile }) 
   const second = { email: address(), password: secret(), next: secret(), words: null }
   let words = null, accounts = 0
   const profiles = {}
-  const profile = async name => (profiles[name] ??= await open(name, seen)).page
+  const profile = async name => (profiles[name] ??= await openProfile(name, seen)).page
   const closeProfile = async name => { await profiles[name]?.close().catch(() => {}); delete profiles[name] }
   const hubPath = q => { const u = new URL(q.url); return (u.origin === hub || u.origin === app) && u.pathname.startsWith('/v2/') }
   let stopped = null, waited = false, n = 0
