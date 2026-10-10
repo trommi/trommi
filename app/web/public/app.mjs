@@ -1147,6 +1147,9 @@ export function keepMenu() {
   const doors = document.getElementById('brand-doors')
   if (!doors || doors.hidden) return () => {}
   const from = doors.dataset.from ?? null
+  // (and the line for a new desk's name, open, with what is typed in it and the focus in it)
+  const form = document.getElementById('desk-new'), field = form?.querySelector('.menu-desk-field')
+  const typing = form && !form.hidden ? { value: field?.value ?? '', focused: document.activeElement === field, at: field?.selectionStart ?? null } : null
   return () => {
     const now = document.getElementById('brand-doors')
     // (only a menu that was replaced: one still in the page was shut on purpose)
@@ -1154,6 +1157,12 @@ export function keepMenu() {
     now.hidden = false
     if (from) now.dataset.from = from
     for (const b of document.querySelectorAll('#brand-menu, .desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', 'true')
+    const again = document.getElementById('desk-new'), line = again?.querySelector('.menu-desk-field')
+    if (typing && again && line) {
+      again.hidden = false
+      line.value = typing.value
+      if (typing.focused) { line.focus({ preventScroll: true }); if (typing.at !== null) line.setSelectionRange(typing.at, typing.at) }
+    }
   }
 }
 async function perform(stream) {
