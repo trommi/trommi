@@ -162,6 +162,8 @@ remote_common() {
   cat <<'REMOTE'
 set -euo pipefail
 export LC_ALL=C
+# whatever the ssh session hands down: nothing made here is writable by others
+umask 022
 ROOT=/srv/trommi DEPLOY=/srv/trommi/deploy ETC=/etc/trommi LIB=/usr/local/lib/trommi UNITS=/etc/systemd/system
 SAVE=/etc/trommi/before-noroot
 MOVED="releases current previous updater updater-previous state.json deploy.lock updater-reverted"
@@ -203,6 +205,8 @@ undo_conversion() {
     if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then mv -T "$ROOT/$name" "$aside/$name" || return 1; fi
   done
   cp -a "$SAVE/releases" "$ROOT/releases" || return 1
+  # the copy's folder is root's alone; the hub (as trommi) must reach its program through it again
+  chmod 0755 "$ROOT/releases" || return 1
   if [ -f "$SAVE/state.json" ]; then cp -a "$SAVE/state.json" "$ROOT/state.json" || return 1; fi
   while read -r name target; do
     ln -sfn "$target" "$ROOT/$name" || return 1
@@ -498,6 +502,8 @@ remote_command() {
 # user. Never as root: what lies under /srv/trommi/deploy is the updater's, not root's to run. It runs in a session
 # of its own, so it has no hold on the terminal of whoever calls this.
 set -a; . /etc/trommi/updater.env; set +a
+# as under its unit (UMask=0022), whatever the caller's shell has
+umask 022
 program=/srv/trommi/deploy/updater/trommi-hub-updater
 if [ "$(id -u)" != 0 ]; then
   [ "$(id -un)" = trommi-updater ] || { echo "run this as root" >&2; exit 1; }
