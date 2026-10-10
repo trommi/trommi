@@ -602,7 +602,15 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let account = accounts::account_of(x.c, &auth.room)?;
             let revision = accounts::revision_of(x.c, account)?;
             let handle = accounts::handle_of(x.c, account)?;
-            Ok(json!({ "challenge": b64(&app.accounts.challenge(Some((account, revision)), x.now)), "account": accounts::id_text(&handle), "user_handle": b64(&handle) }))
+            // (with it what a new kit needs to be made in the account's form: 8.8.2)
+            let email: Option<String> = x.c.query_row("SELECT email FROM accounts WHERE account_id = ?1", [account], |r| r.get(0))?;
+            Ok(json!({
+                "challenge": b64(&app.accounts.challenge(Some((account, revision)), x.now)),
+                "account": accounts::id_text(&handle),
+                "user_handle": b64(&handle),
+                "kit_form": if email.is_some() { "email" } else { "id" },
+                "email": email,
+            }))
         }),
         ("POST", ["account", "passkeys"]) => human_write(app, rq, |x, auth| app.accounts.add_passkey(x.c, &auth.room, &rq.body, x.now)),
         ("DELETE", ["account", "passkeys", credential]) => {
