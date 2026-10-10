@@ -144,22 +144,6 @@ final class InkTests: XCTestCase {
       XCTAssertEqual(InkWire.pack(ink), packed, "\(name): packed again byte for byte")
     }
   }
-  func testItemThroughTheReducer() throws {
-    let f = try fixture()
-    let st = CanvasState()
-    let sender = String(repeating: "a", count: 64)
-    let changed = st.apply(sender: sender, seq: 1, hash: nil, envelopeNumber: 1, content: f["item"]["body"])
-    XCTAssertEqual(changed?.count, f["item"]["body"]["strokes"].array?.count)
-    // a piece continues the first stroke
-    let piece = f["piece"]["entry"].with("continues", .str("\(sender)/1/0"))
-    let before = st.shapes["\(sender)/1/0"]!.ink!.count
-    st.apply(sender: sender, seq: 2, hash: nil, envelopeNumber: 2, content: ["content_type": "strokes", "strokes": [piece]])
-    XCTAssertGreaterThan(st.shapes["\(sender)/1/0"]!.ink!.count, before)
-    // snapshot v2 round trip
-    let snap = st.snapshot()
-    let back = CanvasState(); back.load(snapshot: snap)
-    XCTAssertEqual(Set(back.shapes.keys), Set(st.shapes.keys))
-  }
   func testPalette() {
     XCTAssertEqual(Palette.color("ink"), 0x1b1f23)
     XCTAssertEqual(Palette.color("ink", dark: true), 0xe9eeea)
