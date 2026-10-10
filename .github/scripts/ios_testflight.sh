@@ -9,7 +9,7 @@
 # Environment, from the 1Password Environment: APPLE_ASC_KEY (the .p8 of a team key with the Admin role; it may
 # arrive with its line breaks turned into spaces), APPLE_ASC_KEY_ID, APPLE_ASC_ISSUER_ID, APPLE_TEAM_ID.
 # From the workflow: RUNNER_TEMP, COMMIT (the commit that is built), XCODEGEN (the command), and optionally
-# ITS_NON_EXEMPT_ENCRYPTION (YES or NO, default NO), TESTFLIGHT_TESTER (an address kept in the group), NOTES.
+# ITS_NON_EXEMPT_ENCRYPTION (YES or NO, default YES), TESTFLIGHT_TESTER (an address kept in the group), NOTES.
 # Nothing here prints a value of the first four. The key lies in one file under RUNNER_TEMP, mode 600, removed when
 # the script ends (and once more by the workflow, whatever happened).
 set -euo pipefail
@@ -66,8 +66,8 @@ xcodebuild -version
 
 echo "== 4. Archive =="
 archive=$RUNNER_TEMP/Trommi.xcarchive
-its=NO
-[ "${ITS_NON_EXEMPT_ENCRYPTION:-NO}" = YES ] && its=YES
+its=YES
+[ "${ITS_NON_EXEMPT_ENCRYPTION:-YES}" = NO ] && its=NO
 xcodebuild archive \
   -project "$appstore/Trommi.xcodeproj" -scheme Trommi -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$archive" \
@@ -121,7 +121,11 @@ echo "== 8. Internal group \"Intern\" =="
 asc internal "$build_id" Intern "${TESTFLIGHT_TESTER:-}"
 
 echo "== 9. What to Test =="
-asc notes "$build_id" "${NOTES:-Neu in Build $build ($short): $(git -C "$repo" log -1 --format=%s "$COMMIT" | cut -c1-300)}" || echo "::warning::What to Test was not set"
+# the text the app's folder carries (AppStore/WhatToTest.txt, at most 4000 characters), else the commit's subject
+notes=${NOTES:-}
+[ -n "$notes" ] || [ ! -s "$appstore/WhatToTest.txt" ] || notes="Build $build ($short). $(head -c 3900 "$appstore/WhatToTest.txt")"
+[ -n "$notes" ] || notes="Neu in Build $build ($short): $(git -C "$repo" log -1 --format=%s "$COMMIT" | cut -c1-300)"
+asc notes "$build_id" "$notes" || echo "::warning::What to Test was not set"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {

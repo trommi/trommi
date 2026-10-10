@@ -15,7 +15,7 @@
 #
 # Secrets: the environment `ios` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; APPLE_ASC_KEY,
 # APPLE_ASC_KEY_ID, APPLE_ASC_ISSUER_ID and APPLE_TEAM_ID come from the 1Password Environment. Optional repository
-# variables: IOS_NON_EXEMPT_ENCRYPTION (YES or NO, default NO: the export compliance answer written into the build,
+# variables: IOS_NON_EXEMPT_ENCRYPTION (YES or NO, default YES: the export compliance answer written into the build,
 # ios/README.md "Export compliance"), IOS_TESTFLIGHT_TESTER (an address kept in the group).
 name: deploy_ios
 
@@ -131,7 +131,7 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
           COMMIT: ${{ steps.core.outputs.commit }}
-          ITS_NON_EXEMPT_ENCRYPTION: ${{ vars.IOS_NON_EXEMPT_ENCRYPTION || 'NO' }}
+          ITS_NON_EXEMPT_ENCRYPTION: ${{ vars.IOS_NON_EXEMPT_ENCRYPTION || 'YES' }}
           TESTFLIGHT_TESTER: ${{ vars.IOS_TESTFLIGHT_TESTER }}
         run: |
           set -eu
