@@ -1806,3 +1806,45 @@ fn first_contact_verifies_a_helper_session_from_its_founding() {
         Err(Error::NotFound)
     );
 }
+
+#[test]
+fn a_founding_that_breaks_the_rules_is_no_room_to_join() {
+    // Whoever holds the recovery_mac (a copied human device, section 17) can authenticate a row for a room
+    // of its own making. The mac says who wrote the row; whether the founding obeys 5.1.1 and 8.1 is
+    // checked on the founding itself.
+    let keys = test_keys();
+    let mut founder = new_device();
+    let (hub, room) = trommi_tests::found_room(&mut founder);
+    let honest = fetch(&hub, &keys);
+    let check = |fetched: &Fetched| fetched.served(|served| check_room(&keys, served));
+    assert!(check(&honest).is_ok());
+
+    let rogue = Forger::new();
+    let mut state = hub.history().unwrap().newest().room.clone();
+    // The founder enrols itself as an agent device: no device is both (4.2).
+    state.agents = vec![rogue.id()];
+    let forged = rogue.found_room(&room, &state);
+    let info = rogue.group_info(&forged);
+    let row = SealedKey::seal(
+        &mut SystemEntropy,
+        &Sealing {
+            context: KeyContext::of(&room, 0, &info).unwrap(),
+            room_epoch: 0,
+            recovery_hpke_key: &state.recovery_hpke_key,
+            writer: rogue.id(),
+            content_key: &Secret::new([0x66; 32]),
+        },
+        Some(&keys.mac_key().key),
+    )
+    .unwrap()
+    .to_bytes()
+    .unwrap();
+    let mut own = honest.clone();
+    own.room.founding = info.clone();
+    own.room.current = info.clone();
+    own.room.commits.clear();
+    own.anchor = info;
+    own.sessions.clear();
+    own.rows = vec![row];
+    assert_eq!(check(&own).err(), Some(Error::BadGroup));
+}
