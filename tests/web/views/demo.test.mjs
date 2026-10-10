@@ -19,7 +19,7 @@ import { emptyModel } from '../../../app/web/core/model-shape.ts'
 import { mirrorOf, snapshotOf } from '../../../app/web/core/mirror.ts'
 
 const TYPES = interfacesOf(path.join(CORE, 'types.ts'))
-const richSkip = fs.existsSync(RICH) ? false : `the rich demo room is not at ${RICH}: only the skeleton was checked`
+const richSkip = RICH && fs.existsSync(RICH) ? false : 'TROMMI_DEMO_FIXTURE names no rich demo room: only the skeleton was checked'
 const VARIANTS = ['1', 'quiet', 'fresh', 'first', 'many', 'foot', 'reads', 'side', 'link']
 
 /** What the demo keeps on a record beside the interface's fields, where the interface is open for the app's own. */
