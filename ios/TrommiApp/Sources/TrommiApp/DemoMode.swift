@@ -67,7 +67,8 @@ extension BoardModel {
       }
     case "s": if segs.count > 1 { path = [.session(segs[1])] }
     case "blitz": path = [.blitz]
-    case "settings": path = [.settings(segs.count > 1 && segs[1] != "agents" ? segs[1] : "sessions")]
+    // (/settings is the page of Settings itself; /settings/<page> one of its pages)
+    case "settings": path = [.settings(segs.count > 1 && segs[1] != "agents" ? segs[1] : "")]
     case "assets": path = [.media]
     case "artifacts": path = [query == "kind=pages" ? .pages : .media]
     case "pages": path = [.pages]
@@ -83,7 +84,8 @@ extension BoardModel {
     case "toast": if let c = v?.fresh.first { say("Answered", c.title, undo: {}) }
     case "menu", "drawer", "rail", "switch": break
     case "note", "phone-note": tab = .note
-    case "pair", "invite", "invite-emoji", "invite-ended": if path.isEmpty { path = [.settings("")] }
+    case "pair", "pair-emoji": path = [.settings("")]; demoSheet = "pair"
+    case "invite", "invite-emoji", "invite-ended": path = [.settings("")]; demoSheet = "invite"
     default: break
     }
   }
@@ -149,7 +151,6 @@ struct DemoTag: View {
         .glass(Capsule(), interactive: true)
     }
     .buttonStyle(.plain)
-    .frame(maxWidth: .infinity)
     .padding(.vertical, 4)
   }
 }

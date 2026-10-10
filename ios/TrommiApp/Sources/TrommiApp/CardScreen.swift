@@ -212,7 +212,7 @@ struct CardScreen: View {
             VStack(alignment: .leading, spacing: 12) {
               ForEach(Array(secs.enumerated()), id: \.offset) { _, s in
                 VStack(alignment: .leading, spacing: 4) {
-                  Text(s["label"].string ?? "").font(Face.display(17, .bold)) + Text(s["recommended"].truthy ? "  recommended" : "").font(Face.text(13)).foregroundColor(Ink.urgHigh)
+                  Text("\(Text(s["label"].string ?? "").font(Face.display(17, .bold)))\(Text(s["recommended"].truthy ? "  recommended" : "").font(Face.text(13)).foregroundColor(Ink.urgHigh))")
                   if beyond(s) { RichText(text: s["text"].string ?? "", size: 15) }
                 }
               }
@@ -344,7 +344,7 @@ struct CardScreen: View {
    *  quiet underlined link with the pen's return arrow (44 pt to hit); no button of its own. */
   private func saidFoot(_ words: String, _ ts: UInt64?, back: String? = nil, _ action: @escaping () -> Void = {}) -> some View {
     HStack(alignment: .center, spacing: 6) {
-      (Text(words) + Text(ts.map { "  ·  \(agoText($0))" } ?? "").foregroundColor(Ink.muted.opacity(0.75)))
+      Text("\(Text(words))\(Text(ts.map { "  ·  \(agoText($0))" } ?? "").foregroundColor(Ink.muted.opacity(0.75)))")
         .font(Face.text(13, .medium)).foregroundStyle(Ink.muted)
       Spacer(minLength: 8)
       if let back = back {

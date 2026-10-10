@@ -157,8 +157,7 @@ struct Greeting: View {
   var body: some View {
     let words = text.split(separator: " ").map(String.init)
     let head = words.dropLast().joined(separator: " ")
-    (Text(head.isEmpty ? "" : head + " ").font(Face.display(36, .heavy)).foregroundStyle(Ink.fg)
-      + Text(words.last ?? "").font(Face.display(36, .heavy)).foregroundStyle(Ink.fg))
+    Text("\(Text(head.isEmpty ? "" : head + " ").font(Face.display(36, .heavy)).foregroundStyle(Ink.fg))\(Text(words.last ?? "").font(Face.display(36, .heavy)).foregroundStyle(Ink.fg))")
       .overlay(alignment: .bottomTrailing) {
         // the pen's line under the last word
         GeometryReader { _ in EmptyView() }
@@ -211,7 +210,7 @@ struct CutSlip: View {
           VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 8) {
               Sketch("ear-off", color: Ink.urgHigh).frame(width: 20, height: 20)
-              (Text(u.agent.name).font(Face.text(15, .semibold)) + Text(" is cut off\(u.link?.since != nil ? " since \(clockText(u.link!.since!))" : ""): it cannot hear you and cannot write to you.").font(Face.text(15)))
+              Text("\(Text(u.agent.name).font(Face.text(15, .semibold)))\(Text(" is cut off\(u.link?.since != nil ? " since \(clockText(u.link!.since!))" : ""): it cannot hear you and cannot write to you.").font(Face.text(15)))")
                 .foregroundStyle(Ink.fg).multilineTextAlignment(.leading)
             }
             if let fix = u.link?.fixCode { HStack(spacing: 6) { Text(u.link?.fixSay ?? "").font(Face.text(13)).foregroundStyle(Ink.muted); CodeChip(text: fix) }.padding(.leading, 28) }

@@ -6,6 +6,7 @@
 //
 // Without the variable every test here is skipped, so `swift test` passes on a machine without the hub.
 // With TROMMI_STRICT_HUB=1 as well, the two tests that stop where the hub and the core part fail there instead.
+#if !os(iOS)   // (the hub is started here as a process: there are none on iOS)
 import Foundation
 import XCTest
 #if canImport(FoundationNetworking)
@@ -411,3 +412,4 @@ final class RealHubTests: XCTestCase {
     catch let refused as HubError { XCTAssertEqual(refused.code, "not-member") }
   }
 }
+#endif

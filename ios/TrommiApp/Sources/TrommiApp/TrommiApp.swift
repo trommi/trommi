@@ -88,6 +88,8 @@ final class BoardModel: ObservableObject {
   @Published var signing = false
   /** Said once on the start screen after a log out. */
   @Published var loggedOut = false
+  /** A sheet of Settings a state of the demo's list opens ("pair", "invite"); taken by SettingsHome. */
+  @Published var demoSheet: String?
   /** This device was removed by another device (removedHere): the start screen says so once. */
   @Published var removed = false
   /** The Emergency Kit's page is up (KitScreen.swift); its words live here only, until "Open Trommi". */
@@ -920,7 +922,8 @@ struct RootView: View {
     }
     .background(Ink.bg)
     // the demo's tag at the top of every screen, below the island: content starts under it, nothing covers it
-    .safeAreaInset(edge: .top, spacing: 0) { if model.demo && model.phase == .board && model.demoKit == nil { DemoTag() } }
+    // (an iPad: floating at the foot, right; above it sat over the sidebar's desk box and the centred title)
+    .overlay(alignment: .bottomTrailing) { if model.demo && model.phase == .board && model.demoKit == nil { DemoTag().padding(.trailing, 24).padding(.bottom, 24) } }
     .sheet(isPresented: $model.demoScreens) { AllScreensSheet() }
   }
 }
