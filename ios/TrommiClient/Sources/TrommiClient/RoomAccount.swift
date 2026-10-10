@@ -158,15 +158,16 @@ extension Room {
       // The core reads the room from the hub under the recovery key's token, checks it, and posts the join.
       _ = try await tools.joinRoomWithRecoveryCode(device: made.device, code: code, hub: hub, nowMs: nowMs())
     } catch {
-      // No answer to a join that was posted: the hub may have taken it. The device is asked about under its own key;
-      // what cannot be told yet is kept and settled by the next sign-in (`resumeUnsureJoin`).
+      // No answer to a join that was posted: the hub may have taken it. The room group's log, read under the
+      // recovery key, is handed to the core, which says whether its own join is in it; what cannot be told yet is
+      // kept and settled by the next sign-in (`resumeUnsureJoin`).
       let posted = made.device.outbox().contains { $0.kind == .externalCommit && $0.group == room }
       guard posted, Self.unsure(error) else { abandon(made); throw error }
-      switch await Self.memberAtHub(made.device, hubURL: hubURL, room: room) {
+      switch await Self.stagedJoinTaken(made.device, recoveryHub: hub, room: room) {
       case true?: break
       case false?: abandon(made); throw error
       case nil:
-        try? LocalKey.write(joinCodeItem(made.store.dir), code, dir: made.store.dir)
+        do { try LocalKey.write(joinCodeItem(made.store.dir), code, dir: made.store.dir) } catch { abandon(made); throw error }
         made.store.markUnsureJoin(roomId)
         Store.lifecycle.withLock { made.state.close() }
         throw TrommiError("pending", "the hub did not answer the sign-in: signing in again finishes it")
@@ -185,7 +186,7 @@ extension Room {
       made.store.markUnsureJoin(nil)
       joined = try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
     } catch { abandon(made); throw error }
-    await joined.finishCodeJoin(as: recoveryHub)
+    await joined.finishCodeJoin(as: recoveryHub, code: code)
     return joined
   }
 
@@ -196,21 +197,30 @@ extension Room {
   }
 
   /**
-   * Whether the hub holds this device as a member of the room, asked under the device's own key: true (a token
-   * for a member), false (`not-member` / `unauthorised`: its join was not taken), nil (no answer).
+   * Whether the hub took this device's join of the room group, by the core's word: the group's Commits, read under
+   * the recovery key, are handed to the core from its place on. true: its own Commit is among them (the core took
+   * the room); false: another Commit took that epoch and the join is dropped; nil: nothing could be read, or the
+   * log does not say yet. A refusal of the hub is no "not taken": only the log decides.
    */
-  static func memberAtHub(_ device: CoreDevice, hubURL: String, room: RoomId) async -> Bool? {
-    guard let client = try? HubClient(hubURL: hubURL, room: room, signer: device) else { return nil }
-    defer { client.shutdown() }
-    do { return ["human", "agent", "helper"].contains(try await client.signIn()) }
-    catch let e as HubError where !unsure(e) { return false }
-    catch { return nil }
+  static func stagedJoinTaken(_ device: CoreDevice, recoveryHub: HubClient, room: RoomId) async -> Bool? {
+    guard let past = try? await recoveryHub.history(of: room) else { return nil }
+    for commit in past.commits where commit.change > device.cursor {
+      let entry = LogEntry(change: commit.change, group: room, kind: .commit(bytes: commit.commit, recoveryAuth: commit.recoveryAuth))
+      guard let done = try? device.processLogEntry(entry) else { continue }
+      switch done {
+      case .ownCommit: return true
+      case .joinSuperseded: return false
+      default: continue
+      }
+    }
+    if device.room != nil { return true }
+    return device.outbox().contains { $0.kind == .externalCommit && $0.group == room } ? nil : false
   }
 
   /**
-   * A folder an earlier sign-in to this room left unsure (`joinWithRecoveryCode`): its device is asked about at the
-   * hub. In the room: it is resumed as the room's device. Not taken: the folder goes and a new device signs in. No
-   * answer: `pending` again, and the folder stays.
+   * A folder an earlier sign-in to this room left unsure (`joinWithRecoveryCode`): the room group's log decides
+   * (`stagedJoinTaken`). Taken: it is resumed as the room's device. Not taken: the folder goes and a new device
+   * signs in. Not known: `pending` again, and the folder stays.
    */
   private static func resumeUnsureJoin(base: URL, hubURL: String, roomId: String, code: Bytes) async throws -> Room? {
     let room = try unhex(roomId)
@@ -222,9 +232,28 @@ extension Room {
       do { device = try Core.tools.openDevice(store: state) } catch { state.close(); throw error }
     } catch { Store.lifecycle.withLock { store.wipe() }; return nil }
     let made = (store: store, state: state, device: device)
-    switch await memberAtHub(device, hubURL: hubURL, room: room) {
+    let recoveryHub: HubClient
+    do {
+      recoveryHub = try HubClient(hubURL: hubURL, room: room, signer: try Core.tools.recoverySigner(code: code))
+      _ = try await recoveryHub.signIn()
+    } catch {
+      Store.lifecycle.withLock { state.close() }
+      throw Self.unsure(error) ? TrommiError("pending", "the hub did not answer the sign-in: signing in again finishes it") : error
+    }
+    var taken = await stagedJoinTaken(device, recoveryHub: recoveryHub, room: room)
+    // Not in the log, and no other Commit took its epoch: the same join goes out once more, and the log decides again.
+    if taken == nil, let staged = device.outbox().first(where: { $0.kind == .externalCommit && $0.group == room }) {
+      do {
+        let answer = try await recoveryHub.post(staged)
+        if let change = Wire.uint(answer["change"]) { try? device.outboxAccepted(staged.id, change: change) }
+      } catch let e as HubError where !unsure(e) && Core.tools.isFinalRefusal(e.code) && e.code != "epoch-taken" {
+        try? device.outboxRefused(staged.id, code: e.code)
+      } catch {}
+      taken = await stagedJoinTaken(device, recoveryHub: recoveryHub, room: room)
+    }
+    switch taken {
     case true?:
-      return try await settleCodeJoin(made, hubURL: hubURL, roomId: roomId, code: code, recoveryHub: try HubClient(hubURL: hubURL, room: room, signer: try Core.tools.recoverySigner(code: code)))
+      return try await settleCodeJoin(made, hubURL: hubURL, roomId: roomId, code: code, recoveryHub: recoveryHub)
     case false?:
       abandon(made); return nil
     case nil:
@@ -240,10 +269,13 @@ extension Room {
    * as an alert: another device of the person can add this one to it. (The core is called from here directly: the
    * binding lets one caller in at a time, and this runs before the first catch-up or inside it.)
    */
-  func finishCodeJoin(as recoveryHub: HubClient? = nil) async {
+  func finishCodeJoin(as recoveryHub: HubClient? = nil, code given: Bytes? = nil) async {
     guard record.codeJoin == true else { return }
     let item = Room.joinCodeItem(store.dir)
-    if let code = (try? LocalKey.read(item, dir: store.dir)) ?? nil {
+    // (a Keychain that does not answer now is not a code that is gone: the work waits for the next sync)
+    let stored: Bytes?
+    do { stored = try LocalKey.read(item, dir: store.dir) } catch { if given == nil { return }; stored = nil }
+    if let code = given ?? stored {
       guard let left = try? await Core.tools.joinSessionsWithRecoveryCode(device: device, code: code, hub: recoveryHub ?? hub, nowMs: nowMs()), !left.again else { return }
       var change = Change()
       for session in left.notJoined { board.pushAlert(&change, code: session.code, message: "a session could not be joined when this device signed in: another device of yours can add it") }

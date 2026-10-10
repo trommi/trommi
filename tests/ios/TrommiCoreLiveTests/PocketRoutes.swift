@@ -24,6 +24,11 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var asked: [String] = []
   /// A path that is refused once with this code (a hub that fails in the middle of something).
   nonisolated(unsafe) static var refuseOnce: [String: String] = [:]
+  /// Requests whose answer is lost this many times ("METHOD /path"): the first is taken (or not, `takeLost`), and
+  /// the client gets no answer (a connection that broke after the request went out).
+  nonisolated(unsafe) static var loseAnswers: [String: Int] = [:]
+  nonisolated(unsafe) static var takeLost = true
+  nonisolated(unsafe) static var lostTaken: Set<Data> = []
   /// The bodies of the requests `refuseOnce` refused, in order.
   nonisolated(unsafe) static var refused: [JSON] = []
   /// Devices the hub calls removed (hex of the key): their token names `role: "removed"`, and the removal route
@@ -33,7 +38,7 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
 
   /// Routes every hub client of the process here, over a fresh PocketHub.
   static func install(_ hub: PocketHub) {
-    self.hub = hub; account = nil; logins = [:]; asked = []; refuseOnce = [:]; refused = []; removed = [:]
+    self.hub = hub; account = nil; logins = [:]; asked = []; refuseOnce = [:]; refused = []; removed = [:]; loseAnswers = [:]; takeLost = true; lostTaken = []
     HubClient.transportForTests = [PocketRoutes.self]
   }
 
@@ -173,7 +178,19 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
     }
     let body = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
     let token = request.value(forHTTPHeaderField: "authorization").map { String($0.dropFirst("Bearer ".count)) }
-    let (status, answer) = Self.answer(request.httpMethod ?? "GET", Array(url.path.split(separator: "/").map(String.init).dropFirst()), query, body, token: token)
+    let method = request.httpMethod ?? "GET", path = Array(url.path.split(separator: "/").map(String.init).dropFirst())
+    let line = "\(method) /\(path.joined(separator: "/"))"
+    let lose: Bool = Self.hub.lock.withLock {
+      guard let n = Self.loseAnswers[line], n > 0 else { return false }
+      Self.loseAnswers[line] = n - 1
+      return true
+    }
+    if lose {
+      if Self.takeLost && !Self.lostTaken.contains(data) { Self.lostTaken.insert(data); _ = Self.answer(method, path, query, body, token: token) }
+      client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+      return
+    }
+    let (status, answer) = Self.answer(method, path, query, body, token: token)
     client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["content-type": "application/json"])!, cacheStoragePolicy: .notAllowed)
     client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: answer))
     client?.urlProtocolDidFinishLoading(self)

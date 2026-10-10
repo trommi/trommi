@@ -253,4 +253,44 @@ final class RoomRecoveryTests: XCTestCase {
     XCTAssertNil(try again.store.load().codeJoin)
     XCTAssertNil(try LocalKey.read(item, dir: folder), "the code is forgotten once the join has finished")
   }
+  /// The join of the room group is taken and its answer is lost: the room group's log, handed to the core, holds
+  /// the device's own join, so the sign-in goes on with this device; nothing is posted twice.
+  func testALostAnswerToATakenJoinIsSettledByTheLog() async throws {
+    let secret = try tools.generateRecoveryCode()
+    let a = try newDevice()
+    let room = try a.foundRoom(recoveryCode: secret, nowMs: nowMs())
+    try hub.post(a)
+    let base = try scratchFolder(self)
+    func commits() -> Int { hub.log.filter { if case .commit = $0.kind { return $0.group == room } else { return false } }.count }
+    let before = commits()
+    PocketRoutes.loseAnswers["POST /groups/\(b64u(room))/commits"] = 2
+    let joined = try await Room.joinWithRecoveryCode(hubURL: PocketRoutes.url, roomId: hex(room), code: secret, base: base)
+    XCTAssertEqual(Store.folders(base).count, 1)
+    XCTAssertEqual(Store.rooms(base: base), [hex(room)])
+    XCTAssertEqual(commits(), before + 1, "one join")
+    XCTAssertEqual(try (joined.device as? LiveDevice)?.room, room)
+    XCTAssertNil(joined.store.unsureJoin)
+    await joined.shutdown()
+  }
+
+  /// The join's answer is lost and the hub never took it: the next sign-in sends the same join once more and goes
+  /// on with the same device.
+  func testALostJoinTheHubNeverTookIsSentAgainByTheNextSignIn() async throws {
+    let secret = try tools.generateRecoveryCode()
+    let a = try newDevice()
+    let room = try a.foundRoom(recoveryCode: secret, nowMs: nowMs())
+    try hub.post(a)
+    let base = try scratchFolder(self)
+    PocketRoutes.takeLost = false
+    PocketRoutes.loseAnswers["POST /groups/\(b64u(room))/commits"] = 2
+    let lost = await failure { _ = try await Room.joinWithRecoveryCode(hubURL: PocketRoutes.url, roomId: hex(room), code: secret, base: base) }
+    XCTAssertEqual(code(of: lost), "pending")
+    let left = Store.folders(base)
+    XCTAssertEqual(left.count, 1)
+
+    let joined = try await Room.joinWithRecoveryCode(hubURL: PocketRoutes.url, roomId: hex(room), code: secret, base: base)
+    XCTAssertEqual(joined.store.dir.standardizedFileURL, left[0].standardizedFileURL, "the same device")
+    XCTAssertEqual(try (joined.device as? LiveDevice)?.room, room)
+    await joined.shutdown()
+  }
 }
