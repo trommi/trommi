@@ -56,4 +56,4 @@ export const HOST_CALLS: readonly string[] = Object.freeze(['account', 'pushKey'
 /** account.ts functions that make a room (run in the worker, which then holds it). */
 export const ACCOUNT_OPENS: readonly string[] = Object.freeze(['createAccount', 'createAccountWithPasskey', 'loginWithPassword', 'loginWithPasskey', 'resetPassword', 'recoverWithKit', 'recoverWithCode'])
 /** account.ts functions that take the signed-in client (run in the worker on its client). */
-export const ACCOUNT_CALLS: readonly string[] = Object.freeze(['accountStatus', 'addAccount', 'makeEmergencyKit', 'changePassword', 'setPassword', 'checkUnlock', 'passkeyChallengeFor', 'addPasskey', 'removePasskey', 'replaceRecoveryCode'])
+export const ACCOUNT_CALLS: readonly string[] = Object.freeze(['accountStatus', 'addAccount', 'makeEmergencyKit', 'changePassword', 'setPassword', 'checkUnlock', 'setEmail', 'passkeyChallengeFor', 'addPasskey', 'removePasskey', 'replaceRecoveryCode'])

@@ -183,10 +183,17 @@ export interface CommitParts {
 /** The key derivation record: the hub stores and returns exactly the pinned one, as a JSON object. */
 export type Kdf = Record<string, string | number>
 export interface PasskeyRegistration { attestation_object: Uint8Array; client_data_json: Uint8Array; sealed_copy: Uint8Array; transports?: string[] }
-/** `POST /v2/account`, and `account` of `POST /v2/rooms`: an e-mail, the Emergency Kit and at least one way in. */
+/** Which salt an Emergency Kit's keys were derived with: the account's e-mail, or its id (the only form for an
+ *  account without e-mail). The hub cannot check it; it keeps it and returns it as `kit_form`. */
+export type KitForm = 'email' | 'id'
+/** A kit's part of a body. `form` is always said: unsaid, the hub would take `email` wherever the account has one. */
+export interface KitPart { auth_key: Uint8Array; sealed_copy: Uint8Array; form: KitForm }
+/** `POST /v2/account`, and `account` of `POST /v2/rooms`: the Emergency Kit and at least one way in. An e-mail
+ *  comes with a password and is optional beside a passkey. The account's id is the hub's: with a passkey the one
+ *  it named with the registration's challenge (`passkeyChallenge`). */
 export interface NewAccount {
-  email: string; user_handle?: Uint8Array
-  kit: { auth_key: Uint8Array; sealed_copy: Uint8Array }
+  email?: string | null
+  kit: KitPart
   password?: { auth_key: Uint8Array; sealed_copy: Uint8Array; kdf: Kdf }
   passkey?: PasskeyRegistration
 }
@@ -196,18 +203,27 @@ export interface NewAccount {
  *  words or the bare code: a password with its login key and `kdf`, or a passkey registered as in sign-up (its
  *  challenge is the account's, or one of `passkeyChallenge()`, which needs no token). */
 export interface AccountCopies {
-  kit: { auth_key: Uint8Array; sealed_copy: Uint8Array }
+  kit: KitPart
   password?: { sealed_copy: Uint8Array } | { auth_key: Uint8Array; sealed_copy: Uint8Array; kdf: Kdf }
   passkey?: { credential_id: Uint8Array; sealed_copy: Uint8Array } | PasskeyRegistration
 }
 export interface AccountView {
-  email: string; revision: number; has_password: boolean; kdf: Kdf | null
+  /** null: an account without an e-mail (its ways in are its passkeys and its kit). */
+  email: string | null
+  /** The account's id as it is printed: a UUID, lower case, with dashes. Its 16 bytes are `user_handle`. */
+  account: string
+  kit_form: KitForm
+  revision: number; has_password: boolean; kdf: Kdf | null
   password_copy: Uint8Array | null; kit_copy: Uint8Array; user_handle: Uint8Array
   passkeys: { credential_id: Uint8Array; sealed_copy: Uint8Array; transports: string[]; created_at: number; last_used_at: number | null }[]
   rooms: Uint8Array[]
 }
-/** What a login answers: per room the sealed copy of its recovery code and a sign-in challenge of that room. */
-export interface LoginAnswer { rooms: { room_id: Uint8Array; sealed_copy: Uint8Array; challenge: Uint8Array }[]; kdf: Kdf | null }
+/** What a login answers: per room the sealed copy of its recovery code and a sign-in challenge of that room; and
+ *  which account it is: its id, and its e-mail if it has one. */
+export interface LoginAnswer { rooms: { room_id: Uint8Array; sealed_copy: Uint8Array; challenge: Uint8Array }[]; kdf: Kdf | null; account: string; email: string | null }
+/** A passkey challenge with the id of the account the passkey is for: the one an account made on this challenge
+ *  will have (no token), or this room's account's. `user_handle` is the id's 16 bytes, the passkey's `user.id`. */
+export interface PasskeyChallenge { challenge: Uint8Array; account: string; user_handle: Uint8Array }
 
 export interface PushRegistration {
   web_push?: { endpoint: string; keys: { p256dh: Uint8Array; auth: Uint8Array } }
@@ -370,9 +386,21 @@ function kdf(v: unknown): Kdf | null {
     return Object.fromEntries(entries) as Kdf
   })
 }
+/** An account id in its one printed form, which must be the text of these 16 bytes when they are given. */
+function accountId(v: unknown, handle?: Uint8Array): string {
+  const t = text(v, 'account', 36)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(t)) bad('account')
+  if (handle && hex(handle) !== t.replaceAll('-', '')) bad('account: not the id of user_handle')
+  return t
+}
+function passkeyChallengeAnswer(v: unknown): PasskeyChallenge {
+  const o = obj(v, 'a challenge answer'), user_handle = bytes(o.user_handle, 'user_handle', 16)
+  return { challenge: bytes(o.challenge, 'challenge', 32), account: accountId(o.account, user_handle), user_handle }
+}
 function loginAnswer(v: unknown): LoginAnswer {
   const o = obj(v, 'a login answer')
   return {
+    account: accountId(o.account), email: maybe(o.email, e => text(e, 'email', 254)),
     rooms: list(o.rooms, 'rooms', 16).map(r => {
       const room = obj(r, 'a room')
       return { room_id: id(room.room_id, 'room_id', 32), sealed_copy: bytes(room.sealed_copy, 'sealed_copy', 61), challenge: bytes(room.challenge, 'challenge', 32) }
@@ -381,11 +409,11 @@ function loginAnswer(v: unknown): LoginAnswer {
   }
 }
 function accountView(v: unknown): AccountView {
-  const o = obj(v, 'an account')
+  const o = obj(v, 'an account'), user_handle = bytes(o.user_handle, 'user_handle', 16)
   return {
-    email: text(o.email, 'email', 254), revision: int(o.revision, 'revision'), has_password: bool(o.has_password, 'has_password'), kdf: kdf(o.kdf),
+    email: maybe(o.email, e => text(e, 'email', 254)), account: accountId(o.account, user_handle), kit_form: oneOf(o.kit_form, 'kit_form', 'email', 'id'), revision: int(o.revision, 'revision'), has_password: bool(o.has_password, 'has_password'), kdf: kdf(o.kdf),
     password_copy: maybe(o.password_copy, c => bytes(c, 'password_copy', 61)), kit_copy: bytes(o.kit_copy, 'kit_copy', 61),
-    user_handle: bytes(o.user_handle, 'user_handle', 32),
+    user_handle,
     passkeys: list(o.passkeys, 'passkeys', 64).map(p => {
       const k = obj(p, 'a passkey')
       return {
@@ -430,13 +458,23 @@ function commitBody(c: CommitParts): Record<string, unknown> {
     ...(c.welcome?.length ? { welcome: enc(c.welcome) } : {}), ...(c.recovery_auth?.length ? { recovery_auth: enc(c.recovery_auth) } : {}),
   }
 }
+/** The one field that names an account, as typed: the hub reads an e-mail (with `@`) or an id out of it. */
+function ownName(name: unknown): string {
+  if (typeof name !== 'string' || name.length < 1 || name.length > 254) wrong('an account is named by its e-mail or its id')
+  return name
+}
 function passkeyBody(p: PasskeyRegistration): Record<string, unknown> {
   return { attestation_object: enc(p.attestation_object), client_data_json: enc(p.client_data_json), sealed_copy: enc(p.sealed_copy), ...(p.transports ? { transports: p.transports } : {}) }
 }
+const kitBody = (k: KitPart): Record<string, unknown> => ({ auth_key: enc(k.auth_key), sealed_copy: enc(k.sealed_copy), form: ownForm(k.form) })
+function ownForm(form: unknown): KitForm {
+  if (form !== 'email' && form !== 'id') wrong('a kit says its form: email or id')
+  return form
+}
 function accountBody(a: NewAccount): Record<string, unknown> {
   return {
-    email: a.email, ...(a.user_handle ? { user_handle: enc(a.user_handle) } : {}),
-    kit: { auth_key: enc(a.kit.auth_key), sealed_copy: enc(a.kit.sealed_copy) },
+    ...(a.email != null ? { email: a.email } : {}),
+    kit: kitBody(a.kit),
     ...(a.password ? { password: { auth_key: enc(a.password.auth_key), sealed_copy: enc(a.password.sealed_copy), kdf: a.password.kdf } } : {}),
     ...(a.passkey ? { passkey: passkeyBody(a.passkey) } : {}),
   }
@@ -444,7 +482,7 @@ function accountBody(a: NewAccount): Record<string, unknown> {
 function copiesBody(a: AccountCopies | null): Record<string, unknown> | null {
   if (!a) return null
   return {
-    kit: { auth_key: enc(a.kit.auth_key), sealed_copy: enc(a.kit.sealed_copy) },
+    kit: kitBody(a.kit),
     ...(a.password ? { password: 'auth_key' in a.password ? { auth_key: enc(a.password.auth_key), sealed_copy: enc(a.password.sealed_copy), kdf: a.password.kdf } : { sealed_copy: enc(a.password.sealed_copy) } } : {}),
     ...(a.passkey ? { passkey: 'attestation_object' in a.passkey ? passkeyBody(a.passkey) : { credential_id: enc(a.passkey.credential_id), sealed_copy: enc(a.passkey.sealed_copy) } } : {}),
   }
@@ -473,8 +511,8 @@ function accountCopiesOf(account: Uint8Array): AccountCopies | null {
   }
   let parsed: unknown
   try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(account)) } catch { wrong('the account\'s copies: not what accountCopiesBytes writes') }
-  const o = members(parsed, 'kit', 'password', 'passkey'), kit = members(o.kit, 'auth_key', 'sealed_copy')
-  const copies: AccountCopies = { kit: { auth_key: part(kit.auth_key, 'kit.auth_key', 32), sealed_copy: part(kit.sealed_copy, 'kit.sealed_copy', 61) } }
+  const o = members(parsed, 'kit', 'password', 'passkey'), kit = members(o.kit, 'auth_key', 'sealed_copy', 'form')
+  const copies: AccountCopies = { kit: { auth_key: part(kit.auth_key, 'kit.auth_key', 32), sealed_copy: part(kit.sealed_copy, 'kit.sealed_copy', 61), form: ownForm(kit.form) } }
   const has = (v: unknown, name: string): boolean => typeof v === 'object' && v !== null && Object.hasOwn(v, name)
   if (o.password !== undefined && o.passkey !== undefined) wrong('the account\'s copies: one way in')
   if (has(o.password, 'auth_key')) {
@@ -628,6 +666,23 @@ export class Hub {
     this.role = null
   }
   get room_id(): Uint8Array | null { return this.signer?.room_id ?? null }
+  /** `DELETE /v2/token`: ends the token this client holds, at once, and the hub cuts this device's streams. A
+   *  client without a token asks nothing (it does not sign in to sign out). The token is forgotten here whatever
+   *  the hub answers; it would have run out within ten minutes. A later call signs in anew. */
+  async signOut(): Promise<void> {
+    const token = this.token
+    if (!token) return
+    this.token = null
+    this.role = null
+    const watch = new Watch(this.timing.request)
+    try {
+      const res = await this.fetch(`${this.hub_url}/v2/token`, { method: 'DELETE', headers: { authorization: `Bearer ${token}`, ...(this.client_name ? { 'trommi-client': this.client_name } : {}) }, redirect: 'manual', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: watch.signal })
+      void res.body?.cancel().catch(() => {})
+      if (!res.ok) throw new HubError(res.status === 401 ? 'unauthorised' : `http-${res.status}`, 'the hub did not end the token', { status: res.status })
+    } catch (e) {
+      throw e instanceof HubError ? e : new HubError('offline', 'the hub was not reached')
+    } finally { watch.done() }
+  }
 
   /** Signs in now. `challenge`: one the hub handed out already (a login answers with one per room), saving a round
    *  trip; if the hub no longer holds it, a new one is asked for. Concurrent callers share one sign-in. */
@@ -1440,18 +1495,20 @@ export class Hub {
 
   // ---- the account (hub-api.md "The account"). Login keys and sealed copies are secrets: they go in bodies only.
 
-  /** `POST /v2/account/login`: `wrong-login` for an unknown e-mail and a wrong key alike; `rate-limited` with
-   *  `retry_after` when this source has to wait. */
-  async login(email: string, auth_key: Uint8Array): Promise<LoginAnswer> {
-    return loginAnswer(await this.send('POST', '/v2/account/login', { email, auth_key: enc(auth_key) }, false))
+  /** `POST /v2/account/login`. `account`: the one field that names an account, its e-mail (it contains `@`) or
+   *  its id. `wrong-login` for a name nobody has and a wrong key alike; `rate-limited` with `retry_after` when
+   *  this source has to wait. */
+  async login(account: string, auth_key: Uint8Array): Promise<LoginAnswer> {
+    return loginAnswer(await this.send('POST', '/v2/account/login', { account: ownName(account), auth_key: enc(auth_key) }, false))
   }
   /** `POST /v2/account/recover`: the same with the Emergency Kit's key; `wrong-recovery`. */
-  async recover(email: string, auth_key: Uint8Array): Promise<LoginAnswer> {
-    return loginAnswer(await this.send('POST', '/v2/account/recover', { email, auth_key: enc(auth_key) }, false))
+  async recover(account: string, auth_key: Uint8Array): Promise<LoginAnswer> {
+    return loginAnswer(await this.send('POST', '/v2/account/recover', { account: ownName(account), auth_key: enc(auth_key) }, false))
   }
-  /** `POST /v2/account/passkey/challenge`: a challenge for a sign-in with a passkey; no token. */
-  async passkeyChallenge(): Promise<Uint8Array> {
-    return bytes(obj(await this.send('POST', '/v2/account/passkey/challenge', {}, false), 'a challenge answer').challenge, 'challenge', 32)
+  /** `POST /v2/account/passkey/challenge`: a challenge for a sign-in with a passkey, or for the passkey of a new
+   *  account, with the id that account will have; no token. */
+  async passkeyChallenge(): Promise<PasskeyChallenge> {
+    return passkeyChallengeAnswer(await this.send('POST', '/v2/account/passkey/challenge', {}, false))
   }
   /** `POST /v2/account/passkey/login`: every failure is `wrong-login`. */
   async passkeyLogin(a: { credential_id: Uint8Array; authenticator_data: Uint8Array; client_data_json: Uint8Array; signature: Uint8Array; user_handle?: Uint8Array | null }): Promise<LoginAnswer> {
@@ -1472,13 +1529,20 @@ export class Hub {
     return { revision: int(obj(await this.send('PUT', '/v2/account/password', json), 'a revision').revision, 'revision') }
   }
   /** `PUT /v2/account/kit`: a new Emergency Kit replaces the one before. */
-  async putKit(k: { auth_key: Uint8Array; sealed_copy: Uint8Array; revision: number }): Promise<{ revision: number }> {
-    const json = { auth_key: enc(k.auth_key), sealed_copy: enc(k.sealed_copy), revision: ownInt(k.revision, 'revision') }
+  async putKit(k: KitPart & { revision: number }): Promise<{ revision: number }> {
+    const json = { ...kitBody(k), revision: ownInt(k.revision, 'revision') }
     return { revision: int(obj(await this.send('PUT', '/v2/account/kit', json), 'a revision').revision, 'revision') }
   }
-  /** `POST /v2/account/passkeys/challenge`: a challenge for adding a passkey to this room's account. */
-  async accountPasskeyChallenge(): Promise<Uint8Array> {
-    return bytes(obj(await this.send('POST', '/v2/account/passkeys/challenge', {}), 'a challenge answer').challenge, 'challenge', 32)
+  /** `PUT /v2/account/email`: gives an account without e-mail one, once (`forbidden` when it has one);
+   *  `bad-email`, `account-exists`, `account-changed`. */
+  async putEmail(e: { email: string; revision: number }): Promise<{ revision: number }> {
+    if (typeof e.email !== 'string' || e.email.length > 254) wrong('an e-mail address')
+    return { revision: int(obj(await this.send('PUT', '/v2/account/email', { email: e.email, revision: ownInt(e.revision, 'revision') }), 'a revision').revision, 'revision') }
+  }
+  /** `POST /v2/account/passkeys/challenge`: a challenge for adding a passkey to this room's account, with the
+   *  account's id, which that passkey carries as its user handle. */
+  async accountPasskeyChallenge(): Promise<PasskeyChallenge> {
+    return passkeyChallengeAnswer(await this.send('POST', '/v2/account/passkeys/challenge', {}))
   }
   /** `POST /v2/account/passkeys`. */
   async addPasskey(passkey: PasskeyRegistration): Promise<{ credential_id: Uint8Array; created_at: number }> {
