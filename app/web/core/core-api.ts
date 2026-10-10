@@ -9,10 +9,9 @@
 // stable code of spec/v2.md section 16. A `Device` is asynchronous: each call runs after the ones before it and
 // resolves only once what it wrote is stored, so a result in hand is always durable (spec 13.2).
 //
-// Part 2 is PROVISIONAL: what the web app needs and the binding does not have yet. Today that is one call, the Cut
-// of a device a recovery removes. core-wasm.ts answers it with the refusal `core-missing`; the tests' core
-// (tests/web/stand-in/core.ts) implements it. Everything else, stored content and joining by link included, is the
-// binding's own, in the binding's shapes.
+// Part 2 is PROVISIONAL: what the web app needs and the binding does not have yet. Today it is EMPTY: stored
+// content, joining by link and recovery are all the binding's own, in the binding's shapes. A call the binding lacks
+// is named there (and in core-wasm.ts' table, which answers it with the refusal `core-missing`) until it is bound.
 import type * as Binding from '../../../core/wasm/js/trommi-core.js'
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -23,7 +22,7 @@ export type {
   OutboxKind, OutboxEntry, Cut, Replacement, Joined, LogEntry, CommitSummary, ReceivedMessage, Processed, LogFinding,
   HandoverSent, KeyPackageInfo, SignedHubAuth, FileRef, FileEnd, FileLayout, FileChunk, ShareLink, AccountKeys, AccountWay,
   PushNote, Versions, SelfTestStep, SelfTestReport, FileEncryptor, FileDecryptor,
-  ServedCommit, ServedGroup, ServedRoom, UnverifiedSession, CodeJoin, GroupCut, Removals, RecoveryPlan, Anchor,
+  ServedCommit, ServedGroup, ServedRoom, ServedEnvelope, Learned, UnverifiedSession, CodeJoin, Removals, RecoveryPlan, Anchor,
   InviteRole, InviteOpened, SignedOffer, SignedRequest, SignedReveal, InviteLinkParts, EmojiWord, CheckCode, InviteAccepted,
   InviteConfirmed, InviteStepKind, InviteStep, JoinRequest,
   Urgency, ObjectType, ObjectState, DraftKind, Draft, Sealed, EnvelopeKind, TimelineKind, TimelineRef, ObjectHeader,
@@ -39,18 +38,8 @@ export type Stateless = Omit<typeof Binding, 'init' | 'Device' | 'TrommiError' |
 // ---------------------------------------------------------------------------------------------------------------------
 // Part 2 (PROVISIONAL)
 
-/** The calls on a device that the binding does not have yet. */
-export interface ProvisionalDevice {
-  /**
-   * The Cut of a device a recovery removes (spec 8.7, 9.0.10), for a device that is no member yet and so holds no
-   * chain (the binding's `cutOf` and `chainCut` read the chains the device itself accepted): `envelopes` is that
-   * sender's whole chain in `served` as the hub's chain route gives it (pruned form, from number 1, in order).
-   * Verified: each signature under the sender's key of the served group, the numbers and `prev` links
-   * (`bad-signature`, `gap`, `chain-break`, `not-member`). The Cut is the last envelope; an empty list gives
-   * number 0 and zeros.
-   */
-  servedChainCut(served: Binding.ServedGroup, device: Uint8Array, envelopes: Uint8Array[]): Promise<Binding.Cut>
-}
+/** The calls on a device that the binding does not have yet: none. */
+export interface ProvisionalDevice {}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // What the client layer holds
