@@ -516,3 +516,109 @@ fn a_welcome_into_a_room_with_too_many_devices() {
         }
     }
 }
+
+/// The note of a Commit that builds on the newest room state `device` holds.
+fn note_now(device: &TestDevice) -> Vec<u8> {
+    let state = device.room_history().unwrap().newest().clone();
+    codec::encode(&CommitNote {
+        room_epoch: state.epoch,
+        room_state: state.state,
+        time: now(),
+        cuts: Vec::new(),
+        join: false,
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_commit_with_a_pre_shared_key_proposal() {
+    // Section 3: no PreSharedKey proposal, whoever holds the key. No device builds one; a member that obeys
+    // MLS alone does. The hub refuses it by the rules.
+    let World {
+        mut hub,
+        mut a,
+        room_group,
+        ..
+    } = world(true);
+    let forger = Forger::new();
+    let mut forged = add_forger(&mut hub, &mut a, &forger);
+    let with_psk = forger.commit_with_psk(&mut forged, &note_now(&a));
+    assert_eq!(
+        forger.post_commit(&mut hub, &room_group, &with_psk),
+        Err(Error::BadCommit)
+    );
+
+    // Stored by a hub that checks nothing, it is taken by nobody: an observer refuses it by the same rules,
+    // a member cannot even process it, and every one of them keeps its state.
+    let World {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        room_group,
+        ..
+    } = world(false);
+    let forger = Forger::new();
+    let mut forged = add_forger(&mut hub, &mut a, &forger);
+    sync_ok(&hub, &mut b);
+    settle(&hub, &mut agent);
+    let epoch = hub.epoch(&room_group).unwrap();
+    let with_psk = forger.commit_with_psk(&mut forged, &note_now(&a));
+    forger
+        .post_commit(&mut hub, &room_group, &with_psk)
+        .unwrap();
+    assert_eq!(last(&hub, &mut agent), Err(Error::BadCommit));
+    for device in [&mut a, &mut b] {
+        let error = last(&hub, device).unwrap_err();
+        assert_eq!(log_finding(&error), LogFinding::BadGroup);
+        assert_eq!(device.group(&room_group).unwrap().epoch, epoch);
+    }
+    assert_eq!(
+        agent.room_history().unwrap().newest().epoch,
+        epoch,
+        "the observer did not follow it"
+    );
+}
+
+#[test]
+fn a_commit_with_one_byte_changed() {
+    // The hub refuses it wherever the byte lies in what it can check: the content, the signature, the
+    // confirmation tag. The membership tag, the last 32 bytes, only members can check (14.1). It then takes
+    // the Commit as it was built.
+    let World {
+        mut hub,
+        mut a,
+        room_group,
+        ..
+    } = world(true);
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    let entry = a.outbox().remove(0);
+    let len = entry.parts[0].len();
+    for at in [len / 4, len / 2, len - 100, len - 40] {
+        let mut changed = entry.clone();
+        changed.parts[0][at] ^= 1;
+        assert!(hub.post(&a.id(), &changed).is_err(), "byte {at}");
+    }
+    post_ok(&mut hub, &mut a);
+
+    // A changed membership tag passes every hub and is merged by no member; an observer, which follows
+    // what the hub does, cannot tell either (14.7).
+    let World {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        room_group,
+        ..
+    } = world(false);
+    let epoch = hub.epoch(&room_group).unwrap();
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    let mut changed = a.outbox().remove(0);
+    let last_byte = changed.parts[0].len() - 1;
+    changed.parts[0][last_byte] ^= 1;
+    hub.post(&a.id(), &changed).unwrap();
+    let error = last(&hub, &mut b).unwrap_err();
+    assert_eq!(log_finding(&error), LogFinding::BadGroup);
+    assert_eq!(b.group(&room_group).unwrap().epoch, epoch);
+    assert!(last(&hub, &mut agent).is_ok());
+}
