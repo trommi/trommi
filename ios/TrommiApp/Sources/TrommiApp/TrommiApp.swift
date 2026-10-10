@@ -326,6 +326,13 @@ final class BoardModel: ObservableObject {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard t.contains("#v2."), (try? Core.tools.parseInviteLink(t)) != nil else { return false }
     if drawnOnly() { return true }
+    // (a link past its deadline is said here, before anything is made or asked)
+    do { _ = try Core.tools.inviteLinkCheck(t, nowMs: nowMs()) }
+    catch {
+      let code = (error as? TrommiError)?.code
+      phase = .pairFailed(code == "invite-expired" ? "This code has run out. Make a new one on the other device." : "This code is not valid. Make a new one on the other device.")
+      return true
+    }
     pair(link: t)
     return true
   }
@@ -346,7 +353,8 @@ final class BoardModel: ObservableObject {
         let why: String
         switch (error as? TrommiError)?.code {
         case "invite-used": why = "This code was used already."
-        case "invite-expired": why = "This code has run out."
+        case "invite-expired": why = "This code has run out. Make a new one on the other device."
+        case "bad-invite": why = "This code is not valid. Make a new one on the other device."
         case "code-mismatch": why = "The emoji did not match there."
         default: why = accountError(error)
         }
