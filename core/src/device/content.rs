@@ -1203,8 +1203,12 @@ impl<S: Storage> Device<S> {
                 }
             }
             let loaded = board::verify_load(board, &applied, &cuts, &snapshot, served, &chains)?;
+            // What is kept is the frontier of the snapshot loaded (10.3), not what was applied after it: the
+            // next load holds its snapshot to that, so the same snapshot loads again (the board is built anew
+            // from it, also after a Cut dropped items) and a newer one written by a device that had not yet
+            // read every item after it is not taken for an older one.
             let mut frontier = Writer::new();
-            for (writer, head) in &loaded.frontier {
+            for (writer, head) in &snapshot.frontier {
                 frontier.fixed(writer.as_bytes());
                 frontier.value(head)?;
             }
