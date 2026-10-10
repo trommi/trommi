@@ -594,7 +594,7 @@ body[data-t-view="whiteboard"] .corner-note-box.is-open .corner-note-park { disp
 .topbar #brand-doors button.menu-desk-pen .sketch { width: 16px; height: 16px; }
 .topbar #brand-doors .menu-desk-row:is(:hover, :focus-within) button.menu-desk-pen { opacity: 1; }
 .topbar #brand-doors button.menu-desk-pen:hover { background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); }
-@media (hover: none) { .topbar #brand-doors button.menu-desk-pen { opacity: 1; right: 4px; width: 40px; height: 40px; } .topbar #brand-doors .menu-desk kbd { display: none; } .topbar #brand-doors .menu-desk-rename { right: 46px; } .topbar #brand-doors .menu-desk-row .menu-desk { padding-right: 46px; } }
+@media (hover: none) { .topbar #brand-doors button.menu-desk-pen { opacity: 1; right: 4px; width: 40px; height: 34px; min-height: 34px; } .topbar #brand-doors .menu-desk kbd { display: none; } .topbar #brand-doors .menu-desk-rename { right: 46px; } .topbar #brand-doors .menu-desk-row .menu-desk { padding-right: 46px; } }
 .topbar #brand-doors .menu-desk-row.is-renaming > :is(.menu-desk b, .menu-desk-pen) { visibility: hidden; }
 .topbar #brand-doors .menu-desk-row.is-renaming .menu-desk b { visibility: hidden; }
 .topbar #brand-doors .menu-desk-rename { position: absolute; left: 42px; right: 40px; top: 50%; translate: 0 -50%; margin: 0; display: flex; }
