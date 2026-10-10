@@ -1,4 +1,4 @@
-//! Configuration by environment. Every limit of spec/v2.md section 16 has its default here; a variable that is
+//! Configuration by environment. Every limit of spec/v1.md section 16 has its default here; a variable that is
 //! unset, empty or not a number means the default.
 
 use std::collections::HashMap;

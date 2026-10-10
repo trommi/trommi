@@ -1,4 +1,4 @@
-// codec.ts: the bodies of stored content (spec/v2.md 9.1: UTF-8 JSON, `schema_version` 2) between the wire and the
+// codec.ts: the bodies of stored content (spec/v1.md 9.1: UTF-8 JSON, `schema_version` 2) between the wire and the
 // model, both directions, and nothing else. The core seals and opens envelopes and hands a body's payload over as
 // JSON text; decodeBody turns that text into the fields the model and the views name (types.ts), encodeBody turns a
 // draft's fields into the text the core seals.

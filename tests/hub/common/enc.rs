@@ -1,4 +1,4 @@
-//! The test clients' own encoder for the structs of spec/v2.md, written from the spec and independent of the
+//! The test clients' own encoder for the structs of spec/v1.md, written from the spec and independent of the
 //! hub's `wire` module: a mistake in the hub's encoding is not repeated here by construction. The hub's structs
 //! are used as plain holders of fields; no byte of what a client sends is produced by the hub's code.
 //! (Once the core's encodings are merged, this file gives way to the core.)

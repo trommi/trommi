@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 pub const MAX_ASSET: u64 = 64 * 1024 * 1024;
 pub const ASSET_TYPES: [&str; 5] = ["html", "image", "video", "audio", "file"];
 pub const RETENTION_DAYS: u64 = 30;
-/// A Share link lasts at most 180 days (spec/v2.md 11.5).
+/// A Share link lasts at most 180 days (spec/v1.md 11.5).
 pub const SHARE_MAX_DAYS: u64 = 180;
 const SHARE_MAX_HOURS: f64 = (SHARE_MAX_DAYS * 24) as f64;
 pub const URGENCIES: [&str; 4] = ["low", "normal", "high", "critical"];
@@ -1284,7 +1284,7 @@ impl Bridge {
         Ok(())
     }
 
-    /// A block of a turn's trail (`trail.rs`) as the work trail of protocol v2 (spec/v2.md 7.3): one MLS message
+    /// A block of a turn's trail (`trail.rs`) as the work trail of protocol v2 (spec/v1.md 7.3): one MLS message
     /// per step, numbered from 1 within the turn, in this agent's session group or in the group of the child
     /// session `target` (one that exists; never opened here). An item is sent when it is first seen, and once
     /// more when it ended badly; a step that simply finished is not sent again.
@@ -2878,7 +2878,7 @@ impl Bridge {
     }
 }
 
-/// The longest `text` of a work trail step, in bytes (spec/v2.md 7.3).
+/// The longest `text` of a work trail step, in bytes (spec/v1.md 7.3).
 const STEP_TEXT_MAX: usize = 30_000;
 
 /// One item of a trail block as a step `{ text, tool? }`, and whether it tells of a bad end. None for an item

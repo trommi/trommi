@@ -1,4 +1,4 @@
-//! Push and Live Activity (spec/v2.md section 15, D5): how the hub wakes a device. A push carries no content: a
+//! Push and Live Activity (spec/v1.md section 15, D5): how the hub wakes a device. A push carries no content: a
 //! room, a change number and an urgency; for an iPhone sealed under the key the phone registered, with a ticket
 //! for the one envelope its notification extension may fetch.
 //!

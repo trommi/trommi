@@ -1,4 +1,4 @@
-//! The structs of spec/v2.md that the hub parses, in TLS presentation language with MLS's variable-length
+//! The structs of spec/v1.md that the hub parses, in TLS presentation language with MLS's variable-length
 //! vectors (`<V>`, RFC 9420 section 2.1.2). Parsing is strict: minimal length encodings, no trailing bytes, and
 //! every struct re-encodes to the bytes it was read from. The hub reads headers and public fields only; nothing
 //! here can open a body.

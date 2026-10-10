@@ -1,4 +1,4 @@
-// Joining by link (spec/v2.md 12.1) with the real core and no hub: the four parts of an invite go from hand to hand
+// Joining by link (spec/v1.md 12.1) with the real core and no hub: the four parts of an invite go from hand to hand
 // (`exchangeInvite`, LiveCoreTests.swift), and `PocketHub` (RecoveryTests.swift) keeps the log, the GroupInfos and
 // the Welcomes.
 import Foundation

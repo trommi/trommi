@@ -282,7 +282,7 @@ final class RealHubTests: XCTestCase {
     do { answer = try await first.hub.request("POST", "/rooms/\(b64u(roomId))/recovery-code", body: body) }
     catch let refused as HubError where refused.code == "incomplete" && refused.message.contains("another room epoch") {
       // WHERE THE HUB AND THE CORE PART (not the client): the SealedKey of a room Commit that replaces the recovery
-      // keys names the new room epoch (spec/v2.md 8.2, core/src); the hub of branch v2-hub wants the room epoch of
+      // keys names the new room epoch (spec/v1.md 8.2, core/src); the hub of branch v2-hub wants the room epoch of
       // the Commit's note for every Commit (hub/src/delivery.rs, the call of `check_sealed_key` in `commit_in`). The
       // refusal is the hub's last word: the device takes its Commit back and keeps the code in force. The rest of
       // this test runs once the hub follows 8.2.
@@ -362,7 +362,7 @@ final class RealHubTests: XCTestCase {
         } catch let refused as HubError where index == 1 && refused.code == "incomplete" && refused.message.contains("another room epoch") {
           // WHERE THE HUB AND THE CORE PART (not the client), as in testASecondDeviceSignsInWithThePassword: the hub
           // took the join (the first part) and refuses the Commit that removes the lost device and brings the new
-          // code, for the room epoch its SealedKey names (spec/v2.md 8.2). The recovery is given up at the hub and
+          // code, for the room epoch its SealedKey names (spec/v1.md 8.2). The recovery is given up at the hub and
           // on the device, which is in no room, as before. The rest of this test runs once the hub follows 8.2.
           XCTAssertEqual(refused.status, 400)
           if strict { XCTFail("the hub refuses the SealedKey of a Commit that replaces the recovery keys: \(refused)") }

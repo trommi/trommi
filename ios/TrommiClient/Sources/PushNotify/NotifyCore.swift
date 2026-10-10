@@ -6,7 +6,7 @@
 // on the device that holds its group, whose store the app owns. So the extension shows no content.
 import Foundation
 
-/** What a sealed APNs notification says (spec/v2.md 15.2, core `push::ApnsPush`). No content. */
+/** What a sealed APNs notification says (spec/v1.md 15.2, core `push::ApnsPush`). No content. */
 public struct ApnsPush: Equatable {
   /** The room something changed in (32 bytes). */
   public var roomId: [UInt8]

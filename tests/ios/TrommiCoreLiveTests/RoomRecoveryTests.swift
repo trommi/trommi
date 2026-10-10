@@ -1,4 +1,4 @@
-// Replacing the recovery code (spec/v2.md 8.6) and the recovery when every device is lost (8.7) through the engine
+// Replacing the recovery code (spec/v1.md 8.6) and the recovery when every device is lost (8.7) through the engine
 // (`Room`, Account.swift, RoomAccount.swift), with the real core and `PocketHub` behind the hub's routes
 // (PocketRoutes.swift). The account is the one a test fills in: its sealed copies are the real core's.
 import Foundation

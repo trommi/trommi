@@ -1,5 +1,5 @@
 {
-  "about": "Signing in to the hub (spec/v2.md section 12.3): HubAuth = room_id, hub<V>, device, challenge, and SignWithLabel(device's key, \"TrommiHubAuth\", HubAuth). The hub handed the challenge out at issued_at, good until expires_at. cases: what the hub answers when the sign-in (auth, signature) is posted for room_id to the hub of that address at now: 'signed in: <device>' or the code, by the order of its checks.",
+  "about": "Signing in to the hub (spec/v1.md section 12.3): HubAuth = room_id, hub<V>, device, challenge, and SignWithLabel(device's key, \"TrommiHubAuth\", HubAuth). The hub handed the challenge out at issued_at, good until expires_at. cases: what the hub answers when the sign-in (auth, signature) is posted for room_id to the hub of that address at now: 'signed in: <device>' or the code, by the order of its checks.",
   "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
   "cases": [
     {

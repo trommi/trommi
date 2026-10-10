@@ -1,4 +1,4 @@
-// Compat.swift: what this version of Trommi knows, and how it meets what a newer one wrote (spec/v2.md 9.0.4, 9.1.2
+// Compat.swift: what this version of Trommi knows, and how it meets what a newer one wrote (spec/v1.md 9.0.4, 9.1.2
 // and the hub's version answer.
 //
 // The rules every client follows:

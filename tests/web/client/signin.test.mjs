@@ -1,4 +1,4 @@
-// A new device that signs in with the recovery code (spec/v2.md 8.4) and then takes the hub's order: that it goes
+// A new device that signs in with the recovery code (spec/v1.md 8.4) and then takes the hub's order: that it goes
 // live, however the hub's answers are timed, and that a catch-up which takes long says how far it is. STAND-IN core
 // (real groups and envelopes of the binding) and FAKE hub: nothing here is evidence against a hub.
 import test from 'node:test'

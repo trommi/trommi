@@ -7,7 +7,7 @@
 //! beside the device's outbox. Every step takes that lock, calls the device, puts what follows from the answer
 //! into the journal and commits once: one record per step, and nothing leaves before it (`store.rs`).
 //!
-//! **The hub's order.** Everything of the room comes with one running change number (spec/v2.md 5.4.1). The
+//! **The hub's order.** Everything of the room comes with one running change number (spec/v1.md 5.4.1). The
 //! device has one cursor for the log's entries and the envelopes; the client hands it every item in that
 //! order, its own envelopes and Commits included: an envelope this device sent counts in the model when it
 //! comes back at its place, and a Commit it made is merged where the log shows it. A write therefore posts and

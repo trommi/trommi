@@ -1,4 +1,4 @@
-//! Trommi's protocol core (`spec/v2.md`): every key comes from MLS (RFC 9420) through OpenMLS, and Trommi's own
+//! Trommi's protocol core (`spec/v1.md`): every key comes from MLS (RFC 9420) through OpenMLS, and Trommi's own
 //! constructs (stored content, recovery, files, invites) run on the same primitives. One crate for the web app
 //! (WASM), the iOS app (UniFFI), the connector and the hub; there is no second implementation.
 //!

@@ -9,7 +9,7 @@ the hub, and turns what the core accepted into the model the views render.
 their real extension (`'./codec.ts'`). Nothing is compiled ahead: Node 26 runs `.ts` itself (type stripping, hence
 `erasableSyntaxOnly`), and the build erases the types for the browser.
 
-The bytes on the wire are [`spec/v2.md`](../../../spec/v2.md), the hub's routes
+The bytes on the wire are [`spec/v1.md`](../../../spec/v1.md), the hub's routes
 [`spec/hub-api.md`](../../../spec/hub-api.md). This file is the contract **between the client layer and its
 users**: the model the views read and the calls they make. Names are snake_case, ids lowercase hex, times in ms.
 (The core and the hub's JSON speak base64url and bytes; `ids.ts` converts.)
@@ -26,7 +26,7 @@ users**: the model the views read and the calls they make. Names are snake_case,
 | `client.ts` | The `Client`: the model, the human actions, timelines, files, invites, sessions, push, the local cache |
 | `room.ts` | How a device comes to hold a room: `foundRoom`, `openRoom`, `joinRoom`, `joinWithCode` |
 | `model.ts`, `model-shape.ts`, `types.ts` | The model's builder (no rules of its own), an empty model, the shapes |
-| `codec.ts` | Bodies: the JSON of spec/v2.md 9.1 and 10.5 ↔ the model's fields; register names; attachment references |
+| `codec.ts` | Bodies: the JSON of spec/v1.md 9.1 and 10.5 ↔ the model's fields; register names; attachment references |
 | `scribble.ts`, `ink.ts`, `palette.ts` | The Scribble Board: merge of items, snapshot file, packed points, colour tokens |
 | `work.ts` | A turn's work trail as the views fold it |
 | `store-idb.ts`, `tabs.ts` | The device's store and the cache on IndexedDB; one owner per browser profile ("Storage and tabs") |
@@ -234,7 +234,7 @@ await client.leaveRoom()                                  // → { key_epoch, hu
 ## The account
 
 `account.ts` (in the worker) and `account-remote.ts` (what the page calls): e-mail and password, passkeys, the
-Emergency Kit, each a sealed copy of the room's recovery code (spec/v2.md 8.8), made and opened by the core. The
+Emergency Kit, each a sealed copy of the room's recovery code (spec/v1.md 8.8), made and opened by the core. The
 steps that make a room (`createAccount`, `createAccountWithPasskey`, `loginWithPassword`, `loginWithPasskey`,
 `recoverWithKit`, `resetPassword`, `recoverWithCode`) run in a new worker that then holds the room; the others
 (`accountStatus`, `addAccount`, `makeEmergencyKit`, `changePassword`, `setPassword`, `checkUnlock`,

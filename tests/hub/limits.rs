@@ -1,5 +1,5 @@
 //! Every limit at its exact value: the last one that is taken and the first one that is refused, with its code.
-//! Limits of spec/v2.md section 16 and of spec/hub-api.md ("Decided for the first hub"); where a limit is large,
+//! Limits of spec/v1.md section 16 and of spec/hub-api.md ("Decided for the first hub"); where a limit is large,
 //! the hub is started with a small one (its setting is named), so that the boundary itself is what is tested.
 //! Also here: the admission queue, the pool for expensive work, and the policies set by configuration.
 
@@ -597,7 +597,7 @@ fn share_links_of_a_room() {
     share(now + day).refused(429, "too-many");
 }
 
-/// The limits of spec/v2.md section 16 at their real values, where a test can reach them: 256 agent devices, 32
+/// The limits of spec/v1.md section 16 at their real values, where a test can reach them: 256 agent devices, 32
 /// live helper sessions, 20 passkeys, a 48 KiB message, a 64 MiB file, a Share link of 180 days.
 #[test]
 fn the_defaults_at_their_exact_values() {
