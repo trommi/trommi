@@ -43,9 +43,10 @@ pub use device::{log_finding, CoreDevice};
 pub use error::{error_code_from_text, error_code_text, CoreError, ErrorCode};
 pub use files::*;
 pub use invite::{
-    check_emoji, hub_address, invite_link_parse, CheckCode, EmojiWord, InviteAccepted,
-    InviteConfirmed, InviteLinkParts, InviteOpened, InviteRole, InviteStep, InviteStepKind,
-    JoinRequest, SignedOffer, SignedRequest, SignedReveal,
+    check_emoji, hub_address, invite_clock_tolerance_ms, invite_life_ms, invite_link_check,
+    invite_link_parse, CheckCode, EmojiWord, InviteAccepted, InviteConfirmed, InviteLinkParts,
+    InviteOpened, InviteRole, InviteStep, InviteStepKind, JoinLink, JoinRequest, SignedOffer,
+    SignedRequest, SignedReveal,
 };
 pub use push::*;
 pub use records::*;

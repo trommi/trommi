@@ -332,6 +332,32 @@
       ],
       "returns": "InviteLinkParts"
     },
+    "inviteLinkCheck": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        },
+        {
+          "name": "nowMs",
+          "type": "number"
+        }
+      ],
+      "returns": "InviteLinkParts"
+    },
+    "inviteLifeMs": {
+      "arguments": [
+        {
+          "name": "role",
+          "type": "InviteRole"
+        }
+      ],
+      "returns": "number"
+    },
+    "inviteClockToleranceMs": {
+      "arguments": [],
+      "returns": "number"
+    },
     "checkEmoji": {
       "arguments": [],
       "returns": "list<EmojiWord>"
@@ -1479,6 +1505,19 @@
         ],
         "returns": "void"
       },
+      "joinLink": {
+        "arguments": [
+          {
+            "name": "link",
+            "type": "text"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "JoinLink"
+      },
       "joinRequest": {
         "arguments": [
           {
@@ -1799,11 +1838,13 @@
       "link": "text",
       "expiresAt": "number",
       "offer": "bytes",
-      "signature": "bytes"
+      "signature": "bytes",
+      "mac": "bytes"
     },
     "SignedOffer": {
       "offer": "bytes",
-      "signature": "bytes"
+      "signature": "bytes",
+      "mac": "bytes"
     },
     "SignedRequest": {
       "request": "bytes",
@@ -1818,7 +1859,14 @@
       "app": "text",
       "hub": "text",
       "roomId": "bytes",
-      "inviteId": "bytes"
+      "inviteId": "bytes",
+      "expiresAt": "number"
+    },
+    "JoinLink": {
+      "hub": "text",
+      "roomId": "bytes",
+      "inviteId": "bytes",
+      "expiresAt": "number"
     },
     "EmojiWord": {
       "emoji": "text",
