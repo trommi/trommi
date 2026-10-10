@@ -683,10 +683,14 @@ impl ShareLink {
 
     /// The link as text. It holds the secret and the key: it is for the person to hand on, never for a log.
     pub fn to_text(&self) -> SecretBytes {
-        // Room for the whole link, so that no shorter copy of it is left behind while it grows.
-        let mut text = Zeroizing::new(String::with_capacity(self.app.len() + 160));
+        // Room for the whole link, so that no shorter copy of it is left behind while it grows: the path, the
+        // share id (22), `#` and three parts of 43 with their two dots.
+        const PATH: &str = "/artifact/";
+        let mut text = Zeroizing::new(String::with_capacity(
+            self.app.len() + PATH.len() + 22 + 1 + 3 * 43 + 2,
+        ));
         text.push_str(&self.app);
-        text.push_str("/artifact/");
+        text.push_str(PATH);
         text.push_str(&self.share_id.to_base64url());
         text.push('#');
         text.push_str(&Zeroizing::new(ids::base64url_encode(self.secret.expose())));

@@ -155,7 +155,7 @@ fn no_freed_block_holds_a_secret() {
     // An attachment's key, and a Share link read, written and compared.
     let id = ids::base64url_encode(&[0xF1; 16]);
     let hash = Hash32::new([7; 32]).to_base64url();
-    let link = format!("{APP}/a/{id}#{KEY_TEXT}.{KEY_TEXT}.{hash}");
+    let link = format!("{APP}/artifact/{id}#{KEY_TEXT}.{KEY_TEXT}.{hash}");
     assert_eq!(
         left_behind(|| {
             let file = FileRef::from_base64url(&id, KEY_TEXT, &hash).unwrap();
