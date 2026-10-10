@@ -340,14 +340,19 @@ final class RealHubTests: XCTestCase {
     // POST /v2/rooms/{room}/recovery: from here on the room takes nothing else for ten minutes.
     let opened = try await hub.request("POST", "/rooms/\(room)/recovery")
     let recovery = try XCTUnwrap(opened["recovery_id"] as? String)
-    let served = try await ServedByHub(hub: hub).room { try self.tools.recoveryAnchor(code: code, room: roomId, sealedKeys: $0).epoch }.served
-    let plan = try device.prepareRecovery(code, served: served)
+    let reader = ServedByHub(hub: hub)
+    let read = try await reader.room { try self.tools.recoveryAnchor(code: code, room: roomId, sealedKeys: $0).epoch }
+    try device.recoveryPlanStart(code, served: read.start)
+    try await reader.commits(of: read.groups) { try device.recoveryPlanSlice($0) }
+    let plan = try device.recoveryPlanFinish(code, served: read.end)
     XCTAssertEqual(plan.removals.map(\.group), [roomId])
     XCTAssertEqual(plan.removals.first?.devices, [lost])
     // (the lost device stored nothing: GET /v2/groups/{group}/chains/{sender} is empty, its Cut is 0 and zeros)
     let chain = try await hub.chain(group: roomId, sender: lost, after: 0)
     XCTAssertEqual((chain["items"] as? [Any])?.count ?? 0, 0)
-    let built = try device.recover(code, served: served, chains: [], account: [], nowMs: nowMs())
+    try device.codeCheckStart(code, served: read.start)
+    try await reader.commits(of: read.groups) { try device.codeCheckSlice($0) }
+    let built = try device.recoverChecked(code, served: read.end, chains: [], account: [], nowMs: nowMs())
     XCTAssertEqual(PocketHub.waiting(device).map(\.kind), [11, 11, 12])
     for (index, entry) in PocketHub.waiting(device).enumerated() {
       XCTAssertTrue(built.outbox.contains(entry.id))

@@ -24,9 +24,11 @@
 //                holdsRecoveryMac, keyIsConfirmed, sendRecoveryAuth, newRecoveryCode, replaceCode
 //
 //   REAL, beside Core.swift (bound here and tested; the engine `Room` has no call for them yet):
-//                LiveCore.recoveryAnchor, buildVersions; LiveDevice.joinRoomWithCode and joinSessionWithCode (used
-//                by joinWithRecoveryCode), prepareRecovery, recover (with the removed devices' chains), learnHistory,
-//                postSealedKey, verifyFounding, isHuman, disallowed, roomRoles.
+//                LiveCore.recoveryAnchor, buildVersions; LiveDevice.codeCheckStart, codeCheckSlice,
+//                joinRoomChecked, sessionCheckStart, sessionCheckSlice, joinSessionChecked (used by
+//                joinWithRecoveryCode), recoveryPlanStart, recoveryPlanSlice, recoveryPlanFinish, recoverChecked (with
+//                the removed devices' chains), postSealedKey, verifyFounding, isHuman, disallowed, roomRoles.
+//   CoreDevice, in steps: learnStart, learnSlice, learnFinish, learnAbandon (RoomPast.swift).
 //
 //   IN THE BINDING AND BOUND NOWHERE HERE:
 //     an agent's or helper device's, which a human device never calls: the command gate (command, commandFinished,
@@ -39,7 +41,10 @@
 //     files in pieces and their links: fileLayout, fileChunk, openFileChunk (the whole file goes through
 //                FileEncryptor and FileDecryptor here), shareLinkParse, checkShareExpiry (the web app opens a link);
 //     passkeys: generateUserHandle, passkeyPrfInput (passkeyWrapKey is bound: `sealCode` and `openCode`);
-//     push: openApnsPush is bound by NotifyCoreLive, for the notification extension; readWebPush is the web's.
+//     push: openApnsPush is bound by NotifyCoreLive, for the notification extension; readWebPush is the web's;
+//     a whole history in one call: learnHistory, joinRoomWithCode, joinSessionWithCode, prepareRecovery, recover
+//                (the same checks as the steps above, but one call holds every Commit of a room; the tests have
+//                them over the steps: tests/ios/TrommiCoreLiveTests/ServedInSlices.swift).
 //
 //   WHAT THE BINDING DOES NOT HAVE: a content key handed out, and a call that opens an envelope without a device.
 //                So the notification extension opens no envelope (NotifyCoreLive.swift).

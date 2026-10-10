@@ -253,6 +253,41 @@ final class RoomRecoveryTests: XCTestCase {
     XCTAssertNil(try again.store.load().codeJoin)
     XCTAssertNil(try LocalKey.read(item, dir: folder), "the code is forgotten once the join has finished")
   }
+  /// SIGNING IN WITH THE CODE TO A ROOM WITH A LONG HISTORY (8.4, 8.5). The room group and a session group hold
+  /// more Commits together than one slice (256) and than one page of a log: the logs are read page by page, handed
+  /// to the core in slices in the hub's order across the two groups, and the device joins both.
+  func testASignInWalksAHistoryLongerThanOneSlice() async throws {
+    let secret = try tools.generateRecoveryCode()
+    let a = try newDevice(), agent = try newDevice()
+    let room = try a.foundRoom(recoveryCode: secret, nowMs: nowMs())
+    try hub.post(a)
+    let invite = try exchangeInvite(from: a, to: agent, role: .agent, tools: tools)
+    try agent.joinObserve(groupInfo: try XCTUnwrap(hub.infos[room]?[0]))
+    _ = try a.inviteConfirm(invite: invite.invite, numbers: invite.inviterShows, requestHash: invite.requestHash, matches: true, nowMs: nowMs())
+    try hub.post(a)
+    guard case .foundSession(_, _, let keyPackage)? = try a.inviteSteps().first else { return XCTFail("the invite asks for no session") }
+    let session = room + (try a.foundSession(agent: agent.id, keyPackages: [keyPackage], nowMs: nowMs()))
+    try hub.post(a)
+    // (the two groups' Commits interleave in the hub's order)
+    for at in 0..<400 {
+      _ = try a.update(group: at % 5 == 0 ? session : room, forced: true, nowMs: nowMs())
+      try hub.post(a)
+    }
+    func commits(_ group: GroupId) -> Int { hub.log.filter { $0.group == group }.count }
+    XCTAssertGreaterThan(commits(room), Slices.maxCommits)
+    XCTAssertGreaterThan(commits(session), 64)
+
+    let base = try scratchFolder(self)
+    let joined = try await Room.joinWithRecoveryCode(hubURL: PocketRoutes.url, roomId: hex(room), code: secret, base: base)
+    addTeardownBlock { await joined.shutdown() }
+    _ = try await joined.sync()
+    try await joined.flush()
+    _ = try await joined.sync()
+    let device = try XCTUnwrap(joined.device as? LiveDevice)
+    XCTAssertEqual(Set(try device.groups().map(\.group)), [room, session])
+    XCTAssertGreaterThan(PocketRoutes.asked.filter { $0.hasSuffix("/groups/\(b64u(room))/log") }.count, 2, "the log is read in pages")
+  }
+
   /// The join of the room group is taken and its answer is lost: the room group's log, handed to the core, holds
   /// the device's own join, so the sign-in goes on with this device; nothing is posted twice.
   func testALostAnswerToATakenJoinIsSettledByTheLog() async throws {

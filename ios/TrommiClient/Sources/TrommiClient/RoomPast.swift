@@ -1,11 +1,12 @@
 // RoomPast.swift: what was in the room before this device came. A device that joined by link, or was added to a
 // session group by a Welcome, holds each group from the epoch it joined at; the core takes an envelope of an earlier
-// epoch only once it learned the group's past from its public history (`CoreDevice.learnHistory`, spec/v1.md 4.6).
+// epoch only once it learned the group's past from its public history (`CoreDevice.learnStart`, spec/v1.md 4.6).
 //
 // What is left to do is kept in room.json (`RoomRecord.past`), so an interrupted run goes on at the next sync:
 //
-//   learn      per group: the founding GroupInfo and the Commits of its log are fetched and handed to the core, the
-//              room group first, then main sessions, then helper sessions;
+//   learn      per group: the founding GroupInfo and the Commits of its log are fetched page by page and handed to
+//              the core in slices (PastWalk.swift), the room group first, then main sessions, then helper sessions; a
+//              walk cut short (the hub failed, the app ended) starts again from the founding at the next sync;
 //   read back  the board is emptied and the hub's changes are read again from the start, in the hub's order. An
 //              envelope below the device's cursor is handed to the core as the next of its sender's chain; one the
 //              chain holds already is read again for display. The keys of the old epochs come by the handover of
@@ -43,6 +44,36 @@ extension Room {
   }
 
   /**
+   * Walks the past of `group` (PastWalk.swift): its founding GroupInfo, then its log page by page, each page in
+   * slices, until the walk reaches the epoch this device's own knowledge begins at; then the core compares and
+   * writes. A failure, of the hub or of the core, ends the walk: the next try starts again from the founding.
+   * How many epochs were recorded.
+   */
+  private func learnPast(of group: GroupId) async throws -> UInt64 {
+    let founding = try await noted { try await hub.groupInfoBytes(group, epoch: 0) }.bytes
+    var progress = try await onCore { try $0.learnStart(group: group, founding: founding) }
+    do {
+      var pages = GroupLogPages(hub: hub, group: group)
+      var cap = Slices.maxCommits
+      while !progress.reachedEnd, let page = try await noted({ try await pages.next() }) {
+        let (reached, halved) = try await onCore { device -> (LearnProgress, Int) in
+          var at = progress, cap = cap
+          try Slices.feed(page, size: { $0.commit.count }, cap: &cap) { slice in
+            at = try device.learnSlice(group: group, commits: slice)
+            return !at.reachedEnd
+          }
+          return (at, cap)
+        }
+        progress = reached; cap = halved
+      }
+      return try await onCore { try $0.learnFinish(group: group) }
+    } catch {
+      try? await onCore { $0.learnAbandon(group: group) }
+      throw error
+    }
+  }
+
+  /**
    * Does what is left to do for the past (see the head of this file); nothing when nothing is left. Inside `serial`.
    * A failure of the hub is thrown with everything still noted: the next sync goes on. A group whose turn has not
    * come (`room-behind`, `group-behind`) stays noted; a history that is not the group's own (`bad-group`) is a
@@ -54,9 +85,8 @@ extension Room {
     for id in noted.toLearn.sorted(by: { learningRank($0) < learningRank($1) }) {
       // (a group this device is no longer in has no past to show)
       guard groups[id] != nil, let group = try? unhex(id) else { notePast { $0.toLearn.removeAll { $0 == id } }; continue }
-      let served = try await self.noted { try await hub.history(of: group) }
       do {
-        let epochs = try await onCore { try $0.learnHistory(group: group, founding: served.founding, commits: served.commits) }
+        let epochs = try await learnPast(of: group)
         notePast { $0.toLearn.removeAll { $0 == id }; if epochs > 0 && $0.passedOver { $0.readBack = true } }
       } catch let e as TrommiError where e.code == "room-behind" || e.code == "group-behind" {
         continue

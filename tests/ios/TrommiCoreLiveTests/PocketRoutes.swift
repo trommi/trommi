@@ -126,9 +126,11 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
           commits += 1
         case .message(let message): item["kind"] = "message"; item["epoch"] = commits; item["bytes"] = b64u(message)
         }
-        if n > after { items.append(item) }
+        if n > after && (query["kind"] != "commit" || item["kind"] as? String == "commit") { items.append(item) }
       }
-      return (200, ["items": items, "more": false])
+      // (a page of at most `limit` items, as the hub's route: a long log is read over more than one)
+      let limit = query["limit"].flatMap { Int($0) } ?? 200
+      return (200, ["items": Array(items.prefix(limit)), "more": items.count > limit])
     case ("GET", 4, "groups") where path[2] == "chains":
       var seq: UInt64 = 0
       let items = hub.chains.filter { $0.group == id(path[1]) && $0.sender == id(path[3]) }.map { e -> JSON in seq += 1; return ["change": e.change, "envelope": b64u(e.bytes), "seq": seq] }

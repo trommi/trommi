@@ -291,7 +291,12 @@ Keychain (`join-<folder>`) until the next sync has joined them, and deletes it t
 **Signing in on a new device** (8.4, `Room.joinWithRecoveryCode`) is two steps. Until the hub accepted the join of
 the room group, a failure leaves nothing on the device. From then on the device is kept whatever happens:
 `room.json` is written at once, the session groups are joined after it, and what is left of them (the hub did not
-answer, the app was ended) is finished by the next sync.
+answer, the app was ended) is finished by the next sync. The room is checked in steps, never whole in one call
+(`ServedByHub` in `LiveRecovery.swift`): the GroupInfos first (founding, anchor, the current one of the room group
+and of every live session group), then the Commits of all those logs, page by page and only up to the epoch each
+current GroupInfo names, handed to the core in slices of at most 256 Commits and 16 MiB in the hub's order across
+the groups (`codeCheckStart`, `codeCheckSlice`, `joinRoomChecked`; a session: `sessionCheckStart`,
+`sessionCheckSlice`, `joinSessionChecked`). A check lives in the core's memory only: a relaunch starts it again.
 
 **A new recovery code** (8.6, `Room.replaceRecoveryCode`; Settings → Account → "New Recovery Code…", and offered
 when a device is removed under Devices). The password opens the code in force; the core makes the new code and the
@@ -302,7 +307,8 @@ stays in the outbox, no kit is shown, and the person makes a new kit with the pa
 
 **When every device is lost** (8.7, `Room.recoverAccount`; "New password" → "All my devices are lost", after a
 confirmation that names it). The kit's words open the code; the new device opens a recovery at the hub, checks the
-room, reads the chains of the devices that go (handed to the core as ONE list rising by change number across
+room in steps as a sign-in does (twice: once for the plan, `recoveryPlanStart`, and once for the device,
+`codeCheckStart` before `recoverChecked`), reads the chains of the devices that go (handed to the core as ONE list rising by change number across
 devices and groups, never chain after chain), and posts the joins, the removals and the new code; the hub publishes
 all of it at once or nothing. The account gets a new kit and the new password; the kit's page comes next, as after
 "Create account". An account without an e-mail needs a new passkey for this, so it waits for passkeys to be switched
@@ -536,8 +542,9 @@ chrome; the minimum is iOS 27.
   device that holds the group (`receiveEnvelope`), whose store the app owns. The Notification Service Extension
   therefore opens the push itself (room, change, urgency) and shows the fixed text.
 - **Content from before a device came by link** is read once the group's past is learned (`RoomPast.swift`: the
-  founding GroupInfo and the Commits of the group's log go to `learnHistory`, then the changes are read back in the
-  hub's order; what is left to do is noted in `room.json`, so an interrupted run goes on at the next sync). The old
+  founding GroupInfo and the Commits of the group's log, read page by page, go to the core in slices of at most
+  256 Commits and 16 MiB (`learnStart`, `learnSlice`, `learnFinish`; `PastWalk.swift`), then the changes are read
+  back in the hub's order; what is left to do is noted in `room.json`, so an interrupted run goes on at the next sync). The old
   items open when the inviting device's key handover arrived; until then they take their places without bodies.
   Not done: the read back fetches the room's changes from the start again (once per learned past), and the board
   is rebuilt from them rather than patched.
