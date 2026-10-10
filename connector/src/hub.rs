@@ -42,7 +42,10 @@ pub fn unb64(value: &Value, field: &str) -> Result<Vec<u8>> {
 
 /// Answers a challenge: the device's `HubAuth` and its signature.
 pub type Signer = Arc<
-    dyn Fn([u8; 32]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SignedHubAuth>> + Send>>
+    dyn Fn(
+            [u8; 32],
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SignedHubAuth>> + Send>>
         + Send
         + Sync,
 >;
