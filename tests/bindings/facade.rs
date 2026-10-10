@@ -7,11 +7,12 @@ use trommi_core::hub_auth::{self, HubAddress, IssuedChallenge};
 use trommi_core::ids::RoomId;
 use trommi_core::store::{Batch, Loaded, Storage, StorageError};
 use trommi_core_ffi::{
-    base64url_decode, check_emoji, error_code_from_text, error_code_text, format_recovery_code,
-    generate_kit_words, generate_recovery_code, hub_address, invite_link_parse, kit_keys,
-    log_finding, open_recovery_code, parse_recovery_code, recovery_anchor, recovery_sign_in,
-    seal_recovery_code, self_test, versions, AccountWay, CoreDevice, CoreError, Draft, DraftKind,
-    ErrorCode, FileDecryptor, FileEncryptor, LogFinding, OutboxKind, ServedGroup, ServedRoom,
+    account_id_parse, base64url_decode, check_emoji, envelope_header, error_code_from_text,
+    error_code_text, format_recovery_code, generate_kit_words, generate_recovery_code, hub_address,
+    invite_link_parse, kit_keys, kit_keys_for, log_finding, open_recovery_code,
+    parse_recovery_code, recovery_anchor, recovery_sign_in, seal_recovery_code, self_test,
+    versions, AccountName, AccountWay, CoreDevice, CoreError, Draft, DraftKind, ErrorCode,
+    FileDecryptor, FileEncryptor, LogFinding, OutboxKind, ServedGroup, ServedRoom,
 };
 use trommi_tests::{now, MemoryStorage};
 
@@ -172,6 +173,75 @@ fn a_draft_that_lacks_what_its_kind_needs_is_bad_format_and_uses_no_number() {
     );
     assert_eq!(
         code_of(invite_link_parse("https://app.example/join#v2.x".into())),
+        ErrorCode::BadFormat
+    );
+}
+
+#[test]
+fn the_account_vectors_hold_through_the_facade() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../spec/vectors/account.json")).expect("the vectors");
+    let text = |key: &str| vectors[key].as_str().expect("text").to_owned();
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let unhex = |text: &str| -> Vec<u8> {
+        (0..text.len() / 2)
+            .map(|at| u8::from_str_radix(&text[at * 2..at * 2 + 2], 16).expect("hex"))
+            .collect()
+    };
+    let id = text("account_id_text");
+    assert_eq!(account_id_parse(id.clone()).expect("an id"), id);
+    let typed = format!(" {} ", id.to_uppercase().replace('-', " "));
+    assert_eq!(account_id_parse(typed).expect("tidied"), id);
+    assert_eq!(
+        code_of(account_id_parse(format!("{id}0"))),
+        ErrorCode::BadFormat
+    );
+    for refused in vectors["refused_id_texts"].as_array().expect("texts") {
+        let name = AccountName {
+            email: None,
+            id: Some(refused["text"].as_str().expect("text").to_owned()),
+        };
+        assert_eq!(
+            code_of(kit_keys_for(name, text("words"))),
+            ErrorCode::BadFormat,
+            "{}",
+            refused["why"]
+        );
+    }
+    for case in vectors["cases"].as_array().expect("cases") {
+        let name = AccountName {
+            email: case["account"]["email"].as_str().map(str::to_owned),
+            id: case["account"]["id"].as_str().map(str::to_owned),
+        };
+        let keys = kit_keys_for(name, text("words")).expect("keys");
+        assert_eq!(
+            hex(&keys.auth_key),
+            case["auth_key"].as_str().expect("a key")
+        );
+        assert_eq!(
+            hex(&keys.wrap_key),
+            case["wrap_key"].as_str().expect("a key")
+        );
+        let opened = open_recovery_code(
+            keys.wrap_key.clone(),
+            unhex(&text("room_id")),
+            AccountWay::Kit,
+            None,
+            unhex(&text("sealed")),
+        );
+        let result = match opened {
+            Ok(code) => format!("opens: {}", hex(&code)),
+            Err(error) => error.code().text().to_owned(),
+        };
+        assert_eq!(
+            result,
+            case["result"].as_str().expect("a result"),
+            "{}",
+            case["why"]
+        );
+    }
+    assert_eq!(
+        code_of(envelope_header(vec![1, 2, 3])),
         ErrorCode::BadFormat
     );
 }
