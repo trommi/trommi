@@ -61,6 +61,9 @@ class Hub {
       } else if (entry.kind === 'envelope') {
         // A stored envelope has its place in the same one order as the log's entries.
         change = ++this.change
+        // The header reads without a device, and is the one the outbox entry is for.
+        const info = this.world.core.envelopeHeader(part(0))
+        check(same(info.header.group, entry.group) && same(info.header.sender, await device.call('id')) && !info.pruned, 'the envelope\'s header is another')
         this.log.push({ change, group: entry.group, kind: 'envelope', bytes: part(0), from: await device.call('id') })
       } else if (entry.kind === 'relayMessage') {
         // Passed on, never stored: no change number.
