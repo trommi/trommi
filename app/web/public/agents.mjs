@@ -189,6 +189,21 @@ controller('set-find', class extends Controller {
   }
 })
 
+/**
+ * What Delete of session `a` takes along: `all`, it and the helpers its own agent runs under it (another agent's main
+ * session the human put under it is no helper: it stays, and so does a session on another desk or in the archive);
+ * `devices`, the agent devices that carried only those (not this device, no person's device). me: this device's id;
+ * human(d): whether d is a person's device. m: the board model (everyone: every session, of every desk).
+ */
+export function deletionOf(m, a, { me = null, human = () => false } = {}) {
+  const all = [a, ...m.everyone.filter(x => x.id !== a.id && x.parent === a.id && (!x.main || x.agent_device_id === a.agent_device_id))]
+  const ids = new Set(all.map(x => x.id))
+  // (a device that also carries a session that stays, on any desk, is left in the room)
+  const stays = d => m.everyone.some(x => !ids.has(x.id) && !x.removed && (!x.archived || x.online) && x.agent_device_id === d)
+  const devices = [...new Set(all.map(x => x.agent_device_id).filter(Boolean))].filter(d => d !== me && !human(d) && !stays(d))
+  return { all, devices }
+}
+
 export function register(t) {
   const { BASE, hub } = t
   const show = (req, res, url, errors, code = 200) => {
@@ -286,14 +301,12 @@ export function register(t) {
     const fail = text => (t.wantsStream(req) ? t.sendStream(req, res, t.toast({ head: 'Not deleted', line: text, role: 'alert' })) : t.redirect(res, `${BASE}/chat/${encodeURIComponent(id)}`))
     if (!a) return fail('no such session')
     if (a.own) return fail('this session runs on your own device')
-    const all = [a, ...m.agents.filter(x => x.parent === a.id)], ids = new Set(all.map(x => x.id))
     const client = hub.client, members = client?.model?.members
     const me = client?.model?.room?.my_device_id
+    const { all, devices } = deletionOf(m, a, { me, human: d => members?.get(d)?.device_role === 'human' })
     try {
       for (const c of m.state.cards) if (ids.has(c.agent) && c.status === 'open' && c.kind !== 'permission') await hub.shred(c.id, '')
       for (const x of all) await hub.editSession({ agent: x.id, archived: true, deleting: true })
-      // (a device that also carries a session that stays is left in the room)
-      const devices = [...new Set(all.map(x => x.agent_device_id).filter(Boolean))].filter(d => d !== me && members?.get(d)?.device_role !== 'human' && !m.agents.some(x => !ids.has(x.id) && x.agent_device_id === d))
       if (devices.length) await client.removeDevices(devices)
     } catch (err) { return fail(sayError(err, 'the board did not take it')) }
     if (!t.wantsStream(req)) return t.redirect(res, `${BASE}/`)

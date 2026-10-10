@@ -426,13 +426,16 @@ public final class DeskModel {
       let wanted: String? = set.has("parent") ? set["parent"].string : claimed.flatMap { devToAgent[$0] ?? $0 }
       let parent = wanted.flatMap { agentToDev[$0] != nil ? $0 : nil }
       let closedChild = p["closed_at"].truthy && p["parent_session"].truthy && s.openCardIds.isEmpty
+      // Hidden (Archive, Delete, a closed helper); a main session whose agent is connected again shows, whatever hid it (as the web's).
+      let chosen = set.has("archived") ? set["archived"].truthy : closedChild
+      let back = s.isOnline && s.isActive && s.parentSessionId == nil && parent == nil
       let given = p["agent_name"].string.flatMap { $0.isEmpty ? nil : $0 } ?? (s.deviceName.isEmpty ? id : s.deviceName)
       let label = set["name"].string ?? ""
       let icon = set["icon"].string.flatMap { $0.isEmpty ? nil : $0 } ?? p["icon"].string ?? ""
       var a = Agent(id: id, deviceId: key, sessionId: key, agentDeviceId: s.agentDeviceId, given: given, name: label.isEmpty ? given : label, label: label, icon: icon,
                     mark: icon.isEmpty ? id : icon, online: s.isOnline, offlineSince: s.offlineSince, model: p["model"].string ?? "", task: p["task"].string ?? "",
                     starred: crown == key || (crown != nil && crown == s.agentDeviceId), parent: parent, main: p["is_main"].truthy, desk: set["desk"].string,
-                    archived: set.has("archived") ? set["archived"].truthy : closedChild, position: set["position"].int ?? i, seen: s.lastActivityAt, active: s.lastActivityAt,
+                    archived: chosen && !back, position: set["position"].int ?? i, seen: s.lastActivityAt, active: s.lastActivityAt,
                     deviceActive: s.agentDeviceId.flatMap { lastOfDevice[$0] } ?? 0, removed: !s.isActive,
                     own: s.agentDeviceId == m.myDeviceId || (s.agentDeviceId.flatMap { m.members[$0]?.deviceRole } == "human"), link: s.link, heardUpTo: s.heardUpTo)
       a.hue = Pen.hueFor(id: a.id, mark: a.mark)

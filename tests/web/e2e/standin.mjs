@@ -158,6 +158,35 @@ export const steps = [
     check(await A.js("return !document.querySelector('#desk-invite-go')"), '"Invite your first agent" is gone')
   }],
 
+  ['renamed, then hidden while it was away: the connected session is one row under its new name, and stays', async ctx => {
+    const { check } = ctx.run
+    const A = await ctx.profile('A')
+    await ui.openDesk(A)
+    const rows = () => A.js("return [...document.querySelectorAll('#agents .agent-row[data-unit]')].map(r => r.querySelector('strong')?.textContent)")
+    const sid = await A.js("return [...trommi.client.model.sessions.values()].find(s => s.group_id && !s.parent_session_id).session_id")
+    const id = await A.js("return document.querySelector('#agents .agent-row[data-unit]').dataset.unit")
+    const edit = fields => A.js(`const r = await fetch('/sessions/${id}/edit', { method: 'POST', headers: { accept: 'text/vnd.turbo-stream.html' }, body: new URLSearchParams(${JSON.stringify({ stay: '1', ...fields })}) }); return r.status`)
+    // the app's Rename (the session's More menu): the human register session/<id> { name }
+    check(await edit({ label: 'Trommi' }) === 200, 'the rename is taken')
+    await A.until("[...document.querySelectorAll('#agents .agent-row[data-unit] strong')].some(s => s.textContent === 'Trommi')", 'the new name in the sidebar')
+    check(JSON.stringify(await rows()) === '["Trommi"]', 'one row, under the new name', await rows())
+    // its agent is connected (the fake hub tells no presence by itself: the event the real hub sends)
+    const room = ctx.fake.state.rooms.values().next().value
+    const device = Buffer.from(await A.js(`return trommi.client.model.sessions.get('${sid}').agent_device_id`), 'hex').toString('base64url')
+    ctx.fake.push(room.room_id, `event: presence\ndata: ${JSON.stringify({ device, online: true, hears: true })}\n\n`)
+    await A.until(`trommi.client.model.sessions.get('${sid}').is_online`, 'the session connected')
+    // the archived mark that Archive or Delete leaves while the agent is away; its agent is connected now. As on the
+    // owner's room, the hub did not archive the group (it stays live): only the human register hides it.
+    ctx.fake.faults.add({ method: 'POST', path: /\/archive$/, refuse: { error: 'forbidden', status: 403 }, times: 5 })
+    await A.js(`await trommi.client.setRegisters({ ['session/${sid}']: { ...(trommi.client.model.human.session_settings.get('${sid}') ?? {}), archived: true } })`)
+    await A.until(`trommi.client.model.human.session_settings.get('${sid}')?.archived === true`, 'the archived mark in the model')
+    await sleep(500)
+    check(JSON.stringify(await rows()) === '["Trommi"]', 'the connected session stays in the sidebar, one row', { rows: await rows(), session: await A.js(`const s = trommi.client.model.sessions.get('${sid}'); return { online: s.is_online, active: s.is_active, parent: s.parent_session_id, group_archived: s.group_archived, settings: s.settings }`) })
+    ctx.fake.faults.clear()
+    await A.js(`await trommi.client.setRegisters({ ['session/${sid}']: { ...trommi.client.model.human.session_settings.get('${sid}'), archived: false, name: '' } })`)
+    await A.until("[...document.querySelectorAll('#agents .agent-row[data-unit] strong')].some(s => s.textContent === 'night-agent')", 'its own name again')
+  }],
+
   // (regression: before 4933dc3 the engine took the binding's `not-found` for a hub's refusal whenever the stream
   // showed the device its own Commit before the post's answer was handled, and stalled 30 s on it)
   ['the engine is not halted after the Commits so far (no "chain-halted" alert, nothing blocked)', async ctx => {
