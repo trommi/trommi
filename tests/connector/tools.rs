@@ -730,3 +730,84 @@ async fn without_channel_and_monitor_board_events_wait_for_the_inbox_tool() {
     // was taken for deaf by mistake still hears it)
     mcp.close().await;
 }
+
+/// A link past its deadline is refused by the connector itself, at once and with a plain reason, before a slot
+/// is made or the hub is asked.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_expired_link_is_refused_before_anything_is_asked() {
+    let hub = HubProc::start().await;
+    let mut human = Human::found(&hub.url).await;
+    let seat = Seat::new(&hub.url);
+    // an agent invite lives 15 minutes, and two more are tolerated
+    let link = human.expired_link(20 * 60 * 1000).await;
+    // (the connector is built before the clock starts)
+    common::process::connector_binary();
+    let started = std::time::Instant::now();
+    let (joined, log) = seat.join(&link).await;
+    assert!(!joined, "{log}");
+    assert!(log.contains("expired"), "{log}");
+    assert_eq!(log.matches("make a new").count(), 1, "{log}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "refused without waiting: {log}"
+    );
+    let keys = seat.home.path().join("keys");
+    let left: Vec<_> = std::fs::read_dir(&keys)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    assert!(left.is_empty(), "nothing was written: {left:?}");
+}
+
+/// A restart whose old process has not ended: the new process takes the lease, and its stream (which carries
+/// the lease) replaces the old one's at the hub. The old process is answered `lease-lost` and ends without
+/// asking again; only the new one hears the human.
+#[tokio::test(flavor = "multi_thread")]
+async fn of_two_processes_of_one_device_only_the_lease_holder_streams() {
+    let (_hub, mut human, seat, group) = joined().await;
+    let signal = |what: &str, pid: u32| {
+        let sent = std::process::Command::new("kill")
+            .args([what, &pid.to_string()])
+            .status()
+            .expect("kill runs");
+        assert!(sent.success());
+    };
+    let mut old = seat.serve().await;
+    old.ready().await;
+    let pid = old.child.id().expect("the old process");
+    // the old process stands still while its state is copied, and while the new one starts
+    signal("-STOP", pid);
+    let twin = seat.twin(pid);
+    let mut new = twin.serve().await;
+    new.ready().await;
+    signal("-CONT", pid);
+
+    // the old process ends by itself, soon, and does not come back
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(60), old.child.wait()).await;
+    assert!(
+        ended.is_ok(),
+        "the process that lost the lease ended (no reconnect loop)"
+    );
+
+    // the new one hears the human
+    human
+        .say(
+            &group,
+            json!({ "content_type": "message", "text": "Only the new one hears this." }),
+        )
+        .await
+        .expect("the human writes");
+    let heard = new.event("chat").await;
+    assert!(
+        heard.to_string().contains("Only the new one hears this."),
+        "{heard}"
+    );
+    // and signs and sends: its state is the device's, nothing halted it
+    let sent = new
+        .ok("reply", json!({ "text": "The new one answers." }))
+        .await;
+    assert!(sent.starts_with("sent"), "{sent}");
+    new.close().await;
+}
