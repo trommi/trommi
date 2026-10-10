@@ -42,6 +42,7 @@ Updates: `trommi-connector update`.
 - **Hub:** the server stores ciphertext and who is in which group, and pushes to your devices. It cannot read a
   message, a card, a file or a key.
 - **Connector:** one signed program that joins a Claude Code or Codex session to your room.
+  What the agent is told: [connector/prompt.md](connector/prompt.md).
 
 ## Under the hood
 
@@ -98,7 +99,8 @@ curl -fsS https://app.trommi.com/index.html -o index.html
 gh attestation verify index.html --repo trommi/trommi
 ```
 
-The hub's installation: `hub/deploy/install.sh`.
+The whole way from a commit to the running server, what goes wrong and what runs as root, and how content and keys
+are organised: [hub/deploy/README.md](hub/deploy/README.md).
 
 </details>
 
