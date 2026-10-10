@@ -2,14 +2,21 @@
 // local hub binary.   node tests/web/e2e/run.mjs real --app <app URL> --hub <hub URL> [--shots <folder>]
 // It builds nothing and starts nothing: it only drives headless Chromium against `--app`. What it does there, as a
 // person would: sign up → the Emergency Kit → the empty Desk → reload (still signed in, connection live) → the MLS
-// proof page → log out → log in again with the password → a SECOND browser profile logs in (which joins with the
-// recovery code, spec 8.4) → Settings shows the devices.
+// proof page → log out → log in again with the password → a SECOND browser profile JOINS BY LINK (the six check
+// emoji compared between the two, "They match") → a note written on the first is seen on the second, an edit on the
+// second is seen on the first → a small file attached to the note on the first is opened on the second, its bytes the
+// same → a desk made on the first (a register) is in the second's menu → a THIRD profile logs in with the password
+// (which joins with the recovery code, spec 8.4) → Settings shows the devices → the live stream stays open → on a
+// SECOND account of its own: forgot password (the one field "Email or account ID", the Emergency Kit's twelve words,
+// a new password) → a new kit → log in with the new password, the old one refused.
+// tests/web/e2e/stack.mjs is a local stand for it (the build and the hub's binary on one origin).
 //
-// It makes a real account on the hub it is pointed at. So, built in and not to be switched off:
-// - the address is `e2e-<16 random hex>@example.invalid` (a name that can never receive mail), nothing else;
-// - the password is random (32 characters), held in this process only, never printed and never written anywhere;
-//   the Emergency Kit's words likewise;
-// - ONE account per run (the limit is two; nothing here makes a second);
+// It makes real accounts on the hub it is pointed at. So, built in and not to be switched off:
+// - each address is `e2e-<16 random hex>@example.invalid` (a name that can never receive mail), nothing else;
+// - the passwords are random (32 characters), held in this process only, never printed and never written anywhere;
+//   the Emergency Kits' words likewise (no screenshot is taken while they are shown);
+// - TWO accounts per run at most: the first for everything but "forgot password", the second for that alone (a
+//   recovery removes every other device of its account, 8.7: done on the first it would end the run's other steps);
 // - when the hub says `rate-limited` (status 429) the run waits the `retry_after` it names, once, and tries that step
 //   once more; a second refusal ends the run with that as its result. Nothing is ever asked in a loop;
 // - `--app` and `--hub` must both be local (127.0.0.1, localhost) or both be remote: a mixed pair is refused.
@@ -21,10 +28,13 @@
 // end what would explain a failure that only production has: Content-Security-Policy violations (page and worker),
 // requests that failed or were blocked (status, the browser's reason, a CORS error), whether the live stream
 // (/v2/stream) opened and stayed open for 20 s and how soon its first bytes came (a buffering proxy holds them
-// back), the service worker's state, storage errors. The tested build (`<app>/gen/build.txt`) is printed first.
+// back), the service worker's state, storage errors. The tested build (`<app>/gen/build.txt`) is printed first, the
+// number of requests made to the hub last.
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
-import { openProfile, run, sleep, watch } from './harness.mjs'
+import { openProfile, run, sleep, TMP, watch } from './harness.mjs'
+import { appendNote, arrives, foldNote, NOTE, noteIs, openNote, picture, sha256 } from './real.mjs'
 import * as ui from './ui.mjs'
 
 const BUILT_FOR = 'https://hub.trommi.com'
@@ -49,12 +59,16 @@ export async function runRemote({ app, hub, shots = null }) {
   if (shots) seen.shots = path.resolve(shots)
   const r = run('deployed app + deployed hub')
   const start = hub === BUILT_FOR ? `${app}/` : `${app}/?hub=${encodeURIComponent(hub)}`
-  // the secrets of this run: in memory only
-  const email = `e2e-${crypto.randomBytes(8).toString('hex')}@example.invalid`
-  const password = crypto.randomBytes(24).toString('base64url')
-  let words = null
+  // the secrets of this run: in memory only. The second account is for "forgot password" alone.
+  const address = () => `e2e-${crypto.randomBytes(8).toString('hex')}@example.invalid`
+  const secret = () => crypto.randomBytes(24).toString('base64url')
+  const email = address(), password = secret()
+  const second = { email: address(), password: secret(), next: secret(), words: null }
+  let words = null, accounts = 0
   const profiles = {}
   const profile = async name => (profiles[name] ??= await openProfile(name, seen)).page
+  const closeProfile = async name => { await profiles[name]?.close().catch(() => {}); delete profiles[name] }
+  const hubPath = q => { const u = new URL(q.url); return (u.origin === hub || u.origin === app) && u.pathname.startsWith('/v2/') }
   let stopped = null, waited = false, n = 0
   const limited = from => seen.requests.slice(from).filter(q => q.status === 429)
 
@@ -105,6 +119,7 @@ export async function runRemote({ app, hub, shots = null }) {
       await A.click('#create-form button[type=submit]')
       await A.until("document.querySelector('#kit-gate[open] #kit-done') || document.querySelector('#ob-error')?.textContent.trim()", 'the Emergency Kit screen, or a refusal', 90000)
       if (!await A.js("return !!document.querySelector('#kit-gate #kit-done')")) throw new Error('the account was not made (the error line is below)')
+      accounts++
       words = await ui.readKit(A)
       r.check(words.split(' ').length === 12, 'twelve words were shown')
       // (the kit's words are on screen now: no screenshot of this step shows them, the kit is hidden again first)
@@ -137,18 +152,111 @@ export async function runRemote({ app, hub, shots = null }) {
       r.check(await A.js("return !document.querySelector('#kit-gate')"), 'no kit screen over the Desk after the log in')
     })
     if (!proved) await proof()
-    await step('a second browser profile logs in with the password (joins with the recovery code, 8.4); Settings shows the devices', 'B', async () => {
+    let joined = false
+    const ifJoined = () => { if (!joined) throw Object.assign(new Error('the second profile did not join'), { skip: true }) }
+    await step('a second browser profile JOINS BY LINK (Settings → Invite a Device): both show the same six emoji, "They match", it lands on the Desk, live', 'B', async () => {
       const A = await profile('A'), B = await profile('B')
-      await ui.logIn(B, start, email, password)
-      await B.until(`(${ui.LIVE}) || document.querySelector('#ob-error')?.textContent.trim()`, 'the Desk, or a refusal', 90000)
-      if (!await B.js(`return Boolean(${ui.LIVE})`)) throw new Error('the login was refused (the error line is below)')
-      for (const P of [A, B]) {
+      const link = await ui.deviceInvite(A)
+      r.check(/\/join#v2\./.test(link), 'Show Code gives a join link, its secret after the #', link.replace(/#.*/, '#…'))
+      await B.go(link)
+      await B.until("document.getElementById('check-code') || document.querySelector('.ob-error.is-shown')", 'six emoji on the new device, or an error line', 60000)
+      await A.until("document.querySelector('#set-device[data-state=confirm_code] .check-emoji') || document.querySelector('#set-device .room-error')?.textContent.trim()", 'six emoji on the inviting device, or an error line', 60000)
+      const [a, b] = [await ui.emoji(A, '#set-device[data-state=confirm_code]'), await ui.emoji(B, '#check-code')]
+      r.check(a.split(' ').length === 6, 'the inviting profile shows six emoji', a.split(' ').length)
+      r.check(a === b, 'both profiles show the same six emoji', a === b ? undefined : { inviting: a, joining: b })
+      r.note(`the six emoji on both: ${a}`)
+      await A.shot(`remote-${String(n + 1).padStart(2, '0')}-A-emoji`).catch(() => {})
+      if (a !== b || a.split(' ').length !== 6) return
+      await A.click('#set-device[data-state=confirm_code] .check-yes')
+      await ui.live(B, 'the new device live', 90000)
+      r.check(await B.js("return !!document.querySelector('#inbox') && !document.querySelector('#kit-gate')"), 'the Desk on the second profile')
+      await arrives(A, "document.querySelector('#set-device[data-state=joined]')", 'the inviting profile says the new device is in', 60000)
+      joined = true
+    })
+    let text = ''
+    await step('a note written on the first profile is seen on the second', 'B', async () => {
+      ifJoined()
+      const A = await profile('A'), B = await profile('B')
+      await ui.openDesk(A)
+      text = `Written on the first profile ${crypto.randomBytes(3).toString('hex')}.`
+      await openNote(A)
+      await A.type(NOTE, text)
+      await foldNote(A)
+      await arrives(A, "[...trommi.client.model.notes.values()].some(n => n.object_state === 'open' && !n.pending) && trommi.client.model.outbox.length === 0", 'the note saved on the first profile (nothing left to send)')
+      const took = await arrives(B, noteIs(text), 'the note on the second profile', 60000)
+      r.note(`the note stood on the second profile ${(took / 1000).toFixed(1)} s after it was saved on the first`)
+    })
+    await step('the second profile edits the note: the edit is seen on the first', 'A', async () => {
+      ifJoined()
+      const A = await profile('A'), B = await profile('B')
+      await openNote(B)
+      await appendNote(B, ' Edited on the second.')
+      await foldNote(B)
+      text += ' Edited on the second.'
+      await arrives(A, noteIs(text), 'the edit on the first profile', 60000)
+    })
+    await step('a small file (a picture) attached to the note on the first profile is opened on the second, its bytes the same', 'B', async () => {
+      ifJoined()
+      const A = await profile('A'), B = await profile('B')
+      const file = path.join(TMP, 'tmp', `remote-${crypto.randomBytes(4).toString('hex')}.png`), png = picture(64, 64)
+      fs.writeFileSync(file, png)
+      try {
+        await openNote(A)
+        await A.click('#corner-note-box .corner-note-clip')
+        await A.until("document.querySelector('#corner-note-box input[type=file]')", 'the note\'s file field')
+        await A.attach('#corner-note-box input[type=file]', [file])
+        await arrives(A, "document.querySelector('#corner-note-box .corner-note-file img')?.naturalWidth === 64", 'the picture on the note of the first profile', 60000)
+        await foldNote(A)
+      } finally { fs.rmSync(file, { force: true }) }
+      await arrives(B, "[...trommi.client.model.notes.values()].some(n => n.attachments?.length === 1)", 'the attachment in the second profile\'s model', 60000)
+      await openNote(B)
+      const decoded = "document.querySelector('#corner-note-box .corner-note-file img')?.naturalWidth === 64"
+      if (!await B.until(decoded, 'the picture on the second profile\'s note', 15000).then(() => true, () => false)) {
+        // (the corner note of a page that was open when the file came may draw it only once loaded again: real.mjs
+        // holds that as its own check; here the question is whether the file opens at all)
+        r.note('the second profile\'s open note did not draw the file as it arrived: loaded again to open it')
+        await B.reload()
+        await ui.live(B, 'live after the reload', 60000)
+        await openNote(B)
+        await arrives(B, decoded, 'the picture on the second profile\'s note, after a reload', 60000)
+      }
+      const got = await B.js(`const i = document.querySelector('#corner-note-box .corner-note-file img')
+        const b = new Uint8Array(await (await fetch(i.currentSrc)).arrayBuffer()), h = new Uint8Array(await crypto.subtle.digest('SHA-256', b))
+        return { size: b.length, sha256: [...h].map(x => x.toString(16).padStart(2, '0')).join('') }`)
+      r.check(got.size === png.length && got.sha256 === sha256(png), `the bytes the second profile opens are the ${png.length} bytes attached`, got)
+    })
+    await step('a desk made on the first profile (a register) is in the second profile\'s menu', 'B', async () => {
+      ifJoined()
+      const A = await profile('A'), B = await profile('B')
+      for (const P of [A, B]) { await P.key('Escape', 27); await ui.openDesk(P) }
+      const name = `Desk ${crypto.randomBytes(2).toString('hex')}`
+      const has = `[...document.querySelectorAll('#menu-desk-rows a.menu-desk b')].some(b => b.textContent === ${JSON.stringify(name)})`
+      await A.click('.desk-switch-open')
+      await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open')
+      await A.click('#desk-add')
+      await A.until("document.activeElement?.matches('.menu-desk-field')", 'the field for the new desk\'s name')
+      await A.session.send('Input.insertText', { text: name })
+      await A.key('Enter', 13)
+      await arrives(A, has, 'the new desk in the first profile\'s menu')
+      await A.key('Escape', 27)
+      await B.click('.desk-switch-open')
+      await B.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open on the second profile')
+      const took = await arrives(B, has, 'the new desk in the second profile\'s menu', 60000)
+      r.note(`the desk "${name}" was in the second profile's menu after ${(took / 1000).toFixed(1)} s`)
+    })
+    await step('a third browser profile logs in with the password (joins with the recovery code, 8.4); Settings shows the devices', 'C', async () => {
+      const A = await profile('A'), C = await profile('C')
+      await ui.logIn(C, start, email, password)
+      await C.until(`(${ui.LIVE}) || document.querySelector('#ob-error')?.textContent.trim()`, 'the Desk, or a refusal', 90000)
+      if (!await C.js(`return Boolean(${ui.LIVE})`)) throw new Error('the login was refused (the error line is below)')
+      for (const P of [A, C]) {
         await ui.openSettingsPage(P, 'devices')
-        await P.until("document.querySelectorAll('.room-device').length >= 2", `at least two devices listed on ${P.name}`, 40000).catch(() => {})
+        await P.until("document.querySelectorAll('.room-device').length >= 3", `at least three devices listed on ${P.name}`, 40000).catch(() => {})
         const listed = await P.js("return document.querySelectorAll('.room-device').length")
         // (logging out removes no device under protocol v2: the first profile's device of before the log out is still
-        // listed, so three rows are expected here: that one, the first profile's new device, the second profile's)
-        r.check(listed >= 2, `${P.name} lists the devices`, listed)
+        // listed, so four rows are expected when the second profile joined: that one, the first profile's new device,
+        // the second profile's and the third's)
+        r.check(listed >= 3, `${P.name} lists the devices`, listed)
         r.note(`${P.name} lists ${listed} devices`)
       }
     })
@@ -162,6 +270,72 @@ export async function runRemote({ app, hub, shots = null }) {
       r.check(still.length === watched.length, `every open stream stayed open for ${STREAM_OPEN_MS / 1000} s`, watched.map(q => ({ who: q.who, open_ms: (q.ended ?? Date.now()) - q.at, failed: q.failed })))
       for (const q of watched) r.note(`${q.who}: stream open ${Math.round(((q.ended ?? Date.now()) - q.at) / 1000)} s, first bytes ${q.first_data === null ? 'NOT received (a proxy that buffers holds them back)' : `after ${q.first_data - q.at} ms`}`)
     })
+    // "forgot password" on a SECOND account of its own: a recovery removes every other device of its account (8.7)
+    const made2 = await step('a second, separate account (for "forgot password" only) is made on its own profile: its Emergency Kit, the Desk', 'R', async () => {
+      const R = await profile('R')
+      await R.go(start)
+      await R.until("document.querySelector('#way-create')", 'the welcome screen', 30000)
+      await R.click('#way-create')
+      await R.until("document.querySelector('#create-form')", 'the create account screen')
+      await R.type('#create-form input[name=email]', second.email)
+      await R.type('#create-form input[name=password]', second.password)
+      await R.click('#create-form button[type=submit]')
+      await R.until("document.querySelector('#kit-gate[open] #kit-done') || document.querySelector('#ob-error')?.textContent.trim()", 'the Emergency Kit screen, or a refusal', 90000)
+      if (!await R.js("return !!document.querySelector('#kit-gate #kit-done')")) throw new Error('the account was not made (the error line is below)')
+      accounts++
+      second.words = await ui.readKit(R)
+      r.check(second.words.split(' ').length === 12, 'twelve words were shown')
+      await R.click('#kit-show')
+      await ui.live(R, 'the room live', 60000)
+      if (await R.js("return !!document.querySelector('#kit-gate #kit-done')")) await ui.leaveKit(R)
+    })
+    await closeProfile('R')
+    let recovered = false
+    await step('forgot password on a fresh profile: the one field "Email or account ID", the twelve words, a new password → a NEW kit → the Desk, live', 'S', async () => {
+      if (!second.words) throw Object.assign(new Error('the second account has no kit'), { skip: true })
+      const S = await profile('S')
+      await S.go(start)
+      await S.until("document.querySelector('#way-login')", 'the welcome screen', 30000)
+      await S.click('#way-login')
+      await S.until("document.querySelector('#way-forgot')", 'the login screen')
+      await S.click('#way-forgot')
+      await S.until("document.querySelector('#forgot-form')", 'the forgot password screen')
+      const fields = await S.js("return [...document.querySelectorAll('#forgot-form .ob-label')].map(l => l.textContent.trim())")
+      r.check(fields[0] === 'Email or account ID', 'the first field is "Email or account ID"', fields)
+      await S.type('#forgot-form input[name=account]', second.email)
+      await S.type('#forgot-form textarea[name=words]', second.words)
+      await S.type('#forgot-form input[name=password]', second.next)
+      await S.click('#forgot-form button[type=submit]')
+      await S.until("document.querySelector('#kit-gate[open] #kit-done') || document.querySelector('#ob-error')?.textContent.trim()", 'the new kit, or a refusal', 90000)
+      if (!await S.js("return !!document.querySelector('#kit-gate #kit-done')")) throw new Error('the recovery was refused (the error line is below)')
+      recovered = true
+      const fresh = await ui.readKit(S)
+      r.check(fresh.split(' ').length === 12 && fresh !== second.words, 'a NEW kit of twelve words is shown')
+      await S.click('#kit-show')
+      if (await S.js("return !!document.querySelector('#kit-gate #kit-done')")) await ui.leaveKit(S)
+      else r.note('the kit screen had closed by itself before "Open Trommi" was pressed')
+      await ui.live(S, 'the recovered profile live', 60000)
+    })
+    await closeProfile('S')
+    await step('log in with the NEW password on a fresh profile: the Desk, live', 'T', async () => {
+      if (!recovered) throw Object.assign(new Error('the password was not replaced'), { skip: true })
+      const T = await profile('T')
+      await ui.logIn(T, start, second.email, second.next)
+      await T.until(`(${ui.LIVE}) || document.querySelector('#ob-error')?.textContent.trim()`, 'the Desk, or a refusal', 90000)
+      if (!await T.js(`return Boolean(${ui.LIVE})`)) throw new Error('the login with the new password was refused (the error line is below)')
+      r.check(await T.js("return !!document.querySelector('#inbox')"), 'the Desk')
+    })
+    await closeProfile('T')
+    // (last of all: a refused log-in slows the next ones from this address down, by the hub's login throttle)
+    await step('the OLD password is refused on a fresh profile: "Wrong email or password."', 'U', async () => {
+      if (!recovered) throw Object.assign(new Error('the password was not replaced'), { skip: true })
+      const U = await profile('U')
+      await ui.logIn(U, start, second.email, second.password)
+      await U.until(`document.querySelector('#ob-error')?.textContent.trim() || (${ui.LIVE})`, 'the refusal of the old password', 60000)
+      const said = await U.js("return document.querySelector('#ob-error')?.textContent.trim() || 'not refused: the Desk'")
+      r.check(said === 'Wrong email or password.', 'the old password: "Wrong email or password."', said)
+    })
+    await closeProfile('U')
     await step('what a failure only production has would show', 'B', async () => {
       for (const name of Object.keys(profiles)) {
         const P = profiles[name].page
@@ -189,6 +363,9 @@ export async function runRemote({ app, hub, shots = null }) {
   } finally {
     for (const p of Object.values(profiles)) await p.close().catch(() => {})
   }
-  r.say(`account made on ${hub}: 1 (e2e-…@example.invalid; it stays there: nothing in the app deletes an account)`)
+  const asked = seen.requests.filter(hubPath), kinds = new Map()
+  for (const q of asked) { const k = `${q.method} ${new URL(q.url).pathname.replace(/[A-Za-z0-9_-]{20,}/g, '…').replace(/\/\d+(?=\/|$)/g, '/N')}`; kinds.set(k, (kinds.get(k) ?? 0) + 1) }
+  r.say(`requests to the hub (/v2/): ${asked.length}, ${asked.filter(q => q.status === 429).length} of them answered rate-limited · ${[...kinds].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, c]) => `${k} ×${c}`).join(', ')}`)
+  r.say(`accounts made on ${hub}: ${accounts} (e2e-…@example.invalid; they stay there: nothing in the app deletes an account)`)
   return r.finish() ? 1 : 0
 }

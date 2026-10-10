@@ -145,7 +145,8 @@ change = { cards, sessions, permissions, notes, published, timelines, registers,
            members, alerts, outbox, stack, room: boolean }
 ```
 
-One `change` per batch (a catch-up page, one live event, one action's echo). Every field is always present. Other
+One `change` per batch (a catch-up page, or what was taken of a long one every half second; one live event; one
+action's echo). Every field is always present. Other
 events: `'alert'` (each new `model.alerts` entry), `'device-closed'` (the device closed itself; `tabs.ts` takes
 over). The worker adds `'error'` and, through `tabs.ts`, `'reset'` (the model object was replaced: take all of it
 again).
@@ -245,7 +246,9 @@ taken it. Their headers are the contract.
 
 Three IndexedDB databases per `name` (`store-idb.ts`):
 
-- `<name>`: the device's state. It is the binding's own `IdbStore`: one strict transaction per write, the revision
+- `<name>`: the device's state. It is the binding's own `IdbStore`: one strict transaction per call of the device
+  that wrote (a batch of a catch-up, `feed`, is one call: a strict transaction costs about 10 ms on a quiet disk,
+  which item by item was nearly all of a long catch-up's time), the revision
   compared inside it, and a **Web Lock** on the name from `load()` until `close()`. A device resolves a call only
   once its write is stored.
 - `<name>:wrap`: one non-extractable AES-GCM key under which every stored value is wrapped at rest. What that is
@@ -282,7 +285,9 @@ host hands it a store factory (Node, tests).
    blocks the pump instead (above).
 5. **`epoch-taken`, `room-behind`, `wrong-epoch`, `stale-session`**: the group moved on. The log is processed and
    whoever asked for the Commit or message builds it again.
-6. **The position moves only when an item is taken, in the hub's order**, upwards. An item at or below it is
+6. **The position moves only when an item is taken, in the hub's order**, upwards. A page is handed to the core in
+   batches of 200 (`feed`); each item's outcome is then told as if it had come alone, the one the core refused is
+   taken as a single item, and envelopes that waited for a repair made in the batch are fed once more. An item at or below it is
    skipped. Change numbers are not consecutive for one device, so there is no "next expected number"; what a hub
    withholds shows in chains and `heads`.
 7. **An item that does not process halts the batch**: a duplicate is skipped; one that came early is tried again

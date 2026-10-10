@@ -15,7 +15,7 @@
 // What it also leaves out of the real hub's behaviour: who may see what below "a human device sees all, another
 // device its groups" (no public sight of Commits for agents, no pruned form, no Cut marks on a chain, `stale` is
 // always false), the 8 MiB budget of an answer and `truncated`, the limits and lifetimes of KeyPackages, requests,
-// invites and passkeys, transactions (a refused request may leave a part of its writes), the checks of a recovery's
+// invites and passkeys (a passkey challenge of an account is bound to the account's revision, as the real one), transactions (a refused request may leave a part of its writes), the checks of a recovery's
 // parts and that its finish replaces the recovery key, push endpoints, `/v2/link`, `/v2/live-activity`,
 // `/v2/push-envelope`, `Trommi-Lease`, the stream's bounded queue and pings. Cross-origin requests are answered for
 // any origin. tests/web/hub/real-hub.test.mjs runs the client against the real hub for what must not rest on this.
@@ -236,6 +236,8 @@ export async function startFakeHub(opts = {}) {
     for (const d of facts.removed ?? []) {
       g.leaves.delete(d)
       if (g.kind === 'room') { r.devices.delete(d); for (const s of [...streams]) if (s.room === r && s.device === d) endStream(s) }
+      // what the key may still read, for thirty days: the group's Commits up to this one (hub-api.md 42)
+      if (opts.serves_removal !== false) { r.removed ??= new Map(); if (!r.removed.has(d)) r.removed.set(d, new Map()); r.removed.get(d).set(g.group_id, entry.n) }
     }
     g.log.push(entry)
     joined(r, g, a.device)
@@ -347,31 +349,80 @@ export async function startFakeHub(opts = {}) {
     if (!(k?.alg === 'argon2id' && k.v === 1 && k.m === 65536 && k.t === 3 && k.p === 1)) throw refuse('bad-format', 'the key derivation record is pinned to argon2id v1, m 65536, t 3, p 1')
     return { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 }
   }
-  function passkey(v) {
+  // The account id: a UUID. Its text is `account`, its 16 bytes are `user_handle` (hub accounts.rs).
+  const asUuid = id => { id[6] = (id[6] & 0x0f) | 0x40; id[8] = (id[8] & 0x3f) | 0x80; return id }
+  const idText = id => { const h = Buffer.from(id).toString('hex'); return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}` }
+  /** The id that goes with a passkey challenge: an account made with a passkey registered on it gets it. */
+  const idOfChallenge = challenge => asUuid(sha256(Buffer.concat([Buffer.from('trommi account id\0'), challenge])).subarray(0, 16))
+  /** An id as typed: case, white space and dashes are ignored; what is left is 32 hex digits. */
+  const parseId = text => { const d = String(text).replace(/[\s-]/gu, ''); return /^[0-9a-fA-F]{32}$/.test(d) ? Buffer.from(d, 'hex') : null }
+  const normalEmail = text => { const e = typeof text === 'string' ? text.trim().toLowerCase() : ''; return /^[\x21-\x7e]+@[\x21-\x7e]+\.[\x21-\x7e]{2,}$/.test(e) && e.split('@').length === 2 ? e : null }
+  /** The one field `account` (read as `email` too): an e-mail if it contains `@`, else the account's id. */
+  function named(body) {
+    const text = typeof body.account === 'string' ? body.account : typeof body.email === 'string' ? body.email : ''
+    if (text.includes('@')) { const email = normalEmail(text); return email ? [...state.accounts.values()].find(a => a.email === email) : undefined }
+    const id = parseId(text)
+    return id ? state.accounts.get(idText(id)) : undefined
+  }
+  /** The kit's form follows from the account alone (v2.md 8.8.2): its e-mail where it has one, else its id. */
+  const kitForm = (_kit, has_email) => (has_email ? 'email' : 'id')
+  const needsEmail = account => { if (account.email === null) throw refuse('bad-email', 'a password signs in under an e-mail: this account has none') }
+  function passkeyChallenge(scope) {
+    const challenge = randomBytes(32), c = b64(challenge)
+    session.passkey_challenges.set(c, scope)
+    const id = scope ? Buffer.from(scope.user_handle, 'base64url') : idOfChallenge(challenge)
+    return { challenge: c, account: idText(id), user_handle: b64(id) }
+  }
+  /** The credential id in an attestation object's authenticator data (WebAuthn 6.1: rpIdHash 32, flags 1, counter 4,
+   *  then, with the flag 0x40, aaguid 16, length 2, the id), or null. The CBOR around it is not read: the data is
+   *  the byte string after the text "authData". */
+  function attestedCredentialId(attestation) {
+    const at = attestation.indexOf('authData')
+    if (at < 0) return null
+    const head = at + 8, kind = attestation[head]
+    const start = kind === 0x58 ? head + 2 : kind === 0x59 ? head + 3 : -1
+    if (start < 0 || attestation.length < start + 55 || !(attestation[start + 32] & 0x40)) return null
+    const length = attestation.readUInt16BE(start + 53)
+    return length >= 1 && length <= 1023 && attestation.length >= start + 55 + length ? attestation.subarray(start + 55, start + 55 + length) : null
+  }
+  /** A registration on a challenge of `scope`: null for a sign-up, else the account it was handed out for, as it was then. */
+  function passkey(v, scope = null) {
     const attestation = unb64(v?.attestation_object), client = unb64(v?.client_data_json)
     if (!attestation?.length || !client?.length) throw refuse('bad-format', 'attestation_object: base64url')
-    takePasskeyChallenge(client, 'bad-passkey')
-    // the real hub reads the credential id out of the attestation; the fake names it by the attestation's hash
-    return { credential_id: b64(sha256(attestation).subarray(0, 16)), sealed_copy: sealedCopy(v, 'sealed_copy'), transports: v.transports ?? [], created_at: now(), last_used_at: null, algorithm: -7, sign_count: 0 }
+    const held = takePasskeyChallenge(client, 'bad-passkey')
+    if ((held?.account ?? null) !== (scope?.account ?? null) || (held && held.revision !== scope.revision)) throw refuse('bad-passkey', 'challenge')
+    // the credential id is read out of the attestation as the real hub reads it, where it is one (a browser's);
+    // bytes that are no attestation (a unit test's) are named by their hash. Nothing of it is verified.
+    return { credential_id: b64(attestedCredentialId(attestation) ?? sha256(attestation).subarray(0, 16)), sealed_copy: sealedCopy(v, 'sealed_copy'), transports: v.transports ?? [], created_at: now(), last_used_at: null, algorithm: -7, sign_count: 0 }
   }
+  /** Uses a challenge up; returns the scope it was handed out for (null: no account's). */
   function takePasskeyChallenge(client_data, code) {
     let challenge = null
     try { challenge = json(client_data).challenge } catch { /* refused below */ }
-    if (!session.passkey_challenges.delete(challenge)) throw refuse(code, 'challenge')
+    if (!session.passkey_challenges.has(challenge)) throw refuse(code, 'challenge')
+    const scope = session.passkey_challenges.get(challenge)
+    session.passkey_challenges.delete(challenge)
+    return scope
   }
+  const scopeOf = account => ({ account: account.account, revision: account.revision, user_handle: account.user_handle })
   function createAccount(r, v) {
-    const email = typeof v.email === 'string' ? v.email.trim().toLowerCase() : ''
-    if (!/^[\x21-\x7e]+@[\x21-\x7e]+\.[\x21-\x7e]{2,}$/.test(email)) throw refuse('bad-email', 'not an e-mail address this hub takes')
+    const email = v.email == null ? null : normalEmail(v.email)
+    if (v.email != null && !email) throw refuse('bad-email', 'not an e-mail address this hub takes')
+    // with a passkey the id is the one the hub named with the registration's challenge; else it is minted now
+    let id = asUuid(randomBytes(16))
+    if (v.passkey) { try { id = idOfChallenge(Buffer.from(json(unb64(v.passkey.client_data_json)).challenge, 'base64url')) } catch { throw refuse('bad-passkey', 'client-data') } }
     const account = {
-      email, created_at: now(), updated_at: now(), revision: 1, kit_auth: authKey(v.kit), kit_copy: sealedCopy(v.kit, 'sealed_copy'),
-      auth: null, password_copy: null, kdf: null, passkeys: [], rooms: [r.room_id], user_handle: v.user_handle ?? b64(randomBytes(32)),
+      email, account: idText(id), user_handle: b64(id), created_at: now(), updated_at: now(), revision: 1, kit_auth: authKey(v.kit), kit_copy: sealedCopy(v.kit, 'sealed_copy'),
+      kit_form: null, auth: null, password_copy: null, kdf: null, passkeys: [], rooms: [r.room_id],
     }
     if (v.password) Object.assign(account, { auth: authKey(v.password), password_copy: sealedCopy(v.password, 'sealed_copy'), kdf: kdfRecord(v.password) })
     if (v.passkey) account.passkeys.push(passkey(v.passkey))
+    account.kit_form = kitForm(v.kit, email !== null)
     if (!account.auth && !account.passkeys.length) throw refuse('bad-format', 'an account needs a way in: a password or a passkey')
     if (accountOf(r, false)) throw refuse('account-exists', 'this room has an account')
-    if (state.accounts.has(email)) throw refuse('account-exists', 'an account with this e-mail exists')
-    state.accounts.set(email, account)
+    if (account.auth && email === null) throw refuse('bad-email', 'a password signs in under an e-mail')
+    if ((email !== null && [...state.accounts.values()].some(a => a.email === email)) || state.accounts.has(account.account)) throw refuse('account-exists', 'an account with this e-mail or id exists')
+    state.accounts.set(account.account, account)
     return accountView(account)
   }
   function accountOf(r, must = true) {
@@ -381,12 +432,12 @@ export async function startFakeHub(opts = {}) {
   }
   function accountView(a) {
     return {
-      email: a.email, created_at: a.created_at, updated_at: a.updated_at, revision: a.revision, has_password: a.auth !== null, kdf: a.kdf, password_copy: a.password_copy,
+      email: a.email, account: a.account, kit_form: a.kit_form, created_at: a.created_at, updated_at: a.updated_at, revision: a.revision, has_password: a.auth !== null, kdf: a.kdf, password_copy: a.password_copy,
       kit_copy: a.kit_copy, user_handle: a.user_handle, passkeys: a.passkeys.map(p => ({ ...p })), rooms: [...a.rooms],
     }
   }
   function loginAnswer(account, copy) {
-    return { rooms: account.rooms.map(room_id => ({ room_id, sealed_copy: copy, challenge: challenge(room_id) })), kdf: account.kdf }
+    return { rooms: account.rooms.map(room_id => ({ room_id, sealed_copy: copy, challenge: challenge(room_id) })), kdf: account.kdf, account: account.account, email: account.email }
   }
   function revised(account, v) {
     if (v.revision !== account.revision) throw refuse('account-changed', 'the account changed meanwhile: read it again')
@@ -397,13 +448,14 @@ export async function startFakeHub(opts = {}) {
     const account = accountOf(r, false)
     if (!account) { if (v === null || v === undefined) return; throw refuse('not-found', 'this room has no account') }
     if (v === null || v === undefined) throw refuse('incomplete', 'new recovery keys come with the account\'s new sealed copies')
-    Object.assign(account, { kit_auth: authKey(v.kit), kit_copy: sealedCopy(v.kit, 'sealed_copy') })
+    try { Object.assign(account, { kit_auth: authKey(v.kit), kit_copy: sealedCopy(v.kit, 'sealed_copy'), kit_form: kitForm(v.kit, account.email !== null) }) } catch { throw refuse('incomplete', 'the account\'s new Emergency Kit copy') }
     // one way in, every other removed: the one used just now with a new copy, or one set anew (hub accounts.rs replace_copies)
+    if (v.password?.auth_key != null && !v.passkey) needsEmail(account)
     if (v.password?.auth_key != null && !v.passkey) Object.assign(account, { auth: authKey(v.password), password_copy: sealedCopy(v.password, 'sealed_copy'), kdf: kdfRecord(v.password), passkeys: [] })
     else if (v.password && !v.passkey) {
       if (!account.auth) throw refuse('incomplete', 'the account has no password')
       Object.assign(account, { password_copy: sealedCopy(v.password, 'sealed_copy'), passkeys: [] })
-    } else if (v.passkey?.attestation_object != null && !v.password) Object.assign(account, { passkeys: [passkey(v.passkey)], auth: null, password_copy: null, kdf: null })
+    } else if (v.passkey?.attestation_object != null && !v.password) Object.assign(account, { passkeys: [passkey(v.passkey, scopeOf(account))], auth: null, password_copy: null, kdf: null })
     else if (v.passkey && !v.password) {
       const kept = account.passkeys.find(p => p.credential_id === v.passkey.credential_id)
       if (!kept) throw refuse('incomplete', 'the account has no such passkey')
@@ -429,7 +481,7 @@ export async function startFakeHub(opts = {}) {
     if (!known || known.room !== room_id || known.expires_at <= now()) throw refuse('bad-challenge', 'the challenge is unknown, used or ran out')
     if (a.room_id !== room_id) throw refuse('wrong-room', 'signed for another room')
     if (a.hub !== url) throw refuse('bad-format', 'signed for another hub address')
-    const r = room(room_id), who = r && standing(r, a.device)
+    const r = room(room_id), who = r && (standing(r, a.device) ?? (r.removed?.has(a.device) ? 'removed' : null))
     if (!who) throw refuse('not-member', 'this key has no standing in the room')
     const token = b64(randomBytes(32)), expires_at = now() + (opts.token_ms ?? 600_000)
     session.tokens.set(token, { room: room_id, device: a.device, expires_at })
@@ -471,17 +523,18 @@ export async function startFakeHub(opts = {}) {
 
     // no token
     if (is('POST', 'account', 'login') || is('POST', 'account', 'recover')) {
-      const kit = segs[1] === 'recover', key = authKey(body), account = state.accounts.get(String(body.email ?? '').trim().toLowerCase())
+      // an id nobody has, an address nobody has and a text that is neither are answered like a wrong key
+      const kit = segs[1] === 'recover', key = authKey(body), account = named(body)
       if (!account || key !== (kit ? account.kit_auth : account.auth)) throw refuse(kit ? 'wrong-recovery' : 'wrong-login', 'e-mail or secret is wrong')
       return loginAnswer(account, kit ? account.kit_copy : account.password_copy)
     }
-    if (is('POST', 'account', 'passkey', 'challenge')) { const c = b64(randomBytes(32)); session.passkey_challenges.add(c); return { challenge: c } }
+    if (is('POST', 'account', 'passkey', 'challenge')) return passkeyChallenge(null)
     if (is('POST', 'account', 'passkey', 'login')) {
       // every failure of this route is the one answer, a malformed request too (hub-api.md "Decided" 36)
       if (['credential_id', 'authenticator_data', 'client_data_json', 'signature'].some(name => !unb64(body[name])?.length)) throw refuse('wrong-login', 'e-mail or secret is wrong')
       const account = [...state.accounts.values()].find(a => a.passkeys.some(p => p.credential_id === body.credential_id))
       let fresh = true
-      try { takePasskeyChallenge(field(body, 'client_data_json'), 'wrong-login') } catch { fresh = false }
+      try { fresh = takePasskeyChallenge(field(body, 'client_data_json'), 'wrong-login') === null } catch { fresh = false }
       if (!account || !fresh || (body.user_handle && body.user_handle !== account.user_handle)) throw refuse('wrong-login', 'e-mail or secret is wrong')
       const used = account.passkeys.find(p => p.credential_id === body.credential_id)
       used.last_used_at = now()
@@ -538,22 +591,53 @@ export async function startFakeHub(opts = {}) {
       return { reveal: invite.reveal, signature: invite.reveal_signature }
     }
 
+    // signing out: that token ends at once, and the device's streams are cut
+    if (is('DELETE', 'token')) {
+      const a = auth(rq)
+      session.tokens.delete(/^Bearer (.+)$/.exec(rq.headers.authorization)[1])
+      for (const s of streams) if (s.room === a.room && s.device === a.device) s.res.end()
+      return {}
+    }
     // the account, by a human device of the room
     if (is('POST', 'account')) return createAccount(human(writer(rq)).room, body)
     if (is('GET', 'account')) return accountView(accountOf(human(auth(rq)).room))
     if (is('PUT', 'account', 'password')) {
-      const account = accountOf(human(writer(rq)).room), answer = revised(account, body)
+      const account = accountOf(human(writer(rq)).room)
+      if (body.revision === account.revision) needsEmail(account)
+      const answer = revised(account, body)
       Object.assign(account, { auth: authKey(body), password_copy: sealedCopy(body, 'sealed_copy'), kdf: kdfRecord(body) })
       return answer
     }
     if (is('PUT', 'account', 'kit')) {
-      const account = accountOf(human(writer(rq)).room), answer = revised(account, body)
-      Object.assign(account, { kit_auth: authKey(body), kit_copy: sealedCopy(body, 'sealed_copy') })
+      const account = accountOf(human(writer(rq)).room)
+      const form = body.revision === account.revision ? kitForm(body, account.email !== null) : account.kit_form
+      const answer = revised(account, body)
+      Object.assign(account, { kit_auth: authKey(body), kit_copy: sealedCopy(body, 'sealed_copy'), kit_form: form })
       return answer
     }
-    if (is('POST', 'account', 'passkeys', 'challenge')) { accountOf(human(auth(rq)).room); const c = b64(randomBytes(32)); session.passkey_challenges.add(c); return { challenge: c } }
+    if (is('PUT', 'account', 'email')) {
+      const account = accountOf(human(writer(rq)).room)
+      if (body.revision !== account.revision) throw refuse('account-changed', 'the account changed meanwhile: read it again')
+      const email = normalEmail(body.email)
+      if (!email) throw refuse('bad-email', 'not an e-mail address this hub takes')
+      if (account.email !== null) throw refuse('forbidden', 'the e-mail of an account is set once')
+      if ([...state.accounts.values()].some(a => a.email === email)) throw refuse('account-exists', 'an account with this e-mail exists')
+      // with an e-mail the kit's keys are under the e-mail's salt: the kit comes anew in this request
+      let kit
+      try { kit = { kit_auth: authKey(body.kit), kit_copy: sealedCopy(body.kit, 'sealed_copy'), kit_form: 'email' } } catch { throw refuse('incomplete', 'an e-mail comes with the kit made anew under it') }
+      Object.assign(account, { email }, kit)
+      account.revision += 1
+      return { revision: account.revision }
+    }
+    if (is('POST', 'account', 'passkeys', 'challenge')) {
+      // a human device, or the recovery key before it finishes; with the challenge the account's id
+      const a = auth(rq)
+      if (a.who !== 'human' && a.who !== 'recovery') throw refuse('forbidden', 'a human device or the recovery key')
+      const account = accountOf(a.room)
+      return { ...passkeyChallenge(scopeOf(account)), email: account.email, kit_form: account.kit_form }
+    }
     if (is('POST', 'account', 'passkeys')) {
-      const account = accountOf(human(writer(rq)).room), added = passkey(body)
+      const account = accountOf(human(writer(rq)).room), added = passkey(body, scopeOf(account))
       account.passkeys.push(added)
       account.revision += 1
       return { credential_id: added.credential_id, created_at: added.created_at }
@@ -603,6 +687,19 @@ export async function startFakeHub(opts = {}) {
       const found = g.log.filter(e => e.n > after && (rq.query.get('kind') !== 'commit' || e.kind === 'commit'))
       return { items: found.slice(0, limit), more: found.length > limit }
     }
+    // a removed key's one read (hub-api.md 42): the group's Commits up to and including the one that removed it
+    if (is('GET', 'groups', null, 'removal')) {
+      const token = /^Bearer ([A-Za-z0-9_-]{16,200})$/.exec(rq.headers.authorization ?? '')?.[1]
+      const held = token && session.tokens.get(token)
+      if (!held || held.expires_at <= now()) throw refuse('unauthorised', 'sign in')
+      const r = room(held.room), g = group(r, groupId(segs[1]))
+      const removed_at = standing(r, held.device) ? undefined : r.removed?.get(held.device)?.get(g.group_id)
+      if (!removed_at) throw refuse('not-found', 'nothing to show this key')
+      rq.log.device = held.device
+      const after = number(rq, 'after') ?? 0
+      const found = g.log.filter(e => e.kind === 'commit' && e.n > after && e.n <= removed_at)
+      return { items: found.slice(0, 200), more: found.length > 200, removed_at }
+    }
     if (is('POST', 'groups', null, 'messages')) {
       const a = writer(rq), g = group(a.room, groupId(segs[1])), message = field(body, 'message')
       if (!Number.isSafeInteger(body.epoch)) throw refuse('bad-format', 'epoch')
@@ -634,8 +731,22 @@ export async function startFakeHub(opts = {}) {
       const found = (a.room.chains.get(`${g.group_id} ${sender}`) ?? []).filter((_, i) => i + 1 > after)
       return { items: found.slice(0, limit).map(e => ({ ...paged(e), seq: e.header.seq })), more: found.length > limit }
     }
-    if (is('GET', 'rooms', null, 'groups')) { const a = ownRoom(auth(rq), segs[1]); return groupList(a) }
-    if (is('GET', 'welcomes')) { const a = auth(rq); return a.room.welcomes.filter(w => w.device === a.device).map(({ group_id, welcome, at }) => ({ group_id, welcome, at })) }
+    if (is('GET', 'rooms', null, 'groups')) {
+      const a = ownRoom(auth(rq), segs[1]), all = groupList(a)
+      // paged as the hub pages it (point 43): in the order of founding, `after` the answer's own cursor; bare without `limit`
+      const limit = number(rq, 'limit')
+      if (limit === null || limit === undefined || opts.bare_lists) return all
+      const after = number(rq, 'after') ?? 0, size = opts.groups_page ?? clamp(limit, 1000, 1000)
+      const items = all.slice(after, after + size)
+      return { items, more: after + size < all.length, after: after + items.length }
+    }
+    if (is('GET', 'welcomes')) {
+      // numbered, oldest first, after the one numbered `after`; `welcomes_page` (default all) per answer, as the 8 MiB do
+      const a = auth(rq), after = number(rq, 'after') ?? 0
+      const mine = a.room.welcomes.filter(w => w.device === a.device && (w.id ??= (state.welcome_ids = (state.welcome_ids ?? 0) + 1)) > after).sort((x, y) => x.id - y.id)
+      if (opts.bare_lists) return a.room.welcomes.filter(w => w.device === a.device).map(({ group_id, welcome, at }) => ({ group_id, welcome, at }))
+      return mine.slice(0, opts.welcomes_page ?? mine.length).map(({ id, group_id, welcome, at }) => ({ id, group_id, welcome, at }))
+    }
     if (is('PUT', 'key-packages')) {
       const a = member(writer(rq)), single = body.single_use ?? []
       if (!Array.isArray(single) || single.length > 100 || single.some(k => !unb64(k))) throw refuse('bad-format', 'single_use: at most 100 KeyPackages')
@@ -944,7 +1055,7 @@ export async function startFakeHub(opts = {}) {
   }
 
   async function listen(port) {
-    session = { tokens: new Map(), challenges: new Map(), passkey_challenges: new Set() }
+    session = { tokens: new Map(), challenges: new Map(), passkey_challenges: new Map() }
     sockets = new Set()
     streams = new Set()
     server = http.createServer((req, res) => {
@@ -978,6 +1089,8 @@ export async function startFakeHub(opts = {}) {
     /** Cuts every connection without a word, as a hub that died does; clients that kept one alive find out when they use it. */
     dropConnections() { for (const s of sockets) s.destroy() },
     get streams() { return streams.size },
+    /** How many tokens the hub holds: a sign-out ends one. */
+    get tokens() { return session.tokens.size },
     /** A room set up without a founding: its room group at epoch 0 with these human devices as leaves. */
     seedRoom(room_id, devices, more = {}) {
       const r = newRoom(room_id)

@@ -183,7 +183,8 @@ async function driver(session, name, seen, { width, height }) {
   listen(seen, name, (event, fn) => session.on(event, fn))
   // Workers of the page (the core worker, the proof worker): each is attached to, so its exceptions, console and
   // policy violations are seen too. (Messages to a worker travel through the page's session.)
-  const workers = new Map()
+  const workers = new Map(), answers = new Map()
+  let asked = 1_000_000
   session.on('Target.attachedToTarget', ({ sessionId, targetInfo }) => {
     if (targetInfo.type !== 'worker') return
     const handlers = new Map()
@@ -195,6 +196,7 @@ async function driver(session, name, seen, { width, height }) {
   session.on('Target.receivedMessageFromTarget', ({ sessionId, message }) => {
     const m = JSON.parse(message)
     if (m.method) workers.get(sessionId)?.get(m.method)?.(m.params)
+    else if (answers.has(m.id)) { answers.get(m.id)(m); answers.delete(m.id) }
   })
   session.on('Target.detachedFromTarget', ({ sessionId }) => workers.delete(sessionId))
   await session.send('Runtime.enable')
@@ -212,6 +214,17 @@ async function driver(session, name, seen, { width, height }) {
       const r = await session.send('Runtime.evaluate', { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true })
       if (r.exceptionDetails) throw new Error(`${name}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}\n    in: ${code.trim().slice(0, 200)}`)
       return r.result.value
+    },
+    /** Evaluates the expression `code` in every worker of the page; returns the values (by value) that are not
+     *  undefined, one per worker that answered within two seconds. */
+    async workers(code) {
+      const out = await Promise.all([...workers.keys()].map(sessionId => new Promise(resolve => {
+        const id = ++asked
+        const timer = setTimeout(() => { answers.delete(id); resolve(undefined) }, 2000)
+        answers.set(id, m => { clearTimeout(timer); resolve(m.result?.result?.value) })
+        session.send('Target.sendMessageToTarget', { sessionId, message: JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression: code, returnByValue: true } }) }).catch(() => { clearTimeout(timer); resolve(undefined) })
+      })))
+      return out.filter(v => v !== undefined)
     },
     /** Waits until the expression `code` is truthy in the page; returns the milliseconds it took. */
     async until(code, what, ms = 15000) {
@@ -296,8 +309,8 @@ async function driver(session, name, seen, { width, height }) {
 }
 
 /** A browser profile: `page` (its first tab), `tab()` for another tab of the same profile, `close()`. */
-export async function openProfile(name, seen, { width = 1440, height = 900, args = [] } = {}) {
-  const browser = await launchChromium({ width, height, args })
+export async function openProfile(name, seen, { width = 1440, height = 900, args = [], keep = null } = {}) {
+  const browser = await launchChromium({ width, height, args, keep })
   const page = await driver(await browser.page(), name, seen, { width, height })
   let tabs = 0
   return {

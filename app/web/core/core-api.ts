@@ -22,12 +22,12 @@ export type {
   OutboxKind, OutboxEntry, Cut, Replacement, Joined, LogEntry, CommitSummary, ReceivedMessage, Processed, LogFinding,
   HandoverSent, KeyPackageInfo, SignedHubAuth, FileRef, FileEnd, FileLayout, FileChunk, ShareLink, AccountKeys, AccountWay,
   PushNote, Versions, SelfTestStep, SelfTestReport, FileEncryptor, FileDecryptor,
-  ServedCommit, ServedGroup, ServedRoom, ServedEnvelope, Learned, UnverifiedSession, CodeJoin, Removals, RecoveryPlan, Anchor,
+  ServedCommit, ServedGroup, ServedRoom, ServedEnvelope, FeedItem, FeedOutcome, Fed, Learned, UnverifiedSession, CodeJoin, Removals, RecoveryPlan, Anchor,
   InviteRole, InviteOpened, SignedOffer, SignedRequest, SignedReveal, InviteLinkParts, EmojiWord, CheckCode, InviteAccepted,
   InviteConfirmed, InviteStepKind, InviteStep, JoinRequest,
   Urgency, ObjectType, ObjectState, DraftKind, Draft, Sealed, EnvelopeKind, TimelineKind, TimelineRef, ObjectHeader,
   EnvelopeHeader, BindKind, Bind, ObjectView, RegisterChange, EnvelopeOutcome, ReceivedEnvelope, ChainHead, WriterHead,
-  Standing, HeadStanding, ServedItem, BoardLoaded, Gate, CommandKind, AnswerKind, CommandDecision, Finding, BoardItem,
+  AccountName, Standing, HeadStanding, ServedItem, BoardLoaded, Gate, CommandKind, AnswerKind, CommandDecision, Finding, BoardItem,
 } from '../../../core/wasm/js/trommi-core.js'
 
 /** Everything of the binding's module that has no state: versions, the self test, the account, files, share links,

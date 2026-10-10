@@ -181,8 +181,9 @@ function checks(name, start, skip, kind) {
     await assert.rejects(hub.login('nobody@example.com', new Uint8Array(5)), refused('bad-format', 400))
   })
   on('a passkey challenge is 32 bytes; a passkey nobody registered is wrong-login', async hub => {
-    const challenge = await hub.passkeyChallenge()
-    assert.equal(challenge.length, 32)
+    const { challenge, account, user_handle } = await hub.passkeyChallenge()
+    assert.deepEqual([challenge.length, user_handle.length], [32, 16])
+    assert.equal(account.replaceAll('-', ''), Buffer.from(user_handle).toString('hex'), 'the id an account made on this challenge will have')
     const client_data_json = utf8({ type: 'webauthn.get', challenge: b64u(challenge), origin: 'https://app.trommi.com' })
     await assert.rejects(hub.passkeyLogin({ credential_id: new Uint8Array(16), authenticator_data: new Uint8Array(37), client_data_json, signature: new Uint8Array(70) }), refused('wrong-login', 401))
   })
@@ -429,7 +430,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     const recovered = await outside.recover(email, kit.authKey)
     assert.deepEqual(core.openRecoveryCode(kit.wrapKey, room, 'kit', null, recovered.rooms[0].sealed_copy), code)
     await assert.rejects(hub.putKit({ auth_key: kit.authKey, sealed_copy: view.kit_copy, revision: 0 }), refused('account-changed', 409))
-    assert.equal((await hub.accountPasskeyChallenge()).length, 32)
+    assert.deepEqual([(await hub.accountPasskeyChallenge()).account, view.kit_form, login.account, login.email], [view.account, 'email', view.account, email])
   })
 
   const second = await newDevice('second'), second_hub = newHub()

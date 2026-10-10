@@ -8,6 +8,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { core, no_core, b64u, hex, unb64u, unhex, bytes } from './setup.mjs'
+import { accountName, kitAddress, parseKitAddress } from '../../../app/web/core/account-name.ts'
 import * as page from '../../../app/web/core/passwords.ts'
 import { PASSKEY_PRF_INPUT } from '../../../app/web/core/passkey.ts'
 import { WORDS } from '../../../app/web/core/wordlist.ts'
@@ -179,4 +180,93 @@ test('codes and words: fresh each time, and what is shown is read back', { skip 
   assert.equal(core.parseKitWords(words), words)
   assert.notEqual(core.generateKitWords(), words)
   assert.equal(core.generateUserHandle().length, 32)
+})
+
+// ---- an account without an e-mail: the kit under the account's id (spec/vectors/account.json, the core's own)
+
+const ID = JSON.parse(await readFile(new URL('../../../spec/vectors/account.json', import.meta.url), 'utf8'))
+
+test('the kit under an account id: the core\'s known answers through the binding\'s kitKeysFor and accountIdParse', { skip }, () => {
+  const room = unhex(ID.room_id)
+  assert.equal(core.accountIdParse(ID.account_id_text), ID.account_id_text)
+  assert.equal(core.accountIdParse(ID.account_id.toUpperCase()), ID.account_id_text, 'typed in any case, without hyphens')
+  const keys = core.kitKeysFor({ id: ID.account_id_text }, ID.words)
+  assert.deepEqual([hex(keys.authKey), hex(keys.wrapKey)], [ID.auth_key, ID.wrap_key])
+  assert.equal(hex(core.openRecoveryCode(keys.wrapKey, room, 'kit', null, unhex(ID.sealed))), ID.code)
+  for (const c of ID.cases) {
+    const k = core.kitKeysFor(c.account, ID.words)
+    assert.deepEqual([hex(k.authKey), hex(k.wrapKey)], [c.auth_key, c.wrap_key], c.why)
+    let result
+    try { result = `opens: ${hex(core.openRecoveryCode(k.wrapKey, room, 'kit', null, unhex(ID.sealed)))}` } catch (e) { result = codeOf(e) }
+    assert.equal(result, c.result, c.why)
+  }
+  // for an e-mail it is kitKeys, byte for byte: the kits accounts already hold stay readable
+  assert.deepEqual(core.kitKeysFor({ email: V.password.email }, V.recovery.words), core.kitKeys(V.password.email, V.recovery.words))
+  assert.equal(b64u(core.kitKeysFor({ email: V.password.email }, V.recovery.wordsAsTyped).authKey), V.recovery.recoveryAuthB64u)
+  // exactly one of the two names; an id only in its one text
+  for (const name of [{}, { email: 'a@example.org', id: ID.account_id_text }, { id: ID.account_id }, { id: ID.account_id_text.toUpperCase() }, { id: 'x' }]) assert.throws(() => core.kitKeysFor(name, ID.words), e => typeof codeOf(e) === 'string', JSON.stringify(name))
+})
+
+// ---- the one field, and the kit's address
+
+test('the one field "E-mail or account ID": told apart by its form alone', { skip }, () => {
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  const table = [
+    ['ada@example.org', { kind: 'email', email: 'ada@example.org' }],
+    ['  Ada@Example.ORG\n', { kind: 'email', email: 'ada@example.org' }],
+    [id, { kind: 'id', account: id }],
+    [id.toUpperCase(), { kind: 'id', account: id }],
+    [id.replaceAll('-', ''), { kind: 'id', account: id }],
+    [` 0F8FAD5B D9CB 469F A165 70867728950E `, { kind: 'id', account: id }],
+    ['0f8f-ad5b-d9cb-469f-a165-7086-7728-950e', { kind: 'id', account: id }],
+    ['0f8fad5b\td9cb469fa165\n70867728950e', 'bad-account'], ['0f8fad5b\u00a0d9cb469fa16570867728950e', 'bad-account'],
+    ['00000000000000000000000000000000', { kind: 'id', account: '00000000-0000-0000-0000-000000000000' }],
+    // an `@` anywhere makes it an e-mail, and then it must be one
+    [`${id}@`, 'bad-email'], ['@', 'bad-email'], ['ada@example', 'bad-email'], ['ada@@example.org', 'bad-email'], ['ädä@example.org', 'bad-email'], [`${id}@example.org`, { kind: 'email', email: `${id}@example.org` }],
+    // without one it is an id or nothing: nothing is guessed
+    ['', 'bad-account'], ['   ', 'bad-account'], ['ada', 'bad-account'], ['ada.example.org', 'bad-account'], [id.slice(1), 'bad-account'], [`${id}0`, 'bad-account'],
+    [id.replace('0', 'g'), 'bad-account'], [`{${id}}`, 'bad-account'], [`urn:uuid:${id}`, 'bad-account'], [id.replaceAll('-', '_'), 'bad-account'], [id.replaceAll('-', '–'), 'bad-account'],
+    [`0x${id.replaceAll('-', '').slice(2)}`, 'bad-account'], ['０f8fad5bd9cb469fa16570867728950e', 'bad-account'], [null, 'bad-account'], [undefined, 'bad-account'], [12345678901234567890123456789012, 'bad-account'],
+  ]
+  for (const [typed, expected] of table) {
+    let got
+    try { got = accountName(typed) } catch (e) { got = codeOf(e) }
+    assert.deepEqual(got, expected, JSON.stringify(typed))
+    // the page and the core read an id alike, into the same one text
+    if (got?.kind === 'id') assert.equal(core.accountIdParse(String(typed)), got.account)
+    if (got === 'bad-account') assert.throws(() => core.accountIdParse(String(typed ?? '')), e => codeOf(e) === 'bad-format', JSON.stringify(typed))
+    if (got?.kind === 'email') assert.equal(core.normaliseEmail(String(typed)), got.email)
+  }
+})
+
+test('the kit\'s address: hub and id in the fragment, read back strictly, and never anything else', { skip }, () => {
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  for (const [app, hub] of [['https://app.trommi.com', 'https://hub.trommi.com'], ['https://app.trommi.com/settings/account?x=1#y', 'https://hub.example.org:8443'], ['http://127.0.0.1:8080', 'http://127.0.0.1:9000']]) {
+    const address = kitAddress(app, hub, id.toUpperCase())
+    const url = new URL(address)
+    assert.deepEqual([url.origin, url.pathname, url.search], [new URL(app).origin, '/', ''], 'nothing of it reaches a server')
+    assert.match(url.hash, /^#k1\.[A-Za-z0-9_-]+\.[0-9a-f]{32}$/)
+    assert.deepEqual(parseKitAddress(address), { hub_url: hub, account: id })
+    assert.deepEqual(parseKitAddress(url.hash), { hub_url: hub, account: id })
+  }
+  // the function is handed no words, and what it makes holds none: its length is fixed by hub and id alone
+  const address = kitAddress('https://app.trommi.com', 'https://hub.trommi.com', id)
+  assert.equal(address, `https://app.trommi.com/#k1.${Buffer.from('https://hub.trommi.com').toString('base64url')}.${id.replaceAll('-', '')}`)
+  assert.equal(kitAddress.length, 3)
+  for (const word of V.recovery.words.split(' ')) assert.ok(!address.includes(word))
+  assert.throws(() => kitAddress('https://app.trommi.com', 'https://hub.trommi.com', 'ada@example.org'), e => codeOf(e) === 'bad-account')
+  assert.throws(() => kitAddress('https://app.trommi.com', 'https://hub.trommi.com/path', id), e => codeOf(e) === 'bad-argument')
+
+  const hub = Buffer.from('https://hub.trommi.com').toString('base64url'), hex32 = id.replaceAll('-', '')
+  const b = text => Buffer.from(text).toString('base64url')
+  const refused = [
+    '', '#', '#k1', `#k1.${hub}`, `#k1.${hub}.`, `#k1..${hex32}`, `#k2.${hub}.${hex32}`, `#K1.${hub}.${hex32}`, `#k1.${hub}.${hex32}.extra`, `#k1.${hub}.${hex32}.${b('twelve words')}`,
+    `#k1.${hub}.${hex32.toUpperCase()}`, `#k1.${hub}.${id}`, `#k1.${hub}.${hex32.slice(1)}`, `#k1.${hub}.${hex32}0`, `#k1.${hub}=.${hex32}`, `#k1.${hub}.${hex32}&words=x`, `#k1.${hub}.${hex32}?x`,
+    // a hub that is not in its one canonical form, or no hub at all
+    `#k1.${b('https://hub.trommi.com/')}.${hex32}`, `#k1.${b('https://HUB.trommi.com')}.${hex32}`, `#k1.${b('http://hub.trommi.com')}.${hex32}`, `#k1.${b('https://user@hub.trommi.com')}.${hex32}`,
+    `#k1.${b('javascript:alert(1)')}.${hex32}`, `#k1.${b('https://hub.trommi.com?x=1')}.${hex32}`, `#k1.${b('hub.trommi.com')}.${hex32}`, `#k1.${Buffer.from([0xff, 0xfe]).toString('base64url')}.${hex32}`,
+    `k1.${hub}.${hex32}`, `#r1.${hub}.${hex32}`, `#v2.${hub}.${hex32}.${hex32}`,
+  ]
+  for (const text of refused) assert.equal(parseKitAddress(text), null, text)
+  assert.equal(parseKitAddress(`https://evil.example/#k1.${hub}.${hex32}`)?.hub_url, 'https://hub.trommi.com', 'whose page carries the fragment is the caller\'s to check (the app reads only its own address)')
 })
