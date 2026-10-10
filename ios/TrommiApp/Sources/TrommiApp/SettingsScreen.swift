@@ -737,10 +737,15 @@ struct AgentInviteSheet: View {
         VStack(alignment: .leading, spacing: 18) {
           Text(label.isEmpty ? "Invite Agent" : "Invite \(label)").font(Face.display(26, .heavy))
           Text("On a computer with Claude Code and Node 22+.").font(Face.text(15)).foregroundStyle(Ink.muted)
-          step(1, done: state != "making" && state != "open", "Copy this into a terminal in your project") {
+          step(1, done: state != "making" && state != "open", "Copy these into a terminal") {
             if let i = inv, state == "open" {
-              let cmd = "curl -fsSL https://app.trommi.com/connect | sh -s '\(i.pairing.link)'"
-              CodeChip(text: cmd)
+              ForEach(Array(agentConnectSteps(link: i.pairing.link).enumerated()), id: \.offset) { _, s in
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(s.title).font(Face.text(13, .medium)).foregroundStyle(Ink.muted)
+                  CodeChip(text: s.command)
+                }
+              }
+              Text("For Codex instead of Claude Code: \(agentConnectSteps(link: "", codex: true)[1].command)").font(Face.text(13)).foregroundStyle(Ink.muted)
             }
           }
           step(2, done: state == "joined", state == "confirm" ? "An agent wants to join. Its terminal shows six emoji, each with a word. Are they these, in this order?" : "Compare the six emoji") {
