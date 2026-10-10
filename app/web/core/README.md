@@ -204,8 +204,6 @@ await client.settle({ timeout_ms })   // outbox empty and the hub's copies back;
 const invite = await client.createInvite({ device_role: 'human' | 'agent', app_url?, label?, desk?, takeover?, session_id?, with_history? })
 await client.confirmInvite(invite_id, true | false)
 await client.removeDevices([device_id, ...])              // → { key_epoch }
-await client.createSession({ agent_device_id })           // → session_id: a main session for an enrolled agent without one
-await client.assignSession({ session_id, agent_device_id, with_history? })   // a takeover by an enrolled agent device
 await client.leaveRoom()                                  // → { key_epoch, humans_left, removed: false }
 ```
 

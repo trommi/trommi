@@ -43,7 +43,7 @@ export const CALLS: readonly string[] = Object.freeze([
   // human actions
   'sendMessage', 'answer', 'trust', 'markRead', 'shred', 'decideAgain', 'verdict', 'setRegisters', 'setDraft', 'snooze',
   'duck', 'setCrown', 'setDesk', 'saveNote', 'deleteNote', 'sendStrokes', 'sendStrokePiece', 'createInvite', 'confirmInvite', 'removeDevices',
-  'createSession', 'assignSession', 'leaveRoom',
+  'leaveRoom',
   // timelines and attachments
   'loadTimeline', 'timelineWindow', 'loadTimelineAfter', 'uploadAttachment', 'fetchAttachment', 'attachmentBlob',
   'shareAttachment', 'myShares', 'revokeShare',

@@ -889,18 +889,6 @@ export class Client {
       }
     } finally { for (const g of groups()) e.hold(g, false) }
   }
-  /** A new main session for an agent device that is enrolled and has none. Returns its session id. */
-  async createSession({ agent_device_ids = [], agent_device_id = null }: { agent_device_ids?: string[]; agent_device_id?: string | null } = {}): Promise<string> {
-    this.needHuman()
-    const agent = agent_device_id ?? agent_device_ids[0] ?? fail('bad-argument', 'a session is founded for one agent device')
-    return this.foundSession(unhex(agent), null)
-  }
-  /** Hands an existing session to another enrolled agent device (a takeover; `with_history`: with the keys of its past). */
-  async assignSession({ session_id, agent_device_ids = null, agent_device_id = null, with_history = false }: { session_id: string; agent_device_ids?: string[] | null; agent_device_id?: string | null; with_history?: boolean }): Promise<void> {
-    this.needHuman()
-    const agent = agent_device_id ?? agent_device_ids?.[0] ?? fail('bad-argument', 'a session is handed to one agent device')
-    await this.takeOver(session_id, unhex(agent), null, with_history)
-  }
   /** Removes devices: human devices by one room Commit with their Cuts, agent devices from `agents`; then every
    *  session group that still holds one gets its Remove (5.2.8). Any human device finishes what a crash leaves. */
   async removeDevices(device_ids: string[]): Promise<{ key_epoch: number }> {
