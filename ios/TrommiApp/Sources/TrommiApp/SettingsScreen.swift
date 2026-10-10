@@ -126,6 +126,11 @@ struct SettingsHome: View {
     }
     .sheet(isPresented: $inviteDevice) { InviteDeviceSheet() }
     .sheet(isPresented: $inviteAgent) { AgentInviteSheet(label: agentName.trimmingCharacters(in: .whitespaces)) }
+    // (a state of the demo's list opens its sheet here: DemoMode.swift openDemoScreen)
+    .onAppear {
+      switch model.demoSheet { case "pair": inviteDevice = true; case "invite": agentName = "Website"; inviteAgent = true; default: break }
+      model.demoSheet = nil
+    }
     .alert("Invite Agent", isPresented: $askAgentName) {
       TextField("Name of the Session (e.g. Website)", text: $agentName)
       Button("Cancel", role: .cancel) {}
@@ -278,7 +283,7 @@ struct DevicesPage: View {
     let agents = members.filter { $0.isActive && $0.deviceRole != "human" }
     let gone = members.filter { !$0.isActive }
     SettingsPage(title: "Devices") {
-      SettingsGroup(header: "Push on This iPhone", footer: pushLevel == "knocking" ? "Only urgent questions and a session that lost its link ring here." : pushLevel == "off" ? "Nothing rings here; the board still shows everything." : "Every new question rings here.") {
+      SettingsGroup(header: "Push on This \(UIDeviceName.model)", footer: pushLevel == "knocking" ? "Only urgent questions and a session that lost its link ring here." : pushLevel == "off" ? "Nothing rings here; the board still shows everything." : "Every new question rings here.") {
         Picker("Push", selection: Binding(get: { pushLevel }, set: { l in pushLevel = l; Task { await Push.setLevel(l); await loadPush() } })) {
           Text("Yes").tag("all"); Text("Only Knocking").tag("knocking"); Text("No").tag("off")
         }
@@ -731,6 +736,7 @@ struct AgentInviteSheet: View {
   @State private var code = ""
   @State private var error = ""
   @State private var task: Task<Void, Never>?
+  @State private var demoLink: String?
   var body: some View {
     NavigationStack {
       ScrollView {
@@ -738,8 +744,8 @@ struct AgentInviteSheet: View {
           Text(label.isEmpty ? "Invite Agent" : "Invite \(label)").font(Face.display(26, .heavy))
           Text("On a computer with Claude Code or Codex.").font(Face.text(15)).foregroundStyle(Ink.muted)
           step(1, done: state != "making" && state != "open", "Copy these into a terminal") {
-            if let i = inv, state == "open" {
-              ForEach(Array(agentConnectSteps(link: i.pairing.link).enumerated()), id: \.offset) { _, s in
+            if let link = inv?.pairing.link ?? demoLink, state == "open" {
+              ForEach(Array(agentConnectSteps(link: link).enumerated()), id: \.offset) { _, s in
                 VStack(alignment: .leading, spacing: 4) {
                   Text(s.title).font(Face.text(13, .medium)).foregroundStyle(Ink.muted)
                   CodeChip(text: s.command)
@@ -775,7 +781,8 @@ struct AgentInviteSheet: View {
     }
   }
   private func start() {
-    guard let room = model.room else { if model.demo { error = "The demo invites nobody: it is a made-up room on this phone."; state = "failed" }; return }
+    // (the demo shows the three lines with a made-up link: nothing is invited)
+    guard let room = model.room else { if model.demo { demoLink = "https://app.trommi.com/join#v2.ZGVtbw.ZGVtbw.ZGVtbw.ZGVtbw"; state = "open" }; return }
     task = Task {
       do {
         var i = try await room.createAgentInvite(label: label.isEmpty ? nil : label, desk: model.view?.all == true ? nil : model.view?.deskId)

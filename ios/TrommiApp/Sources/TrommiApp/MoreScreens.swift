@@ -322,6 +322,8 @@ struct NoteScreen: View {
       TextEditor(text: $text)
         .font(Face.text(18)).foregroundStyle(Ink.noteInk)
         .scrollContentBackground(.hidden)
+        // (the page's soft scroll edge, which the note inherits, drew a band over the first line)
+        .scrollEdgeEffectHidden(true, for: .all)
         .scrollDismissesKeyboard(.interactively)
         .focused($focused)
         // the words give way, never the row below: in a short panel (keyboard up, pictures attached) the text area
