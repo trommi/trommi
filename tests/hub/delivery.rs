@@ -2014,7 +2014,7 @@ fn what_the_second_review_found_stays_refused() {
         .post(
             &w.hub,
             &format!("/v2/rooms/{}/recovery-code", b64(&room)),
-            &body,
+            &code_body(&body),
         )
         .refused(400, "bad-commit");
     w.ada.clear(&room);

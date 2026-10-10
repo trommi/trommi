@@ -767,8 +767,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             app.write_recovery(Default::default(), None, &auth, |x, _| delivery::recovery_drop(x, &auth, &recovery))
         }
         ("POST", ["rooms", room, "recovery-code"]) => {
-            // the Commit's fields under `commit`; beside the other members is taken too
-            let body = commit_body(if rq.body["commit"].is_object() { &rq.body["commit"] } else { &rq.body })?;
+            let body = commit_body(&rq.body["commit"])?;
             let link = crate::wire::RecoveryLink::parse(&rq.bytes("recovery_link")?)?;
             let auth = read_auth()?;
             own_room(&auth, room)?;

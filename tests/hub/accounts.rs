@@ -638,7 +638,9 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
     .bytes()));
     let path = format!("/v2/rooms/{}/recovery-code", b64(&room));
     // without the account's new copies nothing is applied: not the Commit either
-    w.ada.post(&w.hub, &path, &body).refused(400, "incomplete");
+    w.ada
+        .post(&w.hub, &path, &code_body(&body))
+        .refused(400, "incomplete");
     assert_eq!(
         w.ada
             .get(&w.hub, &format!("/v2/groups/{}/info", b64(&room)))
@@ -647,7 +649,7 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
     );
     let new_kit: [u8; 32] = random();
     body["account"] = json!({ "kit": { "auth_key": b64(&new_kit), "sealed_copy": copy(4) }, "password": { "sealed_copy": copy(8) } });
-    w.ada.post(&w.hub, &path, &body).ok();
+    w.ada.post(&w.hub, &path, &code_body(&body)).ok();
     w.ada.merge(&room);
     // the password opens the new copy; the old kit is gone, the new one opens its copy
     assert_eq!(
