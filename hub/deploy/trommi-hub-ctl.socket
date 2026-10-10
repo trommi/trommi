@@ -1,0 +1,16 @@
+# The one thing the updater may ask root for: starting and stopping the hub's unit. A socket only the updater's user
+# can open; each connection is handed to trommi-hub-ctl@.service, which runs hub-ctl.sh. Installed once by
+# hub/deploy/install.sh; not part of a release.
+[Unit]
+Description=Trommi hub start/stop helper (socket)
+
+[Socket]
+ListenStream=/run/trommi-hub-ctl.sock
+SocketUser=trommi-updater
+SocketGroup=trommi-updater
+SocketMode=0600
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target
