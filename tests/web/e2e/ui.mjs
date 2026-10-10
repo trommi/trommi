@@ -40,7 +40,10 @@ export async function readKit(page) {
 /** "Open Trommi" on the kit screen: resolves once the screen is gone; throws with the screen's error line when it stays. */
 export async function leaveKit(page, ms = 15000) {
   await page.click('#kit-done')
-  await page.until("!document.querySelector('#kit-gate') || document.querySelector('#kit-gate #ob-error')?.textContent.trim()", 'the kit screen closed, or its error line', ms)
+  try { await page.until("!document.querySelector('#kit-gate') || document.querySelector('#kit-gate #ob-error')?.textContent.trim()", 'the kit screen closed, or its error line', ms) } catch (err) {
+    const held = await page.js("const m = window.trommi?.client?.model; return JSON.stringify({ button: document.querySelector('#kit-done')?.textContent.trim() ?? null, disabled: document.querySelector('#kit-done')?.disabled ?? null, connection: m?.room.connection ?? null, taken_up_to: m?.room.last_envelope_number ?? null, outbox: (m?.outbox ?? []).map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: m?.room.outbox_blocked ?? null, alerts: (m?.alerts ?? []).map(a => a.code + ': ' + a.message.slice(0, 120)), kit_register: m?.human?.raw?.get('kit') ?? null })").catch(() => 'the page could not be read')
+    throw new Error(`${err.message} (the app holds: ${held})`)
+  }
   const error = await page.js("return document.querySelector('#kit-gate #ob-error')?.textContent.trim() ?? ''")
   if (error) throw new Error(`"Open Trommi" does not close the Emergency Kit screen; it says "${error}"`)
 }
