@@ -1215,22 +1215,7 @@ impl Joiner {
         key_package: &[u8],
         now_ms: u64,
     ) -> Result<(Self, SignedRequest), Error> {
-        link.check_deadline(now_ms)?;
-        let decoded = Offer::decode(&offer.offer)?;
-        if decoded.room_id != link.room_id || decoded.invite_id != link.invite_id()? {
-            return Err(Error::BadInvite);
-        }
-        link.check_offer_mac(offer)?;
-        crypto::verify_with_label(
-            decoded.inviter.as_bytes(),
-            SIGN_OFFER,
-            &offer.offer,
-            &offer.signature,
-        )?;
-        if decoded.expires_at != link.expires_at {
-            return Err(Error::BadInvite);
-        }
-        check_deadline(decoded.expires_at, decoded.role.invite_life_ms(), now_ms)?;
+        let decoded = Self::check_offer(link, offer, now_ms)?;
         if key_package.is_empty() || key_package.len() > MAX_KEY_PACKAGE_LEN {
             return Err(Error::BadFormat);
         }
@@ -1256,6 +1241,33 @@ impl Joiner {
             request: signed.clone(),
         };
         Ok((joiner, signed))
+    }
+
+    /// The checks of the served Offer that [`Joiner::request`] begins with, up to and without the KeyPackage,
+    /// in the same order and with the same refusals; returns the Offer. A caller runs them before it makes
+    /// anything for the Request.
+    pub fn check_offer(
+        link: &InviteLink,
+        offer: &SignedOffer,
+        now_ms: u64,
+    ) -> Result<Offer, Error> {
+        link.check_deadline(now_ms)?;
+        let decoded = Offer::decode(&offer.offer)?;
+        if decoded.room_id != link.room_id || decoded.invite_id != link.invite_id()? {
+            return Err(Error::BadInvite);
+        }
+        link.check_offer_mac(offer)?;
+        crypto::verify_with_label(
+            decoded.inviter.as_bytes(),
+            SIGN_OFFER,
+            &offer.offer,
+            &offer.signature,
+        )?;
+        if decoded.expires_at != link.expires_at {
+            return Err(Error::BadInvite);
+        }
+        check_deadline(decoded.expires_at, decoded.role.invite_life_ms(), now_ms)?;
+        Ok(decoded)
     }
 
     /// Checks the Reveal and returns the code to show. `bad-format` (not a Reveal); `bad-signature` (not signed

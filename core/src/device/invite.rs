@@ -930,6 +930,8 @@ impl<S: Storage> Device<S> {
                 return Err(Error::RoomExists);
             }
             let link = InviteLink::parse(link)?;
+            // 12.1.2: the Offer is checked before anything is made for the Request.
+            Joiner::check_offer(&link, signed_offer, now_ms)?;
             let key_package = this.make_key_package(batch, now_ms, false)?;
             let (joiner, signed_request) =
                 Joiner::request(&link, signed_offer, &this.key, &key_package, now_ms)?;
