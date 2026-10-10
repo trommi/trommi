@@ -166,7 +166,7 @@ open class LiveCore: CoreTools {
   }
   static let passing: Set<String> = ["internal", "overloaded", "rate-limited", "unauthorised", "bad-challenge", "client-too-old", "lease-lost"]
   /// What only a client finds, the account's own checks, and what a device says only of itself.
-  static let notOfAHub: Set<String> = ["storage", "entropy", "busy", "bad-email", "weak-password", "bad-kdf", "bad-recovery-words", "bad-recovery-code", "no-prf",
+  static let notOfAHub: Set<String> = ["storage", "entropy", "busy", "weak-password", "bad-kdf", "bad-recovery-words", "bad-recovery-code", "no-prf",
                                        "withheld", "hub-voided-other", "bad-group", "no-key", "pruned", "decrypt-failed", "code-not-confirmed", "hash-mismatch", "cut"]
 
   // invite (12.1): what needs no device
