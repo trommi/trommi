@@ -8,7 +8,7 @@
 #            site/wrangler.jsonc`, then asks trommi.com for its front page and compares it with site/public/index.html
 #            byte for byte (SHA-256)
 #
-# Secrets: the environment `web` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; CLOUDFLARE_API_TOKEN
+# Secrets: the environment `site` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; CLOUDFLARE_API_TOKEN
 # and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment and are seen by the wrangler command only.
 # Cloudflare's Workers Builds is disconnected from trommi-com: this workflow is the only way the site is delivered.
 name: deploy_site
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
-      name: web
+      name: site
       url: https://trommi.com
     # one delivery at a time; a running one is not cut off, a waiting one is replaced by the next (both deliver main)
     concurrency:
