@@ -24,7 +24,7 @@
 //
 // Nothing here writes a log line: tokens, bodies and share secrets never leave this module but in a request.
 import { b64u, hex, unb64u } from './ids.ts'
-import type { LogEntry, OutboxEntry, ServedGroup, ServedRoom, SignedHubAuth } from './core-api.ts'
+import type { LogEntry, OutboxEntry, PlacedCommit, ServedCommit, ServedEnd, ServedGroup, ServedRoom, ServedStart, SignedHubAuth } from './core-api.ts'
 
 const MIB = 1 << 20
 /** Most a JSON answer may hold: a small one; a list (the hub's 8 MiB of envelopes, the one item that may exceed it,
@@ -43,9 +43,12 @@ const MAX_ENVELOPE = 128 << 10
 const MAX_MLS = MIB
 const MAX_KEY_PACKAGE = 16 << 10
 const MAX_SMALL_STRUCT = 1024
-/** Most a room may weigh as it is served to a device that comes with the code (`servedRoom`): every Commit of the
- *  room group and of each live session group, their GroupInfos, every SealedKey and RecoveryLink. */
+/** Most of a room a device that comes with the code holds at once (`roomInSteps`): the GroupInfos, every SealedKey
+ *  and RecoveryLink. The Commits are not held: they are read page by page while the core takes them in slices (only
+ *  the whole forms `servedGroup` and `servedRoom` hold them, within the same bound). */
 const CAP_SERVED = 256 * MIB
+/** How many Commits one page of a group's log is asked for when a history is read (`groupCommits`): one slice. */
+const LOG_PAGE = 256
 /** A signature or a MAC: 64 and 32 bytes in v1.md; their exact form is the core's to check, here only that they are small. */
 const MAX_TAG = 128
 /** hub-api.md "Decided for the first hub" 32: one catch-up answer looks at most so many change numbers ahead. */
@@ -157,6 +160,19 @@ export interface GroupRow {
   epoch: number; room_epoch: number; live: boolean; stale: boolean; leaves: Uint8Array[]
 }
 /** An open object of the Desk: `state` 1 open, 2 answered, 3 closed; `urgency` 0 to 3 (v1.md 9). */
+/** A group's Commits as `groupCommits` reads them: `peek` looks at the next without taking it. */
+export interface CommitReader { peek(): Promise<ServedCommit | null>; next(): Promise<ServedCommit | null> }
+/** The room in the parts of the core's check in steps (`roomInSteps`). */
+export interface RoomInSteps {
+  start: ServedStart
+  end: ServedEnd
+  /** The epoch of the room group's current GroupInfo (`end.current`). */
+  epoch: number
+  /** The live session groups of `start` and `end`, in their order, each with the epoch of its current GroupInfo. */
+  sessions: { group: Uint8Array; epoch: number }[]
+  /** The Commits of the room group and of the sessions, ascending by change number; a new reading each call. */
+  placed(): { next(): Promise<PlacedCommit | null> }
+}
 export interface DeskObject {
   object_id: Uint8Array; group: Uint8Array; state: number; urgency: number; answered_at: number; owner: Uint8Array
   first_change: number; head_change: number; version: EnvelopeItem | null
@@ -1004,42 +1020,89 @@ export class Hub {
   }
 
   /**
-   * One group as a device verifies it from its founding (8.4): the founding GroupInfo, every Commit in the hub's
-   * order, the GroupInfo the hub offers as current. Nothing in it is trusted, the core checks it; here only that the
-   * Commits are the group's, one per epoch from 0 up to the current one.
+   * The Commits of one group as a device verifies them from its founding (8.4, 4.6), read from the group's log page
+   * by page while they are taken: epoch 0 first, up to `upto` and not beyond it (the epoch of the GroupInfo the hub
+   * offers as current, or where the device's own knowledge begins). Nothing in them is trusted, the core checks them;
+   * here only that they are the group's, one per epoch, and that the log reaches `upto`. Null once all are read.
+   */
+  groupCommits(group: Uint8Array, upto: number): CommitReader {
+    const pages: ServedCommit[] = []
+    let at = 0, after = 0, epoch = 0, more = upto > 0
+    const peek = async (): Promise<ServedCommit | null> => {
+      while (at >= pages.length && more) {
+        const page = await this.groupLog(group, { after, limit: LOG_PAGE, commits_only: true })
+        pages.length = 0; at = 0
+        for (const item of page.items) {
+          if (epoch >= upto) break
+          if (item.kind !== 'commit' || item.epoch !== epoch) bad('a log that is not one Commit per epoch')
+          pages.push({ change: item.change, commit: item.bytes, recoveryAuth: item.recovery_auth })
+          epoch++
+          after = item.n
+        }
+        more = page.more && epoch < upto
+        if (page.more && page.items.length === 0) bad('more to come, and no step forward')
+      }
+      if (at < pages.length) return pages[at]!
+      if (epoch !== upto) bad('a log that does not reach the current epoch')
+      return null
+    }
+    return { peek, async next() { const c = await peek(); if (c) at++; return c } }
+  }
+  /**
+   * One group whole, as the core's whole-history calls take it (`joinSessionWithCode`, `verifyFounding`): the
+   * founding GroupInfo, every Commit in the hub's order (`groupCommits`), the GroupInfo the hub offers as current.
+   * The app hands histories over in steps (`groupCommits`, `roomInSteps`); this form holds a history at once and is
+   * bounded by `budget`.
    */
   async servedGroup(group: Uint8Array, budget = { bytes: CAP_SERVED }): Promise<ServedGroup> {
     const spend = (b: Uint8Array): Uint8Array => { if ((budget.bytes -= b.length) < 0) bad('a room larger than a device takes'); return b }
     // the current GroupInfo first: a Commit accepted while the log is read lies beyond it and is left out
     const current = await this.groupInfo(group)
     const founding = current.epoch === 0 ? current : await this.groupInfo(group, 0)
-    const commits: ServedGroup['commits'] = []
-    for (let after = 0, more = current.epoch > 0; more;) {
-      const page = await this.groupLog(group, { after, limit: 1000, commits_only: true })
-      for (const item of page.items) {
-        if (item.kind !== 'commit' || item.epoch !== commits.length) bad('a log that is not one Commit per epoch')
-        if (item.epoch < current.epoch) commits.push({ change: item.change, commit: spend(item.bytes), recoveryAuth: item.recovery_auth })
-        after = item.n
-      }
-      more = page.more && commits.length < current.epoch
-      if (page.more && page.items.length === 0) bad('more to come, and no step forward')
-    }
-    if (commits.length !== current.epoch) bad('a log that does not reach the current epoch')
+    const commits: ServedCommit[] = [], reader = this.groupCommits(group, current.epoch)
+    for (let c = await reader.next(); c; c = await reader.next()) commits.push({ ...c, commit: spend(c.commit) })
     return { founding: spend(founding.group_info), commits, current: spend(current.group_info) }
+  }
+  /** The room whole, as `joinRoomWithCode` and `prepareRecovery` take it: `roomInSteps` with every group's Commits
+   *  read at once (`servedGroup`'s bound). `session_groups` names the group of each of `served.sessions`. */
+  async servedRoom(opts: { anchorOf: (rows: Uint8Array[]) => { group: Uint8Array; epoch: number } }): Promise<{ served: ServedRoom; session_groups: Uint8Array[] }> {
+    const steps = await this.roomInSteps(opts), budget = { bytes: CAP_SERVED }
+    const whole = async (group: Uint8Array, epoch: number, founding: Uint8Array, current: Uint8Array): Promise<ServedGroup> => {
+      const commits: ServedCommit[] = [], reader = this.groupCommits(group, epoch)
+      for (let c = await reader.next(); c; c = await reader.next()) {
+        if ((budget.bytes -= c.commit.length) < 0) bad('a room larger than a device takes')
+        commits.push(c)
+      }
+      return { founding, commits, current }
+    }
+    const { start, end } = steps
+    const group = await whole(start.room, steps.epoch, start.founding, end.current)
+    const sessions: ServedGroup[] = []
+    for (const [at, s] of steps.sessions.entries()) sessions.push(await whole(s.group, s.epoch, start.sessions[at]!, end.sessions[at]!))
+    return { served: { room: start.room, group, anchor: start.anchor, rows: start.rows, links: end.links, sessions }, session_groups: steps.sessions.map(s => s.group) }
   }
   /**
    * The room as a device that holds the recovery code needs it (8.4, 8.5, 8.7), under the recovery key's token
-   * (`useSigner` with the core's `recoverySignIn`): the room group, every SealedKey and RecoveryLink, the GroupInfo
-   * of the anchor's epoch, every live session group, main sessions before helper sessions. `anchorOf` is the core's
-   * `recoveryAnchor(code, room, rows)`: it names the epoch whose GroupInfo is fetched. Nothing in the answer is
-   * trusted (the core verifies all of it); here it is only checked for its shape and its size. `served` is the
-   * binding's `ServedRoom`; `session_groups` names the group of each of `served.sessions`, in the same order.
+   * (`useSigner` with the core's `recoverySignIn`), in the parts the core's check in steps takes: `start` (the room's
+   * founding GroupInfo, every SealedKey, the GroupInfo of the anchor's epoch, the founding of every live session
+   * group, main sessions before helper sessions), `end` (the GroupInfos the hub offers as current, every SealedKey
+   * and RecoveryLink), and `placed()`, the Commits of the room group and of those sessions, read page by page in the
+   * hub's one order (ascending by change number), each time it is called from the start. `anchorOf` is the core's
+   * `recoveryAnchor(code, room, rows)`: it names the epoch whose GroupInfo is fetched. `sessions` names each session
+   * of `start` and `end` in the same order, with the epoch its current GroupInfo has. Nothing in the answer is
+   * trusted (the core verifies all of it); here it is only checked for its shape and its size.
    */
-  async servedRoom(opts: { anchorOf: (rows: Uint8Array[]) => { group: Uint8Array; epoch: number } }): Promise<{ served: ServedRoom; session_groups: Uint8Array[] }> {
+  async roomInSteps(opts: { anchorOf: (rows: Uint8Array[]) => { group: Uint8Array; epoch: number } }): Promise<RoomInSteps> {
     if (!this.signer) wrong('this hub client has no signer: useSigner first')
     const room = this.signer.room_id, budget = { bytes: CAP_SERVED }
     const spend = (b: Uint8Array): Uint8Array => { if ((budget.bytes -= b.length) < 0) bad('a room larger than a device takes'); return b }
-    const group = await this.servedGroup(room, budget)
+    // each group's current GroupInfo before its log: a Commit accepted while the log is read lies beyond it and is left out
+    const groupOf = async (group: Uint8Array): Promise<{ founding: Uint8Array; current: Uint8Array; epoch: number }> => {
+      const current = await this.groupInfo(group)
+      const founding = current.epoch === 0 ? current : await this.groupInfo(group, 0)
+      return { founding: spend(founding.group_info), current: spend(current.group_info), epoch: current.epoch }
+    }
+    const roomGroup = await groupOf(room)
     const rows: Uint8Array[] = [], links: Uint8Array[] = []
     for (let after = 0, more = true; more;) {
       const page = await this.sealedKeys(after, 2000)
@@ -1052,11 +1115,32 @@ export class Hub {
     if (!same(anchor.group, this.signer.room)) wrong('the anchor is an epoch of the room group')
     const anchored = spend((await this.groupInfo(room, ownInt(anchor.epoch, 'the anchor\'s epoch'))).group_info)
     const live = (await this.roomGroups()).filter(g => g.live && g.kind !== 'room')
-    const sessions: ServedGroup[] = [], session_groups: Uint8Array[] = []
+    const sessions: { group: Uint8Array; founding: Uint8Array; current: Uint8Array; epoch: number }[] = []
     for (const kind of ['main', 'helper'] as const) {
-      for (const g of live) if (g.kind === kind) { sessions.push(await this.servedGroup(g.group, budget)); session_groups.push(g.group) }
+      for (const g of live) if (g.kind === kind) sessions.push({ group: g.group, ...await groupOf(g.group) })
     }
-    return { served: { room, group, anchor: anchored, rows, links, sessions }, session_groups }
+    const groups = [{ group: room, epoch: roomGroup.epoch }, ...sessions]
+    return {
+      start: { room, founding: roomGroup.founding, anchor: anchored, rows, sessions: sessions.map(s => s.founding) },
+      end: { current: roomGroup.current, sessions: sessions.map(s => s.current), rows, links },
+      epoch: roomGroup.epoch,
+      sessions: sessions.map(s => ({ group: s.group, epoch: s.epoch })),
+      placed: () => {
+        const readers = groups.map(g => ({ group: g.group, commits: this.groupCommits(g.group, g.epoch) }))
+        return {
+          // the lowest change number among the groups' next Commits; two groups never share one
+          async next(): Promise<PlacedCommit | null> {
+            let first: { group: Uint8Array; commits: CommitReader; change: number } | null = null
+            for (const r of readers) {
+              const c = await r.commits.peek()
+              if (c && (!first || c.change < first.change)) first = { ...r, change: c.change }
+            }
+            if (!first) return null
+            return { group: first.group, commit: (await first.commits.next())! }
+          },
+        }
+      },
+    }
   }
 
   // ---- groups: the MLS delivery service
