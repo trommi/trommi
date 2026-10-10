@@ -1,22 +1,29 @@
 # The updater under systemd: the deploy endpoint on the tailnet address. Installed once by hub/deploy/install.sh and
 # not part of a release: it is the fixed point a broken release cannot move. The program it starts IS part of every
-# release (/srv/trommi/updater is a link into the release it came with).
+# release (/srv/trommi/deploy/updater is a link into the release it came with).
+#
+# It runs as the user `trommi-updater`, which owns /srv/trommi/deploy and nothing else. It is not root and has no
+# way to become it: it changes which program the hub's unit runs (as the hub's user), and it has the hub started
+# and stopped through trommi-hub-ctl.socket, which takes those two words and nothing more.
 #
 # Type=notify: the updater says when it is up. A new updater on trial that does not say so within the start time, or
-# ends, is started again by systemd, and the pre-start script then puts the previous one back.
+# ends, is started again by systemd, and the pre-start script (run as the same user) then puts the previous one back.
 # The updater also starts the hub (after settling a deploy that was cut off): the hub's unit is not enabled by itself.
 [Unit]
 Description=Trommi hub updater (deploy endpoint)
-After=network-online.target tailscaled.service
+After=network-online.target tailscaled.service trommi-hub-ctl.socket
 Wants=network-online.target
+Requires=trommi-hub-ctl.socket
 StartLimitIntervalSec=0
 
 [Service]
 Type=notify
 NotifyAccess=main
+User=trommi-updater
+Group=trommi-updater
 EnvironmentFile=/etc/trommi/updater.env
-ExecStartPre=-/bin/sh /usr/local/lib/trommi/updater-prestart.sh /srv/trommi
-ExecStart=/srv/trommi/updater/trommi-hub-updater serve
+ExecStartPre=-/bin/sh /usr/local/lib/trommi/updater-prestart.sh /srv/trommi/deploy
+ExecStart=/srv/trommi/deploy/updater/trommi-hub-updater serve
 Restart=always
 RestartSec=3
 # settling a cut-off deploy (two health checks at most) and waiting for the tailnet address happen before "up"
@@ -25,11 +32,13 @@ TimeoutStartSec=240
 # at the next start
 TimeoutStopSec=120
 KillMode=mixed
+UMask=0022
 
-# Root, because it stops and starts the hub's unit and swaps the links. What it may write is narrowed down.
 NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
 ProtectSystem=strict
-ReadWritePaths=/srv/trommi
+ReadWritePaths=/srv/trommi/deploy
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

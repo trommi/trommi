@@ -99,7 +99,7 @@ jobs:
           find out -type f ! -name manifest.json -printf '%f\n' | sort > "$RUNNER_TEMP/there"
           jq -r '.assets[].name' out/manifest.json | sort > "$RUNNER_TEMP/named"
           diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the manifest does not name"; exit 1; }
-          for name in "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET" trommi-hub.service; do
+          for name in "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET"; do
             grep -qx "$name" "$RUNNER_TEMP/named" || { echo "::error::the release has no $name"; exit 1; }
           done
       - name: Install the 1Password CLI
