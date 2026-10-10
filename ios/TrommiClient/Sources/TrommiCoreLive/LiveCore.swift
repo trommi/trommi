@@ -140,7 +140,9 @@ open class LiveCore: CoreTools {
     errorCodeFromText(text: code) != nil && !passing.contains(code) && !notOfAHub.contains(code)
   }
   static let passing: Set<String> = ["internal", "overloaded", "rate-limited", "unauthorised", "bad-challenge", "client-too-old", "lease-lost"]
-  static let notOfAHub: Set<String> = ["storage", "entropy", "busy", "bad-email", "weak-password", "bad-kdf", "bad-recovery-words", "bad-recovery-code", "no-prf"]
+  /// What only a client finds, the account's own checks, and what a device says only of itself.
+  static let notOfAHub: Set<String> = ["storage", "entropy", "busy", "bad-email", "weak-password", "bad-kdf", "bad-recovery-words", "bad-recovery-code", "no-prf",
+                                       "withheld", "hub-voided-other", "bad-group", "no-key", "pruned", "decrypt-failed", "code-not-confirmed", "hash-mismatch", "cut"]
 
   // invite, the joining side (12.1): the joining side's state is the device's, kept in its store
   /// The hub, the room and the invite's id a link names. The link's secret is not among them.
