@@ -11,7 +11,7 @@ KeyPackage, an envelope and every struct of v2.md travel as their TLS-encoded by
 | Route | Body → answer | Notes |
 | --- | --- | --- |
 | **No token** | | |
-| `POST /v2/account/…` | sign-up, login, passkeys, the sealed copies: v1 §16 and the old hub's "Accounts", moved under `/v2/` | answers with the account's `rooms` (a list; one for now) |
+| `POST /v2/account/…` | sign-up, login, passkeys, the sealed copies: v2.md 8.9 and the old hub's "Accounts", moved under `/v2/` | answers with the account's `rooms` (a list; one for now) |
 | `POST /v2/rooms` | `{ group_info, sealed_key, account }` → `{ room_id }` | founding (5.1.1, 8.2); `room-exists` |
 | `GET /v2/rooms/{room}/challenge` | → `{ challenge }` | 12.3 |
 | `POST /v2/rooms/{room}/tokens` | `{ auth, signature }` (`auth`: the `HubAuth` bytes) → `{ token, expires_at }` | 12.3; the challenge is used up |
