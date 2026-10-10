@@ -627,6 +627,13 @@ interface Send {
   once?: boolean
 }
 
+/** Every stream of this context that is open: `closeAllStreams` ends them (the page goes: a reload, a tab closed). */
+const OPEN_STREAMS = new Set<() => void>()
+/** Ends every live stream of this context at once, its connection aborted. A browser may keep a stream's connection
+ *  open past the page that opened it (Firefox under a service worker did, one more per reload, until the six
+ *  connections to the host were taken): the page says when it goes, and nothing is left behind. */
+export function closeAllStreams(): void { for (const close of [...OPEN_STREAMS]) close() }
+
 export class Hub {
   hub_url: string
   /** `<kind>/<major>.<minor>.<patch>`, sent as `Trommi-Client` on every request (`client-too-old`). */
@@ -1375,7 +1382,9 @@ export class Hub {
       }
     }
     void run().catch(e => { if (!closed) { tell('offline'); report(e) } })
-    return () => { closed = true; connection?.abort(); this.wake() }
+    const close = (): void => { closed = true; connection?.abort(); OPEN_STREAMS.delete(close); this.wake() }
+    OPEN_STREAMS.add(close)
+    return close
   }
 
   // ---- files and Share links (v2.md 11)
