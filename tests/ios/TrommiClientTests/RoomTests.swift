@@ -144,6 +144,65 @@ final class RoomTests: XCTestCase {
     room.close()
   }
 
+  /// A Commit of this device is not merged by the hub's answer: the outbox reads the changes after it, and the
+  /// Commit takes effect where the hub's log hands it back.
+  func testAnOwnCommitTakesEffectWhenTheChangesBringItBack() async throws {
+    let room = try await founded()
+    _ = try await room.sync()
+    XCTAssertEqual(room.state.epoch, 0)
+    // The core alone: the answer leaves the group in its old epoch with the Commit pending.
+    let probe = try FakeDevice(store: MemoryStore(), create: true)
+    let other = try probe.foundRoom(recoveryCode: [], nowMs: 0)
+    let id = try XCTUnwrap(try probe.update(group: other, forced: true, nowMs: 0))
+    let commit = try XCTUnwrap(probe.outbox().first { $0.id == id })
+    try probe.outboxAccepted(id, change: 1)
+    XCTAssertEqual(try probe.groups().first?.epoch, 0)
+    XCTAssertEqual(try probe.groups().first?.pending, true)
+    XCTAssertEqual(try probe.processLogEntry(LogEntry(change: 1, group: other, kind: .commit(bytes: commit.parts[0], recoveryAuth: nil))), .ownCommit)
+    XCTAssertEqual(try probe.groups().first?.epoch, 1)
+
+    // The engine: posted, accepted, read back from the changes, merged; only then is the entry done.
+    let group = room.roomId
+    let entry = try await room.serial { let id = try await room.onCore { try $0.update(group: group, forced: true, nowMs: nowMs()) }; room.pumpOutbox(); return id }
+    try await room.awaitOutcome(try XCTUnwrap(entry), orThrow: true)
+    XCTAssertEqual(room.state.epoch, 1)
+    XCTAssertEqual(room.groups[room.roomIdHex]?.pending, false)
+    XCTAssertEqual(room.cursor, 1)
+    XCTAssertEqual(room.coreCursor, 1)
+    let paths = FakeHub.shared.lock.withLock { FakeHub.shared.posted.map(\.path) }
+    let posted = try XCTUnwrap(paths.firstIndex { $0.hasSuffix("/commits") })
+    XCTAssertTrue(paths[posted...].contains("/v2/changes"))
+    XCTAssertFalse(room.board.alerts.contains { $0.code == "not-found" })
+    room.close()
+  }
+
+  /// The log may bring an own Commit before the hub's answer to its post arrives: the core merges it there, the
+  /// entry is gone when the answer comes, and that is no failure.
+  func testAnOwnCommitTheLogBroughtBeforeTheAnswer() async throws {
+    let room = try await founded()
+    _ = try await room.sync()
+    let hold = DispatchSemaphore(value: 0)
+    FakeHub.shared.lock.withLock { FakeHub.shared.holdCommitAnswer = hold }
+    let group = room.roomId
+    let entry = try await room.serial { let id = try await room.onCore { try $0.update(group: group, forced: true, nowMs: nowMs()) }; room.pumpOutbox(); return id }
+    // The hub took the Commit and has not answered: the catch-up brings it first.
+    let until = nowMs() + 5_000
+    while FakeHub.shared.lock.withLock({ FakeHub.shared.change }) == 0, nowMs() < until { try await Task.sleep(nanoseconds: 10_000_000) }
+    _ = try await room.sync()
+    XCTAssertEqual(room.state.epoch, 1)
+    let waiting = try await room.onCore { $0.outbox().count }
+    XCTAssertEqual(waiting, 0)
+    hold.signal()
+    try await room.awaitOutcome(try XCTUnwrap(entry), orThrow: true)
+    XCTAssertEqual(room.state.epoch, 1)
+    // The outbox goes on afterwards.
+    FakeHub.shared.lock.withLock { FakeHub.shared.holdCommitAnswer = nil }
+    try await room.setCrown(.str("x"))
+    try await room.flush()
+    XCTAssertEqual(FakeHub.shared.envelopePosts.count, 1)
+    room.close()
+  }
+
   func testARegisterIsOneEnvelopePerNameAndShowsAtOnce() async throws {
     let room = try await founded()
     _ = try await room.sync()

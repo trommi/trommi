@@ -40,7 +40,8 @@ final class PocketHub {
     } while !Self.waiting(device).isEmpty
   }
 
-  private func postWaiting(_ device: CoreDevice) throws {
+  /// Posts what waits and reports each entry as accepted, without handing anything back from the log.
+  func postWaiting(_ device: CoreDevice) throws {
     while let entry = Self.waiting(device).first {
       func part(_ at: Int) -> Bytes { at < entry.parts.count ? entry.parts[at] : [] }
       let group = entry.group ?? []
@@ -209,6 +210,17 @@ final class RecoveryTests: XCTestCase {
     XCTAssertNil(b.room)
     XCTAssertTrue(try b.groups().isEmpty)
 
+    // A join from outside is in force with the hub's answer (a member's Commit is not: LiveCoreTests): the device is
+    // in the group before the log handed anything back, and its cursor has not moved.
+    try hub.postWaiting(b)
+    XCTAssertEqual(b.room, room)
+    XCTAssertEqual(try b.groups().map(\.epoch), [3])
+    XCTAssertEqual(try b.groups().first?.pending, false)
+    XCTAssertEqual(b.cursor, 0)
+    // The log from its start, in the hub's order: what lies behind the join is passed over, and so is the join's
+    // own Commit, which gives the join its place.
+    XCTAssertEqual(try hub.deliver(to: b), Array(repeating: .skipped, count: hub.log.count))
+    XCTAssertEqual(b.cursor, hub.change)
     try hub.post(b)
     XCTAssertEqual(b.room, room)
     XCTAssertTrue(try b.isHuman())

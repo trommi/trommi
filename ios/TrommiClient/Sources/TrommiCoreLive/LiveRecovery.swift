@@ -297,6 +297,11 @@ extension LiveCore {
   /// Posts one outbox entry of a join and reports the hub's answer to the device. The hub's last word against it
   /// (`isFinalRefusal`) is reported too, so the device drops what it had built, and thrown; so is anything else,
   /// with the entry left in the outbox.
+  ///
+  /// A join from outside is not a member's Commit: it was built on a copy of the state, and reporting the answer
+  /// puts that copy in force (the device is in the group at once, its cursor untouched). So nothing is handed back
+  /// here. The room's first catch-up reads the log from the start, in the hub's order; there the join's own Commit
+  /// is passed over and gives the join its place (RecoveryTests.testANewDeviceJoinsWithTheCode holds this down).
   private func post(_ id: UInt64, of device: LiveDevice, to hub: HubClient) async throws {
     guard let entry = device.outbox().first(where: { $0.id == id }) else { throw TrommiError("internal", "an entry the core named is not in the outbox") }
     do {

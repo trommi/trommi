@@ -160,14 +160,11 @@ final class RealHubTests: XCTestCase {
     catch let refused as TrommiError { XCTAssertEqual(refused.code, "wrong-recovery") }
     do { _ = try await Room.signInWithPassword(hubURL: hubURL, email: "ada@example.com", password: "a wrong long password", base: try scratchFolder(self)); XCTFail("a wrong password signed in") }
     catch let refused as TrommiError { XCTAssertEqual(refused.code, "wrong-login") }
-    // The right password gets the sealed code from the hub. The join that follows is RoomAccount.joinWithRecoveryCode,
-    // which still calls the shape Core.swift guessed (`not-built`); once it calls LiveCore.joinWithRecoveryCode(device:
-    // code:hub:nowMs:), the device is in. Both are right here; testASecondDeviceSignsInWithThePassword does the join.
-    do {
-      let outcome = try await Room.signInWithPassword(hubURL: hubURL, email: "ada@example.com", password: "another long password", base: try scratchFolder(self))
-      if case .joined(let second) = outcome { XCTAssertEqual(second.roomId, room.roomId); second.close() }
-      _ = try await room.sync()
-    } catch let refused as TrommiError { XCTAssertEqual(refused.code, "not-built") }
+    // The right password gets the sealed code from the hub, and RoomAccount.joinWithRecoveryCode joins with it
+    // (LiveCore.joinWithRecoveryCode); testASecondDeviceSignsInWithThePassword looks at that join closely.
+    let outcome = try await Room.signInWithPassword(hubURL: hubURL, email: "ada@example.com", password: "another long password", base: try scratchFolder(self))
+    if case .joined(let second) = outcome { XCTAssertEqual(second.roomId, room.roomId); second.close() }
+    _ = try await room.sync()
     let base = try device.groups().first?.epoch ?? 0
 
     // KeyPackages: the room published what the core made when it caught up (PUT /v2/key-packages); an empty PUT
@@ -184,7 +181,9 @@ final class RealHubTests: XCTestCase {
     XCTAssertEqual(claimed.map(\.device), [device.id])
     XCTAssertFalse(claimed[0].keyPackage.isEmpty)
 
-    // A Commit: POST /v2/groups/{group}/commits; the hub's group moves with the device's.
+    // A Commit: POST /v2/groups/{group}/commits. The hub's answer merges nothing; the outbox reads the changes
+    // after it, where the Commit comes back and is merged (`flush` waits for that): the device's group then
+    // stands where the hub's does.
     XCTAssertNotNil(try device.update(group: room.roomId, forced: true, nowMs: nowMs()))
     room.pumpOutbox()
     try await room.flush(timeoutMs: 5_000)
@@ -296,10 +295,11 @@ final class RealHubTests: XCTestCase {
       return
     }
     try a.outboxAccepted(id, change: try XCTUnwrap(Room.accepted(.recoveryCode, answer) ?? nil))
+    // The answer merged nothing: the Commit takes effect when the changes bring it back. With it merged, the new
+    // key for the sealed keys goes to the other human device by itself (a stored message, posted by the outbox).
+    XCTAssertEqual(try a.groups().first?.epoch, 2)
+    _ = try await first.sync()
     XCTAssertEqual(try a.groups().first?.epoch, 3)
-    // The new key for the sealed keys goes to the other human device by itself.
-    XCTAssertEqual(a.outbox().map(\.kind), [.message])
-    first.pumpOutbox()
     try await first.flush(timeoutMs: 5_000)
     _ = try await second.sync()
     XCTAssertEqual(try b.groups().first?.epoch, 3)
