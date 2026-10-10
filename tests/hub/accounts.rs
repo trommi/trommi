@@ -713,12 +713,27 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
     // or a passkey made anew: registered in that request, on a challenge asked for without a token; the
     // password is gone with it
     let key = Authenticator::new();
-    let challenge = unb64(
+    // (the account's own challenge, which names the id the passkey carries as its user handle)
+    let asked = w
+        .ada
+        .post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+        .ok();
+    assert_eq!(
+        asked["account"],
+        w.ada.get(&w.hub, "/v2/account").ok()["account"]
+    );
+    let challenge = unb64(asked["challenge"].as_str().unwrap()).unwrap();
+    // one of the tokenless kind is for a new account, not for this one
+    let loose = unb64(
         w.hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
             .as_str()
             .unwrap(),
     )
     .unwrap();
+    let stray = Authenticator::new();
+    replace(&mut w, json!({ "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(2) }, "passkey": {
+        "attestation_object": b64(&stray.attestation(RP, UP_UV)), "client_data_json": b64(&Authenticator::client_data("webauthn.create", &loose, ORIGIN)),
+        "sealed_copy": copy(3), "transports": ["internal"] } })).refused(400, "bad-passkey");
     let last_kit: [u8; 32] = random();
     let registration = json!({
         "attestation_object": b64(&key.attestation(RP, UP_UV)), "client_data_json": b64(&Authenticator::client_data("webauthn.create", &challenge, ORIGIN)),

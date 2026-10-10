@@ -549,6 +549,13 @@ pub fn account_of(c: &Connection, room: &Room) -> Res<i64> {
         .ok_or_else(|| refuse("not-found", "this room has no account"))
 }
 
+pub fn handle_of(c: &Connection, account: i64) -> Res<Vec<u8>> {
+    Ok(
+        c.prepare_cached("SELECT user_handle FROM accounts WHERE account_id = ?1")?
+            .query_row([account], |r| r.get(0))?,
+    )
+}
+
 /// The rooms of an account, in their order.
 pub fn rooms_of(c: &Connection, account: i64) -> Res<Vec<Room>> {
     let mut s = c.prepare_cached(
@@ -861,9 +868,10 @@ impl Accounts {
                 }
                 c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
             }
-            // a passkey made anew: registered as any passkey, on a challenge asked for with or without a token
+            // a passkey made anew: registered as any passkey of this account, on the account's challenge
+            // (`POST /v2/account/passkeys/challenge`, which names the id the passkey carries)
             (Value::Null, p) if !p["attestation_object"].is_null() => {
-                let scopes = [Some((account, revision_of(c, account)?)), None];
+                let scopes = [Some((account, revision_of(c, account)?))];
                 let (registered, copy, transports) = self.register_passkey_of(p, &scopes, now)?;
                 c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
                 insert_passkey(c, account, &registered, &copy, &transports, now)?;
