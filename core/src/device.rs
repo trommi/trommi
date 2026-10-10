@@ -783,7 +783,7 @@ struct Memory {
 }
 
 /// What the device knows of the room's sessions, as the rules ask it.
-struct Known {
+pub(super) struct Known {
     seats: BTreeMap<SessionId, Vec<(u64, Option<DeviceId>)>>,
     helpers: BTreeMap<SessionId, usize>,
     /// The main sessions this device holds as archived: no live session has their id (5.2.10). Their agent
@@ -795,9 +795,11 @@ struct Known {
 }
 
 impl Known {
-    /// The same for a replay. Which live main session an agent device sits in is still asked of the live
-    /// ones alone.
-    fn historical(mut self) -> Self {
+    /// The same for a walk of a session's history from its founding (4.6): a main session that is archived
+    /// now was a main session at the places walked, with the agent leaf it had there. Which live main
+    /// session an agent device sat in, and how many helper sessions lived (5.2.2, 5.2.5), no Commit says:
+    /// a walk does not judge them, the hub did when it took the Commit.
+    pub(super) fn historical(mut self) -> Self {
         self.replay = true;
         self
     }
@@ -820,10 +822,16 @@ impl recovery::SessionsAt for Known {
     }
 
     fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
+        if self.replay {
+            return None;
+        }
         SessionFacts::main_session_of(self, agent)
     }
 
     fn live_helpers(&self, parent: &SessionId) -> usize {
+        if self.replay {
+            return 0;
+        }
         SessionFacts::live_helpers(self, parent)
     }
 }
@@ -890,8 +898,8 @@ pub struct Device<S: Storage> {
     id: DeviceId,
     provider: Provider,
     memory: Memory,
-    /// The walks of groups' pasts that were started and not finished ([`Device::learn_start`]). They are
-    /// no state: nothing here is stored, and nothing the device answers reads it.
+    /// The walk of a group's past that was started and not finished ([`Device::learn_start`]), at most
+    /// one. It is no state: nothing here is stored, and nothing the device answers reads it.
     walks: BTreeMap<GroupId, history::PastWalk>,
     /// The check of a served room that was started and not finished ([`Device::code_check_start`]), and
     /// the check of a session group ([`Device::session_check_start`]), one at a time. The same holds for
@@ -1834,7 +1842,7 @@ impl<S: Storage> Device<S> {
         batch.put(room_place_key(epoch), change.to_be_bytes().to_vec());
     }
 
-    fn known(&self) -> Known {
+    pub(super) fn known(&self) -> Known {
         let mut known = Known {
             seats: BTreeMap::new(),
             helpers: BTreeMap::new(),
@@ -3597,6 +3605,8 @@ impl<S: Storage> Device<S> {
             return Err(Error::Replay);
         }
         let seats = left.map(|held| held.seats.clone()).unwrap_or_default();
+        // 5.2.6: a group closed by its own history stays closed, also for a device let in again.
+        let closed = left.is_some_and(|held| held.closed);
         let leaves = rules::leaves_of(staged.members())?;
         let added_by = staged
             .welcome_sender()
@@ -3623,6 +3633,8 @@ impl<S: Storage> Device<S> {
             joined_epoch: epoch,
             passed: self.memory.record.cursor,
             seats,
+            distrusted: closed,
+            closed,
             ..GroupMeta::default()
         };
         let mut offending = Vec::new();
@@ -3670,7 +3682,7 @@ impl<S: Storage> Device<S> {
                 if !by_human && !by_opener && !offending.contains(&added_by) {
                     offending.push(added_by);
                 }
-                meta.distrusted = !offending.is_empty();
+                meta.distrusted = closed || !offending.is_empty();
             }
         }
         let group = staged
@@ -3823,6 +3835,8 @@ impl<S: Storage> Device<S> {
         if known.is_some_and(|meta| !meta.removed) {
             return Err(Error::Replay);
         }
+        // 5.2.6: a group closed by its own history stays closed, also for a device that joins it again.
+        let closed = known.is_some_and(|meta| meta.closed);
         // 4.3: a device that lost its state comes back under a new key. With a leaf of this key in the
         // tree the join would remove that leaf, and a Remove needs the Cut that only the others hold.
         if group::tree_holds(&verifiable, &self.id) {
@@ -3864,6 +3878,8 @@ impl<S: Storage> Device<S> {
                 seats: seats.to_vec(),
                 own_leaf_ms: now_ms,
                 joined_epoch: built.epoch.saturating_add(1),
+                distrusted: closed,
+                closed,
                 ..GroupMeta::default()
             },
         );
@@ -4116,6 +4132,10 @@ impl<S: Storage> Device<S> {
             return Err(Error::Forbidden);
         }
         let checked = check.finish(current)?;
+        // 4.6: the room epochs at the Commits' places, as this device's own log tells them by now.
+        checked
+            .walked
+            .still_placed(&|change| self.room_epoch_at(change))?;
         self.join_session_from(keys, checked, current, now_ms)
     }
 
@@ -4212,7 +4232,8 @@ impl<S: Storage> Device<S> {
 
 /// Served envelopes in the hub's one order across senders and groups: ascending by change number, whatever
 /// order they were handed in. An envelope handed twice is kept once; two different envelopes under one
-/// change number are `bad-format`, since the hub gives every envelope a number of its own.
+/// change number are `bad-format`, since the hub gives every envelope a number of its own, and so is one
+/// envelope handed twice with void markers that differ (9.0.8: the marker is part of the served record).
 fn in_the_hubs_order<'a>(served: &[ServedEnvelope<'a>]) -> Result<Vec<ServedEnvelope<'a>>, Error> {
     let mut ordered: Vec<ServedEnvelope<'a>> = served.to_vec();
     ordered.sort_by_key(|envelope| envelope.change);
@@ -4220,7 +4241,7 @@ fn in_the_hubs_order<'a>(served: &[ServedEnvelope<'a>]) -> Result<Vec<ServedEnve
     for envelope in ordered {
         match once.last() {
             Some(last) if last.change == envelope.change => {
-                if last.bytes != envelope.bytes {
+                if last.bytes != envelope.bytes || last.void_code != envelope.void_code {
                     return Err(Error::BadFormat);
                 }
             }
@@ -4259,7 +4280,8 @@ impl<S: Storage> Device<S> {
     /// `chains` may be handed in any order, device after device or as they were fetched: this call reads
     /// them in the hub's one order across devices and groups, ascending by their change numbers, which is
     /// the order every envelope is judged in (a Note version builds on another device's). An envelope
-    /// handed twice is read once; two different envelopes under one change number are `bad-format`.
+    /// handed twice is read once; two different envelopes under one change number, or one handed with two
+    /// different void markers, are `bad-format`.
     ///
     /// The outbox entries are the recovery's Commits in order and its finish. The device's state changes
     /// only when the hub accepted the finish; when the hub refuses any of them, or the recovery ran out,

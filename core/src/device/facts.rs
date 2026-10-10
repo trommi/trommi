@@ -533,14 +533,15 @@ impl<S: Storage> Device<S> {
     }
 
     /// The roles of `leaves` under the room state that the Commit naming `room_epoch` was judged with, and the
-    /// seat among them. `place` is that Commit's change number, where a helper session's opener is its main
-    /// session's agent leaf; without it the place is the group's own, the place of its last Commit.
+    /// seat among them. `walked` is, for a Commit a walk judged, its change number, where a helper session's
+    /// opener is its main session's agent leaf, with the sessions the walk judged it against; without it
+    /// the place is the group's own, the place of its last Commit, among the sessions as they stand.
     pub(super) fn roles(
         &self,
         group: &GroupId,
         leaves: &[(LeafNodeIndex, DeviceId)],
         room_epoch: u64,
-        place: Option<u64>,
+        walked: Option<(u64, &dyn SessionsAt)>,
     ) -> Result<EpochFacts, Error> {
         let devices = leaves.iter().map(|(_, device)| *device);
         if group.is_room() {
@@ -561,17 +562,21 @@ impl<S: Storage> Device<S> {
             .ok_or(Error::Internal("a session group without its extension"))?;
         // A group whose place this device does not know yet (it joined by a Welcome and was not handed the
         // Commit that made it) is read as it stands.
-        let place = place.unwrap_or(match meta.place {
+        let own = match meta.place {
             0 => u64::MAX,
             place => place,
-        });
+        };
         let history = self.history()?;
         let room = history.at(room_epoch).unwrap_or(history.newest());
         let main = session.parent.is_zero();
         let seat = if main {
             observer::seat(&session, leaves, room)
         } else {
-            match self.known().main_session_at(&session.parent, place) {
+            let parent = match walked {
+                Some((place, sessions)) => sessions.main_session_at(&session.parent, place),
+                None => self.known().main_session_at(&session.parent, own),
+            };
+            match parent {
                 Parent::Seat(seat) => seat,
                 // A device that does not follow the main session takes the one enrolled agent device
                 // among the leaves for the opener.
@@ -1014,6 +1019,13 @@ impl<S: Storage> Device<S> {
                 group_key(table::CHAIN, SUB_OWN_CHAIN, group, &[]),
                 OwnChain::from_cut(head).to_bytes()?,
             );
+            // A `heads` it signed beyond the Cut is void too: the numbers after the Cut are signed anew,
+            // and whatever it writes there is a change (9.0.7).
+            let mut state = self.group_state(group)?;
+            if state.heads_seq > head.seq {
+                state.heads_seq = head.seq;
+                self.put_group_state(batch, group, &state)?;
+            }
         }
         Ok(())
     }
