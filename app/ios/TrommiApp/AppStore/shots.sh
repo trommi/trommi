@@ -16,7 +16,8 @@
 #   PHONE      [iPhone 18 Pro Max]       a simulator whose screenshots are 1320x2868 (App Store 6.9")
 #   IPAD       [iPad Pro 13-inch (M5)]   a simulator whose screenshots are 2064x2752 (App Store 13")
 #     (of several with that name, the one of the newest iOS: the app's deployment target is iOS 27)
-#   OUT        [AppStore/screenshots/en-US]   pictures land in OUT/iphone-6.9 and OUT/ipad-13
+#   OUT        [AppStore/screenshots-raw/en-US]   pictures land in OUT/iphone-6.9 and OUT/ipad-13 (marketing/render.sh frames
+#              them into AppStore/screenshots, which store.py uploads)
 #   DERIVED    [~/Library/Caches/trommi-shots]   Xcode's build folder, kept between runs
 #   WAIT       [6]   seconds between the launch and the picture
 #   SHOTS_PHONE, SHOTS_IPAD   the shots, "<file name> <screen id>" per line (defaults below)
@@ -28,7 +29,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 xcodegen=${XCODEGEN:-xcodegen}
 phone=${PHONE:-iPhone 18 Pro Max}
 ipad=${IPAD:-iPad Pro 13-inch (M5)}
-out=${OUT:-$here/screenshots/en-US}
+out=${OUT:-$here/screenshots-raw/en-US}
 derived=${DERIVED:-$HOME/Library/Caches/trommi-shots}
 wait=${WAIT:-6}
 bundle=com.trommi.ios

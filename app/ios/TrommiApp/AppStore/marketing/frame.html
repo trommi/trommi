@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- One App Store screenshot as a poster: a headline (one word underlined with the app's pen stroke), a short line,
+     and a raw screenshot of the app in a phone or tablet frame, on the app's paper. render.sh opens it per picture:
+     frame.html?device=phone|tablet&shot=<raw png>&head=<headline>&under=<words underlined>&line=<short line>.
+     Fonts: Bricolage Grotesque and IBM Plex Sans, the site's files (SIL Open Font License, site/THIRD-PARTY.md). -->
+<html><head><meta charset="utf-8"><style>
+@font-face { font-family: 'Bricolage Grotesque'; font-weight: 600 800; src: url(f1.woff2) format('woff2'); }
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 400 600; src: url(f7.woff2) format('woff2'); }
+:root { --bg: #f5f6f2; --fg: #141c18; --muted: #5c6862; --accent: #1b6a57; --bezel: #141c18; }
+* { margin: 0; box-sizing: border-box; }
+html, body { width: var(--w); height: var(--h); overflow: hidden; background: var(--bg); color: var(--fg); }
+body { position: relative; font-family: 'IBM Plex Sans', sans-serif; }
+.head { position: absolute; left: 0; right: 0; top: var(--top); text-align: center; padding: 0 6%; }
+.mark { width: var(--bell); height: var(--bell); margin: 0 auto var(--gap); border-radius: 22%; overflow: hidden; }
+.mark svg { width: 100%; height: 100%; display: block; }
+h1 { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: var(--size); line-height: 1.04;
+     letter-spacing: -.03em; text-wrap: balance; }
+.under { position: relative; white-space: nowrap; }
+.under svg { position: absolute; left: -2%; width: 104%; bottom: -.16em; height: .2em; overflow: visible; }
+.under path { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.under svg path { stroke-width: calc(var(--size) * .075); }
+p { margin-top: calc(var(--gap) * 1.1); font-size: var(--line); color: var(--muted); line-height: 1.35; }
+.device { position: absolute; left: 50%; top: var(--dtop); width: var(--dw); transform: translateX(-50%);
+          background: var(--bezel); padding: var(--pad); border-radius: var(--outer);
+          box-shadow: 0 4px 8px rgb(20 30 25 / .08), 0 60px 120px -40px rgb(20 30 25 / .35); }
+.device img { display: block; width: 100%; border-radius: var(--inner); }
+</style></head><body>
+<div class="head">
+  <div class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" fill="#1b6a57"/><g transform="translate(12.3 11.5) scale(.8) translate(-13 -12.2)" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3.1 19Q12.3 18.6 16.7 19L21 19.3"/><path d="M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8"/><path d="M11.8 8.6L12.2 6.9"/><path d="M10 6.6Q11.8 6 12.8 6.4L13.8 6.8"/><path d="M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5"/><path d="M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5"/></g></svg></div>
+  <h1 id="h"></h1>
+  <p id="l"></p>
+</div>
+<div class="device"><img id="s" alt=""></div>
+<script>
+const q = new URLSearchParams(location.search)
+const sizes = {
+  // App Store 6.9" iPhone and 13" iPad, portrait
+  phone:  { w: 1320, h: 2868, top: 150, bell: 120, gap: 36, size: 122, line: 50, dtop: 830, dw: 1040, pad: 30, outer: 150, inner: 122 },
+  tablet: { w: 2064, h: 2752, top: 120, bell: 110, gap: 32, size: 128, line: 50, dtop: 700, dw: 1640, pad: 34, outer: 84, inner: 52 },
+}[q.get('device') || 'phone']
+for (const [k, v] of Object.entries(sizes)) document.documentElement.style.setProperty('--' + k, v + 'px')
+const head = q.get('head') || '', under = q.get('under') || ''
+const i = under ? head.lastIndexOf(under) : -1
+const h = document.getElementById('h')
+if (i < 0) h.textContent = head
+else {
+  h.append(head.slice(0, i))
+  const s = document.createElement('span'); s.className = 'under'; s.textContent = under
+  s.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><path d="M1.0 5.0 Q18.0 3.4 26.0 4.3 Q34.0 5.2 43.0 4.4 Q52.0 3.6 61.0 4.3 Q70.0 5.0 78.0 4.4 Q86.0 3.8 92.5 4.2 L99.0 4.6"/></svg>')
+  h.append(s, head.slice(i + under.length))
+}
+document.getElementById('l').textContent = q.get('line') || ''
+const img = document.getElementById('s'); img.src = q.get('shot')
+img.onload = () => document.body.dataset.ready = '1'
+</script>
+</body></html>

@@ -242,7 +242,9 @@ that declaration only comes up if the answer ever becomes `YES` with standard al
 Everything App Store Connect shows lies in `TrommiApp/AppStore`: `metadata/` (texts and URLs per locale in `en-US/`,
 `copyright.txt`, categories, `release_type.txt`, `age_rating.json`, `availability.json`, App Review's contact and notes
 in `review_information/`, and `app_privacy.json`, the App Privacy answers) and `screenshots/en-US/iphone-6.9` (1320x2868)
-and `screenshots/en-US/ipad-13` (2064x2752), rendered from the demo by `shots.sh` on a Mac. `store.py` sends them:
+and `screenshots/en-US/ipad-13` (2064x2752): posters (a headline in the house style above the app in a device frame)
+that `marketing/render.sh` makes on Linux from the raw simulator pictures in `screenshots-raw/`, which `shots.sh` renders
+from the demo on a Mac. Headlines and lines are in `marketing/render.sh`. `store.py` sends them:
 
     AppStore/store.sh check            # offline: limits, sizes, no alpha; nothing is sent
     AppStore/store.sh upload [BUILD]   # metadata, screenshots, version of project.yml + the TestFlight build; no submission
