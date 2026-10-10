@@ -239,6 +239,7 @@ struct StartView: View {
   var body: some View {
     ObShell(title: "Agents ask. You decide.", lead: "A desk for your Claude Code sessions, end-to-end encrypted.", home: false, underlined: true) {
       if model.loggedOut { Text("Logged out.").font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
+      if model.removed { Text("This device was removed from your account by another device. Nothing of it is left here.").font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
       if let e = model.error { ObError(text: e) }
       VStack(spacing: 12) {
         Button("Create account") { model.go(.create) }.buttonStyle(ObGo())

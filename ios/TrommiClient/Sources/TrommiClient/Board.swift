@@ -464,6 +464,8 @@ public final class Board {
   public var newerEnvelope = 0
   func noteNewer(_ what: String, _ rec: Rec, _ change: inout Change) -> (applied: Bool, refused: String?) {
     newerCount += 1
+    // (what is noted is the kind of thing only, never the sender's word for it: it goes into logs)
+    let what = String(what.prefix { $0 != " " })
     if !newerWhat.contains(what) { newerWhat.append(what); if newerWhat.count > 16 { newerWhat.removeFirst() } }
     newerEnvelope = max(newerEnvelope, rec.envelopeNumber)
     change.room = true
@@ -1075,6 +1077,18 @@ public final class Board {
     let old = human.raw[key]
     if !rec.pending, let old = old, !old.pending, let rc = old.causal, !causallyAfter(rec.causal, rc) { return }
     human.raw[key] = RegisterValue(value: value, envelopeNumber: rec.envelopeNumber, senderSequence: rec.senderSequence, byDeviceId: rec.senderDeviceId, pending: rec.pending, causal: rec.causal)
+    showHumanValue(key, value, &change)
+  }
+  /**
+   * Takes back this device's echo of a register write that was never sealed: the value before it is shown again.
+   * A value that came from the log meanwhile (not pending) stays.
+   */
+  public func restoreHumanRegister(_ key: String, to old: RegisterValue?, _ change: inout Change) {
+    guard human.raw[key]?.pending == true else { return }
+    if let old = old { human.raw[key] = old } else { human.raw.removeValue(forKey: key) }
+    showHumanValue(key, old?.value ?? .null, &change)
+  }
+  private func showHumanValue(_ key: String, _ value: JV, _ change: inout Change) {
     let slash = key.firstIndex(of: "/")
     let prefix = slash.map { String(key[..<$0]) } ?? key
     let id = slash.map { String(key[key.index(after: $0)...]) } ?? ""
@@ -1160,7 +1174,7 @@ public final class Board {
       return a.objectId < b.objectId
     }
     stack = open.filter { c in
-      if let v = human.snoozes[c.objectId], v.object != nil { if v["until"].isNull { return false }; if let u = v["until"].double, UInt64(max(0, u)) > now { return false } }
+      if let v = human.snoozes[c.objectId], v.object != nil { if v["until"].isNull { return false }; if let u = v["until"].double, clampedU64(u) > now { return false } }
       if let sid = c.sessionId, archived.contains(sid) { return false }
       return true
     }.map { $0.objectId }

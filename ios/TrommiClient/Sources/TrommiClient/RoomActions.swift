@@ -13,7 +13,9 @@ extension Room {
   /** A body in the names of spec/v2.md, with its schema version; refused when it is too large to seal. */
   private func wire(_ content: JV, maxBytes: Int = 60_000) throws -> (payload: Bytes, files: [FileId]) {
     var c = Records.renameFiles(content, toWire: true, depth: 0)
-    if (c["schema_version"].int ?? 0) == 0 { c = c.with("schema_version", .num(Double(Compat.SCHEMA_VERSION))) }
+    // (an object gets the schema version; any other value, a register's string or number, goes as it is: `with`
+    // would turn it into an object holding nothing else)
+    if c.object != nil, (c["schema_version"].int ?? 0) == 0 { c = c.with("schema_version", .num(Double(Compat.SCHEMA_VERSION))) }
     let payload = c.encoded()
     if payload.count > maxBytes { throw TrommiError("too-large", maxBytes == 60_000 ? "body over 60 KB: put it into an attachment" : "a register value is at most 4 KiB") }
     return (payload, Records.fileIds(c))
@@ -24,12 +26,14 @@ extension Room {
    * Throws what the core refuses (no key, removed, too large) and, within a moment, what the hub refuses.
    */
   @discardableResult
-  func send(localId: String? = nil, files: [FileId] = [], _ draft: @escaping () throws -> EnvelopeDraft) async throws -> (localId: String, sent: Sealed) {
+  /** `sealed`: called once the envelope is in the outbox (from then on it is sent, whatever the hub answers now). */
+  func send(localId: String? = nil, files: [FileId] = [], sealed: (() -> Void)? = nil, _ draft: @escaping () throws -> EnvelopeDraft) async throws -> (localId: String, sent: Sealed) {
     if let u = upgrade { throw TrommiError("client-too-old", u.message) }
     let r: (String, Sealed) = try await serial { [self] in
       if !self.synced { _ = try await self.catchUp() }
       let d = try draft()
       let sent = try await self.onCore { try $0.seal(d, files: files, nowMs: nowMs()) }
+      sealed?()
       let lid = localId ?? self.newLocalId()
       self.ownEchoes[hex(sent.hash)] = lid
       self.pumpOutbox()
@@ -151,27 +155,38 @@ extension Room {
     for k in values.keys where k.hasPrefix("device/") && k != "device/\(deviceIdHex)" { throw TrommiError("forbidden", "a device writes only its own device register") }
     for k in values.keys where Board.isAgentKey(k) { throw TrommiError("forbidden", "\(k) is not a human key") }
     var ch = Change()
+    // (what each echo replaced: shown again for every name whose envelope was never sealed, should this fail)
+    var before = [String: RegisterValue?](), unsealed = Set<String>()
     for (k, v) in values where !k.hasPrefix("device/") && sessionId == nil {
+      before[k] = .some(board.human.raw[k])
+      unsealed.insert(k)
       var echo = Rec(envelopeNumber: 0, envelopeHash: "", senderDeviceId: deviceIdHex, senderRole: "human", sentAt: nowMs(), kind: KIND.STATUS, isHead: true,
                      contentState: "ok", causal: Causal(senderDeviceId: deviceIdHex, senderSequence: 0, sentAt: nowMs(), lamport: lamport + 1), senderSequence: 0, epoch: 0)
       echo.pending = true
       board.setHumanRegister(k, v, echo, &ch)
     }
     board.project(); ch.stack = true; emit(ch)
-    let group: GroupId
-    if let sid = sessionId {
-      guard let g = sessionGroup(sid) else { throw TrommiError("no-key", "this device is not in that session's group") }
-      group = g.group
-    } else {
-      guard let g = roomGroup else { throw TrommiError("no-key", "this device is in no room") }
-      group = g
-    }
-    for k in values.keys.sorted() {
-      let v = values[k] ?? .null
-      // (a value of null deletes the name; the 4 KiB limit is the register's, 9.3.5)
-      let value: Bytes? = v.isNull ? nil : try wire(v, maxBytes: 4096).payload
-      let name = Records.registerName(k, toWire: true)
-      try await send { .register(group: group, name: name, value: value) }
+    do {
+      let group: GroupId
+      if let sid = sessionId {
+        guard let g = sessionGroup(sid) else { throw TrommiError("no-key", "this device is not in that session's group") }
+        group = g.group
+      } else {
+        guard let g = roomGroup else { throw TrommiError("no-key", "this device is in no room") }
+        group = g
+      }
+      for k in values.keys.sorted() {
+        let v = values[k] ?? .null
+        // (a value of null deletes the name; the 4 KiB limit is the register's, 9.3.5)
+        let value: Bytes? = v.isNull ? nil : try wire(v, maxBytes: 4096).payload
+        let name = Records.registerName(k, toWire: true)
+        try await send(sealed: { unsealed.remove(k) }) { .register(group: group, name: name, value: value) }
+      }
+    } catch {
+      var back = Change()
+      for k in unsealed.sorted() { if let old = before[k] { board.restoreHumanRegister(k, to: old, &back) } }
+      if !back.registers.isEmpty { board.project(); back.stack = true; emit(back) }
+      throw error
     }
   }
   public func setDraft(cardId: String, _ draft: JV?) async throws { try await setRegisters(["draft/\(cardId)": draft ?? .null]) }

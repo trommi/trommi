@@ -78,7 +78,7 @@ enum LiveActivities {
       let body: [String: Any] = ["kind": kind, "token": token, "tag": mine, "environment": Push.environment, "topic": Bundle.main.bundleIdentifier ?? "com.trommi.ios"]
       _ = try await room.hub.request("POST", "/live-activity", body: body)
       UserDefaults.standard.set(true, forKey: mark)
-    } catch { log.error("trommi live: \(kind, privacy: .public) token for room \(String(id.prefix(8)), privacy: .public) not registered: \(String(describing: error), privacy: .public)") }
+    } catch { log.error("trommi live: \(kind, privacy: .public) token for room \(String(id.prefix(8)), privacy: .public) not registered: \(loggable(error), privacy: .public)") }
   }
 
   /** Push turned off or on: on hands the tokens over again; off ends what runs (the hub is not told, see above). */

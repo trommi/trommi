@@ -392,7 +392,7 @@ public final class DeskModel {
     var d = m.human.desks.compactMap { (id, v) -> DeskDesc? in
       guard v.object != nil else { return nil }
       let name = (v["name"].string ?? "").trimmingCharacters(in: .whitespaces)
-      return DeskDesc(id: id, name: name.isEmpty ? "Desk" : name, created: UInt64(max(0, v["created_at"].double ?? 0)), order: v["order"].int, crown: v.has("crown") ? v["crown"] : nil, goals: cleanGoals(v["goals"].string ?? ""))
+      return DeskDesc(id: id, name: name.isEmpty ? "Desk" : name, created: clampedU64(v["created_at"].double), order: v["order"].int, crown: v.has("crown") ? v["crown"] : nil, goals: cleanGoals(v["goals"].string ?? ""))
     }
     let ordered = d.contains { $0.order != nil }
     d.sort { a, b in
@@ -475,7 +475,7 @@ public final class DeskModel {
     }
     if let dr = h.drafts[c.objectId], status == "open" { d.draft = dr }
     if let sn = h.snoozes[c.objectId], status == "open", let until = sn["until"].double {
-      if UInt64(max(0, until)) > now { d.snoozedUntil = UInt64(until); d.snoozedAt = UInt64(max(0, sn["at"].double ?? 0)) } else { d.unsnoozed = UInt64(max(0, until)) }
+      if clampedU64(until) > now { d.snoozedUntil = clampedU64(until); d.snoozedAt = clampedU64(sn["at"].double) } else { d.unsnoozed = clampedU64(until) }
     }
     if status == "done" && c.closedHow == "closed", let a = a, !a.pending, a.answerAction != "read", a.answerAction != "shred" { d.finished = true }
     d.mergedInto = c.mergedIntoObjectId
@@ -826,7 +826,7 @@ public final class DeskModel {
   public var notes: [NoteVM] {
     board.notes.values.filter { $0.objectState != "closed" && !($0.extra["removed"]?.truthy ?? false) }.map {
       NoteVM(id: $0.objectId, text: $0.text, attachments: $0.extra["attachments"]?.array ?? [], held: $0.extra["held"] ?? .null,
-             created: UInt64(max(0, $0.extra["created_at"]?.double ?? 0)), updated: UInt64(max(0, $0.extra["updated_at"]?.double ?? 0)), pending: $0.pending)
+             created: clampedU64($0.extra["created_at"]?.double), updated: clampedU64($0.extra["updated_at"]?.double), pending: $0.pending)
     }.sorted { $0.created < $1.created }
   }
 

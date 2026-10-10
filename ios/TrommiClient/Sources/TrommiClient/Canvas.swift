@@ -353,7 +353,7 @@ public final class CanvasState {
     for e in j["shapes"].array ?? [] {
       if let id = e["id"].string, let by = e["by"].string, let s = CanvasState.shapeOf(e, id: id, by: by) { shapes[id] = s }
     }
-    for (k, v) in j["frontier"].object ?? [:] { if let seq = v[0].int { frontier[k] = (UInt64(seq), v[1].string) } }
+    for (k, v) in j["frontier"].object ?? [:] { if let seq = v[0].int, seq >= 0 { frontier[k] = (UInt64(seq), v[1].string) } }
     lastEnvelopeNumber = j["last_envelope_number"].int ?? 0
     applied = 0
   }

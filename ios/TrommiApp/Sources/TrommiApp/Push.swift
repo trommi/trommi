@@ -1,9 +1,9 @@
 // Push.swift: notifications through APNs (spec/v2.md section 15). The app asks once, registers with Apple, and hands
 // its device token to the room's hub (POST /v2/push) together with the push key: 32 random bytes the core made,
 // under which the hub seals what a notification says ({ room_id, change, urgency, ticket }, the payload's `e`).
-// Apple sees only a fixed text. The Notification Service Extension (Sources/TrommiNotify) puts the card's title and
-// its session in place of that text, opened on the phone, and the card's path (`trommi-path`). A push that arrives
-// while the app is open refreshes the board; a tap opens the card (Links.swift).
+// Apple sees only a fixed text. The Notification Service Extension (Sources/TrommiNotify) opens `e` on the phone and
+// threads the notification by its room; the text stays one of the fixed ones. A push that arrives while the app is
+// open refreshes the board; a tap refreshes it too and follows nothing the push carries.
 //
 // The token goes to the hub through the room the app has open (the model's), never through a second `Room`: the
 // device's state has one owner.
@@ -58,10 +58,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     return [.banner, .list, .sound]
   }
 
-  // A tap on it: the card (the path the extension found), and the board read again.
+  // A tap on it: the board read again, nothing else. A push is the hub's word and names no card this phone could
+  // check (the extension opens `e` for its room and change number only), so nothing it carries is followed: a
+  // path in it could come from a push the extension never saw (no mutable-content, or its time ran out).
   func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-    let info = response.notification.request.content.userInfo
-    if let p = info["trommi-path"] as? String, p.hasPrefix("/") { await MainActor.run { model?.open(path: p) } }
     await model?.refresh()
   }
 }
@@ -142,7 +142,7 @@ enum Push {
       }
       UserDefaults.standard.set(true, forKey: mark)
     // (only the hub's code: its message is the hub's text about a request that carried the push key)
-    } catch { log.error("trommi push: registration for room \(String(id.prefix(8)), privacy: .public) failed: \((error as? HubError)?.code ?? "no answer", privacy: .public)") }
+    } catch { log.error("trommi push: registration for room \(String(id.prefix(8)), privacy: .public) failed: \(loggable(error), privacy: .public)") }
   }
 }
 #endif
