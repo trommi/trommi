@@ -52,6 +52,10 @@ const TAG_OWN: u8 = b'w';
 
 /// How often an envelope the hub voided for its epoch is sealed again before the sender hears of it.
 const RESEALS: u8 = 3;
+/// Where a device the hub no longer takes reads the public Commits of its groups up to the one that removed it
+/// (the owner's decision of 10 October 2026: the hub serves them for a bounded time). The hub's route is not
+/// named yet: until it is, nothing is fetched, and a `not-member` only stops the connector.
+const REMOVAL_ROUTE: Option<&str> = None;
 /// After this many rounds in a row in which what answered was no hub of this protocol, the client stops.
 const NO_HUB_ROUNDS: u32 = 3;
 /// A stream that lived at least this long was a working connection: the pause before the next starts small.
@@ -421,6 +425,8 @@ pub struct Client {
     /// Tells the background tasks to end; they hold the client alive until they have.
     stop_signal: tokio::sync::watch::Sender<bool>,
     removed: AtomicBool,
+    /// Whether the removal was verified: this device processed the Commit that removed it.
+    removal_verified: AtomicBool,
     online: AtomicBool,
     /// Wakes the loop: something waits in the outbox.
     wake: tokio::sync::Notify,
@@ -541,6 +547,7 @@ impl Client {
             stopped: AtomicBool::new(false),
             stop_signal: tokio::sync::watch::channel(false).0,
             removed: AtomicBool::new(false),
+            removal_verified: AtomicBool::new(false),
             online: AtomicBool::new(false),
             wake: tokio::sync::Notify::new(),
             report: std::sync::Mutex::new(json!({})),
@@ -715,7 +722,14 @@ impl Client {
     /// A fault that ends this client's work: the owner is told what it is.
     async fn fatal(&self, fault: &Fault) {
         match fault.code.as_str() {
-            "not-member" | "removed-sender" | "no-room" => self.set_removed(false).await,
+            "not-member" | "removed-sender" | "no-room" => {
+                // The hub's word alone proves nothing. If it still serves the Commit that removed this
+                // device, the device verifies its removal itself; only then is its state wiped (13.5).
+                if let Ok(items) = self.removal_items().await {
+                    let _ = self.verify_removal(&items).await;
+                }
+                self.set_removed(false).await
+            }
             _ => {
                 // Said once per kind of fault, not once per try.
                 let mut told = self.told.lock().unwrap_or_else(|e| e.into_inner());
@@ -735,13 +749,62 @@ impl Client {
 
     /// Notes that this device is out, for a caller that holds the core.
     fn set_removed_in(&self, core: &mut Core, replaced: bool, verified: bool) {
-        if self.removed.swap(true, Ordering::SeqCst) {
+        // A removal that was only claimed and is verified afterwards is told again, as verified.
+        let newly_verified = verified && !self.removal_verified.swap(true, Ordering::SeqCst);
+        if self.removed.swap(true, Ordering::SeqCst) && !newly_verified {
             return;
         }
         let _ = self.stop_signal.send(true);
         core.model.room.connection = "removed".into();
         core.model.room.replaced = replaced;
         self.emit(ClientEvent::Removed { replaced, verified });
+    }
+
+    /// What the hub still serves a device it no longer takes: the Commits of its groups above its cursor, in
+    /// the shape of the items of `/v2/changes`. Empty while the route is not named.
+    async fn removal_items(&self) -> Result<Vec<Value>> {
+        let Some(route) = REMOVAL_ROUTE else {
+            return Ok(Vec::new());
+        };
+        let cursor = self.core.lock().await.cursor;
+        let answer = self.hub.get(&format!("{route}?after={cursor}")).await?;
+        Ok(answer
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Hands the device Commits the hub served after it stopped taking this device, in the hub's order. The
+    /// device verifies each as any other (signature, rules, its place); nothing is taken on the hub's word.
+    /// Returns whether one of them removed this device: from `agents`, or from its main session by a
+    /// takeover. Then the owner is told `Removed { verified: true }` and wipes the slot.
+    pub async fn verify_removal(&self, items: &[Value]) -> Result<bool> {
+        let mut commits: Vec<(u64, &Value)> = items
+            .iter()
+            .filter(|item| item.get("kind").and_then(Value::as_str) == Some("commit"))
+            .filter_map(|item| Some((item.get("change").and_then(Value::as_u64)?, item)))
+            .collect();
+        commits.sort_by_key(|(change, _)| *change);
+        let mut core = self.core.lock().await;
+        for (change, item) in commits {
+            if change <= core.cursor {
+                continue;
+            }
+            match self.take_log(&mut core, item, change, true).await {
+                Ok(_) => core.commit()?,
+                Err(fault) => {
+                    if core.journal.is_dirty() {
+                        core.journal.poison();
+                    }
+                    return Err(fault);
+                }
+            }
+            if self.removal_verified.load(Ordering::SeqCst) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether this client may still sign, post and hand out: not stopped (its lease was lost, or its owner
