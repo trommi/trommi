@@ -54,6 +54,9 @@ pub type Signer = Arc<
 struct Token {
     value: String,
     expires_at: u64,
+    /// What the hub took the signer for: `agent`, `human`, `helper`, or `removed` (a key that was taken out
+    /// of the room: its token reads the Commits that removed it and nothing else).
+    role: String,
 }
 
 /// One hub, and for a signed-in device its room, token and lease.
@@ -337,11 +340,24 @@ impl Hub {
             .get("expires_at")
             .and_then(Value::as_u64)
             .unwrap_or_else(|| now_ms() + 600_000);
+        let role = granted
+            .get("role")
+            .and_then(Value::as_str)
+            .filter(|role| role.len() <= 16 && role.bytes().all(|b| b.is_ascii_lowercase()))
+            .unwrap_or("")
+            .to_string();
         *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Token {
             value: value.clone(),
             expires_at,
+            role,
         };
         Ok(value)
+    }
+
+    /// Whether the hub's last sign-in took this device for a removed one. A sign-in that succeeds does not say
+    /// that the device is a member.
+    pub fn signed_in_as_removed(&self) -> bool {
+        self.token.lock().unwrap_or_else(|e| e.into_inner()).role == "removed"
     }
 
     fn fresh_token(&self) -> Option<String> {
