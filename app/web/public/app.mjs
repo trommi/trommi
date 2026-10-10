@@ -6,7 +6,7 @@ import * as desk from './desk.mjs'
 import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
 import { DRAWER_VEIL, SIDE_FOOT, cornerNote, markCurrent, phoneBar, sidebarRows, tabBar, topbar } from './sidebar.mjs'
-import { Controller, WORDS, calm, readAttachmentsWith, controller, copyLater, curlHTML, html, hueFor, isKnock, keySheet, raw, showToast, sk, startUi, toast } from './ui.mjs'
+import { Controller, WORDS, calm, readAttachmentsWith, controller, copyLater, curlHTML, html, hueFor, isKnock, keySheet, raw, showToast, sk, startUi, toast, sayError } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { rowSheet } from './desk.mjs'
 // The views a cold start needs (the Desk, its frame, the notes) come with this module; every other view is loaded
@@ -935,7 +935,7 @@ controller('sharelink', class extends Controller {
     let made = null
     const link = had ? Promise.resolve(had.link) : sharing.shareFile(att).then(async r => { made = r; await loadShares(); return r.link })
     let ok = false
-    try { ok = await copyLater(link) } catch (err) { this.busy = false; return showToast({ head: 'Not shared', line: err.message, role: 'alert' }) }
+    try { ok = await copyLater(link) } catch (err) { this.busy = false; return showToast({ head: 'Not shared', line: sayError(err), role: 'alert' }) }
     this.busy = false
     paintShare(att, ok ? 'Link copied' : '')
     clearTimeout(this.timer)
@@ -946,7 +946,7 @@ controller('sharelink', class extends Controller {
   }
   async stop() {
     const att = this.attValue
-    try { for (const sh of shares.filter(x => x.attachment_id === att)) await sharing.stopSharing(sh.share_id, att) } catch (err) { return showToast({ head: 'Not stopped', line: err.message, role: 'alert' }) } finally { await loadShares(); paintShare(att) }
+    try { for (const sh of shares.filter(x => x.attachment_id === att)) await sharing.stopSharing(sh.share_id, att) } catch (err) { return showToast({ head: 'Not stopped', line: sayError(err), role: 'alert' }) } finally { await loadShares(); paintShare(att) }
     showToast({ head: 'Sharing stopped', line: `The link to “${this.titleValue}” opens nothing any more` })
   }
 })
@@ -1700,7 +1700,7 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     if (url.origin !== location.origin || method !== 'POST' || !isAppPath(url.pathname)) return realFetch(input, init)
     if (url.pathname === '/note' || url.pathname === '/desk') {
       const body = JSON.parse(String(init.body ?? '{}'))
-      const out = url.pathname === '/note' ? await board.t.hub.note(body) : await board.t.hub.desk(body).then(d => ({ code: 200, text: JSON.stringify(d) }), err => ({ code: err.status ?? 400, text: JSON.stringify({ error: err.message }) }))
+      const out = url.pathname === '/note' ? await board.t.hub.note(body) : await board.t.hub.desk(body).then(d => ({ code: 200, text: JSON.stringify(d) }), err => ({ code: err.status ?? 400, text: JSON.stringify({ error: sayError(err) }) }))
       return new Response(out.text, { status: out.code, headers: { 'Content-Type': 'application/json' } })
     }
     let form
@@ -1785,7 +1785,7 @@ function startPush(client) {
         await client.pushSubscribe(sub.toJSON(), false, v)
         try { localStorage.setItem(LEVEL_KEY, v) } catch {}
       }
-    } catch (err) { say(err.message) }
+    } catch (err) { say(sayError(err)) }
     paintAll(await shown())
     others()
   }
