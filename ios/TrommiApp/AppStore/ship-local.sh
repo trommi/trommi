@@ -13,7 +13,7 @@
 #   ASC_IDENTITY_DIR [~/.appstoreconnect/private_keys/distribution]  the distribution key (key.pem, 0600) and cert.der;
 #     created on the first run, reused while the certificate is valid
 #   BUILD_NUMBER   [the highest build number in App Store Connect + 1]
-#   ITS_NON_EXEMPT_ENCRYPTION [NO]   written as ITSAppUsesNonExemptEncryption
+#   ITS_NON_EXEMPT_ENCRYPTION [YES]  written as ITSAppUsesNonExemptEncryption
 #   NOTES          What to Test instead of the generated text
 #   TESTFLIGHT_TESTER   a user of the team kept in the group "Intern" (unset: nobody is added)
 #   OUT_DIR        [~/.cache/trommi-ship]   where the .ipa is kept
@@ -95,7 +95,7 @@ min=$("$PY" -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))
   --minimum-deployment-target "$min" --output-partial-info-plist "$work/icon.plist" --output-format human-readable-text
 
 echo "== 4. Info.plist: icon, version, export compliance; App Store keys, frameworks =="
-"$PY" - "$app/Info.plist" "$work/icon.plist" "$version" "${ITS_NON_EXEMPT_ENCRYPTION:-NO}" <<'PYEOF'
+"$PY" - "$app/Info.plist" "$work/icon.plist" "$version" "${ITS_NON_EXEMPT_ENCRYPTION:-YES}" <<'PYEOF'
 import plistlib, sys
 path, icon, version, its = sys.argv[1:]
 d = plistlib.load(open(path, "rb"))
