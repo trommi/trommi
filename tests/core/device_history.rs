@@ -1959,3 +1959,162 @@ fn a_recovery_reads_the_chains_in_the_hubs_order_however_they_are_handed_in() {
         assert_eq!(device.chain_head(&room, &sender).unwrap().seq, 1);
     }
 }
+
+/// Hands the walk of `group` one slice of Commits.
+fn hand(
+    device: &mut TestDevice,
+    group: &GroupId,
+    commits: &[trommi_tests::GroupCommit],
+) -> Result<u64, Error> {
+    trommi_tests::served_commits(commits, |slice| device.learn_slice(group, slice))
+        .map(|progress| progress.epoch)
+}
+
+#[test]
+fn a_past_is_learned_in_slices_and_counts_only_when_it_is_finished() {
+    let mut w = world(2);
+    let room = w.room;
+    let (mut new, store) = newcomer(&mut w);
+    let real = fetch_group(&w.hub, &room);
+    let from = new.group(&room).unwrap().own_from;
+    let first = served_of(&w.hub, &room).remove(0);
+    let before = store.entries();
+
+    // The start, then the Commits five at a time. Until the finish nothing of it is the device's state.
+    let progress = new.learn_start(&room, &real.founding).unwrap();
+    assert_eq!((progress.epoch, progress.upto), (0, from));
+    let mut reached = 0;
+    for slice in real.commits.chunks(5) {
+        reached = hand(&mut new, &room, slice).unwrap();
+        assert!(store.entries() == before);
+        assert!(!new.group(&room).unwrap().past_learned);
+        let got = new
+            .receive_envelope(&first.bytes, first.change, true, None, now())
+            .unwrap();
+        assert_eq!(got.code, Some(Error::GroupBehind));
+    }
+    assert_eq!(reached, from);
+    assert!(store.entries() == before);
+    assert_eq!(new.learn_finish(&room).unwrap().epochs, from);
+    assert!(new.group(&room).unwrap().past_learned);
+    let got = new
+        .receive_envelope(&first.bytes, first.change, true, None, now())
+        .unwrap();
+    assert_eq!(got.outcome, EnvelopeOutcome::Chained);
+    // Nothing to learn is no error, at any step.
+    assert_eq!(new.learn_start(&room, &real.founding).unwrap().epoch, from);
+    assert_eq!(hand(&mut new, &room, &real.commits[..2]), Ok(from));
+    assert_eq!(new.learn_finish(&room).unwrap().epochs, 0);
+
+    // The same history, handed in wrongly, to a device that has not learned it.
+    let (mut other, store) = newcomer(&mut w);
+    let real = fetch_group(&w.hub, &room);
+    let from = other.group(&room).unwrap().own_from;
+    let before = store.entries();
+    let unlearned = |device: &TestDevice| {
+        assert!(store.entries() == before);
+        assert!(!device.group(&room).unwrap().past_learned);
+    };
+    // No walk was started.
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[..5]),
+        Err(Error::NotFound)
+    );
+    assert_eq!(other.learn_finish(&room), Err(Error::NotFound));
+    // A finish without all slices.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..5]).unwrap();
+    assert_eq!(other.learn_finish(&room), Err(Error::BadGroup));
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[5..10]),
+        Err(Error::NotFound)
+    );
+    unlearned(&other);
+    // A slice handed twice.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..5]).unwrap();
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[..5]),
+        Err(Error::BadGroup)
+    );
+    assert_eq!(other.learn_finish(&room), Err(Error::NotFound));
+    unlearned(&other);
+    // A slice out of turn.
+    other.learn_start(&room, &real.founding).unwrap();
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[5..10]),
+        Err(Error::BadGroup)
+    );
+    unlearned(&other);
+    // A hub that changes the history between two slices: a Commit of another branch is valid where it
+    // stands, and nothing of the group's own history follows it.
+    let fork = w.fork.0 as usize;
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..fork]).unwrap();
+    let branch = (real.commits[fork].0, w.fork.1.clone(), None);
+    assert_eq!(hand(&mut other, &room, &[branch]), Ok(fork as u64 + 1));
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[fork + 1..fork + 2]),
+        Err(Error::BadGroup)
+    );
+    unlearned(&other);
+    // A slice above the stated size is refused, and the walk stands where it was.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..3]).unwrap();
+    let many = vec![real.commits[3].clone(); trommi_core::recovery::MAX_SLICE_COMMITS + 1];
+    assert_eq!(hand(&mut other, &room, &many), Err(Error::TooLarge));
+    assert_eq!(hand(&mut other, &room, &real.commits[3..]), Ok(from));
+    // The write of the finish fails: nothing of the walk is written, and the walk is gone.
+    store.fail_apply(1);
+    assert!(matches!(other.learn_finish(&room), Err(Error::Storage(_))));
+    unlearned(&other);
+    assert_eq!(other.learn_finish(&room), Err(Error::NotFound));
+    // A device that is opened again in the middle of a walk holds none, and is what it was.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..7]).unwrap();
+    drop(other);
+    let mut other = reopen(store.reopened()).unwrap();
+    assert!(!other.group(&room).unwrap().past_learned);
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[7..]),
+        Err(Error::NotFound)
+    );
+    // It starts again, and learns.
+    other.learn_start(&room, &real.founding).unwrap();
+    for slice in real.commits.chunks(9) {
+        hand(&mut other, &room, slice).unwrap();
+    }
+    assert_eq!(other.learn_finish(&room).unwrap().epochs, from);
+}
+
+#[test]
+fn a_walk_in_slices_closes_a_session_only_by_its_own_history() {
+    // The helper session of the first-contact test, read in slices: a walk that meets a Commit which
+    // broke the rules reads on, and the finish closes the session if the history is the group's own.
+    let mut w = world(1);
+    let side = w.side;
+    let (free, _, side_at) = takeover_with_a_gap(&mut w);
+    let (mut late, store) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    let before = store.entries();
+    // The hub's word fails in the middle; the rest is the group's own: nothing is closed.
+    let lied = moved(&real, side_at, free);
+    late.learn_start(&side, &lied.founding).unwrap();
+    for slice in lied.commits.chunks(4) {
+        hand(&mut late, &side, slice).unwrap();
+    }
+    assert_eq!(late.learn_finish(&side), Err(Error::BadGroup));
+    assert!(store.entries() == before);
+    assert_open(&late, &side);
+    // The same with the end of the history withheld: it does not arrive, and says nothing.
+    late.learn_start(&side, &lied.founding).unwrap();
+    hand(&mut late, &side, &lied.commits[..lied.commits.len() - 1]).unwrap();
+    assert_eq!(late.learn_finish(&side), Err(Error::BadGroup));
+    assert_open(&late, &side);
+    late.learn_start(&side, &real.founding).unwrap();
+    for slice in real.commits.chunks(4) {
+        hand(&mut late, &side, slice).unwrap();
+    }
+    assert!(late.learn_finish(&side).is_ok());
+    assert_open(&late, &side);
+}

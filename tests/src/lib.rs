@@ -643,3 +643,94 @@ pub fn write(hub: &mut Hub, device: &mut TestDevice, draft: &Draft) -> Sealed {
 pub fn json(text: &str) -> SecretBytes {
     SecretBytes::new(text.as_bytes().to_vec())
 }
+
+/// One Commit of a room's logs as a hub serves it: its group, its change number, the Commit and its
+/// `RecoveryAuth`.
+pub type FetchedCommit = (GroupId, u64, Vec<u8>, Option<Vec<u8>>);
+
+/// One Commit of a group's log as a hub serves it: its change number, the Commit and its `RecoveryAuth`.
+pub type GroupCommit = (u64, Vec<u8>, Option<Vec<u8>>);
+
+/// Hands `use_it` the Commits of one group as the core takes a slice of them.
+pub fn served_commits<T>(
+    commits: &[GroupCommit],
+    use_it: impl FnOnce(&[ServedCommit<'_>]) -> T,
+) -> T {
+    let served: Vec<ServedCommit<'_>> = commits
+        .iter()
+        .map(|(change, commit, recovery_auth)| ServedCommit {
+            change: *change,
+            commit,
+            recovery_auth: recovery_auth.as_deref(),
+        })
+        .collect();
+    use_it(&served)
+}
+
+/// Hands `use_it` Commits of a room's logs as the core takes a slice of them.
+pub fn placed_commits<T>(
+    commits: &[FetchedCommit],
+    use_it: impl FnOnce(&[trommi_core::recovery::PlacedCommit<'_>]) -> T,
+) -> T {
+    let placed: Vec<trommi_core::recovery::PlacedCommit<'_>> = commits
+        .iter()
+        .map(
+            |(group, change, commit, recovery_auth)| trommi_core::recovery::PlacedCommit {
+                group: *group,
+                commit: ServedCommit {
+                    change: *change,
+                    commit,
+                    recovery_auth: recovery_auth.as_deref(),
+                },
+            },
+        )
+        .collect();
+    use_it(&placed)
+}
+
+impl Fetched {
+    /// The Commits of the room group and of every session, in the hub's order across groups.
+    pub fn placed(&self) -> Vec<FetchedCommit> {
+        let mut placed: Vec<FetchedCommit> = std::iter::once(&self.room)
+            .chain(&self.sessions)
+            .flat_map(|group| {
+                group.commits.iter().map(|(change, commit, auth)| {
+                    (group.group, *change, commit.clone(), auth.clone())
+                })
+            })
+            .collect();
+        placed.sort_by_key(|(_, change, _, _)| *change);
+        placed
+    }
+
+    /// Hands `use_it` what begins the check of this room in steps.
+    pub fn start<T>(&self, use_it: impl FnOnce(&trommi_core::recovery::ServedStart<'_>) -> T) -> T {
+        let sessions: Vec<&[u8]> = self
+            .sessions
+            .iter()
+            .map(|session| session.founding.as_slice())
+            .collect();
+        use_it(&trommi_core::recovery::ServedStart {
+            room: self.room.group.room_id(),
+            founding: &self.room.founding,
+            anchor: &self.anchor,
+            rows: &self.rows,
+            sessions: &sessions,
+        })
+    }
+
+    /// Hands `use_it` what ends the check of this room in steps.
+    pub fn end<T>(&self, use_it: impl FnOnce(&trommi_core::recovery::ServedEnd<'_>) -> T) -> T {
+        let sessions: Vec<&[u8]> = self
+            .sessions
+            .iter()
+            .map(|session| session.current.as_slice())
+            .collect();
+        use_it(&trommi_core::recovery::ServedEnd {
+            current: &self.room.current,
+            sessions: &sessions,
+            rows: &self.rows,
+            links: &self.links,
+        })
+    }
+}

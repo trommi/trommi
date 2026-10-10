@@ -1879,3 +1879,176 @@ fn a_session_whose_commits_are_served_out_of_the_hubs_order_is_not_joined() {
     }
     assert!(join(&mut new, &honest).is_ok());
 }
+
+#[test]
+fn a_device_signs_in_with_the_code_in_slices() {
+    use trommi_tests::{fetch_group, placed_commits, served_commits};
+
+    let mut w = world(true);
+    w.write_epochs(3);
+    let keys = test_keys();
+    let fetched = fetch(&w.hub, &keys);
+    let placed = fetched.placed();
+    assert!(placed.len() > 12);
+    let start =
+        |device: &mut TestDevice| fetched.start(|served| device.code_check_start(&keys, served));
+    let hand = |device: &mut TestDevice, commits: &[trommi_tests::FetchedCommit]| {
+        placed_commits(commits, |slice| device.code_check_slice(slice))
+    };
+    let finish = |device: &mut TestDevice| {
+        fetched.end(|served| device.join_room_checked(&keys, served, now()))
+    };
+    let store = MemoryStorage::new();
+    let handle = store.handle();
+    let mut c = new_device_on(store);
+    let before = handle.entries();
+    let untouched = |device: &TestDevice| {
+        assert!(handle.entries() == before);
+        assert!(device.room().is_none() && device.outbox().is_empty());
+    };
+
+    // No check was started.
+    assert_eq!(hand(&mut c, &placed[..4]), Err(Error::NotFound));
+    assert_eq!(finish(&mut c).err(), Some(Error::NotFound));
+    // A finish without all slices: the GroupInfo offered as current is not the state reached.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..4]).unwrap();
+    assert_eq!(finish(&mut c).err(), Some(Error::WrongRecovery));
+    assert_eq!(hand(&mut c, &placed[4..8]), Err(Error::NotFound));
+    untouched(&c);
+    // A slice handed twice, and one out of turn.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..4]).unwrap();
+    assert_eq!(hand(&mut c, &placed[..4]), Err(Error::BadGroup));
+    assert_eq!(finish(&mut c).err(), Some(Error::NotFound));
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[4..8]).unwrap_err();
+    untouched(&c);
+    // A hub that changes the history between two slices: a room Commit is left out of the rest.
+    let is_room = |commit: &trommi_tests::FetchedCommit| commit.0 == w.room;
+    let dropped = (4..placed.len())
+        .find(|at| is_room(&placed[*at]) && placed[at + 1..].iter().any(is_room))
+        .unwrap();
+    let mut changed = placed.clone();
+    changed.remove(dropped);
+    start(&mut c).unwrap();
+    hand(&mut c, &changed[..4]).unwrap();
+    assert_eq!(hand(&mut c, &changed[4..]), Err(Error::BadGroup));
+    untouched(&c);
+    // A slice above the stated size is refused, and the check stands where it was.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..4]).unwrap();
+    let many = vec![placed[4].clone(); recovery::MAX_SLICE_COMMITS + 1];
+    assert_eq!(hand(&mut c, &many), Err(Error::TooLarge));
+    for slice in placed[4..].chunks(5) {
+        hand(&mut c, slice).unwrap();
+        untouched(&c);
+    }
+    // The write of the join fails: nothing is written, and the check is gone.
+    handle.fail_apply(1);
+    assert!(matches!(finish(&mut c), Err(Error::Storage(_))));
+    untouched(&c);
+    assert_eq!(finish(&mut c).err(), Some(Error::NotFound));
+    // A device that is opened again in the middle holds no check.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..6]).unwrap();
+    drop(c);
+    let store = handle.reopened();
+    let handle = store.handle();
+    let mut c = reopen(store).unwrap();
+    assert_eq!(hand(&mut c, &placed[6..]), Err(Error::NotFound));
+
+    // From the start again, in slices: the join is the one the single call builds.
+    start(&mut c).unwrap();
+    for slice in placed.chunks(3) {
+        hand(&mut c, slice).unwrap();
+    }
+    let built = finish(&mut c).unwrap();
+    assert!(built.unverified.is_empty() && built.missing_link.is_none());
+    post_ok(&mut w.hub, &mut c);
+    assert!(c.is_human() && c.holds_recovery_mac());
+    // Each session, in slices too.
+    for group in w.hub.live_sessions() {
+        let served = fetch_group(&w.hub, &group);
+        assert_eq!(c.session_check_start(&served.founding), Ok(group));
+        // Out of turn first: the check is void, and is started again.
+        served_commits(&served.commits[1..], |slice| {
+            c.session_check_slice(&group, slice)
+        })
+        .unwrap_err();
+        assert_eq!(
+            c.join_session_checked(&keys, &group, &served.current, now()),
+            Err(Error::NotFound)
+        );
+        assert_eq!(c.session_check_start(&served.founding), Ok(group));
+        // A finish without all slices does not agree with the GroupInfo offered as current.
+        served_commits(&served.commits[..1], |slice| {
+            c.session_check_slice(&group, slice)
+        })
+        .unwrap();
+        assert_eq!(
+            c.join_session_checked(&keys, &group, &served.current, now()),
+            Err(Error::WrongRecovery)
+        );
+        assert_eq!(c.session_check_start(&served.founding), Ok(group));
+        for slice in served.commits.chunks(2) {
+            served_commits(slice, |slice| c.session_check_slice(&group, slice)).unwrap();
+        }
+        c.join_session_checked(&keys, &group, &served.current, now())
+            .unwrap();
+        post_ok(&mut w.hub, &mut c);
+    }
+    w.settle_all();
+    assert_eq!(c.groups().unwrap().len(), 3);
+    for group in w.groups() {
+        for (epoch, key) in keys_of(&w.hub, &w.a, &group) {
+            assert_eq!(c.content_key(&group, epoch).unwrap(), key);
+        }
+    }
+    drop(c);
+    assert!(reopen(handle.reopened()).is_ok());
+}
+
+#[test]
+fn a_recovery_checks_the_room_in_slices() {
+    use trommi_tests::placed_commits;
+
+    let mut w = world(true);
+    w.write_epochs(1);
+    let World { mut hub, a, b, .. } = w;
+    drop((a, b));
+    let keys = test_keys();
+    let mut device = new_device();
+    hub.open_recovery(&device.id()).unwrap();
+    let fetched = fetch(&hub, &keys);
+    let replacement = fetched
+        .served(|served| {
+            let checked = check_room(&keys, served)?;
+            keys.replace(
+                &mut SystemEntropy,
+                &fetched.room.group.room_id(),
+                checked.observer.history().unwrap(),
+            )
+        })
+        .unwrap();
+    fetched
+        .start(|served| device.code_check_start(&keys, served))
+        .unwrap();
+    for slice in fetched.placed().chunks(4) {
+        placed_commits(slice, |slice| device.code_check_slice(slice)).unwrap();
+    }
+    fetched
+        .end(|served| device.recover_checked(&keys, served, &replacement, &[], b"copies", now()))
+        .unwrap();
+    hub.account.clear();
+    post_ok(&mut hub, &mut device);
+    assert!(device.is_human() && !hub.recovery_runs());
+    assert_eq!(device.groups().unwrap().len(), 3);
+    // The check was used up.
+    assert_eq!(
+        fetched
+            .end(|served| device.join_room_checked(&keys, served, now()))
+            .err(),
+        Some(Error::NotFound)
+    );
+}

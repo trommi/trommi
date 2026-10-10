@@ -751,6 +751,26 @@ impl Observer {
         })
     }
 
+    /// Follows a Commit as MLS alone, without Trommi's rules: it verifies against the public state and is
+    /// merged. For a reader that asks only whether a served history is the group's own, whatever the group
+    /// did in it. The record beside the public state is not kept up. On a refusal the observer is unchanged.
+    pub(crate) fn follow_unjudged(&mut self, commit: &[u8]) -> Result<(), Error> {
+        self.guarded(|observer| {
+            let message = rules::parse_commit(commit)?;
+            let mut public = observer.public()?;
+            let processed = public
+                .process_message(observer.provider.crypto(), message)
+                .map_err(|_| Error::BadCommit)?;
+            let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content()
+            else {
+                return Err(Error::BadCommit);
+            };
+            public
+                .merge_commit(observer.provider.storage(), *staged)
+                .map_err(mls_fault)
+        })
+    }
+
     /// Runs `step` and puts OpenMLS's entries and the record back when it fails.
     fn guarded<T>(&mut self, step: impl FnOnce(&mut Self) -> Result<T, Error>) -> Result<T, Error> {
         let entries = self.provider.entries();
