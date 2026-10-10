@@ -22,10 +22,12 @@
 mod macros;
 
 pub mod account;
+pub mod content;
 pub mod device;
 pub mod error;
 pub mod files;
 mod guard;
+pub mod invite;
 #[cfg(feature = "js")]
 pub mod js;
 pub mod push;
@@ -36,14 +38,20 @@ pub mod store;
 pub mod wipe;
 
 pub use account::*;
+pub use content::*;
 pub use device::{log_finding, CoreDevice};
 pub use error::{error_code_from_text, error_code_text, CoreError, ErrorCode};
 pub use files::*;
+pub use invite::{
+    check_emoji, hub_address, invite_link_parse, CheckCode, EmojiWord, InviteAccepted,
+    InviteConfirmed, InviteLinkParts, InviteOpened, InviteRole, InviteStep, InviteStepKind,
+    JoinRequest, SignedOffer, SignedRequest, SignedReveal,
+};
 pub use push::*;
 pub use records::*;
 pub use recovery::{
-    recovery_anchor, recovery_sign_in, Anchor, CodeJoin, GroupCut, RecoveryPlan, Removals,
-    ServedCommit, ServedGroup, ServedRoom, UnverifiedSession,
+    recovery_anchor, recovery_sign_in, Anchor, CodeJoin, Learned, RecoveryPlan, Removals,
+    ServedCommit, ServedEnvelope, ServedGroup, ServedRoom, UnverifiedSession,
 };
 pub use selftest::{self_test, versions, SelfTestReport, SelfTestStep, Versions};
 pub use store::{StoreEntry, StoreWrite, StoredState};
