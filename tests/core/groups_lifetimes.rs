@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use trommi_core::device::{key_package_info, Processed, WelcomeExpectation};
 use trommi_core::ids::GroupId;
+use trommi_core::invite::Role;
 use trommi_core::mls::key_package::verify_key_package_of;
 use trommi_core::mls::observer::Observer;
 use trommi_core::mls::profile::Cut;
@@ -12,9 +13,9 @@ use trommi_core::store::{table, Batch, Storage};
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, enrol, found_main, found_room, found_room_on, new_device, new_device_on, now,
-    post_ok, post_refused, publish_some, reopen, settle, stranger, sync_ok, take_welcomes,
-    MemoryStorage,
+    add_human, enrol, found_main, found_room, found_room_on, hub_address, join_invited, new_device,
+    new_device_on, now, post_ok, post_refused, publish_some, reopen, settle, stranger, sync_ok,
+    try_invite, MemoryStorage, TestDevice, APP,
 };
 
 const HOUR_MS: u64 = 60 * 60 * 1000;
@@ -124,16 +125,26 @@ fn a_key_package_outside_its_lifetime_is_refused() {
     assert!(info.not_after_ms > now() + ten_years - HOUR_MS);
     assert!(info.not_after_ms <= now() + ten_years);
 
-    // One that ran out, and one that is not valid yet.
+    // One that ran out, and one that is not valid yet. No device answers an invite with such a one, and
+    // none is taken where a KeyPackage is handed over.
+    let open = |a: &mut TestDevice, at: u64| {
+        let opened = a
+            .invite_open(Role::Human, None, APP, &hub_address(), at)
+            .unwrap();
+        let link = String::from_utf8(opened.link.expose().to_vec()).unwrap();
+        (opened, link)
+    };
     for made in [now() - ELEVEN_YEARS_MS, now() + 3 * HOUR_MS] {
         let package = c.key_package(made).unwrap();
+        // The invite is open at the moment the device answers it.
+        let (opened, link) = open(&mut a, made.max(now()));
         assert_eq!(key_package_info(&package), Err(Error::BadKeyPackage));
         assert_eq!(
             verify_key_package_of(&package, &c.id()),
             Err(Error::BadKeyPackage)
         );
         assert_eq!(
-            a.add_human_device(&c.id(), &package, now()),
+            c.join_request(&link, &opened.signed_offer, made),
             Err(Error::BadKeyPackage)
         );
         assert_eq!(
@@ -173,13 +184,25 @@ fn a_key_package_outside_its_lifetime_is_refused() {
     let last = flipped.len() - 1;
     flipped[last] ^= 1;
     assert_eq!(key_package_info(&flipped), Err(Error::BadKeyPackage));
-    // The fresh one is taken.
-    a.add_human_device(&c.id(), &fresh, now()).unwrap();
+    // A fresh one is taken: the one of the Request the device answers the invite with.
+    let (opened, link) = open(&mut a, now());
+    let request = c
+        .join_request(&link, &opened.signed_offer, now())
+        .unwrap()
+        .signed_request;
+    let accepted = a.invite_accept(&opened.invite_id, &request, now()).unwrap();
+    let code = c.join_reveal(&accepted.signed_reveal).unwrap();
+    a.invite_confirm(
+        &opened.invite_id,
+        &code,
+        &accepted.request_hash,
+        true,
+        now(),
+    )
+    .unwrap()
+    .unwrap();
     post_ok(&mut hub, &mut a);
-    assert_eq!(
-        take_welcomes(&hub, &mut c, trommi_tests::added_at(&hub)).len(),
-        1
-    );
+    assert_eq!(join_invited(&hub, &mut c).group, room_group);
 }
 
 #[test]
@@ -193,8 +216,9 @@ fn a_refused_welcome_uses_up_its_single_use_key_package() {
 
     // The newcomer was told who would add it; the Welcome is committed by another device.
     let mut c = new_device();
-    let package = c.key_package(now()).unwrap();
-    a.add_human_device(&c.id(), &package, now()).unwrap();
+    let package = try_invite(&mut a, &mut c, Role::Human, None)
+        .unwrap()
+        .key_package;
     post_ok(&mut hub, &mut a);
     let welcome = hub.welcomes.last().unwrap().bytes.clone();
     let told = WelcomeExpectation {
@@ -218,6 +242,7 @@ fn a_refused_welcome_uses_up_its_single_use_key_package() {
         c.join_welcome(&welcome, &right, now()),
         Err(Error::NotMember)
     );
+    assert_eq!(c.join_invited(&welcome, now()), Err(Error::NotMember));
     // Nor does a second Welcome made with that KeyPackage open: the one of a session group.
     a.add_to_session(&main, &c.id(), &package, now()).unwrap();
     post_ok(&mut hub, &mut a);
@@ -231,8 +256,9 @@ fn a_refused_welcome_uses_up_its_single_use_key_package() {
 
     // A Welcome for another room than the expected one is refused and uses its KeyPackage up too.
     let mut d = new_device();
-    let package = d.key_package(now()).unwrap();
-    a.add_human_device(&d.id(), &package, now()).unwrap();
+    let package = try_invite(&mut a, &mut d, Role::Human, None)
+        .unwrap()
+        .key_package;
     post_ok(&mut hub, &mut a);
     let welcome = hub.welcomes.last().unwrap().bytes.clone();
     let elsewhere = WelcomeExpectation {
@@ -269,12 +295,16 @@ fn a_refused_welcome_uses_up_its_single_use_key_package() {
     long.push(0);
     assert_eq!(d.join_welcome(&long, &anyone, now()), Err(Error::TooLarge));
 
-    // The last-resort KeyPackage is not used up by a refusal, and a Welcome never replaces a held group.
+    // The last-resort KeyPackage is not used up by a refusal, and a Welcome never replaces a held group. A
+    // room group's Welcome answers a Request, whose KeyPackage is a single-use one: the last-resort one opens
+    // the Welcome of a session group.
     let mut e = new_device();
     publish_some(&mut hub, &mut e, 0);
+    add_human(&mut hub, &mut a, &mut e);
     let last_resort = hub.claim(&[e.id()]).unwrap().remove(0);
     assert!(key_package_info(&last_resort).unwrap().last_resort);
-    a.add_human_device(&e.id(), &last_resort, now()).unwrap();
+    a.add_to_session(&main, &e.id(), &last_resort, now())
+        .unwrap();
     post_ok(&mut hub, &mut a);
     let welcome = hub.welcomes.last().unwrap().bytes.clone();
     assert_eq!(
@@ -282,21 +312,26 @@ fn a_refused_welcome_uses_up_its_single_use_key_package() {
         Err(Error::BadInvite)
     );
     let joined = e.join_welcome(&welcome, &right, now()).unwrap();
-    assert_eq!((joined.group, joined.added_by), (room_group, a.id()));
-    assert_eq!(joined.epoch, hub.epoch(&room_group).unwrap());
+    assert_eq!((joined.group, joined.added_by), (main, a.id()));
+    assert_eq!(joined.epoch, hub.epoch(&main).unwrap());
     assert_eq!(e.join_welcome(&welcome, &right, now()), Err(Error::Replay));
     sync_ok(&hub, &mut a);
     assert_eq!(
-        e.content_key(&room_group, joined.epoch).unwrap(),
-        a.content_key(&room_group, joined.epoch).unwrap()
+        e.content_key(&main, joined.epoch).unwrap(),
+        a.content_key(&main, joined.epoch).unwrap()
     );
 }
 
 #[test]
 fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
     const DAY_MS: u64 = 24 * HOUR_MS;
-    let mut a = new_device();
+    let (mut a, mut agent) = (new_device(), new_device());
     let (mut hub, room_group) = found_room(&mut a);
+    // A session group to be added to: there a KeyPackage is claimed at the hub, and a last-resort one is
+    // what the hub hands out last.
+    enrol(&mut hub, &mut a, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    let main = found_main(&mut hub, &mut a, &agent.id());
     let anyone = WelcomeExpectation {
         room: room_group.room_id(),
         committer: None,
@@ -307,6 +342,7 @@ fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
     // ahead, the hub refuses a KeyPackage whose lifetime has not begun, and the refused one's private part
     // goes. That happens twice, 31 days apart.
     let mut b = new_device();
+    add_human(&mut hub, &mut a, &mut b);
     publish_some(&mut hub, &mut b, 0);
     let current = hub.claim(&[b.id()]).unwrap().remove(0);
     for days in [31, 62] {
@@ -320,11 +356,11 @@ fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
         hub.claim(&[b.id()]).unwrap(),
         std::slice::from_ref(&current)
     );
-    a.add_human_device(&b.id(), &current, now()).unwrap();
+    a.add_to_session(&main, &b.id(), &current, now()).unwrap();
     post_ok(&mut hub, &mut a);
     let welcome = hub.welcomes.last().unwrap().bytes.clone();
     let joined = b.join_welcome(&welcome, &anyone, now()).unwrap();
-    assert_eq!(joined.group, room_group);
+    assert_eq!(joined.group, main);
 
     // A device whose uploads waited: its first last-resort KeyPackage is at the hub, the second was made 31
     // days later and the third 31 days after that, and the hub takes both only now. Each replaces what was
@@ -342,6 +378,7 @@ fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
         Then::FirstIsGone,
     ] {
         let mut c = new_device();
+        add_human(&mut hub, &mut a, &mut c);
         c.key_packages_to_upload(100, start - 62 * DAY_MS)
             .unwrap()
             .unwrap();
@@ -371,12 +408,12 @@ fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
                 (&first, false)
             }
         };
-        a.add_human_device(&c.id(), with, now()).unwrap();
+        a.add_to_session(&main, &c.id(), with, now()).unwrap();
         post_ok(&mut hub, &mut a);
         let welcome = hub.welcomes.last().unwrap().bytes.clone();
         let joined = c.join_welcome(&welcome, &anyone, now());
         if opens {
-            assert_eq!(joined.unwrap().group, room_group, "{then:?}");
+            assert_eq!(joined.unwrap().group, main, "{then:?}");
         } else {
             assert_eq!(joined, Err(Error::NotMember), "{then:?}");
         }

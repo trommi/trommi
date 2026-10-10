@@ -8,9 +8,9 @@ use trommi_core::mls::profile::Cut;
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, add_to_session, cuts_for, enrol, found_helper, found_main, found_room, new_device,
-    new_device_on, now, observe, post_all, post_ok, post_refused, process, publish_some, reopen,
-    settle, sync, sync_ok, MemoryStorage, TestDevice,
+    add_human, add_to_session, close_invites, cuts_for, enrol, enrol_over, found_helper,
+    found_main, found_room, new_device, new_device_on, now, post_all, post_ok, post_refused,
+    process, publish_some, reopen, settle, sync, sync_ok, MemoryStorage, TestDevice,
 };
 
 /// Two human devices in a room.
@@ -370,10 +370,9 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
     for _ in 0..SESSIONS {
         let mut agent = new_device();
         publish_some(&mut hub, &mut agent, 0);
+        enrol(&mut hub, &mut a, &mut agent);
         agents.push(agent.id());
     }
-    a.change_agents(&agents, &[], now()).unwrap();
-    post_ok(&mut hub, &mut a);
     let groups: Vec<GroupId> = agents
         .iter()
         .map(|agent| found_main(&mut hub, &mut a, agent))
@@ -405,14 +404,15 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
         if round % 2 == 0 {
             let at = (round * 7 + 11) % SESSIONS;
             let mut new = new_device();
-            a.change_agents(&[new.id()], &[agents[at]], now()).unwrap();
-            post_ok(&mut hub, &mut a);
+            enrol_over(&mut hub, &mut a, &mut new, &groups[at]);
             let package = new.key_package(now()).unwrap();
             let cuts = cuts_for(&a, &groups[at]);
             assert_eq!(cuts, [Cut::none(agents[at])]);
             a.clean_session(&groups[at], &cuts, Some((&new.id(), &package)), now())
                 .unwrap();
             post_ok(&mut hub, &mut a);
+            // The takeover is finished: the session is free for the next one.
+            close_invites(&hub, &mut a);
             agents[at] = new.id();
         }
         a.remove_human_devices(&[Cut::none(guest.id())], now())
@@ -554,9 +554,7 @@ fn a_takeover_races_with_a_helper_founding() {
     let packages = hub.claim(&[a.id()]).unwrap();
     let lost = old.found_helper(&parent, &packages, now()).unwrap();
     let mut new = new_device();
-    a.change_agents(&[new.id()], &[old.id()], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    observe(&hub, &mut new);
+    enrol_over(&mut hub, &mut a, &mut new, &main);
     // The founding names the room epoch before it and is refused; the device drops the group it had made.
     assert_eq!(post_refused(&mut hub, &mut old), [Error::RoomBehind]);
     let lost = GroupId::session(main.room_id(), lost);
@@ -580,6 +578,7 @@ fn a_takeover_races_with_a_helper_founding() {
     )
     .unwrap();
     post_ok(&mut hub, &mut a);
+    close_invites(&hub, &mut a);
     settle(&hub, &mut new);
     settle(&hub, &mut old);
 
@@ -587,9 +586,7 @@ fn a_takeover_races_with_a_helper_founding() {
     // Commit. The helper session exists and is stale with its main session until both are cleaned.
     let helper = found_helper(&mut hub, &mut new, &main, &mut []);
     let mut third = new_device();
-    a.change_agents(&[third.id()], &[new.id()], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    observe(&hub, &mut third);
+    enrol_over(&mut hub, &mut a, &mut third, &main);
     assert_eq!(hub.epoch(&helper), Some(1));
     for group in [main, helper] {
         assert_eq!(hub.stale_leaves(&group).unwrap(), [new.id()]);

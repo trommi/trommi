@@ -5,13 +5,14 @@
 
 use trommi_core::device::{log_finding, GroupSummary, LogFinding, Processed, Received};
 use trommi_core::ids::{DeviceId, GroupId};
+use trommi_core::invite::Role;
 use trommi_core::store::{OutboxEntry, OutboxKind};
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, enrol, found_room, join_room, new_device, new_device_on, now, post_all, post_ok,
-    process, publish_some, reopen, settle, sync, sync_ok, take_welcomes, test_keys, MemoryStorage,
-    TestDevice,
+    add_human, enrol, found_room, hub_address, join_invited, join_room, new_device, new_device_on,
+    now, post_all, post_ok, process, publish_some, reopen, settle, sync, sync_ok, test_keys,
+    MemoryStorage, TestDevice, APP,
 };
 
 /// What a device shows of its state: enough to tell two states apart.
@@ -477,8 +478,17 @@ fn a_key_packages_private_part_is_written_before_it_leaves_the_device() {
     let store = MemoryStorage::new();
     let handle = store.handle();
     let mut newcomer = new_device_on(store);
-    // One KeyPackage handed over outside the hub, and the ones to publish.
-    let package = newcomer.key_package(now()).unwrap();
+    // One KeyPackage handed over outside the hub, in the Request that answers an invite, and the ones to
+    // publish.
+    let opened = run
+        .device
+        .invite_open(Role::Human, None, APP, &hub_address(), now())
+        .unwrap();
+    let link = String::from_utf8(opened.link.expose().to_vec()).unwrap();
+    let request = newcomer
+        .join_request(&link, &opened.signed_offer, now())
+        .unwrap()
+        .signed_request;
     let id = newcomer.key_packages_to_upload(98, now()).unwrap().unwrap();
     let upload = newcomer.outbox().remove(0);
     assert_eq!((upload.id, upload.kind), (id, OutboxKind::KeyPackages));
@@ -490,14 +500,23 @@ fn a_key_packages_private_part_is_written_before_it_leaves_the_device() {
     assert_eq!(newcomer.outbox(), std::slice::from_ref(&upload));
     post_ok(&mut run.hub, &mut newcomer);
     assert_eq!(run.hub.unused(&newcomer.id()), 2);
+    let accepted = run
+        .device
+        .invite_accept(&opened.invite_id, &request, now())
+        .unwrap();
+    let code = newcomer.join_reveal(&accepted.signed_reveal).unwrap();
     run.device
-        .add_human_device(&newcomer.id(), &package, now())
+        .invite_confirm(
+            &opened.invite_id,
+            &code,
+            &accepted.request_hash,
+            true,
+            now(),
+        )
+        .unwrap()
         .unwrap();
     post_ok(&mut run.hub, &mut run.device);
-    assert_eq!(
-        take_welcomes(&run.hub, &mut newcomer, trommi_tests::added_at(&run.hub)).len(),
-        1
-    );
+    join_invited(&run.hub, &mut newcomer);
     assert_eq!(
         newcomer.content_key(&run.room_group, 2).unwrap(),
         run.device.content_key(&run.room_group, 2).unwrap()

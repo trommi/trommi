@@ -10,6 +10,7 @@
 //   lock in hand, another owner told apart from other failures, a lock taken away;
 // - without 'wasm-unsafe-eval' WebAssembly is refused (in the page by the page's policy; in a worker by the policy
 //   of the worker script's own response).
+// - catching up through `feed` leaves the same device as one envelope at a time, with one transaction per call;
 // It prints a report with the sizes of the build (core/wasm/pkg/build.json) and the times of this machine.
 import fs from 'node:fs'
 import http from 'node:http'
@@ -48,7 +49,7 @@ let failed = false
 const fail = (what, detail) => { failed = true; console.error(`FAILED: ${what}: ${JSON.stringify(detail)}`) }
 
 /** One new browser process: loads the page and runs one case there. Returns what the page returned, or why it threw. */
-async function inBrowser(what) {
+async function inBrowser(what, argument = null) {
   const browser = await launchChromium({ width: 800, height: 600 })
   try {
     const page = await browser.page()
@@ -61,7 +62,7 @@ async function inBrowser(what) {
     const loaded = new Promise(resolve => { const off = page.on('Page.loadEventFired', () => { off(); resolve() }) })
     await page.send('Page.navigate', { url: origin + '/' })
     await loaded
-    const answer = await page.send('Runtime.evaluate', { expression: `run(${JSON.stringify(what)})`, awaitPromise: true, returnByValue: true })
+    const answer = await page.send('Runtime.evaluate', { expression: `run(${JSON.stringify(what)}, ${JSON.stringify(argument)})`, awaitPromise: true, returnByValue: true })
     if (answer.exceptionDetails) return { ok: false, error: answer.exceptionDetails.exception?.description?.split('\n')[0] ?? answer.exceptionDetails.text, console: consoleErrors }
     return { ...answer.result.value, console: consoleErrors }
   } finally {
@@ -70,8 +71,10 @@ async function inBrowser(what) {
 }
 
 try {
-  for (const what of ['page', 'worker', 'scenario', 'kill', 'store', 'times']) {
-    const result = await inBrowser(what)
+  // TROMMI_CATCHUP=10000 measures a longer catch-up than the 300 envelopes every run checks.
+  const catchUp = Number(process.env.TROMMI_CATCHUP ?? 300)
+  for (const what of ['page', 'worker', 'scenario', 'kill', 'store', 'catchup', 'times']) {
+    const result = await inBrowser(what, what === 'catchup' ? catchUp : null)
     if (!result.ok || result.violations.length || result.console.length || result.contentType !== 'application/wasm') fail(what, result)
     if (result.steps) {
       result.steps = result.steps.map(step => step.ok ? `${(step.micros / 1000).toFixed(1)} ms  ${step.name}` : `FAILED  ${step.name}: ${step.detail}`)
