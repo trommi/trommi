@@ -1337,7 +1337,6 @@ ${obError()}${obSubmit('Next')}</form></details>
       'create-limit': () => { createFlow({ way: 'password' }); type('#ob-pw', 'a long enough password'); say(accountError({ code: 'too-many' })) },
       kit: () => kit({ words }), 'kit-shown': () => kit({ words, shown: true }), 'kit-again': () => kit({ logout: () => {} }), 'kit-wrong': () => kit({ error: 'Wrong password.', logout: () => {} }),
       'kit-passkey': () => kit({ words, ways: { password: false, passkey: true } }), 'kit-noemail': () => kit({ words, shown: true, email: null, ways: { password: false, passkey: true } }),
-      'create-noemail-yet': () => { lastEmail = ''; createFlow(); say(NEEDS_EMAIL_YET) },
       'login-id': () => { lastEmail = DEMO_ID; loginFlow(ID_NO_PASSWORD) },
       'forgot-kit': () => forgotFlow({ way: 'passkey', kit: { hub_url: DEMO_HUB, account: DEMO_ID } }), 'forgot-kit-hub': () => forgotFlow({ way: 'passkey', kit: { hub_url: 'https://hub.example.org', account: DEMO_ID } }),
       'forgot-wrong-id': () => { forgotFlow({ way: 'passkey', kit: { hub_url: DEMO_HUB, account: DEMO_ID } }); type('textarea', words); say('Wrong account ID or words. A kit that shows an email opens with that email.') }, 'kit-again-passkey': () => kit({ logout: () => {}, ways: { password: false, passkey: true } }), 'kit-again-both': () => kit({ logout: () => {}, ways: { password: true, passkey: true } }),
