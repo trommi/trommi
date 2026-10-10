@@ -1,30 +1,32 @@
 //! What the connector's end-to-end tests share: the real v2 hub (this workspace's `hub/`) as a child process, and a stand-in for the
-//! human's device. The stand-in is built on `trommi-core` through the connector's own vault (the device, its
-//! journal, the content chains), and speaks to the hub through the
-//! connector's hub client; everything a human's app does in these tests is here, step by step.
+//! human's device. The stand-in is the core's `Device` over the connector's journal, driven as an app drives it,
+//! and speaks to the hub through the connector's hub client; everything a human's app does in these tests is
+//! here, step by step.
 #![allow(dead_code)]
 
 pub mod process;
 
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use trommi_connector::client::hub_for;
 use trommi_connector::error::{Fault, Result};
-use trommi_connector::hub::{b64, unb64, Hub, Signer};
+use trommi_connector::hub::{b64, unb64, Hub};
+use trommi_connector::keeper::Keeper;
 use trommi_connector::store::Journal;
 use trommi_connector::util::{hex, now_ms};
-use trommi_connector::vault::{ContentDevice, Vault};
-use trommi_core::chain::{Mode, Served};
-use trommi_core::crypto::{SigningKey, SystemEntropy};
-use trommi_core::device::{Accepted, LogEntry, LogKind, Processed};
-use trommi_core::envelope::{
-    AnswerBind, Draft, Envelope, Subject, TakeBackBind, Urgency, Verdict, VerdictBind,
+use trommi_connector::vault::Vault;
+use trommi_core::crypto::{SecretBytes, SystemEntropy};
+use trommi_core::device::{
+    Accepted, Draft, EnvelopeOutcome, GroupSummary, InviteStep, LogEntry, LogKind, Processed,
+    Received, WelcomeExpectation,
 };
+use trommi_core::envelope::Subject;
 use trommi_core::hub_auth::HubAddress;
-use trommi_core::ids::{DeviceId, GroupId, Hash32, ObjectId, RoomId, SessionId};
-use trommi_core::invite::{InviteTerms, Inviter, Request, Role, SignedRequest};
-use trommi_core::mls::profile::Cut;
+use trommi_core::ids::{DeviceId, GroupId, InviteId, ObjectId, RoomId, SessionId};
+use trommi_core::invite::{Role, SignedRequest};
 use trommi_core::store::{OutboxEntry, OutboxKind};
 use trommi_core::Error;
 
@@ -143,102 +145,110 @@ impl Drop for HubProc {
 
 /// An invite the stand-in made, until its device is in.
 pub struct Invite {
-    inviter: Inviter,
+    id: InviteId,
     /// The link to hand to the connector.
     pub link: String,
-    id: String,
 }
 
 /// A device the stand-in admitted.
 pub struct Admitted {
     pub device: DeviceId,
-    pub key_package: Vec<u8>,
     /// The six numbers of the check code, as the app shows them.
     pub code: [u8; 6],
 }
 
-/// The human's device.
+/// The human's device: the core's `Device` over a journal, as an app drives it.
 pub struct Human {
-    pub vault: Vault,
+    vault: Arc<Keeper<Vault>>,
     pub hub: Hub,
-    key: SigningKey,
+    id: DeviceId,
     pub room: RoomId,
     address: HubAddress,
-    pub cursor: u64,
     _dir: TempDir,
-    /// Card and request versions seen: object id as hex to (group, current hash, owner).
-    pub objects: std::collections::BTreeMap<String, (GroupId, Hash32, DeviceId)>,
+    /// The group of every card, Artifact and request seen, by object id as hex.
+    objects: BTreeMap<String, GroupId>,
+    requests: BTreeSet<String>,
     /// What the stand-in could not take, by code: a test asserts that it stays empty.
     pub findings: Vec<String>,
     /// The work trail steps that opened: (turn, number, step).
     pub trail: Vec<(String, u32, Value)>,
-    /// The Chat messages and register values that opened: (session hex, sender, payload).
+    /// The Chat messages, versions and register values that opened: (session hex, sender, payload).
     pub items: Vec<(String, DeviceId, Value)>,
-    /// A permission request's bind, by object id as hex.
-    requests: std::collections::BTreeMap<String, u64>,
 }
 
 pub fn fault_of(error: Error) -> Fault {
     Fault::from(error)
 }
 
+fn payload(value: &Value) -> SecretBytes {
+    SecretBytes::new(value.to_string().into_bytes())
+}
+
 impl Human {
+    /// Runs `job` on the device.
+    async fn v<R: Send + 'static>(&self, job: impl FnOnce(&mut Vault) -> R + Send + 'static) -> R {
+        self.vault.call(job).await.expect("the device's thread")
+    }
+
     /// A new device that founds a room at the hub and publishes its KeyPackages.
     pub async fn found(url: &str) -> Human {
         let dir = TempDir::new("human");
         let journal = Journal::open(dir.path()).expect("a journal");
-        let mut vault = Vault::create(journal).expect("a device");
-        let key = SigningKey::from_seed(vault.signing_key().seed().duplicate());
-        // The recovery code a human's app shows once; the stand-in forgets it.
-        let (_code, keys) =
-            trommi_core::recovery::RecoveryKeys::generate(&mut SystemEntropy).expect("a code");
-        let room = vault
-            .device
-            .found_room(&keys, now_ms())
-            .expect("the room is founded");
-        vault.commit().expect("stored");
-        let address = HubAddress::parse(url).expect("the hub's address");
-        let signer: Signer = {
-            let key = SigningKey::from_seed(key.seed().duplicate());
-            let address = address.clone();
-            Arc::new(move |challenge| {
-                Ok(trommi_core::hub_auth::sign(
-                    &key, room, &address, challenge,
-                )?)
+        let vault = Arc::new(Keeper::spawn(move || Vault::create(journal)).expect("a device"));
+        let (id, room) = vault
+            .call(|v: &mut Vault| {
+                // The recovery code a human's app shows once; the stand-in forgets it.
+                let (_code, keys) =
+                    trommi_core::recovery::RecoveryKeys::generate(&mut SystemEntropy).expect("a code");
+                let room = v
+                    .device
+                    .found_room(&keys, now_ms())
+                    .expect("the room is founded");
+                v.commit().expect("stored");
+                (v.me(), room)
             })
-        };
-        let hub = Hub::new(url, Some(room), Some(signer)).expect("a client");
+            .await
+            .expect("the device's thread");
+        let hub = hub_for(&vault, url, room).expect("a client");
         let mut human = Human {
             vault,
             hub,
-            key,
+            id,
             room,
-            address,
-            cursor: 0,
+            address: HubAddress::parse(url).expect("the hub's address"),
             _dir: dir,
-            objects: Default::default(),
+            objects: BTreeMap::new(),
+            requests: BTreeSet::new(),
             findings: Vec::new(),
             trail: Vec::new(),
             items: Vec::new(),
-            requests: Default::default(),
         };
         human.post_all().await.expect("the founding is taken");
         human
-            .vault
-            .note_epoch(&GroupId::room(room), None, &[], now_ms())
-            .expect("the room's first epoch");
-        human
-            .vault
-            .device
-            .key_packages_to_upload(0, now_ms())
-            .expect("key packages");
-        human.vault.commit().expect("stored");
+            .v(|v| {
+                v.device
+                    .key_packages_to_upload(0, now_ms())
+                    .expect("key packages");
+                v.commit().expect("stored");
+            })
+            .await;
         human.post_all().await.expect("the key packages are taken");
         human
     }
 
     pub fn id(&self) -> DeviceId {
-        self.vault.me()
+        self.id
+    }
+
+    /// The device a human addresses in a session group: its agent leaf.
+    pub async fn seat(&self, group: &GroupId) -> Option<DeviceId> {
+        let group = *group;
+        self.v(move |v| v.seat(&group)).await
+    }
+
+    /// The groups the device is a leaf of.
+    pub async fn groups(&self) -> Vec<GroupSummary> {
+        self.v(|v| v.device.groups().expect("groups")).await
     }
 
     async fn post(&self, entry: &OutboxEntry) -> Result<Value> {
@@ -293,37 +303,47 @@ impl Human {
                 }
                 self.hub.put("/v2/key-packages", &body).await
             }
+            OutboxKind::Envelope => {
+                self.hub
+                    .post("/v2/envelopes", &json!({ "envelope": part(0) }))
+                    .await
+            }
+            OutboxKind::SealedKey => self.hub.put("/v2/sealed-keys", &json!({ "sealed_key": part(0) })).await,
             other => panic!("the stand-in posts no {other:?}"),
         }
     }
 
-    /// Posts the device's outbox and applies each answer; the first refusal is returned.
+    /// Posts the device's outbox and reports each answer; the first refusal is returned.
     pub async fn post_all(&mut self) -> Result<()> {
-        for entry in self.vault.device.outbox() {
+        let entries = self.v(|v| v.device.outbox()).await;
+        for entry in entries {
+            let id = entry.id;
+            let envelope = entry.kind == OutboxKind::Envelope;
             match self.post(&entry).await {
                 Ok(answer) => {
                     let accepted = Accepted {
                         change: answer.get("change").and_then(Value::as_u64),
                     };
-                    self.vault
-                        .device
-                        .outbox_accepted(entry.id, accepted)
-                        .map_err(fault_of)?;
-                    if let (OutboxKind::Commit | OutboxKind::GroupFounding, Some(group)) =
-                        (entry.kind, entry.group)
-                    {
-                        self.vault
-                            .note_epoch(&group, Some(now_ms()), &[], now_ms())?;
-                    }
-                    self.vault.commit()?;
+                    self.v(move |v| -> Result<()> {
+                        v.device.outbox_accepted(id, accepted).map_err(fault_of)?;
+                        v.commit()
+                    })
+                    .await?;
                 }
                 Err(fault) => {
                     let code = fault.as_core().unwrap_or(Error::Internal("refused"));
-                    self.vault
-                        .device
-                        .outbox_refused(entry.id, &code)
-                        .map_err(fault_of)?;
-                    self.vault.commit()?;
+                    let voided = fault.extra.get("voided") == Some(&Value::Bool(true));
+                    self.v(move |v| -> Result<()> {
+                        if voided {
+                            v.device.outbox_voided(id).map_err(fault_of)?;
+                        } else if envelope {
+                            v.device.envelope_abandon(id).map_err(fault_of)?;
+                        } else {
+                            v.device.outbox_refused(id, &code).map_err(fault_of)?;
+                        }
+                        v.commit()
+                    })
+                    .await?;
                     return Err(fault);
                 }
             }
@@ -333,50 +353,44 @@ impl Human {
 
     /// Makes an agent invite (for a new session, or to take `session` over) and publishes its Offer.
     pub async fn invite(&mut self, session: Option<SessionId>) -> Invite {
-        let newest = self
-            .vault
-            .device
-            .room_history()
-            .expect("the room")
-            .newest()
-            .clone();
-        let terms = InviteTerms {
-            app: "https://app.trommi.example".into(),
-            hub: self.address.clone(),
-            room_id: self.room,
-            role: Role::Agent,
-            session_id: session.unwrap_or(SessionId::ZERO),
-            room_epoch: newest.epoch,
-            room_state: newest.state,
-        };
-        let inviter =
-            Inviter::open(&self.key, terms, now_ms(), &mut SystemEntropy).expect("an invite");
-        let offer = inviter.signed_offer();
-        let answer = self
-            .hub
+        self.sync().await;
+        let address = self.address.clone();
+        let opened = self
+            .v(move |v| {
+                let opened = v
+                    .device
+                    .invite_open(
+                        Role::Agent,
+                        session.as_ref(),
+                        "https://app.trommi.example",
+                        &address,
+                        now_ms(),
+                    )
+                    .expect("an invite");
+                v.commit().expect("stored");
+                opened
+            })
+            .await;
+        let offer = &opened.signed_offer;
+        self.hub
             .post(
                 "/v2/invites",
                 &json!({ "offer": b64(&offer.offer), "signature": b64(&offer.signature) }),
             )
             .await
             .expect("the hub takes the Offer");
-        let id = answer["invite_id"]
-            .as_str()
-            .expect("an invite id")
-            .to_string();
-        let link = String::from_utf8_lossy(inviter.link().to_text().expose()).into_owned();
-        Invite { inviter, link, id }
+        Invite {
+            id: opened.invite_id,
+            link: String::from_utf8_lossy(opened.link.expose()).into_owned(),
+        }
     }
 
-    /// Waits for the Request to an invite, reveals, "confirms the emoji" and enrols the new device as an
-    /// agent device of the room.
+    /// Waits for the Request to an invite, reveals, "confirms the emoji" and commits the new device: the
+    /// change of `agents` in the room group.
     pub async fn admit(&mut self, invite: &mut Invite) -> Admitted {
+        let path = format!("/v2/invites/{}", invite.id.to_base64url());
         let request = loop {
-            let served = self
-                .hub
-                .get(&format!("/v2/invites/{}", invite.id))
-                .await
-                .expect("the invite");
+            let served = self.hub.get(&path).await.expect("the invite");
             if let Some(first) = served["requests"].as_array().and_then(|list| list.first()) {
                 break SignedRequest {
                     request: unb64(first, "request").expect("request"),
@@ -386,180 +400,227 @@ impl Human {
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         };
-        let key_package = Request::decode(&request.request)
-            .expect("a Request")
-            .key_package;
-        let device = trommi_core::device::key_package_info(&key_package)
-            .expect("a KeyPackage")
-            .device;
-        let accepted = invite
-            .inviter
-            .accept(&self.key, &request, now_ms())
-            .expect("the Request is accepted");
+        let id = invite.id;
+        let accepted = self
+            .v(move |v| {
+                let accepted = v
+                    .device
+                    .invite_accept(&id, &request, now_ms())
+                    .expect("the Request is accepted");
+                v.commit().expect("stored");
+                accepted
+            })
+            .await;
         self.hub
             .put(
-                &format!("/v2/invites/{}/reveal", invite.id),
+                &format!("{path}/reveal"),
                 &json!({
-                    "reveal": b64(&accepted.reveal.reveal),
-                    "signature": b64(&accepted.reveal.signature),
+                    "reveal": b64(&accepted.signed_reveal.reveal),
+                    "signature": b64(&accepted.signed_reveal.signature),
                 }),
             )
             .await
             .expect("the Reveal is published");
         // The human compares the six emoji and taps "They match".
-        invite
-            .inviter
-            .confirm(&accepted.code, &accepted.request_hash, now_ms())
-            .expect("the code is confirmed");
-        self.vault
-            .device
-            .change_agents(&[device], &[], now_ms())
-            .expect("the enrolment is built");
-        self.vault.commit().expect("stored");
+        let (code, request_hash) = (accepted.code.clone(), accepted.request_hash);
+        self.v(move |v| {
+            v.device
+                .invite_confirm(&id, &code, &request_hash, true, now_ms())
+                .expect("the code is confirmed")
+                .expect("the device is committed");
+            v.commit().expect("stored");
+        })
+        .await;
         self.post_all().await.expect("the enrolment is taken");
-        invite.inviter.finish().expect("the invite is done");
         Admitted {
-            device,
-            key_package,
+            device: accepted.new_device,
             code: accepted.code.numbers(),
         }
     }
 
-    /// Founds a main session for an agent device with its KeyPackage. Returns the session's group.
-    pub async fn found_session(&mut self, agent: &Admitted) -> GroupId {
-        let session = self
-            .vault
-            .device
-            .found_session(
-                &agent.device,
-                std::slice::from_ref(&agent.key_package),
-                now_ms(),
-            )
-            .expect("the founding is built");
-        self.vault.commit().expect("stored");
-        self.post_all().await.expect("the founding is taken");
-        GroupId::session(self.room, session)
+    /// Does what the device says is left for the devices it committed by link (`invite_steps`), until
+    /// nothing is: founding a session, taking one over, handing the history over.
+    pub async fn follow_invites(&mut self) {
+        for _ in 0..200 {
+            self.sync().await;
+            let steps = self
+                .v(|v| {
+                    let steps = v.device.invite_steps().expect("the steps");
+                    v.commit().expect("stored");
+                    steps
+                })
+                .await;
+            if steps.is_empty() {
+                return;
+            }
+            let mut waited = true;
+            for (invite, step) in steps {
+                match step {
+                    InviteStep::Wait => continue,
+                    InviteStep::Commit => {
+                        self.v(move |v| {
+                            v.device
+                                .invite_recommit(&invite, now_ms())
+                                .expect("committed again");
+                        })
+                        .await;
+                    }
+                    InviteStep::FoundSession { agent, key_package } => {
+                        self.v(move |v| {
+                            v.device
+                                .found_session(&agent, std::slice::from_ref(&key_package), now_ms())
+                                .expect("the founding is built");
+                        })
+                        .await;
+                    }
+                    InviteStep::TakeOver {
+                        group,
+                        cuts,
+                        agent,
+                        key_package,
+                    } => {
+                        let key_package = match key_package {
+                            Some(key_package) => key_package,
+                            None => {
+                                let claimed = self
+                                    .hub
+                                    .post(
+                                        "/v2/key-packages/claim",
+                                        &json!({ "devices": [agent.to_base64url()] }),
+                                    )
+                                    .await
+                                    .expect("a KeyPackage of the agent device");
+                                unb64(&claimed["key_packages"], &agent.to_base64url())
+                                    .expect("its bytes")
+                            }
+                        };
+                        self.v(move |v| {
+                            v.device
+                                .clean_session(&group, &cuts, Some((&agent, &key_package)), now_ms())
+                                .expect("the takeover is built");
+                        })
+                        .await;
+                    }
+                    InviteStep::Handover { .. } => {
+                        self.v(move |v| {
+                            v.device.invite_handover(&invite).expect("the handover");
+                        })
+                        .await;
+                    }
+                    InviteStep::CheckHelpers { session } => {
+                        let listed = self
+                            .hub
+                            .get(&format!("/v2/rooms/{}/groups", self.room.to_base64url()))
+                            .await
+                            .expect("the room's groups");
+                        let parent = b64(session.as_bytes());
+                        let helpers: Vec<GroupId> = listed
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|row| {
+                                row["kind"] == "helper"
+                                    && row["live"] != json!(false)
+                                    && row["parent"] == parent.as_str()
+                            })
+                            .filter_map(|row| {
+                                GroupId::from_bytes(&unb64(row, "group_id").ok()?).ok()
+                            })
+                            .collect();
+                        // `group-behind`: a Welcome is still to be taken; the next round does.
+                        let _ = self
+                            .v(move |v| v.device.invite_checked(&invite, &helpers))
+                            .await;
+                    }
+                    InviteStep::AddToSession { .. } => {
+                        panic!("the stand-in adds no human device")
+                    }
+                }
+                waited = false;
+                self.v(|v| v.commit().expect("stored")).await;
+                self.post_all().await.expect("the step is taken");
+            }
+            if waited {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
+        panic!("the invite never finished");
     }
 
-    /// Takes a main session over for `new` (5.3): the old agent device leaves `agents`, then its leaf is
-    /// replaced in the session group, and the history is handed over.
-    pub async fn take_over(&mut self, group: &GroupId, old: DeviceId, new: &Admitted) {
-        self.sync().await;
-        self.vault
-            .device
-            .change_agents(&[], &[old], now_ms())
-            .expect("the old device leaves agents");
-        self.vault.commit().expect("stored");
-        self.post_all().await.expect("taken");
-        let head = self.vault.head_of(group, &old);
-        let cut = Cut {
-            device: old,
-            seq: head.seq,
-            hash: head.hash,
-        };
-        self.vault
-            .device
-            .clean_session(
-                group,
-                &[cut],
-                Some((&new.device, new.key_package.as_slice())),
-                now_ms(),
-            )
-            .expect("the takeover is built");
-        self.vault.commit().expect("stored");
-        self.post_all().await.expect("the takeover is taken");
-        self.vault
-            .device
-            .send_handover(group, &new.device)
-            .expect("the handover is built");
-        self.vault.commit().expect("stored");
-        self.post_all().await.expect("the handover is taken");
+    /// Founds the main session of an agent device that was admitted without one. Returns its group.
+    pub async fn found_session(&mut self, agent: &Admitted) -> GroupId {
+        self.follow_invites().await;
+        self.groups()
+            .await
+            .into_iter()
+            .find(|summary| {
+                summary.session.is_some_and(|s| s.parent.is_zero())
+                    && summary.leaves.contains(&agent.device)
+            })
+            .expect("the agent device's main session")
+            .group
+    }
+
+    /// Takes a main session over for the device that was admitted for it (5.3): the old agent device left
+    /// `agents` with the enrolment; its leaf is replaced, and the history is handed over.
+    pub async fn take_over(&mut self, _group: &GroupId, _old: DeviceId, _new: &Admitted) {
+        self.follow_invites().await;
     }
 
     /// Follows the hub's order up to its end.
     pub async fn sync(&mut self) {
-        // Welcomes first: a helper session an agent founded adds this device.
-        let welcomes = self.hub.get("/v2/welcomes").await.expect("welcomes");
-        for row in welcomes.as_array().cloned().unwrap_or_default() {
-            let group = GroupId::from_bytes(&unb64(&row, "group_id").expect("group")).expect("id");
-            if self.vault.device.group(&group).is_ok() {
-                continue;
-            }
-            let expected = trommi_core::device::WelcomeExpectation {
-                room: self.room,
-                committer: None,
-            };
-            let welcome = unb64(&row, "welcome").expect("welcome");
-            match self
-                .vault
-                .device
-                .join_welcome(&welcome, &expected, now_ms())
-            {
-                Ok(_) => {
-                    self.vault
-                        .note_epoch(&group, None, &[], now_ms())
-                        .expect("its epoch");
-                }
-                Err(error) => self.findings.push(format!("welcome: {}", error.code())),
-            }
-            self.vault.commit().expect("stored");
-        }
         loop {
+            let cursor = self.v(|v| v.device.cursor()).await;
             let answer = self
                 .hub
-                .get(&format!("/v2/changes?after={}&limit=500", self.cursor))
+                .get(&format!("/v2/changes?after={cursor}&limit=500"))
                 .await
                 .expect("changes");
-            for item in answer["items"].as_array().cloned().unwrap_or_default() {
+            let items = answer["items"].as_array().cloned().unwrap_or_default();
+            for item in &items {
                 let change = item["change"].as_u64().unwrap_or(0);
-                if change <= self.cursor {
-                    continue;
-                }
                 match item["kind"].as_str() {
-                    Some("envelope") => self.take_envelope(&item, change),
-                    Some(kind) => self.take_log(&item, change, kind == "commit"),
+                    Some("envelope") => self.take_envelope(item, change).await,
+                    Some(kind) => self.take_log(item, change, kind == "commit").await,
                     None => {}
                 }
-                self.cursor = change;
-                self.vault.commit().expect("stored");
             }
-            self.cursor = self.cursor.max(answer["change"].as_u64().unwrap_or(0));
-            if answer["more"] != json!(true) {
+            let moved = self.v(|v| v.device.cursor()).await != cursor;
+            if answer["more"] != json!(true) || !moved {
                 break;
             }
         }
+        // What merging put into the outbox (nothing, for most entries).
+        let _ = self.post_all().await;
     }
 
-    fn take_log(&mut self, item: &Value, change: u64, commit: bool) {
+    async fn take_log(&mut self, item: &Value, change: u64, commit: bool) {
         let group = GroupId::from_bytes(&unb64(item, "group_id").expect("group")).expect("id");
         let bytes = unb64(item, "bytes").expect("bytes");
-        let kind = if commit {
-            LogKind::Commit {
-                bytes: &bytes,
-                recovery_auth: None,
-            }
-        } else {
-            LogKind::Message { bytes: &bytes }
+        let hand = move |v: &mut Vault| {
+            let kind = if commit {
+                LogKind::Commit {
+                    bytes: &bytes,
+                    recovery_auth: None,
+                }
+            } else {
+                LogKind::Message { bytes: &bytes }
+            };
+            let processed = v.device.process_log_entry(
+                &LogEntry {
+                    change,
+                    group,
+                    kind,
+                },
+                now_ms(),
+            );
+            v.commit().expect("stored");
+            (processed, v.device.group(&group).is_ok())
         };
-        match self.vault.device.process_log_entry(&LogEntry {
-            change,
-            group,
-            kind,
-        }) {
-            Ok(Processed::Commit { facts, removed, .. }) if !removed => {
-                let (time, cuts) = facts
-                    .note
-                    .map(|note| (note.time, note.cuts))
-                    .unwrap_or((now_ms(), Vec::new()));
-                self.vault
-                    .note_epoch(&group, Some(time), &cuts, now_ms())
-                    .expect("the epoch");
-            }
-            Ok(Processed::Message(trommi_core::device::Received::WorkTrail {
-                turn,
-                number,
-                step,
-                ..
+        let (processed, held) = self.v(hand.clone()).await;
+        match processed {
+            Ok(Processed::Message(Received::WorkTrail {
+                turn, number, step, ..
             })) => {
                 let step = serde_json::from_slice(&step).unwrap_or(Value::Null);
                 self.trail.push((hex(turn.as_bytes()), number, step));
@@ -573,130 +634,165 @@ impl Human {
                 }
             }
         }
-    }
-
-    fn take_envelope(&mut self, item: &Value, change: u64) {
-        let _ = change;
-        let bytes = unb64(item, "envelope").expect("envelope");
-        let served = match item["void_code"].as_str() {
-            Some(code) => Served::Void(Error::from_code(code).unwrap_or(Error::BadFormat)),
-            None => Served::Stored,
-        };
-        let Ok(envelope) = Envelope::decode(&bytes) else {
-            self.findings.push("envelope: bad-format".into());
-            return;
-        };
-        let header = envelope.header.clone();
-        match self.vault.receive(&bytes, &served, Mode::InOrder, now_ms()) {
-            Ok(taken) => {
-                let hash = taken.receipt.hash();
-                let session = header
-                    .group
-                    .session_id()
-                    .map(|sid| hex(sid.as_bytes()))
-                    .unwrap_or_default();
-                let opened = taken.receipt.opened();
-                match &header.subject {
-                    Subject::Version(fields) | Subject::Request(fields) => {
-                        if let trommi_core::chain::Outcome::Taken { .. } = taken.receipt.outcome() {
-                            self.objects.insert(
-                                hex(fields.object_id.as_bytes()),
-                                (header.group, hash, header.sender),
-                            );
-                        }
-                        if let (Subject::Request(_), Some(opened)) = (&header.subject, &opened) {
-                            if let trommi_core::envelope::Bind::Request(bind) = opened.body().bind()
-                            {
-                                self.requests
-                                    .insert(hex(fields.object_id.as_bytes()), bind.expires_at);
-                            }
-                        }
-                    }
-                    _ => {}
+        // A session an agent founded adds this device: its Welcome belongs at this Commit's place.
+        if commit && !held && !group.is_room() {
+            let welcomes = self.hub.get("/v2/welcomes").await.expect("welcomes");
+            let wanted = b64(group.as_bytes());
+            let Some(row) = welcomes
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["group_id"] == wanted.as_str())
+            else {
+                return;
+            };
+            let welcome = unb64(row, "welcome").expect("welcome");
+            let room = self.room;
+            let joined = self
+                .v(move |v| {
+                    let expected = WelcomeExpectation {
+                        room,
+                        committer: None,
+                    };
+                    let joined = v.device.join_welcome(&welcome, &expected, now_ms());
+                    v.commit().expect("stored");
+                    joined.map(|joined| joined.offending.len())
+                })
+                .await;
+            match joined {
+                Ok(0) => {
+                    // The Commit again: it gives the join its place.
+                    let _ = self.v(hand).await;
                 }
-                if let Some(opened) = opened {
-                    let payload: Value =
-                        serde_json::from_slice(opened.body().payload()).unwrap_or(Value::Null);
-                    self.items.push((session, header.sender, payload));
-                }
-                if let trommi_core::chain::Outcome::Refused(code) = taken.receipt.outcome() {
-                    self.findings.push(format!("refused: {}", code.code()));
-                }
+                Ok(offending) => self.findings.push(format!("welcome: {offending} offending")),
+                Err(error) => self.findings.push(format!("welcome: {}", error.code())),
             }
-            Err(fault) if fault.code == "replay" => {}
-            Err(fault) => self.findings.push(format!("envelope: {}", fault.code)),
         }
     }
 
-    async fn post_envelope(&mut self, group: &GroupId, draft: &Draft) -> Result<Value> {
-        let sealed = self.vault.seal(group, draft, now_ms())?;
-        self.vault.commit()?;
-        self.hub
-            .post("/v2/envelopes", &json!({ "envelope": b64(&sealed.bytes) }))
-            .await
+    async fn take_envelope(&mut self, item: &Value, change: u64) {
+        let bytes = unb64(item, "envelope").expect("envelope");
+        let void_code = item["void_code"]
+            .as_str()
+            .map(|code| Error::from_code(code).unwrap_or(Error::BadFormat));
+        let received = self
+            .v(move |v| {
+                let received =
+                    v.device
+                        .receive_envelope(&bytes, change, true, void_code.as_ref(), now_ms());
+                v.commit().expect("stored");
+                received
+            })
+            .await;
+        let received = match received {
+            Ok(received) => received,
+            Err(error) => {
+                self.findings.push(format!("envelope: {}", error.code()));
+                return;
+            }
+        };
+        let header = &received.header;
+        let code = received.code.as_ref().map_or("", |code| code.code());
+        match received.outcome {
+            EnvelopeOutcome::Applied => {}
+            EnvelopeOutcome::Refused if matches!(code, "replay" | "group-behind") => return,
+            EnvelopeOutcome::Refused => {
+                self.findings.push(format!("envelope: {code}"));
+                return;
+            }
+            other => {
+                self.findings.push(format!("{other:?}: {code}"));
+                return;
+            }
+        }
+        if let Subject::Version(fields) | Subject::Request(fields) = &header.subject {
+            let id = hex(fields.object_id.as_bytes());
+            if matches!(header.subject, Subject::Request(_)) {
+                self.requests.insert(id.clone());
+            }
+            self.objects.insert(id, header.group);
+        }
+        if let Some(body) = &received.body {
+            let session = header
+                .group
+                .session_id()
+                .map(|sid| hex(sid.as_bytes()))
+                .unwrap_or_default();
+            let payload = serde_json::from_slice(body.payload()).unwrap_or(Value::Null);
+            self.items.push((session, header.sender, payload));
+        }
     }
 
-    fn seat(&self, group: &GroupId) -> DeviceId {
-        self.vault
-            .seat(group)
-            .expect("the session has an agent leaf")
+    /// Seals an item, posts it, and follows the hub's order.
+    async fn write(&mut self, draft: Draft) -> Result<()> {
+        self.sync().await;
+        self.v(move |v| -> Result<()> {
+            v.device
+                .seal(&draft, None, &[], now_ms())
+                .map_err(fault_of)?;
+            v.commit()
+        })
+        .await?;
+        self.post_all().await
     }
 
-    /// Writes a message into a session's Chat, addressed to its agent device.
-    pub async fn say(&mut self, group: &GroupId, payload: Value) -> Result<Value> {
+    fn session_of(&self, object: &str) -> SessionId {
+        self.objects
+            .get(object)
+            .and_then(GroupId::session_id)
+            .expect("the object is known")
+    }
+
+    /// Writes a message into a session's Chat; the device addresses it to the session's agent device.
+    pub async fn say(&mut self, group: &GroupId, body: Value) -> Result<()> {
         let session = group.session_id().expect("a session group");
-        let draft = Draft::session_chat(session, self.seat(group), payload.to_string().as_bytes());
-        self.post_envelope(group, &draft).await
+        self.write(Draft::SessionChat {
+            session,
+            payload: payload(&body),
+        })
+        .await
     }
 
     /// Answers a card of the agent.
     pub async fn answer(
         &mut self,
         card: &str,
-        payload: Value,
+        body: Value,
         choices: &[&str],
         closes: bool,
-    ) -> Result<Value> {
-        let (group, version, owner) = *self.objects.get(card).expect("the card is known");
-        let object_id = object_id(card);
-        let bind = AnswerBind {
-            object_id,
-            version_hash: version,
-            choices: choices.iter().map(|c| c.as_bytes().to_vec()).collect(),
-        };
-        let draft = Draft::answer(
-            bind,
+    ) -> Result<()> {
+        self.sync().await;
+        self.write(Draft::Answer {
+            session: self.session_of(card),
+            object_id: object_id(card),
+            choices: choices.iter().map(|choice| choice.to_string()).collect(),
             closes,
-            Urgency::Normal,
-            owner,
-            payload.to_string().as_bytes(),
-        );
-        self.post_envelope(&group, &draft).await
+            payload: payload(&body),
+        })
+        .await
     }
 
-    /// Takes the answer in force back: `answer_hash` is the answer's envelope hash.
-    pub async fn take_back(&mut self, card: &str, answer_hash: Hash32) -> Result<Value> {
-        let (group, version, owner) = *self.objects.get(card).expect("the card is known");
-        let bind = TakeBackBind {
+    /// Takes the answer in force back.
+    pub async fn take_back(&mut self, card: &str) -> Result<()> {
+        self.sync().await;
+        self.write(Draft::TakeBack {
+            session: self.session_of(card),
             object_id: object_id(card),
-            previous_hash: answer_hash,
-            version_hash: version,
-        };
-        let draft = Draft::take_back(bind, Urgency::Normal, owner, b"{}");
-        self.post_envelope(&group, &draft).await
+            payload: payload(&json!({})),
+        })
+        .await
     }
 
     /// Allows or denies a permission request of the agent.
-    pub async fn verdict(&mut self, request: &str, allow: bool) -> Result<Value> {
-        let (group, hash, owner) = *self.objects.get(request).expect("the request is known");
-        let bind = VerdictBind {
+    pub async fn verdict(&mut self, request: &str, allow: bool) -> Result<()> {
+        self.sync().await;
+        self.write(Draft::Verdict {
+            session: self.session_of(request),
             request_id: object_id(request),
-            request_hash: hash,
-            expires_at: *self.requests.get(request).expect("its expiry"),
-            verdict: if allow { Verdict::Allow } else { Verdict::Deny },
-        };
-        let draft = Draft::verdict(bind, Urgency::Normal, owner, b"{}");
-        self.post_envelope(&group, &draft).await
+            allow,
+            payload: payload(&json!({})),
+        })
+        .await
     }
 
     /// Sets a register of a session group (the Desk's goals for its agent).
@@ -705,15 +801,23 @@ impl Human {
         group: &GroupId,
         name: &str,
         value: Option<Value>,
-    ) -> Result<Value> {
-        let text = value.map(|v| v.to_string());
-        let draft = self.vault.register_draft(group, name, text.as_deref())?;
-        self.post_envelope(group, &draft).await
+    ) -> Result<()> {
+        self.write(Draft::Register {
+            group: *group,
+            name: name.to_string(),
+            value: value.as_ref().map(payload),
+        })
+        .await
     }
 
     /// Whether the object is a permission request the stand-in saw.
     pub fn has_request(&self, object: &str) -> bool {
-        self.requests.contains_key(object)
+        self.requests.contains(object)
+    }
+
+    /// The objects the stand-in saw, by id as hex.
+    pub fn object_ids(&self) -> Vec<String> {
+        self.objects.keys().cloned().collect()
     }
 }
 

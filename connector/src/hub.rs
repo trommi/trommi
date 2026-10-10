@@ -41,7 +41,11 @@ pub fn unb64(value: &Value, field: &str) -> Result<Vec<u8>> {
 }
 
 /// Answers a challenge: the device's `HubAuth` and its signature.
-pub type Signer = Arc<dyn Fn([u8; 32]) -> Result<SignedHubAuth> + Send + Sync>;
+pub type Signer = Arc<
+    dyn Fn([u8; 32]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SignedHubAuth>> + Send>>
+        + Send
+        + Sync,
+>;
 
 #[derive(Default)]
 struct Token {
@@ -302,7 +306,7 @@ impl Hub {
         let challenge: [u8; 32] = unb64(&issued, "challenge")?
             .try_into()
             .map_err(|_| Fault::new("bad-format", "the hub's challenge is not 32 bytes"))?;
-        let signed = signer(challenge)?;
+        let signed = signer(challenge).await?;
         let body = json!({ "auth": b64(&signed.auth), "signature": b64(&signed.signature) });
         let granted = self
             .open_call(
