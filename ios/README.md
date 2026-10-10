@@ -279,10 +279,6 @@ code live for the length of one call. The kit's words are shown once (`KitScreen
 web app that opens its recovery screen with hub and id filled in. It is in the fragment, so it reaches no server,
 and it never holds the words. The app itself does not open such a link yet.
 
-**Not bound yet.** The binding of this checkout has no `kit_keys_for` and no `account_id_parse` (v2-bindings 33a943d
-has both). `LiveCore.swift` answers `not-built` for the kit of an account without an e-mail and for reading an
-account id, each marked `NOT BUILT`: so this build makes and recovers accounts with an e-mail only.
-
 ### Passkeys: switched off
 
 `Passkeys.available` is `false`. Switched on, Create account shows the e-mail as optional and "Create with passkey"
@@ -492,9 +488,7 @@ chrome; the minimum is iOS 27.
 
 ## Not there yet
 
-`TrommiCoreLive` binds every call of `Core.swift` to the core (`core/swift`, v2-bindings b2e5b98) but two, which
-that binding does not have yet and which answer `not-built`: the Emergency Kit's keys of an account without an
-e-mail (`kitKeysFor(.id)`) and the reading of an account id (`accountIdParse`); see "Account". Its header
+`TrommiCoreLive` binds every call of `Core.swift` to the core (`core/swift`, v2-bindings 33a943d). Its header
 (`LiveCore.swift`) lists what is bound and what of the binding is left out. What the app still cannot do:
 
 - **The notification title.** A content key never leaves the core, and the binding opens an envelope only on the

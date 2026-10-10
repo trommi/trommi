@@ -2,19 +2,14 @@
 // (core/swift, built by core/swift/build.sh). The app installs it once at launch: `Core.tools = LiveCore()`.
 // The device is LiveDevice.swift; the store, errors and bytes at the edge are LiveStore.swift.
 //
-// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src at v2-bindings b2e5b98.
+// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src at v2-bindings 33a943d.
 //
-//   STUBBED      two calls the binding of this worktree does not have yet (v2-bindings 33a943d has them; to be
-//                bound when the integrator merges that binding). Each answers `not-built` and is marked NOT BUILT:
-//                  kitKeysFor(.id(…))   the Emergency Kit's keys of an account without e-mail (`kit_keys_for`);
-//                                       kitKeysFor(.email(…)) is real (`kit_keys`, the same bytes)
-//                  accountIdParse       an account id as typed, in its one text form (`account_id_parse`)
-//                So an account without an e-mail cannot be made or recovered by this build; one with an e-mail can.
-//                Every other call of Core.swift is one call into the binding, with the shapes changed and nothing else.
+//   STUBBED      nothing.
+//                Every call of Core.swift is one call into the binding, with the shapes changed and nothing else.
 //
 //   REAL, Core.swift's calls:
 //   CoreTools    version, selfTest, createDevice, openDevice,
-//                normaliseEmail, checkPassword, passwordKeys, kitKeysFor (by e-mail), generateKitWords, parseKitWords,
+//                normaliseEmail, checkPassword, passwordKeys, kitKeysFor, accountIdParse, generateKitWords, parseKitWords,
 //                generateRecoveryCode, formatRecoveryCode, parseRecoveryCode, sealCode, openCode,
 //                encryptFile, decryptFile, createShareLink, generatePushKey, isFinalRefusal (the core's table, held
 //                by a test), canonicalHub (`hub_address`), parseInviteLink (`invite_link_parse`), checkEmoji,
@@ -90,17 +85,17 @@ open class LiveCore: CoreTools {
     let keys = try core { try TrommiCoreRust.passwordKeys(email: email, password: password, kdf: kdf) }
     return PasswordKeys(authKey: b64u(keys.authKey.bytes), wrapKey: keys.wrapKey.bytes)
   }
-  public func kitKeysFor(_ name: AccountName, words: String) throws -> PasswordKeys {
+  public func kitKeysFor(_ name: TrommiClient.AccountName, words: String) throws -> PasswordKeys {
+    // (exactly one of the two names: an account is named by its e-mail, or without one by its id)
+    let theirs: TrommiCoreRust.AccountName
     switch name {
-    case .email(let email):
-      let keys = try core { try kitKeys(email: email, words: words) }
-      return PasswordKeys(authKey: b64u(keys.authKey.bytes), wrapKey: keys.wrapKey.bytes)
-    // NOT BUILT: bind `kitKeysFor(name: AccountName(email: nil, id: id), words: words)` once the binding has it.
-    case .id: throw TrommiError("not-built", "this build has no Emergency Kit for an account without an e-mail")
+    case .email(let email): theirs = TrommiCoreRust.AccountName(email: email, id: nil)
+    case .id(let id): theirs = TrommiCoreRust.AccountName(email: nil, id: id)
     }
+    let keys = try core { try TrommiCoreRust.kitKeysFor(name: theirs, words: words) }
+    return PasswordKeys(authKey: b64u(keys.authKey.bytes), wrapKey: keys.wrapKey.bytes)
   }
-  // NOT BUILT: bind `accountIdParse(text: text)` once the binding has it.
-  public func accountIdParse(_ text: String) throws -> String { throw TrommiError("not-built", "this build does not read an account id") }
+  public func accountIdParse(_ text: String) throws -> String { try core { try TrommiCoreRust.accountIdParse(text: text) } }
   public func generateKitWords() throws -> String { try core { try TrommiCoreRust.generateKitWords() } }
   public func parseKitWords(_ text: String) throws -> String { try core { try TrommiCoreRust.parseKitWords(text: text) } }
   public func generateRecoveryCode() throws -> Bytes { try core { try TrommiCoreRust.generateRecoveryCode() }.bytes }

@@ -665,10 +665,15 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertEqual(refusedCode { _ = try self.tools.openCode(underKit, room: room, way: .kit(wrapKey: try self.tools.kitKeysFor(.email("bob@example.com"), words: words).wrapKey)) }, "wrong-recovery")
     // A copy opens only as the way it was sealed for.
     XCTAssertEqual(refusedCode { _ = try self.tools.openCode(underKit, room: room, way: .password(wrapKey: keys.wrapKey)) }, "wrong-login")
-    // The kit of an account without an e-mail and the reading of an account id wait for the binding that has them
-    // (LiveCore.swift, STUBBED). When they are bound, this is where their known answers go.
-    XCTAssertEqual(refusedCode { _ = try self.tools.kitKeysFor(.id("00000000-0000-4000-8000-000000000000"), words: words) }, "not-built")
-    XCTAssertEqual(refusedCode { _ = try self.tools.accountIdParse("00000000-0000-4000-8000-000000000000") }, "not-built")
+    // An account without an e-mail: its kit's keys hang on its id, which reads in any case, with or without hyphens.
+    let id = try tools.accountIdParse("00000000-0000-4000-8000-0000000000AB")
+    XCTAssertEqual(id, try tools.accountIdParse("00000000 0000 4000 8000 0000000000ab"))
+    XCTAssertEqual(id, try tools.accountIdParse(id))
+    XCTAssertEqual(refusedCode { _ = try self.tools.accountIdParse("not an id") }, "bad-format")
+    let byId = try tools.kitKeysFor(.id(id), words: words)
+    XCTAssertEqual(byId, try tools.kitKeysFor(.id(id), words: words))
+    XCTAssertNotEqual(byId.wrapKey, kit.wrapKey)
+    XCTAssertNotEqual(byId.wrapKey, try tools.kitKeysFor(.id(try tools.accountIdParse("00000000-0000-4000-8000-0000000000ac")), words: words).wrapKey)
 
     // The copy under a passkey needs no e-mail: a login with a passkey has none (Account.swift).
     let prf = systemRandom(32), credential = systemRandom(20)
