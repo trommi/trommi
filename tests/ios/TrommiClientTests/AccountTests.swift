@@ -773,4 +773,17 @@ final class AccountTests: XCTestCase {
     XCTAssertEqual(try tools.openCode(try unb64u(added["sealed_copy"] as! String), room: room.roomId, way: .passkey(prf: Bytes(repeating: 6, count: 32), credentialId: second)), tools.codes.last)
     room.close()
   }
+  /// "New password" came into the room and the hub did not take the password: the same words again set it on the
+  /// device that is in, instead of failing with `room-exists`.
+  func testANewPasswordThatFailedIsSetByTheNextTry() async throws {
+    let (room, words) = try await created()
+    hub.refusal = ("/v2/account/password", 500, ["error": "internal", "message": "x"], [:])
+    let failed = await failure { _ = try await Room.resetPassword(hubURL: self.hubURL, account: self.email, words: words, newPassword: self.other, base: self.device("second")) }
+    XCTAssertEqual(code(of: try XCTUnwrap(failed)), "internal")
+    XCTAssertEqual(Store.rooms(base: device("second")).count, 1, "the device is in")
+    let again = try await Room.resetPassword(hubURL: hubURL, account: email, words: words, newPassword: other, base: device("second"))
+    XCTAssertEqual(Store.folders(device("second")).count, 1, "no second device")
+    let third = try await Room.loginWithPassword(hubURL: hubURL, account: email, password: other, base: device("third"))
+    room.close(); again.close(); third.close()
+  }
 }

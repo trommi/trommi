@@ -205,6 +205,7 @@ struct ServedByHub {
       let page = try await hub.request("GET", "/sealed-keys", query: ["after": String(after)])
       rows += try (page["rows"] as? [JSON] ?? []).map { try bytes($0, "sealed_key") }
       links += try (page["links"] as? [JSON] ?? []).map { try bytes($0, "recovery_link") }
+      guard rows.reduce(0, { $0 + $1.count }) + links.reduce(0, { $0 + $1.count }) <= HubClient.maxServed else { throw TrommiError("too-large", "the room's sealed keys are more than this client reads") }
       guard page["more"] as? Bool == true else { return (rows, links) }
       guard let next = Wire.uint(page["change"]), next > after else { throw TrommiError("bad-format", "the hub's list of sealed keys does not move on") }
       after = next
@@ -245,7 +246,7 @@ struct ServedByHub {
   /// in and does not sort them, and each is judged against the group state of its place. Chain after chain would
   /// hand it a device's late envelopes before another device's early ones (RoomRecoveryTests holds this down).
   func chains(_ removals: [(group: GroupId, devices: [DeviceId])]) async throws -> [(bytes: Bytes, change: UInt64, voidCode: String?)] {
-    var all = [(bytes: Bytes, change: UInt64, voidCode: String?)]()
+    var all = [(bytes: Bytes, change: UInt64, voidCode: String?)](), total = 0
     for removal in removals {
       for device in removal.devices {
         var after: UInt64 = 0
@@ -256,7 +257,10 @@ struct ServedByHub {
             guard let seq = Wire.uint(item["seq"]), seq > after, let change = Wire.uint(item["change"]) else { throw TrommiError("bad-format", "the hub's chain of a device is not in order") }
             after = seq
             if item["cut"] as? Bool == true { continue }
-            all.append((try bytes(item, "envelope"), change, item["void_code"] as? String))
+            let envelope = try bytes(item, "envelope")
+            total += envelope.count
+            guard total <= HubClient.maxServed else { throw TrommiError("too-large", "the chains to read are more than this client reads") }
+            all.append((envelope, change, item["void_code"] as? String))
           }
           guard page["more"] as? Bool == true, !items.isEmpty else { break }
         }

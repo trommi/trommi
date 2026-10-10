@@ -127,3 +127,12 @@ public extension JV {
   static func n(_ v: Int?) -> JV { v.map { .num(Double($0)) } ?? .null }
   static func n(_ v: UInt64?) -> JV { v.map { .num(Double($0)) } ?? .null }
 }
+
+/**
+ * A number of the content as a time or a count: 0 for a negative one, nothing that is not finite, and at most
+ * 2^53 (the largest whole number a JSON number holds exactly). Never traps, whatever a sender wrote.
+ */
+public func clampedU64(_ d: Double?) -> UInt64 {
+  guard let d = d, d.isFinite, d > 0 else { return 0 }
+  return UInt64(min(d.rounded(.down), 9_007_199_254_740_992))
+}
