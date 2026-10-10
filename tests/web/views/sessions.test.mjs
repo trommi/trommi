@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { emptyModel } from '../../../app/web/core/model-shape.ts'
 import { sessionOf } from '../../../app/web/core/model.ts'
 import { BoardState } from '../../../app/web/public/app.mjs'
-import { deletionOf } from '../../../app/web/public/agents.mjs'
+import { deletionOf, register } from '../../../app/web/public/agents.mjs'
 
 const D0 = 'd0'.repeat(16), D1 = 'd1'.repeat(16), D2 = 'd2'.repeat(16)
 const S0 = '50'.repeat(16), S1 = '51'.repeat(16), S2 = '52'.repeat(16), H0 = '60'.repeat(16)
@@ -93,4 +93,33 @@ test('Delete of the old entry takes neither the connected session put under it n
   session(m, S2, D0, { open: 1, settings: { desk: 'other' } })
   const again = agentsOf(m)
   assert.deepEqual(deletionOf({ everyone: again }, again.find(x => x.id === idOf(S0))).devices, [])
+})
+
+// (regression: the route threw "ids is not defined" before c879cad5, and Delete did nothing but say so)
+test('the Delete route shreds the session\'s open questions, archives it with its helper and removes its device', async () => {
+  const m = pairedTwice()
+  m.members.get(D0).host = 'laptop'
+  session(m, H0, D0, { parent: S0 })
+  const everyone = agentsOf(m), a = everyone.find(x => x.id === idOf(S0))
+  const model = { everyone, byAgent: new Map(everyone.map(x => [x.id, x])), state: { cards: [
+    { id: 'c1', agent: idOf(S0), status: 'open', kind: 'decision' },
+    { id: 'c2', agent: idOf(S1), status: 'open', kind: 'decision' },
+    { id: 'c3', agent: idOf(S0), status: 'open', kind: 'permission' },
+  ] } }
+  const did = [], routes = []
+  const hub = {
+    shred: async id => { did.push(`shred ${id}`) },
+    editSession: async f => { did.push(`archive ${f.agent}`) },
+    client: { model: { members: m.members, room: m.room }, removeDevices: async d => { did.push(`remove ${d.join(',')}`) } },
+  }
+  const stream = (kind, target) => `<${kind} ${target}>`
+  const t = new Proxy({ BASE: '', hub, model: () => model, post: (re, fn) => routes.push([re, fn]), wantsStream: () => true, stream, toast: x => `<toast ${x.head}${x.role ? ` ${x.role}` : ''}>`, sendStream: (req, res, body) => { res.body = String(body) } }, { get: (o, k) => (k in o ? o[k] : () => {}) })
+  register(t)
+  const path = `/sessions/${encodeURIComponent(a.id)}/delete`
+  const [re, fn] = routes.find(([r]) => r.test(path))
+  const res = {}
+  await fn({ req: {}, res, match: re.exec(path), form: new URLSearchParams() })
+  assert.doesNotMatch(res.body, /Not deleted/, res.body)
+  assert.match(res.body, /toast Deleted/)
+  assert.deepEqual(did, ['shred c1', `archive ${idOf(S0)}`, `archive ${idOf(H0)}`, `remove ${D0}`])
 })

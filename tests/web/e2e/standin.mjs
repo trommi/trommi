@@ -505,6 +505,40 @@ export const steps = [
     check((await value(A)) === '' && (await value(B)) === '', 'both note fields are empty')
   }],
 
+  // (regression: a note with pictures and no words, folded once and opened again, was not sent: folding it kept the
+  // empty words and forgot the note's id, so Ctrl+Enter and the envelope did nothing; the envelope's "to <name>" label
+  // was black on black: its colour was an undefined variable)
+  ['notes: a note with only a pasted picture is sent to the crowned session with Ctrl+Enter; the envelope names it', async ctx => {
+    const { check } = ctx.run
+    const A = await ctx.profile('A')
+    await ui.openDesk(A)
+    const id = await A.js("return document.querySelector('#agents .agent-row[data-unit]').dataset.unit")
+    check(await A.js(`const r = await fetch('/sessions/${id}/star', { method: 'POST', headers: { accept: 'text/vnd.turbo-stream.html' }, body: new URLSearchParams({ stay: '1', starred: '1' }) }); return r.status`) === 200, 'the session is given the crown')
+    await A.until("document.querySelector('#corner-note-box .corner-note-send')", 'the note has an envelope (a crowned session)')
+    await A.click('#corner-note-box .corner-note-head')
+    await A.until("document.querySelector('#corner-note-box.is-open')", 'the note open')
+    const png = picture(48, 48).toString('base64')
+    await A.js(`const bytes = Uint8Array.from(atob(${q(png)}), c => c.charCodeAt(0)), dt = new DataTransfer()
+      dt.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }))
+      document.querySelector('#corner-note-box .corner-note-field').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))`)
+    await A.until("document.querySelectorAll('#corner-note-box .corner-note-file.is-pic:not(.is-uploading)').length === 1", 'the pasted picture on the note')
+    // folded and opened again, as a person does who looks elsewhere first
+    await A.key('Escape', 27)
+    await A.until("!document.querySelector('#corner-note-box.is-open')", 'the note folded')
+    await sleep(800)
+    await A.click('#corner-note-box .corner-note-head')
+    await A.until("document.querySelector('#corner-note-box.is-open')", 'the note open again')
+    const label = await A.js(`const b = document.querySelector('#corner-note-box .corner-note-send'), s = getComputedStyle(b, '::after'); return { content: s.content, color: s.color, background: s.backgroundColor, name: b.dataset.name }`)
+    check(/^"to \S/.test(label.content) && label.color !== label.background, 'the envelope\'s label says to whom, readable (not ink on ink)', label)
+    const before = ctx.commands.length
+    await A.click('#corner-note-box .corner-note-field')
+    await A.key('Enter', 13, 2)
+    const heard = await until(() => ctx.commands.slice(before).find(c => c.kind === 'message' && c.body?.attachments?.length === 1), 'the picture-only note at the agent', 20000).catch(() => null)
+    check(heard && !String(heard.body.text ?? '').trim(), 'the agent got the note: one picture, no words', heard?.body)
+    await A.until("!document.querySelector('#corner-note-box.has-words') && !document.querySelector('#corner-note-box .corner-note-file')", 'the note empty again after the send', 10000).catch(() => {})
+    check(await A.js("return !document.querySelector('#corner-note-box .corner-note-file')"), 'the note is empty again')
+  }],
+
   ['a new profile logs in with e-mail and password and lands on the Desk with history; a wrong password is refused', async ctx => {
     const { check } = ctx.run
     await ctx.within('D', async D => {
