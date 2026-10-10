@@ -50,6 +50,8 @@ struct Make {
     unit: Vec<u8>,
     /// the tag the release is published under, when it is not the one the manifest names
     published_as: Option<String>,
+    /// further fields of the manifest (signed with it)
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn make(version: u64) -> Make {
@@ -62,6 +64,7 @@ fn make(version: u64) -> Make {
         updater: b"updater A\n".to_vec(),
         unit: format!("[Service]\n# unit of {version}\n").into_bytes(),
         published_as: None,
+        extra: serde_json::Map::new(),
     }
 }
 
@@ -98,7 +101,10 @@ impl Make {
                     size: bytes.len() as u64,
                 })
                 .collect(),
+            inputs: None,
         };
+        let mut manifest = serde_json::to_value(&manifest).unwrap();
+        manifest.as_object_mut().unwrap().extend(self.extra.clone());
         let manifest = serde_json::to_vec_pretty(&manifest).unwrap();
         let signature = self.key.sign(&manifest).to_bytes().to_vec();
         let mut assets = files.clone();
@@ -358,7 +364,10 @@ async fn a_signed_release_is_deployed_and_reports_what_runs() {
     assert_eq!(outcome.http_status(), 200);
     assert_eq!(outcome.running.as_deref(), Some("hub-v5"));
     assert_eq!(outcome.commit, Some(commit_of(5)));
-    assert_eq!(outcome.sha256, Some(hex(&Sha256::digest(hub_file(5, true)))));
+    assert_eq!(
+        outcome.sha256,
+        Some(hex(&Sha256::digest(hub_file(5, true))))
+    );
     assert!(outcome.health.as_ref().unwrap().ok);
     assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
@@ -391,11 +400,19 @@ async fn a_release_signed_with_another_key_is_not_taken() {
     assert_eq!(outcome.result, "not-verified", "{}", outcome.message);
     assert_eq!(outcome.http_status(), 422);
     assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
-    assert_eq!(b.hub_commit(), Some(commit_of(5)), "the hub was never touched");
+    assert_eq!(
+        b.hub_commit(),
+        Some(commit_of(5)),
+        "the hub was never touched"
+    );
     assert_eq!(b.world.starts.load(Ordering::SeqCst), starts);
     assert!(b.leftovers().is_empty());
     assert!(!b.root.join("releases/hub-v6").exists());
-    assert_eq!(updater.status().await["high_water"], 5, "an unproved release raises no floor");
+    assert_eq!(
+        updater.status().await["high_water"],
+        5,
+        "an unproved release raises no floor"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -414,8 +431,15 @@ async fn a_manifest_changed_after_signing_is_not_taken() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_file_that_is_not_the_one_the_manifest_names_is_not_taken() {
     let b = bench("swapped").await;
-    let (hub, updater) = (format!("trommi-hub-{TARGET}"), format!("trommi-hub-updater-{TARGET}"));
-    for (which, longer) in [(hub.as_str(), false), (updater.as_str(), false), (hub.as_str(), true)] {
+    let (hub, updater) = (
+        format!("trommi-hub-{TARGET}"),
+        format!("trommi-hub-updater-{TARGET}"),
+    );
+    for (which, longer) in [
+        (hub.as_str(), false),
+        (updater.as_str(), false),
+        (hub.as_str(), true),
+    ] {
         let mut release = make(5).release();
         let asset = release.assets.iter_mut().find(|a| a.0 == which).unwrap();
         if longer {
@@ -425,7 +449,11 @@ async fn a_file_that_is_not_the_one_the_manifest_names_is_not_taken() {
         }
         b.publish(release);
         let outcome = deploy(&b.updater(), 5).await;
-        assert_eq!(outcome.result, "not-verified", "{which}: {}", outcome.message);
+        assert_eq!(
+            outcome.result, "not-verified",
+            "{which}: {}",
+            outcome.message
+        );
         assert_eq!(b.link("current"), None);
         assert!(b.leftovers().is_empty());
     }
@@ -455,14 +483,27 @@ async fn a_release_of_another_product_repository_or_name_is_not_taken() {
 
     // a release without this machine's binary
     let mut release = make(5).release();
-    release.assets.retain(|a| a.0 != format!("trommi-hub-{TARGET}"));
+    release
+        .assets
+        .retain(|a| a.0 != format!("trommi-hub-{TARGET}"));
     b.publish(release);
     let outcome = deploy(&b.updater(), 5).await;
-    assert!(matches!(outcome.result, "not-verified" | "fetch-failed"), "{}", outcome.message);
+    assert!(
+        matches!(outcome.result, "not-verified" | "fetch-failed"),
+        "{}",
+        outcome.message
+    );
 
     // not a release name at all: refused before anything is asked of GitHub
     let before = b.fetched();
-    for tag in ["v5", "hub-v05", "hub-v", "hub-v5/../x", "connector-v5", "hub-v1234567890123"] {
+    for tag in [
+        "v5",
+        "hub-v05",
+        "hub-v",
+        "hub-v5/../x",
+        "connector-v5",
+        "hub-v1234567890123",
+    ] {
         let outcome = b.updater().deploy(tag).await;
         assert_eq!(outcome.result, "bad-request", "{tag}");
         assert_eq!(outcome.http_status(), 400);
@@ -485,7 +526,11 @@ async fn an_older_release_is_refused_without_fetching() {
     assert_eq!(outcome.http_status(), 409);
     assert_eq!(outcome.running.as_deref(), Some("hub-v5"));
     assert_eq!(b.fetched(), fetched, "nothing was fetched");
-    assert_eq!(b.world.stops.load(Ordering::SeqCst), stops, "the hub was not touched");
+    assert_eq!(
+        b.world.stops.load(Ordering::SeqCst),
+        stops,
+        "the hub was not touched"
+    );
 
     // the floor outlives the state file (what runs counts) and a new start of the updater
     std::fs::remove_file(b.root.join("state.json")).unwrap();
@@ -515,10 +560,17 @@ async fn a_release_that_is_not_well_is_rolled_back() {
     assert!(outcome.rollback_health.as_ref().unwrap().ok);
     assert_eq!(outcome.running.as_deref(), Some("hub-v5"));
     assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
-    assert_eq!(b.link("previous"), None, "what was before stays what it was");
+    assert_eq!(
+        b.link("previous"),
+        None,
+        "what was before stays what it was"
+    );
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
     assert!(!b.root.join("deploy-journal.json").exists());
-    assert!(!b.root.join("releases/hub-v6").exists(), "the release that failed is not kept");
+    assert!(
+        !b.root.join("releases/hub-v6").exists(),
+        "the release that failed is not kept"
+    );
     // the updater made no copy of the hub's data and has no folder for one: that is the hub's own unit's work
     assert!(!b.root.join("backups").exists());
 
@@ -533,7 +585,10 @@ async fn a_release_that_is_not_well_is_rolled_back() {
     let outcome = deploy(&updater, 7).await;
     assert_eq!(outcome.result, "deployed", "{}", outcome.message);
     assert_eq!(b.link("previous").as_deref(), Some("hub-v5"));
-    assert!(!b.root.join("releases/hub-v6").exists(), "what no link names is tidied away");
+    assert!(
+        !b.root.join("releases/hub-v6").exists(),
+        "what no link names is tidied away"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -571,7 +626,11 @@ async fn two_calls_at_once_are_served_one_after_the_other() {
     let mut results = [first.result, second.result];
     results.sort();
     assert_eq!(results, ["deployed", "unchanged"]);
-    assert_eq!(b.world.starts.load(Ordering::SeqCst), 1, "the hub was started once");
+    assert_eq!(
+        b.world.starts.load(Ordering::SeqCst),
+        1,
+        "the hub was started once"
+    );
 
     // two different releases at once, also from a second process (the command line): the newer one runs in the end
     for v in [6, 7] {
@@ -580,7 +639,11 @@ async fn two_calls_at_once_are_served_one_after_the_other() {
     let other_process = b.updater();
     let (six, seven) = tokio::join!(deploy(&updater, 6), deploy(&other_process, 7));
     assert_eq!(seven.result, "deployed", "{}", seven.message);
-    assert!(matches!(six.result, "deployed" | "refused"), "{}", six.message);
+    assert!(
+        matches!(six.result, "deployed" | "refused"),
+        "{}",
+        six.message
+    );
     assert_eq!(b.link("current").as_deref(), Some("hub-v7"));
     assert_eq!(b.hub_commit(), Some(commit_of(7)));
 }
@@ -595,7 +658,10 @@ async fn the_release_that_runs_is_left_alone_and_a_stopped_one_is_started_again(
     let outcome = deploy(&updater, 5).await;
     assert_eq!(outcome.result, "unchanged");
     assert!(outcome.ok);
-    assert_eq!((b.fetched(), b.world.starts.load(Ordering::SeqCst)), (fetched, starts));
+    assert_eq!(
+        (b.fetched(), b.world.starts.load(Ordering::SeqCst)),
+        (fetched, starts)
+    );
 
     *b.world.hub.lock().unwrap() = None; // the hub fell over
     let outcome = deploy(&updater, 5).await;
@@ -639,7 +705,8 @@ async fn a_release_already_on_disk_is_proved_and_used_without_github() {
         std::fs::write(dir.join(&stored), bytes).unwrap();
         if !stored.contains('.') {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(dir.join(&stored), std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(dir.join(&stored), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
         }
     }
     let outcome = deploy(&b.updater(), 5).await;
@@ -665,7 +732,8 @@ impl Service for NoStart {
         self.0.stop()
     }
     fn start(&self) -> Result<(), String> {
-        let six = std::fs::read_link(self.0.root.join("current")).is_ok_and(|l| l.ends_with("hub-v6"));
+        let six =
+            std::fs::read_link(self.0.root.join("current")).is_ok_and(|l| l.ends_with("hub-v6"));
         if six {
             return Err("hub helper (start): failed: Job for trommi-hub.service failed".into());
         }
@@ -688,7 +756,11 @@ async fn when_the_new_release_cannot_be_started_the_old_hub_runs_on() {
     let outcome = deploy(&updater, 6).await;
     assert!(!outcome.ok);
     assert_eq!(outcome.result, "rolled-back", "{}", outcome.message);
-    assert!(outcome.message.contains("hub helper (start)"), "{}", outcome.message);
+    assert!(
+        outcome.message.contains("hub helper (start)"),
+        "{}",
+        outcome.message
+    );
     assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
 }
@@ -709,7 +781,15 @@ async fn a_release_of_two_programs_and_nothing_else_is_taken() {
         .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
         .collect();
     files.sort();
-    assert_eq!(files, ["manifest.json", "manifest.json.sig", "trommi-hub", "trommi-hub-updater"]);
+    assert_eq!(
+        files,
+        [
+            "manifest.json",
+            "manifest.json.sig",
+            "trommi-hub",
+            "trommi-hub-updater"
+        ]
+    );
     // and from a release that still has a unit file (as they were published before) it is not fetched
     b.publish(make(6).release());
     assert_eq!(deploy(&b.updater(), 6).await.result, "deployed");
@@ -729,7 +809,11 @@ async fn cut_off(name: &str, six_is_well: bool) -> Bench {
         std::fs::write(dir.join(name.replace(&format!("-{TARGET}"), "")), bytes).unwrap();
     }
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(dir.join("trommi-hub"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(
+        dir.join("trommi-hub"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
     std::fs::remove_file(b.root.join("current")).unwrap();
     std::os::unix::fs::symlink("releases/hub-v6", b.root.join("current")).unwrap();
     std::os::unix::fs::symlink("releases/hub-v5", b.root.join("previous")).unwrap();
@@ -792,7 +876,11 @@ async fn a_cut_off_deploy_is_settled_before_the_next_one_begins() {
     let outcome = deploy(&b.updater(), 7).await;
     assert_eq!(outcome.result, "deployed", "{}", outcome.message);
     assert_eq!(b.link("current").as_deref(), Some("hub-v7"));
-    assert_eq!(b.link("previous").as_deref(), Some("hub-v5"), "the release before is the last one that was well");
+    assert_eq!(
+        b.link("previous").as_deref(),
+        Some("hub-v5"),
+        "the release before is the last one that was well"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -807,7 +895,10 @@ async fn while_a_new_updater_is_on_trial_no_further_deploy_is_taken() {
     newest.updater = b"updater C\n".to_vec();
     b.publish(newest.release());
     let updater = b.updater();
-    assert_eq!(deploy(&updater, 6).await.updater.next.as_deref(), Some("hub-v6"));
+    assert_eq!(
+        deploy(&updater, 6).await.updater.next.as_deref(),
+        Some("hub-v6")
+    );
     // a second call reaches the old process before it has ended, or another process: the fallback stays hub-v5
     for other in [updater.clone(), b.updater()] {
         let outcome = deploy(&other, 7).await;
@@ -836,7 +927,11 @@ async fn asking_for_what_runs_proves_it_again() {
     b.publish(make(5).release());
     let updater = b.updater();
     assert!(deploy(&updater, 5).await.ok);
-    std::fs::write(b.root.join("releases/hub-v5/trommi-hub-updater"), b"planted").unwrap();
+    std::fs::write(
+        b.root.join("releases/hub-v5/trommi-hub-updater"),
+        b"planted",
+    )
+    .unwrap();
     let outcome = deploy(&updater, 5).await;
     assert!(!outcome.ok);
     assert_eq!(outcome.result, "failed", "{}", outcome.message);
@@ -861,7 +956,10 @@ async fn a_new_updater_takes_over_and_one_that_does_not_come_up_is_put_back() {
     // the first installation: the updater of hub-v5 is in place and runs
     assert!(deploy(&b.updater(), 5).await.ok);
     assert_eq!(b.link("updater").as_deref(), Some("hub-v5"));
-    assert!(!b.root.join("updater-trial").exists(), "nothing to go back to: no trial");
+    assert!(
+        !b.root.join("updater-trial").exists(),
+        "nothing to go back to: no trial"
+    );
 
     // a release with the same updater changes nothing about it
     b.publish(make(6).release());
@@ -873,7 +971,10 @@ async fn a_new_updater_takes_over_and_one_that_does_not_come_up_is_put_back() {
     assert_eq!(b.link("updater").as_deref(), Some("hub-v5"));
     b.publish(make(7).release());
     assert!(deploy(&updater, 7).await.ok);
-    assert!(b.root.join("releases/hub-v5").exists(), "the release the updater is from is kept");
+    assert!(
+        b.root.join("releases/hub-v5").exists(),
+        "the release the updater is from is kept"
+    );
 
     // a release with another updater: answered first, then the process makes room
     let mut newer = make(8);
@@ -886,7 +987,10 @@ async fn a_new_updater_takes_over_and_one_that_does_not_come_up_is_put_back() {
     assert!(updater.replaced());
     assert_eq!(b.link("updater").as_deref(), Some("hub-v8"));
     assert_eq!(b.link("updater-previous").as_deref(), Some("hub-v5"));
-    assert_eq!(std::fs::read_to_string(b.root.join("updater-trial")).unwrap(), "0 hub-v8\n");
+    assert_eq!(
+        std::fs::read_to_string(b.root.join("updater-trial")).unwrap(),
+        "0 hub-v8\n"
+    );
 
     // systemd starts it: the first start is its try
     prestart(&b.root);
@@ -909,9 +1013,16 @@ async fn a_new_updater_takes_over_and_one_that_does_not_come_up_is_put_back() {
     assert_eq!(outcome.result, "unchanged");
     assert_eq!(outcome.updater.release.as_deref(), Some("hub-v5"));
     assert_eq!(outcome.updater.reverted.as_deref(), Some("hub-v8"));
-    assert_eq!(outcome.updater.next, None, "the same updater is not tried a second time");
+    assert_eq!(
+        outcome.updater.next, None,
+        "the same updater is not tried a second time"
+    );
     assert!(!old.replaced());
-    assert_eq!(b.hub_commit(), Some(commit_of(8)), "the hub of the release runs all the while");
+    assert_eq!(
+        b.hub_commit(),
+        Some(commit_of(8)),
+        "the hub of the release runs all the while"
+    );
 
     // a later release brings a working one: it is tried, comes up, and stays
     let mut fixed = make(9);
@@ -932,6 +1043,69 @@ async fn a_new_updater_takes_over_and_one_that_does_not_come_up_is_put_back() {
     assert_eq!(status["updater"]["on_trial"], false);
     // the key and the floor were never part of it
     assert_eq!(status["high_water"], 9);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_manifest_that_says_more_than_this_updater_knows_is_taken() {
+    let b = bench("unknown").await;
+    let mut release = make(5);
+    release.extra.insert(
+        "built_by".into(),
+        serde_json::json!({ "runner": "x", "seconds": 3 }),
+    );
+    release.extra.insert(
+        "inputs".into(),
+        serde_json::json!({ "hub": "a".repeat(64), "web": "b".repeat(64) }),
+    );
+    b.publish(release.release_without_unit());
+    let outcome = deploy(&b.updater(), 5).await;
+    assert_eq!(outcome.result, "deployed", "{}", outcome.message);
+    assert_eq!(b.hub_commit(), Some(commit_of(5)));
+}
+
+/// `changes` alone decides whether a program is started anew: by the inputs both manifests name, else by the bytes.
+#[tokio::test(flavor = "multi_thread")]
+async fn whether_the_updater_is_replaced_is_decided_by_its_inputs_when_both_releases_name_them() {
+    let b = bench("inputs").await;
+    let with = |version: u64, bytes: &[u8], inputs: Option<&str>| {
+        let mut m = make(version);
+        m.updater = bytes.to_vec();
+        if let Some(i) = inputs {
+            m.extra.insert(
+                "inputs".into(),
+                serde_json::json!({ "hub": "0".repeat(64), "updater": i }),
+            );
+        }
+        m.release_without_unit()
+    };
+    let (one, two) = ("1".repeat(64), "2".repeat(64));
+    b.publish(with(5, b"updater A\n", Some(&one)));
+    assert!(deploy(&b.updater(), 5).await.ok);
+    // other bytes (a build that is not reproducible), the same inputs: the updater in place stays
+    b.publish(with(6, b"updater A built again\n", Some(&one)));
+    let updater = b.updater();
+    let outcome = deploy(&updater, 6).await;
+    assert!(outcome.ok, "{}", outcome.message);
+    assert_eq!(outcome.updater.next, None);
+    assert!(!updater.replaced());
+    assert_eq!(b.link("updater").as_deref(), Some("hub-v5"));
+    // a release without inputs: the bytes decide (they differ from hub-v5's)
+    b.publish(with(7, b"updater A\n", None));
+    let outcome = deploy(&updater, 7).await;
+    assert_eq!(
+        outcome.updater.next, None,
+        "the same bytes as the updater in place"
+    );
+    // other inputs, the same bytes: the updater is replaced
+    b.publish(with(8, b"updater A\n", Some(&two)));
+    let outcome = deploy(&updater, 8).await;
+    assert_eq!(
+        outcome.updater.next.as_deref(),
+        Some("hub-v8"),
+        "{}",
+        outcome.message
+    );
+    assert!(updater.replaced());
 }
 
 // ---- the endpoint ----
@@ -955,7 +1129,10 @@ async fn call(address: SocketAddr, request: &str) -> (u16, serde_json::Value) {
     let text = String::from_utf8_lossy(&answer).to_string();
     let status = text.split_whitespace().nth(1).unwrap().parse().unwrap();
     let body = text.split_once("\r\n\r\n").unwrap().1;
-    (status, serde_json::from_str(body).unwrap_or(serde_json::Value::Null))
+    (
+        status,
+        serde_json::from_str(body).unwrap_or(serde_json::Value::Null),
+    )
 }
 
 fn post(tag: &str) -> String {
@@ -978,7 +1155,12 @@ async fn the_endpoint_answers_with_the_result_and_lets_only_known_callers_in() {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let open = listener.local_addr().unwrap();
-    let serving = tokio::spawn(serve(b.updater(), listener, Arc::new(Only(true)), stop.clone()));
+    let serving = tokio::spawn(serve(
+        b.updater(),
+        listener,
+        Arc::new(Only(true)),
+        stop.clone(),
+    ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let closed = listener.local_addr().unwrap();
     let other = Arc::new(tokio::sync::Notify::new());
@@ -1004,11 +1186,19 @@ async fn the_endpoint_answers_with_the_result_and_lets_only_known_callers_in() {
     assert_eq!(status, 200);
     assert_eq!(body["hub"]["release"], "hub-v6");
     assert_eq!(body["updater"]["release"], "hub-v5");
-    let (status, _) = call(open, "POST /deploy HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\n\r\nabc").await;
+    let (status, _) = call(
+        open,
+        "POST /deploy HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\n\r\nabc",
+    )
+    .await;
     assert_eq!(status, 400);
     let (status, _) = call(open, "GET / HTTP/1.1\r\nhost: x\r\n\r\n").await;
     assert_eq!(status, 404);
-    let (status, _) = call(open, "POST /run HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\n\r\n").await;
+    let (status, _) = call(
+        open,
+        "POST /run HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\n\r\n",
+    )
+    .await;
     assert_eq!(status, 404);
     assert!(!serving.is_finished());
 
@@ -1055,8 +1245,10 @@ fn the_tailnet_decides_who_a_caller_is() {
     let tags = vec!["tag:trommi-ci".to_string()];
     let users = vec!["owner@example.com".to_string()];
     let ci = br#"{"Node":{"Name":"runner.ts.net.","Tags":["tag:trommi-ci"]},"UserProfile":{"LoginName":"tagged-devices"}}"#;
-    let owner = br#"{"Node":{"Name":"laptop.ts.net."},"UserProfile":{"LoginName":"owner@example.com"}}"#;
-    let guest = br#"{"Node":{"Name":"phone.ts.net."},"UserProfile":{"LoginName":"guest@example.com"}}"#;
+    let owner =
+        br#"{"Node":{"Name":"laptop.ts.net."},"UserProfile":{"LoginName":"owner@example.com"}}"#;
+    let guest =
+        br#"{"Node":{"Name":"phone.ts.net."},"UserProfile":{"LoginName":"guest@example.com"}}"#;
     let server = br#"{"Node":{"Name":"hub.ts.net.","Tags":["tag:trommi"]},"UserProfile":{"LoginName":"tagged-devices"}}"#;
     // a tagged device is never taken for a person, whatever its profile says
     let odd = br#"{"Node":{"Tags":["tag:other"]},"UserProfile":{"LoginName":"owner@example.com"}}"#;
@@ -1092,15 +1284,38 @@ fn a_manifest_written_and_signed_by_the_scripts_is_accepted() {
             .current_dir(&dir)
             .output()
             .unwrap();
-        assert!(out.status.success(), "{program} {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{program} {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         out.stdout
     };
     // a key made for this test, and the scripts beside it as they lie in the repository
     for name in ["manifest.sh", "sign.sh"] {
-        std::fs::copy(repo.join("release").join(name), dir.join("release").join(name)).unwrap();
+        std::fs::copy(
+            repo.join("release").join(name),
+            dir.join("release").join(name),
+        )
+        .unwrap();
     }
-    sh("openssl", &["genpkey", "-algorithm", "ed25519", "-out", "key.pem"], &[]);
-    sh("openssl", &["pkey", "-in", "key.pem", "-pubout", "-out", "release/public-key.pem"], &[]);
+    sh(
+        "openssl",
+        &["genpkey", "-algorithm", "ed25519", "-out", "key.pem"],
+        &[],
+    );
+    sh(
+        "openssl",
+        &[
+            "pkey",
+            "-in",
+            "key.pem",
+            "-pubout",
+            "-out",
+            "release/public-key.pem",
+        ],
+        &[],
+    );
     let hub = format!("trommi-hub-{TARGET}");
     let updater = format!("trommi-hub-updater-{TARGET}");
     std::fs::write(dir.join(&hub), b"the hub").unwrap();
@@ -1109,19 +1324,37 @@ fn a_manifest_written_and_signed_by_the_scripts_is_accepted() {
     let commit = commit_of(77);
     let manifest = sh(
         "sh",
-        &["release/manifest.sh", "trommi-hub", "77", &commit, &hub, &updater, "trommi-hub.service"],
+        &[
+            "release/manifest.sh",
+            "trommi-hub",
+            "77",
+            &commit,
+            &hub,
+            &updater,
+            "trommi-hub.service",
+        ],
         &[("GITHUB_REPOSITORY", REPOSITORY)],
     );
     std::fs::write(dir.join("manifest.json"), &manifest).unwrap();
     // the key as the 1Password Environment hands it over: on one line
-    let one_line = std::fs::read_to_string(dir.join("key.pem")).unwrap().replace('\n', " ");
-    sh("sh", &["release/sign.sh", "sign", "manifest.json"], &[("SIGN_RELEASE_KEY", &one_line)]);
+    let one_line = std::fs::read_to_string(dir.join("key.pem"))
+        .unwrap()
+        .replace('\n', " ");
+    sh(
+        "sh",
+        &["release/sign.sh", "sign", "manifest.json"],
+        &[("SIGN_RELEASE_KEY", &one_line)],
+    );
     sh("sh", &["release/sign.sh", "files", "manifest.json"], &[]);
 
-    let key = public_key(&std::fs::read_to_string(dir.join("release/public-key.pem")).unwrap()).unwrap();
+    let key =
+        public_key(&std::fs::read_to_string(dir.join("release/public-key.pem")).unwrap()).unwrap();
     let signature = std::fs::read(dir.join("manifest.json.sig")).unwrap();
     let proved = verify_manifest(&key, &manifest, &signature, REPOSITORY, "hub-v77").unwrap();
-    assert_eq!((proved.version, proved.commit.as_str()), (77, commit.as_str()));
+    assert_eq!(
+        (proved.version, proved.commit.as_str()),
+        (77, commit.as_str())
+    );
     assert_eq!(proved.assets.len(), 3);
     assert_eq!(proved.assets[0].sha256, hex(&Sha256::digest(b"the hub")));
     assert_eq!(proved.assets[0].size, 7);

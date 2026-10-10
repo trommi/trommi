@@ -44,10 +44,9 @@ fn config() -> Result<(Config, PathBuf), String> {
     let root = PathBuf::from(env("UPDATER_ROOT").unwrap_or_else(|| "/srv/trommi/deploy".into()));
     let key_path =
         env("UPDATER_PUBLIC_KEY").unwrap_or_else(|| "/etc/trommi/release-public-key.pem".into());
-    let key = public_key(
-        &std::fs::read_to_string(&key_path).map_err(|e| format!("{key_path}: {e}"))?,
-    )
-    .map_err(|e| format!("{key_path}: {e}"))?;
+    let key =
+        public_key(&std::fs::read_to_string(&key_path).map_err(|e| format!("{key_path}: {e}"))?)
+            .map_err(|e| format!("{key_path}: {e}"))?;
     let seconds = env("UPDATER_HEALTH_SECONDS")
         .and_then(|v| v.parse().ok())
         .unwrap_or(60);
@@ -90,7 +89,12 @@ fn main() {
         .build()
         .expect("the runtime");
     let code = runtime.block_on(async {
-        match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        match args
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
             [] | ["serve"] => run(updater).await,
             ["status"] => {
                 println!("{:#}", updater.status().await);
@@ -122,7 +126,9 @@ async fn run(updater: Arc<Updater>) -> i32 {
         return 1;
     };
     if !on_tailnet(listen.ip()) {
-        eprintln!("cannot start: {listen} is not a tailnet address; the endpoint listens nowhere else");
+        eprintln!(
+            "cannot start: {listen} is not a tailnet address; the endpoint listens nowhere else"
+        );
         return 1;
     }
     // First of all, before the tailnet is needed: a deploy that was cut off is settled and the hub is started.
