@@ -339,7 +339,7 @@ export async function runScenario(scenario, world) {
       await hub.post(writer)
       const later = await hub.sync(world, reader, room)
       check(later.envelopes.length === 1 && later.envelopes[0].outcome === 'applied', 'the added item was not applied')
-      const grown = await reader.call('boardLoad', board, [{ sender: writerId, seq: third.seq, hash: third.envelopeHash }])
+      const grown = await reader.call('boardLoad', board, [{ sender: writerId, seq: second.seq, hash: second.envelopeHash }, { sender: writerId, seq: third.seq, hash: third.envelopeHash }])
       check(grown.frontier[0].seq === third.seq && grown.fresh.length === 2, 'the same snapshot did not load again after items were added')
     },
     async found_session(step) {
