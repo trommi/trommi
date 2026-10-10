@@ -166,12 +166,19 @@ fn a_key_for_an_epoch_its_group_has_not_reached_is_not_taken() {
     let (commit, handover) = (&commit, &handover);
 
     // Handed the message before the Commit, the device takes the keys up to its own epoch of each group:
-    // room epochs 0 to 3 and session epochs 0 to 3, not the session's epoch 5.
+    // room epochs 0 to 3, not the session's epoch 5. Session epochs 0 to 3 it holds already: the adder handed
+    // them in the session group behind the Add (7.1).
+    for epoch in 0..4 {
+        assert_eq!(
+            b.content_key(&group, epoch).unwrap(),
+            a.content_key(&group, epoch).unwrap()
+        );
+    }
     assert_eq!(
         process(&mut b, handover),
         Ok(Processed::Message(Received::Keys {
             from: a.id(),
-            taken: 8,
+            taken: 4,
             last: true
         }))
     );
@@ -323,13 +330,22 @@ fn a_handed_key_is_bound_by_what_the_device_knows_of_its_group() {
     assert_eq!(b.content_key(&group, joins_at + 5), Err(Error::NoKey));
     assert_eq!(b.content_key(&group, 0).unwrap(), key(1));
     assert_eq!(b.content_key(&never_joined, u64::MAX).unwrap(), key(4));
-    // From here on the group bounds what the device takes for it.
+    // The adder handed the keys of the epochs before the Add in the session group (7.1): none replaced one
+    // held already, and the device holds the adder's key of the epoch before its own.
+    assert_eq!(
+        b.content_key(&group, joins_at - 1).unwrap(),
+        a.content_key(&group, joins_at - 1).unwrap()
+    );
+    // From here on the group bounds what the device takes for it, and a held key is never replaced.
     let taken = hand(
         &mut hub,
         &mut b,
         vec![(group, joins_at + 1, 7), (group, joins_at - 1, 8)],
     );
-    assert_eq!(taken, 1);
+    assert_eq!(taken, 0);
     assert_eq!(b.content_key(&group, joins_at + 1), Err(Error::NoKey));
-    assert_eq!(b.content_key(&group, joins_at - 1).unwrap(), key(8));
+    assert_eq!(
+        b.content_key(&group, joins_at - 1).unwrap(),
+        a.content_key(&group, joins_at - 1).unwrap()
+    );
 }

@@ -931,7 +931,9 @@ fn the_recovery_mac_follows_the_add_by_link_without_a_call_also_across_a_restart
         let package = b.key_package(now()).unwrap();
         c.add_to_session(&main, &b.id(), &package, now()).unwrap();
         post_ok(&mut hub, &mut c);
-        let joined = trommi_tests::take_welcomes(&hub, &mut b, hub.change());
+        // (behind the Add, c's handover of the session's earlier keys to b: the Welcome is at the Add's place)
+        let added = hub.welcomes.last().unwrap().change;
+        let joined = trommi_tests::take_welcomes(&hub, &mut b, added);
         assert_eq!(joined.len(), 1);
         assert_eq!((joined[0].group, joined[0].added_by), (main, c.id()));
         assert!(joined[0].offending.is_empty());

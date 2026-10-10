@@ -221,6 +221,12 @@ assumptions have to take in.
   `bad-invite`). A takeover ends with `InviteStep::CheckHelpers`, answered by `invite_checked` with the helper
   sessions the hub lists (5.3.1 c). The `recovery_mac` for a device added by link is no step: it is in the outbox once the Add
   was merged.
+- Key handovers (7.1): the session group's handover to a human device that this device added to a session group
+  (`add_to_session`, `readmit_human`, an invite's `AddToSession`) is no step either: it is in the outbox once that
+  Commit was merged. Every handover message, also those of `send_handover`, is kept until the hub took it; one
+  refused with `wrong-epoch` is made again in the group's epoch then (process the log first, as for any message),
+  and one waiting behind a pending Commit goes out once that Commit was merged or dropped. The device's store has
+  one more kind of record for them.
 - The Offer is bound to the link (12.1, D4 change of 2026-10-10): `SignedOffer` has a third field `mac` (32
   bytes), which `invite_open` returns in `InviteOpened::signed_offer` and the hub stores and serves with the Offer;
   `join_request` refuses an Offer whose `mac` is missing, short or wrong (`bad-invite`) and stores nothing then.

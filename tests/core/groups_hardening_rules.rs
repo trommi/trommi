@@ -225,7 +225,14 @@ fn a_device_that_joined_by_welcome_knows_the_place_of_its_join() {
     a.update(&room_group, true, now()).unwrap().unwrap();
     post_ok(&mut hub, &mut a);
     trommi_tests::add_to_session(&mut hub, &mut a, &mut late, &main);
-    let adding = hub.log.last().unwrap().clone();
+    // (the Add, not the session handover the adder sends behind it)
+    let adding = hub
+        .log
+        .iter()
+        .rev()
+        .find(|item| item.commit && item.group == main)
+        .unwrap()
+        .clone();
     let welcome = hub.welcomes.last().unwrap().bytes.clone();
     forger.follow(&mut forged, &adding.bytes);
     a.update(&room_group, true, now()).unwrap().unwrap();

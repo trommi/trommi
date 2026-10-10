@@ -316,6 +316,10 @@ name = "core_device_history"
 path = "core/device_history.rs"
 
 [[test]]
+name = "core_epoch_gaps"
+path = "core/epoch_gaps.rs"
+
+[[test]]
 name = "connector_dead_hub"
 path = "connector/dead_hub.rs"
 

@@ -81,6 +81,7 @@ const SUB_KEY_PACKAGE: u8 = 3;
 const SUB_STAGED: u8 = 4;
 const SUB_SENT: u8 = 5;
 const SUB_OWED: u8 = 7;
+const SUB_HANDOVER: u8 = 8;
 const SUB_MAC: u8 = 0;
 const SUB_UNCONFIRMED: u8 = 1;
 const SUB_UNBOUND: u8 = 6;
@@ -718,6 +719,61 @@ impl Decode for Owed {
 /// key it belongs to.
 type OwedKey = (u64, DeviceId, [u8; RECOVERY_KEY_LEN]);
 
+/// One message of a key handover (7.1) that has to reach its recipient: the group it travels in, the
+/// recipient, the keys it carries (by group and epoch) and whether it is the last. It is kept under the outbox
+/// entry it waits for (its own message, or a pending Commit of that group it goes out behind) until the hub
+/// took the message; a message the hub refused with `wrong-epoch` is made again in the group's epoch then
+/// (7.0), so that a Commit of another device in between does not lose the keys. While nothing may be written
+/// into the group (it is stale, 5.2.8) it is parked under [`PARKED`] and made again after the group's next
+/// Commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OwedHandover {
+    group: GroupId,
+    recipient: DeviceId,
+    keys: Vec<(GroupId, u64)>,
+    last: bool,
+}
+
+impl Encode for OwedHandover {
+    fn write(&self, writer: &mut Writer) -> Result<(), Error> {
+        writer.value(&self.group)?;
+        writer.fixed(self.recipient.as_bytes());
+        writer.u8(u8::from(self.last));
+        writer.u32(u32::try_from(self.keys.len()).map_err(|_| Error::TooLarge)?);
+        for (group, epoch) in &self.keys {
+            writer.value(group)?;
+            writer.u64(*epoch);
+        }
+        Ok(())
+    }
+}
+
+impl Decode for OwedHandover {
+    fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
+        let group = reader.value()?;
+        let recipient = DeviceId::new(reader.fixed()?);
+        let last = match reader.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::BadFormat),
+        };
+        let count = reader.u32()?;
+        if usize::try_from(count).map_or(true, |count| count > MAX_HANDOVER_KEYS) {
+            return Err(Error::BadFormat);
+        }
+        let mut keys = Vec::new();
+        for _ in 0..count {
+            keys.push((reader.value()?, reader.u64()?));
+        }
+        Ok(Self {
+            group,
+            recipient,
+            keys,
+            last,
+        })
+    }
+}
+
 /// What a Commit leaves to post.
 struct Posting {
     group: GroupId,
@@ -776,6 +832,8 @@ struct Memory {
     macs: MacKeys,
     /// The `recovery_mac`s it owes.
     owed: BTreeMap<OwedKey, Owed>,
+    /// The handover messages it owes: by the outbox entry each waits for, and a number among those.
+    handovers: BTreeMap<(u64, u32), OwedHandover>,
     /// The content keys that only a row without a `mac` vouches for (8.5).
     unconfirmed: BTreeSet<(GroupId, u64)>,
     /// Content keys that were handed over for a session group this device was no leaf of yet, so that it
@@ -987,6 +1045,25 @@ fn owed_key(key: &OwedKey) -> Vec<u8> {
     )
 }
 
+/// What a parked owed handover waits for: no outbox entry (their ids start at 1), the group's next Commit.
+const PARKED: u64 = 0;
+
+/// Deletes an owed handover's record, also one this batch put a moment ago: a batch applies its deletions
+/// before its puts, and one operation may park a handover and send it again (a Commit that clears a pending
+/// one, then merges).
+fn drop_handover_record(batch: &mut Batch, key: (u64, u32)) {
+    let stored = handover_key(key.0, key.1);
+    batch.put.retain(|entry| entry.key != stored);
+    batch.delete(stored);
+}
+
+fn handover_key(waits_for: u64, number: u32) -> Vec<u8> {
+    device_key(
+        SUB_HANDOVER,
+        &[&waits_for.to_be_bytes()[..], &number.to_be_bytes()[..]].concat(),
+    )
+}
+
 fn followed_key(group: &GroupId) -> Vec<u8> {
     let group = group.as_bytes();
     store::key(
@@ -1094,6 +1171,17 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                         return Err(damaged("an owed key"));
                     }
                     memory.owed.insert((waits_for, recipient, named), owed);
+                }
+                SUB_HANDOVER => {
+                    let parsed = (|| {
+                        let waits_for = rest.u64()?;
+                        let number = rest.u32()?;
+                        rest.finish()?;
+                        let owed: OwedHandover = codec::decode(value, value.len())?;
+                        Ok::<_, Error>(((waits_for, number), owed))
+                    })()
+                    .map_err(|_| damaged("an owed handover"))?;
+                    memory.handovers.insert(parsed.0, parsed.1);
                 }
                 _ => return Err(damaged("a key")),
             },
@@ -1499,6 +1587,13 @@ impl<S: Storage> Device<S> {
             .any(|(waits_for, _, _)| *waits_for >= next)
         {
             return Err(contradicts("an owed key"));
+        }
+        if memory
+            .handovers
+            .keys()
+            .any(|(waits_for, _)| *waits_for >= next)
+        {
+            return Err(contradicts("an owed handover"));
         }
         // The records of every group's epochs, learned ones included, against the group's origin.
         self.check_past()
@@ -2176,7 +2271,10 @@ impl<S: Storage> Device<S> {
                         device.put_room_place(batch, entry.epoch.saturating_add(1), change);
                     }
                 }
-                (OutboxKind::Message, _) => device.forget_owed(batch, id),
+                (OutboxKind::Message, _) => {
+                    device.forget_owed(batch, id);
+                    device.take_handovers(batch, id);
+                }
                 (OutboxKind::KeyPackages, _) => {
                     let replacement = entry.parts.first().filter(|part| !part.is_empty());
                     if let Some(replacement) = replacement {
@@ -2287,6 +2385,21 @@ impl<S: Storage> Device<S> {
                             device.owe(batch, recipient, owed)?;
                         }
                     }
+                    // 7.1: so is a key handover, once this device stands in the epoch that ended the
+                    // message's: until it processed that Commit, the message waits for the group's next
+                    // Commit (made again now, it would be of the old epoch once more). One refused for a
+                    // stale group waits for the Commit that mends it.
+                    let moved_on = entry.group.is_some_and(|group| {
+                        group::load(&device.provider, &group)
+                            .is_ok_and(|held| held.epoch().as_u64() > entry.epoch)
+                    });
+                    for owed in device.take_handovers(batch, id) {
+                        if again && moved_on {
+                            device.hand_over(batch, owed)?;
+                        } else if again || *code == Error::StaleSession {
+                            device.put_handover(batch, PARKED, owed)?;
+                        }
+                    }
                 }
                 // The hub took no number, and this device signs no other envelope under the one it
                 // used (9.0.1): the entry stays and the same bytes are sent again.
@@ -2321,6 +2434,23 @@ impl<S: Storage> Device<S> {
         let pending = self.meta(id)?.pending.take().ok_or(Error::NotFound)?;
         self.merging_own(id, pending.outbox, pending.time, noted)?;
         let mut group = group::load(&self.provider, id)?;
+        // The devices this Commit adds, for the handover below.
+        let added: Vec<DeviceId> = group
+            .pending_commit()
+            .map(|staged| {
+                staged
+                    .add_proposals()
+                    .filter_map(|queued| {
+                        key_package::info(queued.add_proposal().key_package())
+                            .ok()
+                            .map(|info| info.device)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // A founding's first Commit builds on epoch 0, the founder's alone: it adds every device at the
+        // session's first shared epoch, before which nothing was written.
+        let founding = group.epoch().as_u64() == 0;
         group
             .merge_pending_commit(&self.provider)
             .map_err(mls_fault)?;
@@ -2342,7 +2472,163 @@ impl<S: Storage> Device<S> {
             )?;
             self.owe(batch, recipient, owed)?;
         }
+        // 7.1: what waited behind this Commit goes out in the epoch it led to.
+        for owed in self.take_handovers(batch, pending.outbox) {
+            self.hand_over(batch, owed)?;
+        }
+        // 7.1, 5.2.7, 3.7: a human device this device added to a session group gets the keys of that group's
+        // earlier epochs from it, in the epoch the Add led to. The room handover of an invite carries only what
+        // the inviter held then: the session may have moved on before the Add, and a device added later
+        // (one that joined the room with the code, one let in again) has nothing of the session at all.
+        if !id.is_room() && !founding && self.is_human() {
+            let room = self.history()?.newest().clone();
+            let newcomers: Vec<DeviceId> = added
+                .into_iter()
+                .filter(|device| *device != self.id && room.is_human(device))
+                .collect();
+            for newcomer in newcomers {
+                self.hand_group_keys(batch, id, &newcomer)?;
+            }
+        }
+        self.retry_parked(batch, id)
+    }
+
+    /// After a Commit of `group`: the handovers parked for it while it was stale are made again (they park
+    /// again if it still is).
+    fn retry_parked(&mut self, batch: &mut Batch, group: &GroupId) -> Result<(), Error> {
+        let parked: Vec<(u64, u32)> = self
+            .memory
+            .handovers
+            .range((PARKED, 0)..=(PARKED, u32::MAX))
+            .filter(|(_, owed)| owed.group == *group)
+            .map(|(key, _)| *key)
+            .collect();
+        for key in parked {
+            drop_handover_record(batch, key);
+            if let Some(owed) = self.memory.handovers.remove(&key) {
+                self.hand_over(batch, owed)?;
+            }
+        }
         Ok(())
+    }
+
+    /// Sends `recipient` the content keys this device holds of `group` itself, in that group, as owed
+    /// handover messages (see [`OwedHandover`]). A distrusted or archived group gets none; in a stale one they
+    /// wait for the Commit that mends it.
+    fn hand_group_keys(
+        &mut self,
+        batch: &mut Batch,
+        group: &GroupId,
+        recipient: &DeviceId,
+    ) -> Result<(), Error> {
+        let meta = self.meta(group)?.clone();
+        if meta.archived || meta.distrusted {
+            return Ok(());
+        }
+        let current = group::load(&self.provider, group)?.epoch().as_u64();
+        let places: Vec<(GroupId, u64)> = self
+            .memory
+            .keys
+            .range((*group, 0)..(*group, current))
+            .map(|(place, _)| *place)
+            .collect();
+        let count = places.len().div_ceil(MAX_HANDOVER_KEYS);
+        for (at, chunk) in places.chunks(MAX_HANDOVER_KEYS).enumerate() {
+            self.hand_over(
+                batch,
+                OwedHandover {
+                    group: *group,
+                    recipient: *recipient,
+                    keys: chunk.to_vec(),
+                    last: at.saturating_add(1) == count,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Sends one owed handover message in its group's current epoch and keeps it until the hub took it; while
+    /// a Commit of this device is pending in that group, it waits for that Commit instead. A key no longer
+    /// held is left out. The message's outbox id, if it was made now.
+    fn hand_over(&mut self, batch: &mut Batch, owed: OwedHandover) -> Result<Option<u64>, Error> {
+        let Ok(meta) = self.meta(&owed.group).cloned() else {
+            // The group is gone for this device: nothing goes through it any more.
+            return Ok(None);
+        };
+        if let Some(pending) = meta.pending.as_ref() {
+            let waits_for = pending.outbox;
+            self.put_handover(batch, waits_for, owed)?;
+            return Ok(None);
+        }
+        let message = self.handover_message(&owed);
+        let sent = match self.send(batch, &owed.group, &message, false) {
+            Ok(sent) => sent,
+            // Nothing may be written into the group until a Commit mends it (5.2.8), or its founding is
+            // unanswered: it waits for the group's next Commit.
+            Err(Error::StaleSession | Error::Busy) => {
+                self.put_handover(batch, PARKED, owed)?;
+                return Ok(None);
+            }
+            // The group failed its first contact (5.2.6) or was archived (5.2.10): nothing goes through it.
+            Err(Error::BadGroup | Error::Gone) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        self.put_handover(batch, sent, owed)?;
+        Ok(Some(sent))
+    }
+
+    /// The message of an owed handover, with the keys this device holds of what it names.
+    fn handover_message(&self, owed: &OwedHandover) -> TrommiMessage {
+        let keys: Vec<EpochKey> = owed
+            .keys
+            .iter()
+            .filter_map(|(of, epoch)| {
+                self.memory.keys.get(&(*of, *epoch)).map(|key| EpochKey {
+                    group: *of,
+                    epoch: *epoch,
+                    content_key: key.duplicate(),
+                })
+            })
+            .collect();
+        TrommiMessage::KeyHandover {
+            recipient: owed.recipient,
+            keys,
+            last: owed.last,
+        }
+    }
+
+    fn put_handover(
+        &mut self,
+        batch: &mut Batch,
+        waits_for: u64,
+        owed: OwedHandover,
+    ) -> Result<(), Error> {
+        let number = self
+            .memory
+            .handovers
+            .range((waits_for, 0)..=(waits_for, u32::MAX))
+            .next_back()
+            .map_or(0, |((_, number), _)| number.saturating_add(1));
+        batch.put(handover_key(waits_for, number), codec::encode(&owed)?);
+        self.memory.handovers.insert((waits_for, number), owed);
+        Ok(())
+    }
+
+    fn take_handovers(&mut self, batch: &mut Batch, waits_for: u64) -> Vec<OwedHandover> {
+        let waiting: Vec<(u64, u32)> = self
+            .memory
+            .handovers
+            .range((waits_for, 0)..=(waits_for, u32::MAX))
+            .map(|(key, _)| *key)
+            .collect();
+        let mut taken = Vec::new();
+        for key in waiting {
+            drop_handover_record(batch, key);
+            if let Some(owed) = self.memory.handovers.remove(&key) {
+                taken.push(owed);
+            }
+        }
+        taken
     }
 
     /// After a merge: the new epoch's content key, the roles, the record of the group, all in the batch.
@@ -2424,6 +2710,9 @@ impl<S: Storage> Device<S> {
             if !owed.bound {
                 self.owe(batch, recipient, owed)?;
             }
+        }
+        for owed in self.take_handovers(batch, pending.outbox) {
+            self.hand_over(batch, owed)?;
         }
         Ok(Some(pending.outbox))
     }
@@ -4570,7 +4859,9 @@ impl<S: Storage> Device<S> {
     /// Welcome. A device that took a Welcome after it had passed the group's entries hands them again from
     /// the Welcome's place, the Commit that added it first. Of a group it follows as an observer: the next
     /// Commit. A group's Commits are taken in ascending order of their `change`. An application message at
-    /// or below the cursor stays a duplicate: it opens once.
+    /// or below the cursor is a duplicate, except one of a group joined late that lies between the place of
+    /// the group's last Commit processed and the cursor at the Welcome (the key handover behind an Add); it
+    /// opens once, and is skipped when handed again.
     ///
     /// An entry called a message whose bytes are a handshake message (a `PublicMessage`) of a group this
     /// device is a leaf of or follows, by the group the message itself names, is refused (`bad-format`, the
@@ -4748,10 +5039,17 @@ impl<S: Storage> Device<S> {
     /// removal.
     ///
     /// Of a group it follows as an observer: the next Commit, on the same condition, with the cursor it stood
-    /// at when it began to follow.
+    /// at when it began to follow. And of a group it is a leaf of, an application message on the same
+    /// condition (see below).
     fn is_behind_the_cursor(&self, entry: &LogEntry<'_>) -> bool {
         let LogKind::Commit { bytes, .. } = entry.kind else {
-            return false;
+            // An application message of a group joined late, after the place of the group's last Commit this
+            // device processed (the Add's, once it was handed again) and not above the cursor it stood at when
+            // it took the Welcome: it was passed while the device could not open it. The key handover the
+            // adder sends right behind the Add is one (7.1). One that opened before does not open again.
+            return self.memory.groups.get(&entry.group).is_some_and(|meta| {
+                !meta.removed && meta.place > 0 && entry.change > meta.place && entry.change <= meta.passed
+            });
         };
         let Ok(message) = rules::parse_commit(bytes) else {
             return false;
@@ -5057,6 +5355,9 @@ impl<S: Storage> Device<S> {
         self.settle(batch, id, &group, room_epoch)?;
         if id.is_room() {
             self.put_room_place(batch, epoch.saturating_add(1), change);
+        }
+        if !removed {
+            self.retry_parked(batch, id)?;
         }
         if let Some(observer) = follower {
             // The roles are the observer's from here on: the device's own record of them goes.
@@ -5382,37 +5683,35 @@ impl<S: Storage> Device<S> {
                 .filter(|(_, meta)| meta.distrusted)
                 .map(|(of, _)| *of)
                 .collect();
-            let keys: Vec<EpochKey> = this
+            let places: Vec<(GroupId, u64)> = this
                 .memory
                 .keys
-                .iter()
-                .filter(|((of, _), _)| of == group || (group.is_room() && human))
-                .filter(|((of, _), _)| !quarantined.contains(of))
-                .map(|((of, epoch), key)| EpochKey {
-                    group: *of,
-                    epoch: *epoch,
-                    content_key: key.duplicate(),
-                })
+                .keys()
+                .filter(|(of, _)| of == group || (group.is_room() && human))
+                .filter(|(of, _)| !quarantined.contains(of))
+                .copied()
                 .collect();
-            let mut chunks: Vec<Vec<EpochKey>> = Vec::new();
-            for key in keys {
-                match chunks.last_mut() {
-                    Some(chunk) if chunk.len() < MAX_HANDOVER_KEYS => chunk.push(key),
-                    _ => chunks.push(vec![key]),
-                }
-            }
+            let mut chunks: Vec<Vec<(GroupId, u64)>> = places
+                .chunks(MAX_HANDOVER_KEYS)
+                .map(<[(GroupId, u64)]>::to_vec)
+                .collect();
             if chunks.is_empty() {
                 chunks.push(Vec::new());
             }
             let count = chunks.len();
             let mut ids = Vec::new();
             for (at, keys) in chunks.into_iter().enumerate() {
-                let message = TrommiMessage::KeyHandover {
+                // Kept until the hub took it: a `wrong-epoch` makes it again (7.0).
+                let owed = OwedHandover {
+                    group: *group,
                     recipient: *recipient,
                     keys,
                     last: at.saturating_add(1) == count,
                 };
-                ids.push(this.send(batch, group, &message, false)?);
+                let message = this.handover_message(&owed);
+                let sent = this.send(batch, group, &message, false)?;
+                this.put_handover(batch, sent, owed)?;
+                ids.push(sent);
             }
             this.memory.sent.insert((*recipient, *group));
             batch.put(

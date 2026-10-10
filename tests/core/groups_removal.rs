@@ -179,10 +179,11 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
     post_ok(&mut hub, &mut b);
     assert_eq!(hub.epoch(&group), Some(2));
     assert!(hub.stale_leaves(&group).unwrap().is_empty());
+    // Behind it, b's handover that the stale group refused above: it waited for this Commit (7.1).
     let processed = sync_ok(&hub, &mut a);
     assert!(matches!(
         &processed[..],
-        [Processed::Commit { facts, removed: false, .. }] if facts.committer == b.id() && facts.removes == [x.id()]
+        [Processed::Commit { facts, removed: false, .. }, Processed::Message(_)] if facts.committer == b.id() && facts.removes == [x.id()]
     ));
     assert!(a.group(&group).unwrap().disallowed.is_empty());
     assert_eq!(
@@ -192,10 +193,11 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
 
     // The removed device processes its removal from the session group too, which names the room epoch that
     // removed it: it derives no key of the session's new epoch; what it read, it keeps.
+    // (behind it b's handover to the agent, which opens nothing for it)
     let processed = sync_ok(&hub, &mut x);
     assert!(matches!(
         &processed[..],
-        [Processed::Commit { facts, removed: true, .. }] if facts.removes == [x.id()]
+        [Processed::Commit { facts, removed: true, .. }, Processed::Skipped] if facts.removes == [x.id()]
     ));
     assert_eq!(x.group(&group).err(), Some(Error::NotFound));
     assert_eq!(x.content_key(&group, 2), Err(Error::NoKey));
@@ -402,7 +404,8 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
             .unwrap();
         post_ok(&mut hub, &mut b);
     }
-    assert_eq!(hub.log.len(), log_before + SESSIONS);
+    // The fifty Commits, and behind the second one b's handover that the stale group refused above (7.1).
+    assert_eq!(hub.log.len(), log_before + SESSIONS + 1);
     for group in &groups {
         assert_eq!(hub.epoch(group), Some(2));
         assert!(hub.stale_leaves(group).unwrap().is_empty());

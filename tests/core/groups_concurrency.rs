@@ -427,9 +427,9 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
         }
     }
     let changes = (hub.change() - start) as usize;
-    // Per round: the Add with the recovery_mac behind it, three session Adds, three updates, the removal
-    // with its three clean-ups.
-    assert_eq!(changes, ROUNDS * 12 + ROUNDS / 2 * 2 + handovers);
+    // Per round: the Add with the recovery_mac behind it, three session Adds each with the session's handover
+    // behind it (one message: no session has 400 epochs), three updates, the removal with its three clean-ups.
+    assert_eq!(changes, ROUNDS * 15 + ROUNDS / 2 * 2 + handovers);
     assert!(changes >= 1000 && handovers > ROUNDS);
     let log = hub.log_after(start);
     assert_eq!(log.len(), changes);
@@ -497,8 +497,9 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
         .iter()
         .filter(|done| matches!(done, Processed::Message(Received::Dropped)))
         .count();
-    // The handovers and the recovery_mac of each round were for the guest.
-    let for_guests = handovers + ROUNDS;
+    // The handovers (the room's, and the three sessions' behind their Adds) and the recovery_mac of each
+    // round were for the guest.
+    let for_guests = handovers + ROUNDS * 3 + ROUNDS;
     assert_eq!((commits, dropped), (changes - for_guests, for_guests));
     assert_eq!(b.cursor(), hub.change());
 
@@ -649,13 +650,14 @@ fn a_welcome_taken_late_is_caught_up_from_its_place_in_the_log() {
         a.update(&target, true, now()).unwrap().unwrap();
         post_ok(&mut hub, &mut a);
     }
-    // It processes the log without taking its Welcome: the session's entries are not for it yet, and the
-    // cursor passes them.
+    // It processes the log without taking its Welcome: the session's entries are not for it yet (the Add, the
+    // handover of the session's earlier keys behind it, an update), and the cursor passes them.
     let log = hub.log_after(from);
     let done: Vec<_> = log.iter().map(|item| process(&mut b, item)).collect();
     assert!(matches!(
         &done[..],
         [
+            Ok(Processed::Skipped),
             Ok(Processed::Skipped),
             Ok(Processed::Skipped),
             Ok(Processed::Commit { .. }),
@@ -675,16 +677,24 @@ fn a_welcome_taken_late_is_caught_up_from_its_place_in_the_log() {
     let again: Vec<_> = log.iter().map(|item| process(&mut b, item)).collect();
     // The first one is the Commit that added the device: it gives the join its place in the hub's order, by
     // which the Commits behind it are judged against the room state of their own place (5.2.1): the first
-    // names the room epoch before the room's update, the second the one after it.
+    // names the room epoch before the room's update, the second the one after it. The handover behind the Add
+    // was passed too: it opens now, in the epoch the device joined at.
     assert!(matches!(
         &again[..],
         [
             Ok(Processed::Skipped),
+            Ok(Processed::Message(Received::Keys { taken: 2, last: true, .. })),
             Ok(Processed::Commit { .. }),
             Err(Error::WrongEpoch),
             Ok(Processed::Commit { .. })
         ]
     ));
+    for at in 0..2 {
+        assert_eq!(
+            b.content_key(&group, at).unwrap(),
+            a.content_key(&group, at).unwrap()
+        );
+    }
     assert_eq!(b.cursor(), hub.change());
     let epoch = hub.epoch(&group).unwrap();
     assert_eq!(b.group(&group).unwrap().epoch, epoch);
