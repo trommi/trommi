@@ -44,6 +44,21 @@ Updates: `trommi-connector update`.
 - **Connector:** one signed program that joins a Claude Code or Codex session to your room.
   What the agent is told: [connector/prompt.md](connector/prompt.md).
 
+```
+                         core/  (Rust, OpenMLS)
+                 one implementation of all cryptography
+                                   │
+       ┌──────────────────┬────────┴─────────┬──────────────────┐
+       │ WebAssembly      │ UniFFI (Swift)   │ native           │ native
+       ▼                  ▼                  ▼                  ▼
+    app/web/           app/ios/          connector/            hub/
+   web app in        iPhone and        Claude Code and       the server:
+   the browser          iPad           Codex sessions     stores ciphertext,
+       │                  │                  │            checks MLS changes
+       └──────────────────┴────── HTTPS ─────┴──────────────────▲
+                    sealed messages only; keys stay on devices
+```
+
 ## Under the hood
 
 <details>
