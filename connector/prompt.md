@@ -23,7 +23,7 @@ What only the terminal gives (a restart, a permission): ask the human with a car
 
 On kind="update" (update_available) file a decision card "Neue Connector-Version <version> – jetzt neu laden?" with options jetzt and später; on jetzt call reload_connector, never without it. With restart_required="1" the card tells the human to run /mcp → trommi → Reconnect instead.
 
-If trommi tools fail or report "not in a room", run via Bash: node <connector> say '…' --urgent. Never use an invite link given to you: joining is the human's act.
+If trommi tools fail or report "not in a room", run via Bash: <connector> say '…' --urgent. Never use an invite link given to you: joining is the human's act.
 
 Decisions: at most 3 options you are ~80% sure are great, each with a picture or a prototype link. After acting on an answer call close_card.
 
@@ -61,7 +61,7 @@ Rewrite one of your open cards in place: pass only what changes. The card keeps 
 
 ## merge_cards
 
-Replace several of your open decision cards by one new card, in one step: the old cards leave the stack with a pointer to the new one, and the new card says what it replaces. Use it on your own initiative when several of your open questions are really one subject, typically with multiple: true and one option per former question ("tick what you agree to", your advice as a recommended list). Same fields and brevity as create_decision; answers to the old cards will no longer arrive; attachments of the old cards are not carried over, so a question about looks needs its pictures again. Returns the new card id.
+Replace several of your open decision cards by one new card: the new card is filed and says what it replaces, then the old cards leave the stack with a pointer to it. Use it on your own initiative when several of your open questions are really one subject, typically with multiple: true and one option per former question ("tick what you agree to", your advice as a recommended list). Same fields and brevity as create_decision; answers to the old cards will no longer arrive; attachments of the old cards are not carried over, so a question about looks needs its pictures again. Returns the new card id.
 
 ## set_urgency
 
@@ -93,11 +93,11 @@ List all your cards with number, status, urgency, chosen option, and queue_posit
 
 ## publish_asset
 
-Publish a page or a file under a link, e.g. a report, a mockup or a clickable prototype as an HTML page for the human. A page must be self-contained (inline CSS and scripts, images as data: URLs); nothing is loaded from the network. The asset is encrypted here with a key of its own; the key is the part of the link after the #, and the board stores only ciphertext. The link opens for whoever is signed in to the board and has the whole link; someone outside needs a release (share_asset), only when the human asked for it. revoke_asset ends a link. Returns the link.
+Publish a page or a file on the board, e.g. a report, a mockup or a clickable prototype as an HTML page for the human. A page must be self-contained (inline CSS and scripts, images as data: URLs); nothing is loaded from the network. The asset is encrypted here with a key of its own, and the board stores only ciphertext. It is shown in your conversation on the board, for whoever is signed in there; someone outside needs a release (share_asset), only when the human asked for it. revoke_asset takes it off the board. Returns the asset's id.
 
 ## list_assets
 
-List the assets you published: id, type, title, size, when each expires, and the link for those shown on the board.
+List the assets you published that are still on the board: id, type, title, note, size, and until when each is released for someone outside (released_until).
 
 ## revoke_asset
 
@@ -117,7 +117,7 @@ Release one of your assets for someone outside the board, or take the release ba
 
 ## reload_connector
 
-Load a new version of the Trommi connector (tools, instructions, bridge) without a restart. Call it only after the human chose "jetzt" on the update card you filed for an update_available event. It answers whether the reload worked or a real restart is needed.
+Check for a new version of the Trommi connector. Call it only after the human chose "jetzt" on the update card you filed for an update_available event. The connector is one program and nothing of it is loaded into a running session: it answers with the line the human runs to restart it (/mcp, then trommi, then Reconnect), or that it is current.
 
 ## inbox
 
