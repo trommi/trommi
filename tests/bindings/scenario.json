@@ -11,6 +11,8 @@
     "In a session group same_key also has the first device write a Chat message that every other one must open.",
     "With 'keys_only' it does not: a device that joined with the recovery code holds the keys, but the core refuses",
     "it every envelope of a sender whose chain began before its join (group-behind, then gap).",
+    "An invited device signs in at the hub before it is let in (invite). W is a helper device in a helper session",
+    "'side' under 'main'; N is an agent device that takes 'main' over by invite, and with it 'side' (take_over).",
     "gate: the agent device asks its command gate about the Chat message with that text: act once, then done."
   ],
   "steps": [
@@ -26,6 +28,8 @@
     { "do": "join", "device": "B", "by": "A" },
     { "do": "hand_over", "by": "A" },
     { "do": "post", "device": "A" },
+    { "do": "sync", "device": "B" },
+    { "do": "holds_recovery_mac", "device": "B" },
     { "do": "same_key", "devices": ["A", "B"], "group": "room" },
     { "do": "sign_in", "device": "B" },
 
@@ -118,6 +122,19 @@
     { "do": "holds_recovery_mac", "device": "R" },
     { "do": "sync", "device": "A", "removed": true },
     { "do": "sync", "device": "G" },
-    { "do": "same_key", "devices": ["R", "G"], "group": "main", "keys_only": true }
+    { "do": "same_key", "devices": ["R", "G"], "group": "main", "keys_only": true },
+
+    { "do": "create", "device": "W" },
+    { "do": "found_helper", "by": "G", "parent": "main", "humans": ["R"], "helper": "W", "name": "side" },
+    { "do": "sync", "device": "R" },
+    { "do": "sync", "device": "W" },
+    { "do": "same_key", "devices": ["R", "G", "W"], "group": "side", "keys_only": true },
+
+    { "do": "create", "device": "N" },
+    { "do": "take_over", "by": "R", "device": "N", "session": "main", "helpers": ["side"] },
+    { "do": "sync", "device": "N" },
+    { "do": "sync", "device": "W" },
+    { "do": "same_key", "devices": ["R", "N"], "group": "main", "keys_only": true },
+    { "do": "same_key", "devices": ["R", "N", "W"], "group": "side", "keys_only": true }
   ]
 }

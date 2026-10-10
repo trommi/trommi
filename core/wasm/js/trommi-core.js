@@ -175,7 +175,7 @@ const DEVICE_CALLS = [
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
   'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
-  'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_forget',
+  'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_checked', 'invite_forget',
   'join_request', 'join_reveal', 'join_observe', 'join_invited',
   'seal', 'outbox_voided', 'envelope_abandon', 'receive_envelope', 'receive_relay', 'heads_due', 'compare_heads',
   'cut_of', 'chain_head', 'chain_cut', 'object', 'objects', 'object_owner', 'register', 'register_of', 'board_load',

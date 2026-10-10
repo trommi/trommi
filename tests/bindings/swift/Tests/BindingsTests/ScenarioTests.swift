@@ -32,6 +32,10 @@ struct Step: Decodable {
   var chat: String?
   var confirmed: Bool?
   var keys_only: Bool?
+  var session: String?
+  var parent: String?
+  var helper: String?
+  var helpers: [String]?
   var epoch: UInt64?
 }
 
@@ -117,6 +121,8 @@ final class Hub {
       }
       try device.outboxAccepted(id: entry.id, change: accepted)
     }
+    // What the hub accepted comes back in its log: a device merges its own Commits there, at their place.
+    _ = try feed(device, room: nil)
   }
 
   /// A group as the hub serves it to a device that verifies it from its founding.
@@ -138,6 +144,11 @@ final class Hub {
   /// Hands the device everything after its cursor, with every Welcome at its place. Returns what the log's
   /// entries did and what became of the envelopes.
   func sync(_ device: CoreDevice, room: Data) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
+    try feed(device, room: room)
+  }
+
+  /// The log after the device's cursor, strictly by change number; with `room`, also the Welcomes at their places.
+  func feed(_ device: CoreDevice, room: Data?) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
     var done: [Processed] = []
     var received: [ReceivedEnvelope] = []
     let cursor = try device.cursor()
@@ -151,6 +162,7 @@ final class Hub {
       } catch let CoreError.Refused(code, _) where logFinding(code: code) == .duplicate {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
       }
+      guard let room else { continue }
       for welcome in welcomes where welcome.change == entry.change {
         // A Welcome for another device does not open here: that is no finding.
         _ = try? device.joinWelcome(welcome: welcome.bytes, room: room, committer: nil, nowMs: now())
@@ -245,22 +257,7 @@ final class ScenarioTests: XCTestCase {
     case "post":
       try hub.post(device(step.device))
     case "invite":
-      // One invite from its opening to its Commit in the inviter's outbox. Both sides must show the same six emoji.
-      let (inviter, newcomer) = (try device(step.by), try device(step.device))
-      let role: InviteRole = step.role == "agent" ? .agent : .human
-      let opened = try inviter.inviteOpen(role: role, sessionId: nil, app: "https://app.example", hub: "https://hub.example", nowMs: now())
-      try check(try inviteLinkParse(text: opened.link).inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
-      let asked = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature), nowMs: now())
-      try check(asked.role == role && asked.inviter == (try inviter.id()), "the Request is for another invite")
-      let accepted = try inviter.inviteAccept(
-        inviteId: opened.inviteId, request: SignedRequest(request: asked.request, mac: asked.mac, signature: asked.signature), nowMs: now())
-      let shown = try newcomer.joinReveal(reveal: SignedReveal(reveal: accepted.reveal, signature: accepted.signature))
-      try check(shown == accepted.code && shown.emoji.count == 6, "the two sides show different codes")
-      // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
-      if role == .agent { try newcomer.joinObserve(groupInfo: hub.roomInfos[Int(asked.roomEpoch)]) }
-      let confirmed = try inviter.inviteConfirm(
-        inviteId: opened.inviteId, code: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: now())
-      try check(confirmed?.role == role && confirmed?.newDevice == (try newcomer.id()), "the confirmed invite was not committed")
+      try invite(by: step.by!, device: step.device!, agent: step.role == "agent", session: nil)
     case "hand_over":
       let steps = try device(step.by).inviteSteps().filter { $0.kind == .handover }
       try check(steps.count == 1, "the invite asks for no handover")
@@ -406,6 +403,49 @@ final class ScenarioTests: XCTestCase {
         recoveryCode: code, served: served, cuts: cuts, account: Data("the account's sealed copies".utf8), nowMs: now())
       try check(built.unverified.isEmpty && built.outbox.count >= 2, "the recovery was not built whole")
       code = plan.newCode
+    case "found_helper":
+      // A helper session under a main session: the helper device follows the room and the main session first.
+      let (opener, helper) = (try device(step.by), try device(step.helper))
+      let parent = try group(step.parent)
+      guard let main = hub.sessions[parent] else { throw Unexpected("the hub has no such session") }
+      try helper.observeRoom(groupInfo: hub.roomInfos[hub.roomInfos.count - 1], expectedState: nil)
+      try helper.observeSession(groupInfo: main.current)
+      var keyPackages = try step.humans!.map { try device($0).keyPackage(nowMs: now()) }
+      keyPackages.append(try helper.keyPackage(nowMs: now()))
+      let session = try opener.foundHelper(parent: parent.subdata(in: parent.startIndex + 32..<parent.endIndex), keyPackages: keyPackages, nowMs: now())
+      groups[step.name!] = try sessionGroupId(room: room, session: session)
+      try hub.post(opener)
+    case "take_over":
+      // A session is handed to a new agent device by invite, and with it every helper session under it.
+      let (human, agent) = (try device(step.by), try device(step.device))
+      try invite(by: step.by!, device: step.device!, agent: true, session: step.session)
+      try hub.post(human)
+      var did: [String] = []
+      for _ in 0..<16 {
+        let steps = try human.inviteSteps()
+        guard let next = steps.first(where: { $0.kind != .wait }) ?? steps.first else { break }
+        switch next.kind {
+        case .takeOver:
+          // The main session's step carries the KeyPackage of the confirmed Request; a helper session's asks for a fresh one.
+          did.append(next.keyPackage == nil ? "takeOverHelper" : "takeOver")
+          let keyPackage = try next.keyPackage ?? agent.keyPackage(nowMs: now())
+          _ = try human.cleanSession(group: next.group!, cuts: next.cuts, replacement: Replacement(device: next.device!, keyPackage: keyPackage), nowMs: now())
+        case .handover:
+          did.append("handover")
+          _ = try human.inviteHandover(inviteId: next.inviteId)
+        case .checkHelpers:
+          did.append("checkHelpers")
+          try human.inviteChecked(inviteId: next.inviteId, helpers: step.helpers!.map { try group($0) })
+        case .commit:
+          did.append("commit")
+          _ = try human.inviteRecommit(inviteId: next.inviteId, nowMs: now())
+        default:
+          did.append("wait")
+        }
+        try hub.post(human)
+      }
+      try check(try human.inviteSteps().isEmpty, "the takeover did not finish: \(did)")
+      for kind in ["takeOver", "takeOverHelper", "handover", "checkHelpers"] { try check(did.contains(kind), "the takeover had no step \(kind): \(did)") }
     case "holds_recovery_mac":
       try check(try device(step.device).holdsRecoveryMac(), "the device does not hold the key of the code in force")
     case "no_key":
@@ -414,6 +454,35 @@ final class ScenarioTests: XCTestCase {
     default:
       throw Unexpected("the scenario has a step this test does not know: \(step.do)")
     }
+  }
+
+  /// One invite from its opening to its Commit in the inviter's outbox. Both sides must show the same six emoji.
+  func invite(by: String, device name: String, agent: Bool, session: String?) throws {
+    let (inviter, newcomer) = (try device(by), try device(name))
+    let role: InviteRole = agent ? .agent : .human
+    let taken = try session.map { name -> Data in
+      let id = try group(name)
+      return id.subdata(in: id.startIndex + 32..<id.endIndex)
+    }
+    let opened = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: now())
+    try check(try inviteLinkParse(text: opened.link).inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
+    let asked = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature), nowMs: now())
+    try check(asked.role == role && asked.inviter == (try inviter.id()), "the Request is for another invite")
+    let accepted = try inviter.inviteAccept(
+      inviteId: opened.inviteId, request: SignedRequest(request: asked.request, mac: asked.mac, signature: asked.signature), nowMs: now())
+    let shown = try newcomer.joinReveal(reveal: SignedReveal(reveal: accepted.reveal, signature: accepted.signature))
+    try check(shown == accepted.code && shown.emoji.count == 6, "the two sides show different codes")
+    // The newcomer signs in at the invite's hub before it is let in: for the Welcome, or the GroupInfo, it must fetch.
+    let signed = try newcomer.hubSignIn(hub: "https://hub.example", challenge: Data(repeating: 4, count: 32))
+    try check(signed.signature.count == 64, "a joining device cannot sign in")
+    try check(
+      refusal { _ = try newcomer.hubSignIn(hub: "https://other.example", challenge: Data(repeating: 4, count: 32)) } == .badInvite,
+      "a joining device signed in at another hub")
+    // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
+    if agent { try newcomer.joinObserve(groupInfo: hub.roomInfos[Int(asked.roomEpoch)]) }
+    let confirmed = try inviter.inviteConfirm(
+      inviteId: opened.inviteId, code: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: now())
+    try check(confirmed?.role == role && confirmed?.newDevice == (try newcomer.id()), "the confirmed invite was not committed")
   }
 
   /// A Chat message in a session, sealed into the outbox.
@@ -550,6 +619,6 @@ final class ScenarioTests: XCTestCase {
       ran += 1
     }
     XCTAssertEqual(ran, scenario.steps.count)
-    XCTAssertGreaterThan(ran, 89)
+    XCTAssertGreaterThan(ran, 100)
   }
 }
