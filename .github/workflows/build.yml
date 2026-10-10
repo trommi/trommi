@@ -6,9 +6,12 @@
 # Which jobs run: a part's tests and build run when its own folder changed, or core/, or what pins the build
 # (Cargo.toml, Cargo.lock, rust-toolchain.toml), compared with the commit before (on a pull request: with its base).
 # Whether there is a release: .github/scripts/inputs.sh hashes, per part, what its build reads (the paths of the
-# commit, by git); the release is made when one hash differs from the newest release's manifest. Then every part
-# with release files (web, connector, hub) is built, so each release is complete. A run started by hand counts every
-# part as changed for its jobs.
+# commit, by git); the release is made when one hash differs from the newest release's manifest. A part whose hash
+# differs is built (its job runs even when its folder did not change since the commit before); a part whose hash is
+# the newest release's runs its tests when its folder changed, but not its build: release.yml takes its files from
+# that release, checked against its signed manifest. When the newest release cannot be read or checked, every part
+# counts as changed and is built. A pull request has no release to compare with: what runs, builds. A run started by
+# hand counts every part as changed for its tests.
 #
 # How a part is wired in (the same three steps for web, connector, ios and hub):
 #   1. `changes`: one more `part <name> '<its own paths>'` line and one more output.
@@ -63,7 +66,9 @@ jobs:
       version: ${{ steps.find.outputs.version }}
       release: ${{ steps.inputs.outputs.release }}
       parts: ${{ steps.inputs.outputs.parts }}
+      reuse: ${{ steps.inputs.outputs.reuse }}
       changed_web: ${{ steps.inputs.outputs.web }}
+      changed_connector: ${{ steps.inputs.outputs.connector }}
       changed_ios: ${{ steps.inputs.outputs.ios }}
       changed_hub: ${{ steps.inputs.outputs.hub }}
     steps:
@@ -72,7 +77,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Main only: what each part is built from, against the manifest of the newest release v<N> (its signature
-      # checked first). A part whose hash differs changed; one changed part makes a release.
+      # checked first). A part whose hash differs changed; one changed part makes a release. The newest release
+      # cannot be read or checked: nothing is taken from it, every part counts as changed.
       - name: What changed since the newest release
         id: inputs
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -82,19 +88,24 @@ jobs:
           set -eu
           sh .github/scripts/inputs.sh > "$RUNNER_TEMP/inputs"
           cat "$RUNNER_TEMP/inputs"
-          newest=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1)
           old=$RUNNER_TEMP/newest
           mkdir "$old"
-          if [ -n "$newest" ]; then
-            gh release download "v$newest" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --pattern manifest.json.sig --dir "$old"
-            sh release/sign.sh verify "$old/manifest.json"
-            jq -e --arg r "$GITHUB_REPOSITORY" --arg t "v$newest" '.product == "trommi" and .repository == $r and .tag == $t' "$old/manifest.json" > /dev/null \
-              || { echo "::error::the manifest of v$newest is not that release of this repository"; exit 1; }
+          if ! newest=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1); then
+            echo "::warning::the releases could not be listed: every part is built"
+            newest=
+          elif [ -z "$newest" ]; then
+            echo "no release v<N> yet: every part counts as changed"
+          elif gh release download "v$newest" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --pattern manifest.json.sig --dir "$old" \
+            && sh release/sign.sh verify "$old/manifest.json" \
+            && jq -e --arg r "$GITHUB_REPOSITORY" --arg t "v$newest" '.product == "trommi" and .repository == $r and .tag == $t' "$old/manifest.json" > /dev/null; then
             echo "compared with v$newest"
           else
-            echo '{}' > "$old/manifest.json"
-            echo "no release v<N> yet: every part counts as changed"
+            echo "::warning::the manifest of v$newest could not be read or is not that release of this repository, signed: every part is built"
+            newest=
           fi
+          [ -n "$newest" ] || echo '{}' > "$old/manifest.json"
+          # the release the unchanged parts are taken from
+          echo "reuse=${newest:+v$newest}" >> "$GITHUB_OUTPUT"
           any=false
           : > "$RUNNER_TEMP/parts"
           while read -r part sum; do
@@ -116,8 +127,6 @@ jobs:
           BEFORE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           RUN_NUMBER: ${{ github.run_number }}
-          RELEASE: ${{ steps.inputs.outputs.release }}
-          CHANGED_IOS: ${{ steps.inputs.outputs.ios }}
         run: |
           set -eu
           echo "version=$((RUN_NUMBER + RELEASE_BASE))" >> "$GITHUB_OUTPUT"
@@ -137,10 +146,11 @@ jobs:
             echo "nothing to compare with: every part counts as changed"
           fi
           shared='core/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|\.github/workflows/build\.yml$'
-          # a release holds the files of web, connector and hub: all three are built for it; iOS when its inputs changed
+          # part <job> '<its own paths>' [<its parts in the release>]: the job runs when its paths changed since the commit
+          # before, and (main) when the inputs of one of its parts differ from the newest release's, to build them
           part() {
             if [ "$all" = 1 ] || grep -Eq "^($2|$shared)" "$RUNNER_TEMP/files"; then value=true; else value=false; fi
-            case $1 in web|connector|hub) [ "${RELEASE:-}" = true ] && value=true ;; ios) [ "${CHANGED_IOS:-}" = true ] && value=true ;; esac
+            if [ -n "${3:-}" ] && grep -Eqs "^($3) [0-9a-f]{64} true$" "$RUNNER_TEMP/parts"; then value=true; fi
             echo "$1=$value" >> "$GITHUB_OUTPUT"
             echo "$1: $value"
             echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
@@ -148,10 +158,10 @@ jobs:
           # (connector/tools.json and prompt.md, demo/: the app's build reads them)
           # the core itself: its sources (core/ is in `shared`), its tests, the test library, the vectors
           part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$|THIRD-PARTY\.md$|\.github/scripts/third_party\.mjs$'
-          part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
-          part connector 'connector/|release/|install\.sh$|\.claude-plugin/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/release\.yml$'
-          part ios 'ios/|tests/ios/|\.github/scripts/ios_(testflight\.sh|archive\.sh|entitlements\.py)$|\.github/workflows/deploy_ios\.yml$'
-          part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$|\.github/workflows/deploy_hub\.yml$'
+          part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$' web
+          part connector 'connector/|release/|install\.sh$|\.claude-plugin/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/release\.yml$' connector
+          part ios 'ios/|tests/ios/|\.github/scripts/ios_(testflight\.sh|archive\.sh|entitlements\.py)$|\.github/workflows/deploy_ios\.yml$' ios
+          part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$|\.github/workflows/deploy_hub\.yml$' 'hub|updater'
 
   # The shared core's own tests: the crates' unit tests and the scenario tests under tests/core and tests/bindings.
   # Every other part builds on the core, and none of their jobs runs these. It builds and delivers nothing.
@@ -171,13 +181,10 @@ jobs:
         run: |
           rustup toolchain install || rustup show
           rustc --version
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # the crates the build depends on, compiled; saved by main only, a pull request reads them
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: core-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # the licence tables are what cargo reports for this Cargo.lock (.github/scripts/third_party.mjs)
       - name: THIRD-PARTY.md is current
         run: node .github/scripts/third_party.mjs --check
@@ -220,13 +227,10 @@ jobs:
           rustup toolchain install || rustup show
           rustc --version
           echo "WASM_BINDGEN=$(sed -n 's/^wasm-bindgen = "=\(.*\)"$/\1/p' core/wasm/Cargo.toml)" >> "$GITHUB_ENV"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # the crates the build depends on, compiled; saved by main only, a pull request reads them
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: web-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: bindgen
         with:
@@ -242,10 +246,14 @@ jobs:
         run: sh core/wasm/build.sh
       - name: Test
         run: npm test
+      # The build of the release: only when the web's inputs differ from the newest release's (always on a pull
+      # request); otherwise release.yml takes web.tar.gz from that release.
       - name: Build
+        if: needs.changes.outputs.changed_web != 'false'
         run: node app/web/dev/build.mjs --write
       # What is delivered: the files, the worker, its settings, and the manifest that names every file.
       - name: Put the release together
+        if: needs.changes.outputs.changed_web != 'false'
         run: |
           set -eu
           node .github/scripts/web_release.mjs app/web/public out
@@ -259,6 +267,7 @@ jobs:
             echo "hub \`$WEB_HUB_URL\`, HSTS \`$WEB_HSTS\`, $(jq '.files | length' out/manifest.json) files, manifest \`$(sha256sum out/manifest.json | cut -d' ' -f1)\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.changed_web != 'false'
         with:
           name: web-release
           path: out/
@@ -315,20 +324,17 @@ jobs:
           tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP/zig" --strip-components 1
           echo "ZIG=$RUNNER_TEMP/zig/zig" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/zig/zig" version
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # the crates the build depends on, compiled; saved by main only, a pull request reads them
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: connector-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: zigbuild
         with:
           path: ~/.cargo/bin/cargo-zigbuild
           key: cargo-zigbuild-${{ runner.os }}-${{ env.ZIGBUILD_VERSION }}-${{ hashFiles('rust-toolchain.toml') }}
       - name: cargo-zigbuild
-        if: steps.zigbuild.outputs.cache-hit != 'true'
+        if: steps.zigbuild.outputs.cache-hit != 'true' && needs.changes.outputs.changed_connector != 'false'
         run: cargo install cargo-zigbuild --version "$ZIGBUILD_VERSION" --locked
       # The scenario tests start the hub of this repository and the built connector (tests/connector/common/mod.rs).
       - name: Test
@@ -343,8 +349,10 @@ jobs:
           TROMMI_HUB_SERVES_REMOVAL=1 TROMMI_HUB_BIN="$PWD/target/debug/trommi-hub" cargo test --locked -p trommi-tests $tests
       # The four binaries, as connector/build-plugin.mjs makes them; then the manifest that names them. (The plugin
       # for Claude Code is no release file: it is the folder connector/plugin, which names the installed connector.)
-      # A target that did not build is an error here, not a smaller release.
+      # A target that did not build is an error here, not a smaller release. Only when the connector's inputs differ
+      # from the newest release's (always on a pull request); otherwise release.yml takes the binaries from it.
       - name: Build the release
+        if: needs.changes.outputs.changed_connector != 'false'
         run: |
           set -eu
           # the release number is compiled in: a connector refuses a release older than itself (update.rs)
@@ -364,8 +372,10 @@ jobs:
           cat out/manifest.json
       # The very file that will be released is started once.
       - name: Try the built connector
+        if: needs.changes.outputs.changed_connector != 'false'
         run: out/trommi-connector-x86_64-unknown-linux-musl --version
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.changed_connector != 'false'
         with:
           name: connector-release
           path: out/
@@ -393,13 +403,10 @@ jobs:
           rustup component add llvm-tools
           rustc --version
           xcodebuild -version
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # the crates the build depends on, compiled; saved by main only, a pull request reads them
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ios-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The Rust core for this Mac (for the tests) and for iOS; the helpers it removes from the iOS library are
       # checked against Apple's runtime of this Xcode.
       - name: The Rust core for Swift
@@ -467,13 +474,10 @@ jobs:
           rustup toolchain install || rustup show
           rustc --version
           swift --version
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # the crates the build depends on, compiled; saved by main only, a pull request reads them
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ios-client-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: The Rust core for Swift on this machine
         run: sh core/swift/build.sh host
       - name: Test
@@ -515,13 +519,10 @@ jobs:
           rustc --version
           sudo apt-get update -q
           sudo apt-get install -y -q musl-tools
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # the crates the build depends on, compiled; saved by main only, a pull request reads them
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: hub-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # the hub's tests and the deploy path's (updater, release form, settings)
       - name: Test
         run: |
@@ -537,8 +538,11 @@ jobs:
           shellcheck -S warning release/*.sh hub/deploy/*.sh
           bash hub/deploy/install.sh check
       # The files of the release: both programs as static binaries and the manifest that
-      # names them. The commit is compiled in; paths of the build machine are not.
+      # names them. The commit is compiled in; paths of the build machine are not. Only when the inputs of the hub or
+      # its updater differ from the newest release's (always on a pull request); release.yml takes the program whose
+      # inputs did not change from that release.
       - name: Build the release
+        if: needs.changes.outputs.changed_hub != 'false'
         env:
           TROMMI_COMMIT: ${{ github.sha }}
         run: |
@@ -557,6 +561,7 @@ jobs:
           cat out/manifest.json
       # The very file that will be released is started once and asked whether it is well and which commit it is.
       - name: Try the built hub
+        if: needs.changes.outputs.changed_hub != 'false'
         run: |
           set -eu
           data=$(mktemp -d)
@@ -572,21 +577,25 @@ jobs:
           echo "$got"
           [ "$(printf '%s' "$got" | jq -r .commit)" = "$GITHUB_SHA" ] || { echo "::error::the built hub does not report this commit"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.changed_hub != 'false'
         with:
           name: hub-release
           path: out/
           if-no-files-found: error
           retention-days: 30
 
-  # The one release of this run: every part's files and one signed manifest (release.yml). Only on main, only when
-  # the inputs of a part changed since the newest release, and only when every part that ran passed.
+  # The one release of this run: every part's files and one signed manifest (release.yml): the parts built here, the
+  # unchanged ones taken from the newest release. Only on main, only when the inputs of a part changed since the
+  # newest release, and only when every part that ran passed.
   release:
     name: Release
     needs: [changes, core, web, connector, ios, ios_client, hub]
     if: >-
       ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
       && needs.changes.outputs.release == 'true'
-      && needs.web.result == 'success' && needs.connector.result == 'success' && needs.hub.result == 'success'
+      && contains(fromJSON('["success","skipped"]'), needs.web.result)
+      && contains(fromJSON('["success","skipped"]'), needs.connector.result)
+      && contains(fromJSON('["success","skipped"]'), needs.hub.result)
       && contains(fromJSON('["success","skipped"]'), needs.core.result)
       && contains(fromJSON('["success","skipped"]'), needs.ios.result)
       && contains(fromJSON('["success","skipped"]'), needs.ios_client.result) }}
@@ -600,6 +609,7 @@ jobs:
       version: ${{ needs.changes.outputs.version }}
       commit: ${{ github.sha }}
       parts: ${{ needs.changes.outputs.parts }}
+      reuse: ${{ needs.changes.outputs.reuse }}
     secrets: inherit
 
   # The server fetches the release itself; it restarts the hub only when the hub's inputs differ from those of the
