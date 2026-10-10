@@ -10,9 +10,9 @@ Security in one page: [SECURITY.md](SECURITY.md).
 |---|---|
 | `core/` | the shared Rust core (keys, envelopes, account) and its bindings: `core/wasm` for the browser, `core/swift` for iOS |
 | `hub/` | the hub (the server) and its updater; `hub/deploy/` is how it is installed |
-| `app/web/` | the web app |
+| `app/web/` | the web app (its `package.json`: `npm ci` and `npm test` run there) |
+| `app/ios/` | the iOS app |
 | `connector/` | the connector: the program and plugin that join a Claude Code session to a room |
-| `ios/` | the iOS app |
 | `demo/` | the demo room: shared data built into both the web app and the iOS app, so it belongs to neither |
 | `tests/` | every part's tests, one folder per part |
 | `spec/` | the protocol, the hub's API, the test vectors |

@@ -11,7 +11,7 @@
 //   ShareInbox       the Share Extension's sealed inbox in the App Group (local storage, Apple's CryptoKit).
 //   PushNotify       what the Notification Service Extension and the Live Activity widget need.
 //
-// Build the Rust library first: core/swift/build.sh (ios/README.md). The tests are a package of their own in the
+// Build the Rust library first: core/swift/build.sh (app/ios/README.md). The tests are a package of their own in the
 // repository's one tests folder: tests/ios (SwiftPM takes no target outside its package).
 import PackageDescription
 
@@ -27,7 +27,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.2"),
-    .package(path: "../../core/swift/TrommiCoreRust"),
+    .package(path: "../../../core/swift/TrommiCoreRust"),
   ],
   targets: [
     .target(name: "TrommiClient", dependencies: [.product(name: "Crypto", package: "swift-crypto")]),

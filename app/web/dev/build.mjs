@@ -20,7 +20,7 @@
 // branches never conflict there, and public/gen/, public/demo/fixture.json and public/demo/files/ are not in git at all.
 //
 // The bundle needs the repository's npm packages (esbuild). Cloudflare's build (WORKERS_CI=1) installs them first: npm
-// ci at the repository root. The dev server without --bundle needs none. The connector (a binary) is not built here:
+// ci in app/web/ (its package.json). The dev server without --bundle needs none. The connector (a binary) is not built here:
 // it is a signed GitHub release of its own (install.sh at the repository root installs it). The build reads two of the
 // connector's files, connector/tools.json and connector/prompt.md, for the help page's list of tools.
 // The Rust core is not compiled here either, as long as its output is there and current: the build takes
@@ -43,18 +43,20 @@ import { readDemo, dataDir } from '../../../demo/check.mjs'
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+/** esbuild, from app/web/node_modules (npm ci in app/web): also for the tests outside app/web, where Node would not find it. */
+export const loadEsbuild = () => import('esbuild').catch(() => { throw new Error('esbuild is missing (npm ci in app/web)') })
 const sha = data => crypto.createHash('sha256').update(data).digest('hex').slice(0, 12)
 
 // ---- the toolchain ----
 // The build is reproducible (README "Verifying the build"): the same commit gives the same bytes, wherever it is built.
 // That needs the same Node (type stripping) and the same esbuild: both pinned
-// (.node-version, package.json engines and the exact esbuild of package-lock.json), and for the Rust core's .wasm the
+// (.node-version, package.json engines and the exact esbuild of app/web/package-lock.json), and for the Rust core's .wasm the
 // same Rust (rust-toolchain.toml) and the same wasm-bindgen (core/wasm/Cargo.toml; the command must be the crate's
 // version). In Cloudflare's build a mismatch
 // fails the build; anywhere else it is said, and the manifest names the toolchain, so verify.mjs can tell why it differs.
 function toolchain(repo = REPO) {
   const node = fs.readFileSync(path.join(repo, '.node-version'), 'utf8').trim()
-  const lock = JSON.parse(fs.readFileSync(path.join(repo, 'package-lock.json'), 'utf8'))
+  const lock = JSON.parse(fs.readFileSync(path.join(repo, 'app/web/package-lock.json'), 'utf8'))
   const { rust, wasmBindgen } = corePins(repo)
   return { node, esbuild: lock.packages?.['node_modules/esbuild']?.version ?? null, rust, 'wasm-bindgen': wasmBindgen }
 }
@@ -245,7 +247,7 @@ function demoFiles(repo) {
   return { 'demo/fixture.json': JSON.stringify(fixture), ...Object.fromEntries(files.map(f => [`demo/files/${f}`, fs.readFileSync(path.join(dataDir(repo), 'files', f))])) }
 }
 const CI = process.env.WORKERS_CI === '1'
-if (CI) execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: REPO, stdio: 'inherit' })
+if (CI) execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: path.join(REPO, 'app/web'), stdio: 'inherit' })
 
 // ---- the stylesheets ----
 const SHEET_LINK = /^<link rel="stylesheet" href="(\/[^"]+\.css)"[^>]*>\n/gm
@@ -302,7 +304,7 @@ const versioned = (src, version) => String(src)
 // The dev server serves the sources as they are instead (bundle: false): unminified, one file per module.
 const BUNDLED = /^(app|auth|agents|desk|card|session|sidebar|notes|media|whiteboard|proof)\.mjs$|^demo\/demo\.mjs$/   // in the bundle, not served alone
 async function bundle(pub, vendor, core) {
-  const esbuild = await import('esbuild').catch(() => { throw new Error('build: esbuild is missing (npm ci at the repository root)') })
+  const esbuild = await loadEsbuild()
   const fromVendor = {
     name: 'vendor',
     setup(b) {

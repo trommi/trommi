@@ -1,4 +1,4 @@
-# Build output of SwiftPM and xtool, wherever under ios/ a build is started.
+# Build output of SwiftPM and xtool, wherever under app/ios/ a build is started.
 .build/
 .swiftpm/
 .bsp/

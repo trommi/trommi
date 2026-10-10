@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   The app's privacy manifest. It must lie at the root of Trommi.app (xtool.yml `resources:`, AppStore/project.yml),
-  not inside the SwiftPM resource bundle. ios/README.md "Privacy manifest" says where each line comes from; keep the
+  not inside the SwiftPM resource bundle. app/ios/README.md "Privacy manifest" says where each line comes from; keep the
   two in step when the code changes.
 
   No tracking. One collected data type: the e-mail address of the account, which the hub stores to sign the person

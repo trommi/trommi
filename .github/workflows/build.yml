@@ -158,9 +158,9 @@ jobs:
           # (connector/tools.json and prompt.md, demo/: the app's build reads them)
           # the core itself: its sources (core/ is in `shared`), its tests, the test library, the vectors
           part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$|THIRD-PARTY\.md$|\.github/scripts/third_party\.mjs$'
-          part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$' web
+          part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$' web
           part connector 'connector/|release/|install\.sh$|\.claude-plugin/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/release\.yml$' connector
-          part ios 'ios/|tests/ios/|\.github/scripts/ios_(testflight\.sh|archive\.sh|entitlements\.py)$|\.github/workflows/deploy_ios\.yml$' ios
+          part ios 'app/ios/|tests/ios/|\.github/scripts/ios_(testflight\.sh|archive\.sh|entitlements\.py)$|\.github/workflows/deploy_ios\.yml$' ios
           part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$|\.github/workflows/deploy_hub\.yml$' 'hub|updater'
 
   # The shared core's own tests: the crates' unit tests and the scenario tests under tests/core and tests/bindings.
@@ -222,6 +222,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+          cache-dependency-path: app/web/package-lock.json
       - name: Compiler (rust-toolchain.toml)
         run: |
           rustup toolchain install || rustup show
@@ -241,10 +242,12 @@ jobs:
         if: steps.bindgen.outputs.cache-hit != 'true'
         run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN" --locked
       - name: Packages
+        working-directory: app/web
         run: npm ci --no-audit --no-fund
       - name: The Rust core for the browser
         run: sh core/wasm/build.sh
       - name: Test
+        working-directory: app/web
         run: npm test
       # The build of the release: only when the web's inputs differ from the newest release's (always on a pull
       # request); otherwise release.yml takes web.tar.gz from that release.
@@ -415,7 +418,7 @@ jobs:
           DARWIN_CLANG_RT="$(xcrun --sdk iphoneos clang -print-resource-dir)/lib/darwin"
           export DARWIN_CLANG_RT
           sh core/swift/build.sh
-      # The core's Swift binding on this Mac. The app's own package (ios/TrommiClient) is tested on Linux only: it
+      # The core's Swift binding on this Mac. The app's own package (app/ios/TrommiClient) is tested on Linux only: it
       # does not compile for macOS (ActivityKit), and the archive in deploy_ios.yml is its build for iOS.
       - name: Test
         run: swift test --package-path tests/bindings/swift
@@ -432,7 +435,7 @@ jobs:
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
           echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
-          appstore=ios/TrommiApp/AppStore
+          appstore=app/ios/TrommiApp/AppStore
           "$RUNNER_TEMP/xcodegen/bin/xcodegen" generate --spec "$appstore/project.yml"
           bash .github/scripts/ios_archive.sh "$RUNNER_TEMP/Trommi.xcarchive" "$RUNNER_TEMP/DerivedData"
       # What deploy_ios.yml takes: the iOS library and UniFFI's two files, with their hashes and the commit.
@@ -455,7 +458,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # The app's client package (ios/TrommiClient) with its tests (tests/ios), on Linux: the package does not compile for
+  # The app's client package (app/ios/TrommiClient) with its tests (tests/ios), on Linux: the package does not compile for
   # macOS (ActivityKit), and the Mac job builds the app for a device without running tests.
   ios_client:
     name: iOS client (test on Linux)

@@ -1,8 +1,8 @@
 {
-  // Strict TypeScript for the web app's client core (app/web/core/). Nothing is emitted: Node 26 runs .ts itself (type
-  // stripping), esbuild bundles it for the browser (app/web/dev/build.mjs). So only syntax that types alone add is
+  // Strict TypeScript for the web app's client core (core/ here). Nothing is emitted: Node 26 runs .ts itself (type
+  // stripping), esbuild bundles it for the browser (dev/build.mjs). So only syntax that types alone add is
   // allowed (erasableSyntaxOnly: no enum, namespace or parameter property), and a .ts file imports with its real
-  // extension ('./codec.ts'). The app's views (app/web/public/) are plain .mjs and are not type-checked.
+  // extension ('./codec.ts'). The app's views (public/) are plain .mjs and are not type-checked.
   //   npx tsc -p .        (npm test runs it first: npm run typecheck)
   "compilerOptions": {
     "target": "es2023",
@@ -26,6 +26,6 @@
     "isolatedModules": true,
     "skipLibCheck": true
   },
-  "include": ["app/web/core/**/*.ts"],
+  "include": ["core/**/*.ts"],
   "exclude": ["node_modules"]
 }

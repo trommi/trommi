@@ -1,8 +1,8 @@
 # Trommi for iOS
 
 A native iOS app in Swift and SwiftUI, no web view for the board: the same board as app.trommi.com, verified and
-decrypted on the phone. The protocol ([`spec/v1.md`](../spec/v1.md)) is not written a second time in Swift: the app
-links [`trommi-core`](../core/README.md) (Rust, OpenMLS) as a static library and talks to it through one Swift
+decrypted on the phone. The protocol ([`spec/v1.md`](../../spec/v1.md)) is not written a second time in Swift: the app
+links [`trommi-core`](../../core/README.md) (Rust, OpenMLS) as a static library and talks to it through one Swift
 protocol. It is built, signed and shipped from Linux; no Mac is needed.
 
 ## Layout
@@ -12,7 +12,7 @@ protocol. It is built, signed and shipped from Linux; no Mac is needed.
 | `TrommiClient/` | A Swift package: everything of the app that is not a view. Four targets, below. |
 | `TrommiApp/` | The SwiftUI app and its three extensions (an [xtool](https://github.com/xtool-org/xtool) project). |
 | `TrommiApp/AppStore/` | What a TestFlight build needs on top: icon, production entitlements, the ship script. |
-| `../core/swift/` | The Rust core for Swift: `build.sh`, the Swift package `TrommiCoreRust` it fills, a proof app. |
+| `../../core/swift/` | The Rust core for Swift: `build.sh`, the Swift package `TrommiCoreRust` it fills, a proof app. |
 
 Targets of `TrommiClient`:
 
@@ -43,11 +43,11 @@ first use), Swift 6.4, and for anything that runs on a phone the toolchain of "O
 ```bash
 core/swift/build.sh                                 # the Rust core: lib/linux and lib/ios, UniFFI's Swift file and header
 (cd tests/ios && swift test)                              # the model, the store, and LiveCore against the Linux library
-(cd ios/TrommiApp && ulimit -n 65536 && xtool dev build --configuration release)   # xtool/TrommiApp.app
+(cd app/ios/TrommiApp && ulimit -n 65536 && xtool dev build --configuration release)   # xtool/TrommiApp.app
 ```
 
 The tests are a package of their own in the repository's one tests folder, `tests/ios` (one folder per tested
-target; SwiftPM takes no target outside its package, so `tests/ios/Package.swift` depends on `ios/TrommiClient` by
+target; SwiftPM takes no target outside its package, so `tests/ios/Package.swift` depends on `app/ios/TrommiClient` by
 path). `swift test` is run there.
 
 ### The Rust core
@@ -65,7 +65,7 @@ With a hub binary of branch `v2-hub` the tests also run against the real hub:
   which `rustc` writes for `aarch64-apple-ios` on Linux.
 - The package links it with a library search path per platform (`core/swift/TrommiCoreRust/Package.swift`), not an
   XCFramework: SwiftPM on Linux refuses an XCFramework, and `swift test` needs the Linux library. SwiftPM allows such a
-  flag only in a package used by path; `ios/TrommiClient/Package.swift` names it as `../../core/swift/TrommiCoreRust`.
+  flag only in a package used by path; `app/ios/TrommiClient/Package.swift` names it as `../../../core/swift/TrommiCoreRust`.
 - The darwin SDK's toolset passes `-all_load` to every link, so the script takes rustc's copy of the compiler runtime's
   C and assembly helpers out of the iOS archive (Apple's `libclang_rt.ios.a` has the same symbols) and checks every
   removed symbol against Apple's file. Without the SDK installed, set `DARWIN_CLANG_RT=unchecked`.
@@ -153,7 +153,7 @@ after that, building and shipping are plain commands.
 
    ```bash
    core/swift/build.sh ios
-   cd ios/TrommiApp
+   cd app/ios/TrommiApp
    ulimit -n 65536
    xtool dev build                                   # xtool/TrommiApp.app
    ~/.local/share/omarchy-apple-dev/device-run.sh    # installs and starts it on the phone
@@ -172,7 +172,7 @@ after that, building and shipping are plain commands.
 fetched first; `--dry-run` stops at the signed, validated `.ipa`):
 
 ```bash
-ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload, then App Store Connect's processing
+app/ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload, then App Store Connect's processing
 ```
 
 - Built from a clean `git worktree` of REF in a temporary folder, never from the working tree; the script and `asc.py`
@@ -195,7 +195,7 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
   (the App Group), each checked against its profile; `rcodesign`, the extensions first.
 - Offline validation (`asc.py validate`), upload with the Build Uploads API (`asc.py upload`), then this folder's
   `asc.py wait`, `internal … Intern`, and `notes`: "Neu in Build N (sha):" and the subjects of the commits under
-  `ios/` since the commit the previous build's What to Test names; `NOTES` overrides it.
+  `app/ios/` since the commit the previous build's What to Test names; `NOTES` overrides it.
 - Needs: cargo (rustup), xtool, `swift-bin` with the darwin SDK, `rcodesign`, `~/pymobile3-venv` (omarchy-apple-dev's
   installer), and the Admin key; `ASC_KEY_ID` and `ASC_ISSUER_ID` are required, from the environment or the env file
   the script's header names.

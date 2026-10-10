@@ -25,7 +25,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchChromium } from '../../../app/web/dev/cdp.mjs'
-import { coreFiles, coreFromPkg } from '../../../app/web/dev/build.mjs'
+import { coreFiles, coreFromPkg, loadEsbuild } from '../../../app/web/dev/build.mjs'
 import { writeBuilt } from '../build/built.mjs'
 import { appPolicy, serveStatic } from '../build/static.mjs'
 
@@ -60,7 +60,7 @@ export function missing({ hub = false } = {}) {
   const found = chromium.includes('/') ? fs.existsSync(chromium) : (process.env.PATH ?? '').split(path.delimiter).some(d => fs.existsSync(path.join(d, chromium)))
   if (!found) out.push(`Chromium is missing: no "${chromium}" on the PATH (set CHROMIUM to the program)`)
   if (!fs.existsSync(path.join(REPO, 'core/wasm/pkg/trommi_core_wasm_bg.wasm'))) out.push('the Rust core\'s WASM package is missing: core/wasm/pkg/ (run core/wasm/build.sh)')
-  if (!fs.existsSync(path.join(REPO, 'node_modules/esbuild'))) out.push('esbuild is missing (npm ci at the repository root)')
+  if (!fs.existsSync(path.join(REPO, 'app/web/node_modules/esbuild'))) out.push('esbuild is missing (npm ci in app/web)')
   if (hub) {
     const bin = process.env.TROMMI_HUB_BIN
     if (!bin) out.push('TROMMI_HUB_BIN is not set: the real hub\'s binary is needed')
@@ -86,7 +86,7 @@ const workerOf = dir => {
 /** Replaces the built worker's file by the same worker with standin-core.ts for core-wasm.ts (see the header). Not minified: an
  *  error in it names its place. Returns the worker's address. */
 export async function standInWorker(dir) {
-  const esbuild = await import('esbuild')
+  const esbuild = await loadEsbuild()
   const core = coreFiles(REPO)
   const worker = workerOf(dir)
   if (!fs.readFileSync(path.join(dir, worker), 'utf8').includes(`/${core.wasm}`)) throw new Error('the built worker does not name the .wasm of this checkout: not this checkout\'s build')
