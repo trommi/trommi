@@ -151,7 +151,7 @@ final class LiveCoreTests: XCTestCase {
       let device = try LiveDevice(store: MemoryStorage(), create: true)
       _ = try device.foundRoom(recoveryCode: ZERO32, nowMs: nowMs())
       let entry = try XCTUnwrap(device.outbox().first)
-      let answer = refusedCode { try device.outboxRefused(entry.id, code: code, voided: false) }
+      let answer = refusedCode { try device.outboxRefused(entry.id, code: code) }
       let stays = device.outbox() == [entry] && device.room != nil
       switch answer {
       case nil where stays: passing.append(code)
@@ -169,10 +169,10 @@ final class LiveCoreTests: XCTestCase {
     // A code this core does not know (a newer hub's, or the client's own "http-502") is never a refusal for good.
     let device = try LiveDevice(store: MemoryStorage(), create: true)
     XCTAssertFalse(LiveCore.isFinalRefusal("http-502"))
-    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "http-502", voided: false) }, "bad-format")
+    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "http-502") }, "bad-format")
     // An entry that is not there: `not-found`, whatever the code says.
-    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "internal", voided: false) }, "not-found")
-    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "bad-commit", voided: false) }, "not-found")
+    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "internal") }, "not-found")
+    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "bad-commit") }, "not-found")
   }
 
   // ---- the device on the phone's store --------------------------------------------------------------------

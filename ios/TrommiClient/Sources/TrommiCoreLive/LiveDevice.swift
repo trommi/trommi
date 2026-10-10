@@ -373,11 +373,15 @@ public final class LiveDevice: TrommiClient.CoreDevice {
         guard let agent = step.device, let keyPackage = step.keyPackage else { return nil }
         return .foundSession(invite: invite, agent: agent.bytes, keyPackage: keyPackage.bytes)
       case .takeOver:
-        guard let group = step.group, let agent = step.device, let keyPackage = step.keyPackage else { return nil }
-        return .takeOver(invite: invite, group: group.bytes, cuts: step.cuts.map(Self.cut), agent: agent.bytes, keyPackage: keyPackage.bytes)
+        guard let group = step.group, let agent = step.device else { return nil }
+        return .takeOver(invite: invite, group: group.bytes, cuts: step.cuts.map(Self.cut), agent: agent.bytes, keyPackage: step.keyPackage?.bytes)
+      case .checkHelpers:
+        guard let session = step.session else { return nil }
+        return .checkHelpers(invite: invite, session: session.bytes)
       }
     }
   }
+  public func inviteChecked(invite: Bytes, helpers: [GroupId]) throws { try core { try device.inviteChecked(inviteId: invite.data, helpers: helpers.map(\.data)) } }
   public func inviteHandover(invite: Bytes) throws -> [UInt64] { try core { try device.inviteHandover(inviteId: invite.data) } }
   public func inviteRecommit(invite: Bytes, nowMs: UInt64) throws -> UInt64 { try core { try device.inviteRecommit(inviteId: invite.data, nowMs: nowMs) } }
   public func inviteForget(invite: Bytes) throws { try core { try device.inviteForget(inviteId: invite.data) } }

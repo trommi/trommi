@@ -165,15 +165,25 @@ extension Room {
         await readOwnChanges()
         founded = sid
       case .takeOver(_, let group, let cuts, let agent, let keyPackage):
-        // The main session first: a helper session takes its new opener only once the main session has it (5.3.1 c).
-        try await commit { try $0.cleanSession(group: group, cuts: cuts, replacement: (agent, keyPackage), nowMs: nowMs()) }
-        let session = groups[hex(group)]?.session?.session
-        for g in groups.values where !g.archived && g.session?.parent != nil && g.session?.parent == session && !g.leaves.contains(agent) {
-          guard let kp = try await noted({ try await hub.claimKeyPackages([agent]) }).first?.keyPackage else { throw TrommiError("not-found", "the new agent device has no KeyPackage left at the hub") }
-          let helper = g.group, gone = g.disallowed
-          try await commit { device in try device.cleanSession(group: helper, cuts: try gone.map { try device.cutOf(group: helper, device: $0) }, replacement: (agent, kp), nowMs: nowMs()) }
-          if history { try await serial { [self] in _ = try await self.onCore { try $0.sendHandover(group: helper, recipient: agent) }; self.pumpOutbox() } }
+        // The core names one such step for the main session's group, then one per live helper session under it
+        // (5.3.1 c). A helper session's step comes without a KeyPackage: a fresh one of the agent is claimed.
+        let kp: Bytes
+        if let given = keyPackage { kp = given }
+        else {
+          guard let claimed = try await noted({ try await hub.claimKeyPackages([agent]) }).first?.keyPackage else { throw TrommiError("not-found", "the new agent device has no KeyPackage left at the hub") }
+          kp = claimed
         }
+        try await commit { try $0.cleanSession(group: group, cuts: cuts, replacement: (agent, kp), nowMs: nowMs()) }
+      case .checkHelpers(_, let session):
+        // Nothing more to do in the groups this device holds. The hub lists the live helper sessions under the
+        // session taken over; the Welcomes still waiting are taken first, so that this device holds them all.
+        try await serial { [self] in var ch = Change(); try await self.takeWelcomes(&ch); self.emit(ch) }
+        let listed = try await noted { try await hub.groups() }
+        let helpers: [GroupId] = listed.compactMap { g in
+          guard g["live"] as? Bool != false, (g["parent"] as? String).flatMap({ try? unb64u($0) }) == session else { return nil }
+          return (g["group_id"] as? String).flatMap { try? unb64u($0) }
+        }
+        try await serial { [self] in try await self.onCore { try $0.inviteChecked(invite: invite, helpers: helpers) } }
       }
     }
     throw TrommiError("pending", "adding the device did not come to an end: it goes on later")

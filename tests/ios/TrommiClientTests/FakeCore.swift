@@ -205,6 +205,7 @@ final class FakeDevice: CoreDevice {
   func inviteHandover(invite: Bytes) throws -> [UInt64] { throw TrommiError("not-built") }
   func inviteRecommit(invite: Bytes, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func inviteForget(invite: Bytes) throws {}
+  func inviteChecked(invite: Bytes, helpers: [GroupId]) throws {}
   func joinRequest(link: String, offer: SignedOffer, nowMs: UInt64) throws -> JoinRequest { throw TrommiError("not-built") }
   func joinReveal(_ reveal: SignedReveal) throws -> CheckCode { throw TrommiError("not-built") }
   func joinObserve(groupInfo: Bytes) throws { throw TrommiError("not-built") }

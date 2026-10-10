@@ -5,7 +5,7 @@
 // Nothing here computes. The implementation is TrommiCoreLive (UniFFI over the Rust library); the tests use a core
 // that seals nothing (Tests/TrommiClientTests/FakeCore.swift). Every call that needs time takes `nowMs`.
 //
-// The shapes are the binding's (core/swift/src/*.rs, branch v2-bindings at 286f595): records and calls keep its
+// The shapes are the binding's (core/swift/src/*.rs, branch v2-bindings at b2e5b98): records and calls keep its
 // names in Swift's spelling, and a record with a `kind` and optional fields there is an enum with values here. What
 // the app never does as a human device (an agent's drafts, the command gate, helper sessions) is left out.
 import Foundation
@@ -401,10 +401,17 @@ public enum InviteStep: Equatable {
   case addToSession(invite: Bytes, group: GroupId, device: DeviceId)
   /** `foundSession` with this KeyPackage of the agent device and one of every other human device. */
   case foundSession(invite: Bytes, agent: DeviceId, keyPackage: Bytes)
-  /** `cleanSession` with these cuts and the agent device with this KeyPackage as the replacement. */
-  case takeOver(invite: Bytes, group: GroupId, cuts: [Cut], agent: DeviceId, keyPackage: Bytes)
+  /** `cleanSession` with these cuts and the agent device as the replacement: one such step for the main session's
+   *  group, then one for every live helper session under it. `keyPackage` nil (a helper session): claim a fresh one
+   *  of `agent` at the hub. */
+  case takeOver(invite: Bytes, group: GroupId, cuts: [Cut], agent: DeviceId, keyPackage: Bytes?)
+  /** A takeover has nothing more to do in the groups this device holds: take the Welcomes still waiting and hand
+   *  the live helper sessions the hub lists under `session` to `inviteChecked`. */
+  case checkHelpers(invite: Bytes, session: SessionId)
   public var invite: Bytes {
-    switch self { case .wait(let i), .commit(let i), .handover(let i, _, _), .addToSession(let i, _, _), .foundSession(let i, _, _), .takeOver(let i, _, _, _, _): return i }
+    switch self {
+    case .wait(let i), .commit(let i), .handover(let i, _, _), .addToSession(let i, _, _), .foundSession(let i, _, _), .takeOver(let i, _, _, _, _), .checkHelpers(let i, _): return i
+    }
   }
 }
 /** A Request as the new device made it, with what its Offer says of the room. */
@@ -466,6 +473,7 @@ public protocol CoreDevice: CoreSigner {
   func logFinding(_ error: Error) -> LogFinding
 
   func sendHandover(group: GroupId, recipient: DeviceId) throws -> [UInt64]
+  /** `epoch-full` when the epoch took its share of pieces: an update of the room group is due first (`update`, forced). */
   func sendStrokePiece(board: BoardId, piece: Bytes) throws -> UInt64
   /**
    * A stroke piece the hub only passed on (the stream's `relay`, 7.2): in no log, with no change number, so the
@@ -475,6 +483,8 @@ public protocol CoreDevice: CoreSigner {
   func receiveRelay(group: GroupId, message: Bytes, nowMs: UInt64) throws -> ReceivedMessage?
 
   func outbox() -> [OutboxEntry]
+  /** The hub accepted the entry: it goes. An accepted Commit is NOT merged here: it takes effect when
+   *  `processLogEntry` reaches it in the log, at its place among the entries of every group. */
   func outboxAccepted(_ id: UInt64, change: UInt64?) throws
   /**
    * The hub refused the entry with a code of its table (`CoreTools.isFinalRefusal`). The core undoes what the entry
@@ -539,11 +549,17 @@ public protocol CoreDevice: CoreSigner {
    * they are the same (`code-not-confirmed`). The Commit is in the outbox; `inviteSteps` says what follows.
    */
   func inviteConfirm(invite: Bytes, numbers: [UInt8], requestHash: Hash32, matches: Bool, nowMs: UInt64) throws -> InviteConfirmed?
-  /** What is to do next for every device this one committed by link. A step that was taken is not named again. */
+  /** What is left to do for every device this one committed by link, read from the state of the groups (the same
+   *  after a restart). An invite with nothing left is finished and listed no more. */
   func inviteSteps() throws -> [InviteStep]
+  /** Sends the key handover of the invite's first `handover` step; `busy` when none is to be sent now. */
   func inviteHandover(invite: Bytes) throws -> [UInt64]
   func inviteRecommit(invite: Bytes, nowMs: UInt64) throws -> UInt64
+  /** A takeover without history: no handover is sent for this invite. Only the handover steps go. */
   func inviteForget(invite: Bytes) throws
+  /** Answers `checkHelpers`: the groups of the live helper sessions the hub lists under the session taken over.
+   *  `group-behind` when this device does not hold one of them yet; `busy` when another step is left. */
+  func inviteChecked(invite: Bytes, helpers: [GroupId]) throws
 
   // joining by link (12.1), the new device: the joining side's state is kept in the device's store
   /** Checks the Offer served for `link` and answers it with a fresh KeyPackage. A device joins one room, once (`room-exists`). */
