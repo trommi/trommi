@@ -52,6 +52,8 @@ fn asked(dir: &Path) -> Vec<String> {
     std::fs::read_to_string(dir.join("asked"))
         .unwrap_or_default()
         .lines()
+        // after a start the helper also asks whether the unit is up: a question, not an order
+        .filter(|l| !l.starts_with("is-active "))
         .map(str::to_string)
         .collect()
 }
@@ -276,6 +278,11 @@ fn a_copy_that_fails_stops_the_first_start_of_that_release_and_only_that() {
     assert!(hub.prestart());
     assert_eq!(hub.copies().len(), 2);
     assert!(!hub.dir.join("run/copy-failed").exists());
+    // the release before coming back (a rollback) starts whether or not a copy can be made
+    std::fs::set_permissions(hub.dir.join("backups"), std::fs::Permissions::from_mode(0o500)).unwrap();
+    hub.current("releases/hub-v5");
+    assert!(hub.prestart());
+    assert!(hub.prestart());
 }
 
 // ---- the units as they are installed ----
