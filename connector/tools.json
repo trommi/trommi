@@ -1245,6 +1245,22 @@
       "additionalProperties": false
     }
   },
+  "connect": {
+    "name": "connect",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "link": {
+          "type": "string",
+          "description": "The agent invite link the human gave, as it is (https://…/join#…)"
+        }
+      },
+      "required": [
+        "link"
+      ],
+      "additionalProperties": false
+    }
+  },
   "session_tools": [
     "reply",
     "create_decision",
