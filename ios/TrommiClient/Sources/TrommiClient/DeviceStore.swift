@@ -34,11 +34,12 @@
 //
 // ROLLBACK. Someone who can write the app's container (a restored copy, a tool on a compromised phone) could put an
 // older log back; everything in it is authentic. The anchor is the answer: a revision kept OUTSIDE the folder, in the
-// Keychain (StateAnchor). It is moved forward, before `apply` returns, by every batch that puts something into the
-// outbox (everything this device signs is in such a batch) and at least every 64 batches. A state whose revision is
-// below its anchor does not load. What an attacker can still do is drop batches above the anchor that signed
-// nothing (received items, which the hub gives again). The files are left out of backups: a restored copy must not
-// become a second owner.
+// Keychain (StateAnchor). It is moved forward by EVERY batch, after the batch is on the drive and before `apply`
+// returns (what a device received and trusted is as much state as what it signed). A state whose revision is below
+// its anchor does not load. A crash between the flush and the anchor leaves one record above the anchor: it was
+// never answered, and may stay or go. The price is one Keychain write per batch; how long a long catch-up takes
+// with it is to be measured on a phone. The files are left out of backups: a restored copy must not become a second
+// owner.
 import Foundation
 import Crypto
 #if canImport(Glibc)
@@ -57,8 +58,6 @@ public protocol StateAnchor: AnyObject {
 public final class DeviceStore: CoreStorage {
   /** The log is folded into a new snapshot once it is larger than this. */
   nonisolated(unsafe) static var compactAbove = 4 << 20
-  /** The anchor moves at least every so many batches. */
-  static let anchorEvery: UInt64 = 64
   /** The first byte of a key in the core's outbox table (core/src/store.rs `table::OUTBOX`). */
   static let outboxTable: UInt8 = 0x09
   private static let logAad = Array("trommi state record".utf8), snapAad = Array("trommi state snapshot".utf8)
@@ -170,7 +169,7 @@ public final class DeviceStore: CoreStorage {
     }
     logSize += framed.count
     revision = next
-    if let anchor = anchor, batch.put.contains(where: { $0.key.first == Self.outboxTable }) || next - anchored >= Self.anchorEvery {
+    if let anchor = anchor {
       // The batch is durable, but without the anchor a rollback below it would pass: not a success.
       do { try anchor.write(next); anchored = next } catch { poisoned = true; throw StoreError.failed("the state's anchor could not be written") }
     }

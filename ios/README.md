@@ -19,7 +19,7 @@ Targets of `TrommiClient`:
 | Target | What | Links the Rust core |
 | --- | --- | --- |
 | `TrommiClient` | The board model (`Board.swift`, `Desk.swift`), the device store, the hub client and live stream, the engine. `Core.swift` is the core as Swift sees it: the protocols `CoreTools` and `CoreDevice`, one call for one call of `core/README.md`. No crypto of its own; builds and tests on Linux without the library. | no |
-| `TrommiCoreLive` | `LiveCore`: `CoreTools` on the real library (UniFFI module `TrommiCoreRust`). Its header lists which calls are real and which are still stubs that refuse with `not-built`. | yes |
+| `TrommiCoreLive` | `LiveCore`: `CoreTools` on the real library (UniFFI module `TrommiCoreRust`). Its header lists which calls are real, which are stubbed (none) and what of the binding is not bound. | yes |
 | `ShareInbox` | The Share Extension's sealed inbox in the App Group (local storage, Apple's CryptoKit). | no |
 | `PushNotify` | What the Notification Service Extension and the Live Activity widget share with the app. | no |
 
@@ -29,7 +29,7 @@ The app and its extensions (`TrommiApp/Package.swift` products, `xtool.yml`):
 | --- | --- | --- | --- |
 | `TrommiApp` | `com.trommi.ios` | everything | yes (about 3 MB) |
 | `TrommiShare.appex` | `com.trommi.ios.share` | `ShareInbox` | no |
-| `TrommiNotify.appex` | `com.trommi.ios.notify` | `PushNotify` | only what opens one push and one envelope; see "Who owns the state" |
+| `TrommiNotify.appex` | `com.trommi.ios.notify` | `PushNotify` | only what opens one push (`NotifyCoreLive`); see "Who owns the state" |
 | `TrommiLive.appex` | `com.trommi.ios.live` | `PushNotify` | no |
 
 Each binary that links the core carries its own copy of it. Measured with the proof build of October 2026: the app
@@ -42,9 +42,13 @@ first use), Swift 6.4, and for anything that runs on a phone the toolchain of "O
 
 ```bash
 core/swift/build.sh                                 # the Rust core: lib/linux and lib/ios, UniFFI's Swift file and header
-(cd ios/TrommiClient && swift test)                 # the model, the store, and LiveCore against the Linux library
+(cd tests/ios && swift test)                              # the model, the store, and LiveCore against the Linux library
 (cd ios/TrommiApp && ulimit -n 65536 && xtool dev build --configuration release)   # xtool/TrommiApp.app
 ```
+
+The tests are a package of their own in the repository's one tests folder, `tests/ios` (one folder per tested
+target; SwiftPM takes no target outside its package, so `tests/ios/Package.swift` depends on `ios/TrommiClient` by
+path). `swift test` is run there.
 
 ### The Rust core
 
@@ -86,11 +90,10 @@ different items under one number.
   - **Share Extension:** writes what was shared into the sealed inbox in the App Group; the app takes it from there
     and sends it.
   - **Notification Service Extension:** gets, in one Keychain item whose access group is the App Group, the push key
-    and of each live session the content key of its newest two epochs and its agent devices. With them it opens the
-    push and the one envelope it names. Know the limit: such a key opens everything of that session in that epoch,
-    and every member of the App Group (the three extensions) can read the item; a narrower hand-over needs either a
-    Keychain group of its own for app and notification extension (the signing scripts and profiles do not carry one
-    today) or a title sealed separately by the core.
+    and the room's id, and nothing else. With the push key it opens the sealed part of a push (room, change number,
+    urgency). It gets no content key: none ever leaves the core, so the extension opens no envelope and shows no
+    title. Every member of the App Group (the three extensions) can read the item. A title in the notification
+    needs a title the core seals separately, or a call of the binding that opens one envelope without the device.
   - **Live Activity widget:** shows two counts; it holds no key and reads no file.
 - **What is not covered:** a phone whose app container AND Keychain an attacker can write. The lock is held while
   the app is suspended; the folder is not a shared container, where iOS would end an app for that, but this is to
@@ -192,11 +195,20 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
 target `Trommi` that links the package's `TrommiApp` library, with the app icon, the production entitlements and the
 Info.plist keys xtool adds; one extension target each. Linux builds do not use it.
 
-**Not usable today.** The package links the Rust core by a search path to the device library, which is wrong for the
-simulator, and no workflow is in this repository. A Mac build needs `core/swift/build.sh` on the runner and an
-XCFramework with a device and a simulator slice (both libraries build on Linux; not built yet).
+**The Xcode path** (the repository's `.github/workflows/deploy_ios.yml` with `.github/scripts/ios_testflight.sh`: an
+archive with cloud-managed signing on a Mac runner, uploaded to TestFlight). What it needs from this folder:
 
-What stays true once it is: `AppStore/asc.py` holds the App Store Connect API steps (the bundle ids with their
+- `core/swift/build.sh` on the runner before anything is built: `ios` for the archive (the package links
+  `lib/ios/libtrommi_core_ffi.a` by a search path; a device archive needs no XCFramework), `host` for
+  `swift test` in `tests/ios` on the Mac (it links `lib/macos`). The simulator library is chosen with
+  `TROMMI_IOS_SIMULATOR=1`; one checkout builds for the device OR the simulator, not both at once.
+- The package's sources build for macOS as well (ActivityKit and the Keychain parts are for iOS only), so the Mac
+  job can run the same tests as Linux.
+- Not verified from here: this text was written on Linux. Whether XcodeGen's project, the archive and the upload go
+  through is what the first run on the runner shows; that the archive carries `PrivacyInfo.xcprivacy` at the bundle's
+  root (`project.yml` lists it) is to be checked on its output.
+
+`AppStore/asc.py` holds the App Store Connect API steps (the bundle ids with their
 capabilities, the app record check, waiting for the processed build, the group and its tester, "What to Test").
 Internal testers must be users of the team under the address they sign in with; when the API refuses the tester (409
 "Tester(s) cannot be assigned"), add them once in App Store Connect → TestFlight → Intern → Testers → +. Cloud-managed
@@ -209,7 +221,8 @@ AES-GCM, Argon2id in the Rust core), not only with what iOS provides. `ITSAppUse
 Info.plist answers Apple's question for every build: `NO` says the app uses no encryption or only exempt encryption;
 `YES` says it uses encryption that is not exempt, and App Store Connect then asks once for the export documents and
 gives a compliance code for the Info.plist. Which one is true is a legal answer of the owner, not a build setting;
-the ship script writes what `ITS_NON_EXEMPT_ENCRYPTION` says.
+the ship script writes what `ITS_NON_EXEMPT_ENCRYPTION` says. The owner's answer is `NO`
+(decided 10 October 2026); the builds carry it.
 
 ## Privacy manifest
 
@@ -296,17 +309,11 @@ and hands its device token and a push key of its own to the hub. Apple sees a fi
 hub's message rides along sealed under that key. A push in the foreground shows as a banner; arriving, it refreshes
 the board; a tap opens the card (`Links.swift`).
 
-**The card's title, end to end encrypted** (`Sources/TrommiNotify`, the Notification Service Extension; the pushes
-carry `mutable-content: 1`). The extension opens the hub's sealed message with the push key, fetches the one envelope
-it names, opens it with the session's content key ("Who owns the state") and shows the title as a message from the
-session: a communication notification (`INSendMessageIntent`, the session as sender with its name and drawing),
-threaded per session. Anything that does not hold leaves the fixed text. An extension has 24 MB of memory: it never
-opens the device, never follows a group, and handles one envelope (a card is at most 64 KiB).
-
-The communication style needs `com.apple.developer.usernotifications.communication` (in
-`AppStore/TrommiApp.entitlements` only: the App Store Connect API has no capability type for it, and xtool removes
-capabilities it does not know from its development ids). Without it the push shows the session's name and the title,
-without the drawing.
+**The notification** (`Sources/TrommiNotify`, the Notification Service Extension; the pushes carry
+`mutable-content: 1`). The extension opens the hub's sealed message with the push key and shows the fixed text,
+threaded by room. It shows no title of a card: it holds no content key ("Who owns the state", "Not there yet").
+Anything that does not open leaves the fixed text as it came. An extension has 24 MB of memory: it never opens the
+device and never follows a group.
 
 **Live Activity** (`Sources/TrommiLive`, a WidgetKit extension; `LiveActivities.swift`): "2 agents working · 3
 questions waiting" on the lock screen and in the Dynamic Island, with the drawing of the crowned session of the desk
@@ -394,19 +401,27 @@ chrome; the minimum is iOS 27.
 
 ## Not there yet
 
-What the app cannot do until the core and its binding (`core/swift`) carry it; each is one stubbed line in
-`TrommiCoreLive` (its header lists real and stubbed calls) behind `Core.swift`:
+Nothing of `Core.swift` is stubbed: `TrommiCoreLive` binds every call to the core (`core/swift`, v2-bindings
+b2e5b98), and its header (`LiveCore.swift`) lists what is bound and what of the binding is left out. What the app
+still cannot do:
 
-- **Stored content on the device** (spec section 9): `sendEnvelope`, `receiveEnvelope`, `register`, `cut`. Without
-  them the app signs in and follows groups, and shows and writes no chat, card, register, Note or board item.
-- **Joining by link** (12.1): `openInvite`, `acceptInviteRequest`, `confirmInvite`, `burnInvite`, `parseInviteLink`,
-  `inviteRequest`, `inviteReveal`, `checkEmoji`.
-- **Live stroke pieces** of other devices (`processRelay`), and the **notification title** (`NotifyCoreLive`'s
-  `openEnvelope`): the extension shows the fixed text.
-- The Scribble Board still reads and writes the shapes of the Swift model (`Canvas.swift`); the core's reducer and
-  its whole-number format (`board_items`) replace it when they are bound.
+- **The notification title.** A content key never leaves the core, and the binding opens an envelope only on the
+  device that holds the group (`receiveEnvelope`), whose store the app owns. The Notification Service Extension
+  therefore opens the push itself (room, change, urgency) and shows the fixed text.
+- **Content from before a device came by link.** The core takes an envelope of an epoch before the device joined
+  only once it learned the group's past (`learnHistory`, bound and tested in `TrommiCoreLive`); the engine does not
+  fetch that history yet, so such items are passed over (`SyncReport.beforeJoining`). (A device that signs in with
+  the recovery code holds the keys back to the founding.)
+- **Recovery when every device is lost** (8.7) and **replacing the recovery code** (8.6) are bound and tested
+  (`prepareRecovery`, `recover`, `newRecoveryCode`, `replaceCode`); no screen and no call of `Room` leads there yet.
+- **Against a real hub** the engine was last run before this binding: `RealHubTests` (founding, signing in with
+  the password, a Commit, the whole recovery) are skipped without `TROMMI_HUB_BIN`, and joining by link through
+  `Room` has no test against a hub yet. Without a hub, the core's side of these paths is tested on the real core
+  (`PocketHub` keeps the hub's order) and the engine's on a core that seals nothing (`FakeCore`).
+- The Scribble Board still merges with the reducer of the Swift model (`Canvas.swift`); the core's reducer and its
+  check of a loaded board (`boardReduce`, `boardLoad`) are bound, and nothing calls them yet.
 - Passkeys are built and switched off (`Passkeys.available`) until `app.trommi.com` lists the app under
   `webcredentials` and the entitlement names it.
-- The Mac and simulator build ("TestFlight from CI"); licence notices for the Rust crates inside the app bundle
+- The first archive on the Mac runner ("TestFlight from CI") is unproven; licence notices for the Rust crates inside the app bundle
   (`THIRD-PARTY.md` lists them); the memory of the Notification Service Extension with the core linked, measured on
   a phone.

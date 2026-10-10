@@ -1,10 +1,16 @@
 // LiveStore.swift: what crosses the edge between Swift and the Rust core besides the calls themselves: the device's
 // store, errors, and byte strings.
 //
-// THE STORE. The core calls the app's store through the binding's protocol `CoreStore` (load, apply(write:)). The app's
-// stores implement `CoreStorage` (TrommiClient/Core.swift; on the phone that is DeviceStore). `StoreAdapter` is the one
-// between: it changes the shapes and nothing else. Both calls arrive on the thread that called the device, while the
-// device is locked inside the core, so a store must not call its device back.
+// THE STORE. The core calls the app's store through the binding's protocol `CoreStore` (load, apply(write:), close).
+// The app's stores implement `CoreStorage` (TrommiClient/Core.swift; on the phone that is DeviceStore). `StoreAdapter`
+// is the one between: it changes the shapes and nothing else. Every call arrives on the thread that called the
+// device, while the device is locked inside the core, so a store must not call its device back.
+//
+// WHO GIVES THE LOCK BACK. The core tells its store when it lets go of it (`close`: the device closed, failed for
+// good, or could not be opened after its `load` went through). `CoreStorage` has no such call: the client opens its
+// store itself, holds its lock, and closes it itself right after it closed the device (Room.swift, RoomAccount.swift).
+// So `close` here only lets go of the app's store: nothing reaches it through this adapter afterwards, and its lock
+// stays with whoever opened it.
 //
 //   CoreStorage throws        the core is told                 the device then
 //   StoreError.conflict       StoreError.Conflict              is the owner no more; every later call is `storage`
@@ -42,25 +48,30 @@ extension Data {
 
 /// The app's store as the core calls it.
 final class StoreAdapter: CoreStore, @unchecked Sendable {
-  private let storage: CoreStorage
+  /// nil once the core let go. No lock of its own: the core calls a store from one thread at a time, and `close`
+  /// is its last call.
+  private var storage: CoreStorage?
   init(_ storage: CoreStorage) { self.storage = storage }
 
   func load() throws -> StoredState {
-    try crossing {
+    try crossing { storage in
       let loaded = try storage.load()
       return StoredState(revision: loaded.revision, entries: loaded.entries.map { TrommiCoreRust.StoreEntry(key: $0.key.data, value: $0.value.data) })
     }
   }
 
   func apply(write: StoreWrite) throws {
-    try crossing {
+    try crossing { storage in
       let batch = StoreBatch(put: write.put.map { TrommiClient.StoreEntry(key: $0.key.bytes, value: $0.value.bytes) }, delete: write.delete.map(\.bytes))
       try storage.apply(expectedRevision: write.expectedRevision, batch: batch)
     }
   }
 
-  private func crossing<T>(_ call: () throws -> T) throws -> T {
-    do { return try call() }
+  func close() { storage = nil }
+
+  private func crossing<T>(_ call: (CoreStorage) throws -> T) throws -> T {
+    guard let storage else { throw TrommiCoreRust.StoreError.Failed(message: "the device let go of this store") }
+    do { return try call(storage) }
     catch TrommiClient.StoreError.conflict { throw TrommiCoreRust.StoreError.Conflict }
     catch TrommiClient.StoreError.failed(let text) { throw TrommiCoreRust.StoreError.Failed(message: text) }
     catch { throw TrommiCoreRust.StoreError.Failed(message: "the store threw an error that is not a StoreError") }
