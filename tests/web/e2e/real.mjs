@@ -74,7 +74,7 @@ const q = s => JSON.stringify(s)
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 export const NOTE = '#corner-note-box .corner-note-field'
 export const noteIs = text => `document.querySelector(${q(NOTE)})?.value === ${q(text)}`
-export const openNote = async P => { if (!await P.js("return !!document.querySelector('#corner-note-box.is-open')")) await P.click('#corner-note-box .corner-note-head'); await P.until("document.querySelector('#corner-note-box.is-open')", `the note open on ${P.name}`) }
+export const openNote = async P => { if (!await P.js("return !!document.querySelector('#corner-note-box.is-open')")) { await P.until("document.querySelector('#corner-note-box .corner-note-head')?.getClientRects().length", `the note's head drawn on ${P.name}`); await P.click('#corner-note-box .corner-note-head') } await P.until("document.querySelector('#corner-note-box.is-open')", `the note open on ${P.name}`) }
 export const foldNote = async P => { await P.key('Escape', 27); await P.until("!document.querySelector('#corner-note-box.is-open')", `the note folded on ${P.name}`) }
 export const appendNote = async (P, text) => { await P.click(NOTE); await P.key('End', 35, 2); await P.session.send('Input.insertText', { text }) }
 /** What a page holds when something does not arrive: for a failure's line. */
