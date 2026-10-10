@@ -858,6 +858,13 @@ export async function startFakeHub(opts = {}) {
       const a = member(auth(rq)), key = `board/desk/${pathId(segs[1], 16)}`, after = number(rq, 'after_change') ?? 0
       return page(a.room.envelopes.filter(e => timelineOf(e.header) === key && e.change > after && sees(a, a.room.groups.get(e.group))), clamp(number(rq, 'limit'), 500, 2000))
     }
+    if (is('POST', 'boards', null, 'frontier')) {
+      // (10.9: taken and kept per device; the stand-in prunes nothing: it has no pruned form)
+      const a = human(member(writer(rq))), board = pathId(segs[1], 16)
+      if (!body || typeof body.frontier !== 'object' || !Array.isArray(body.files)) throw refuse('bad-format', 'frontier and files')
+      ;(a.room.frontiers ??= new Map()).set(`${board}/${a.device}`, { frontier: body.frontier, files: body.files })
+      return { pruned: 0 }
+    }
     if (method === 'GET' && segs.length === 2 && ['cards', 'notes', 'permission-requests', 'artifacts'].includes(segs[0])) {
       const a = member(auth(rq)), o = objectsOf(a.room, a).get(pathId(segs[1], 16))
       if (!o || (OBJECT_TABLES[o.type] ?? 'cards') !== segs[0].replace('-', '_')) throw refuse('not-found', 'no such object')

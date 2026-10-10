@@ -320,7 +320,9 @@ extension Room {
    * to verify them against the chains and Cuts this device holds, and `boardReduce` to merge the fresh ones into the
    * snapshot. Every opening loads it so anew (the core takes the same snapshot again, also after a Cut dropped
    * items). A board the core refuses (`withheld`, `equivocation`, `gap`, …) is thrown, not drawn; `withheld` is
-   * asked once more after a catch-up (the chains read up to their heads).
+   * asked once more after a catch-up (the chains read up to their heads). The hub prunes items behind every human
+   * device's snapshot (10.9): a pruned item is no `loaded` item (`boardItems`), so one the snapshot covers is skipped
+   * and one after it is missing, `withheld`; the catch-up brings the newer snapshot that covers it (10.3).
    */
   public func loadCanvas(_ timelineId: String) async throws -> CanvasState {
     do { return try await loadCanvasOnce(timelineId) }

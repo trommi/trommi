@@ -578,6 +578,31 @@ export class Client {
   }
 
   /**
+   * After this device wrote a board's snapshot register (`sent`, from `setRegisters`): once the hub took that
+   * envelope, tells it what the snapshot covers and which files its shapes still name (10.9), so that it prunes the
+   * board's items behind every device's snapshot. `frontier` in the model's ids (`{ <writer hex>: [seq, hash hex] }`),
+   * `shapes` the snapshot's. Returns how many item bodies the hub pruned, or null when the register was refused or
+   * not sent within a minute (the next snapshot posts again).
+   */
+  async postBoardFrontier(timeline_id: string, sent: Sent, frontier: Record<string, [number, string | null]>, shapes: readonly Record<string, unknown>[]): Promise<number | null> {
+    this.needHuman()
+    const board = unhex(timeline_id.replace(/^desk\//, ''))
+    const item = this.model.outbox.find(i => i.local_id === sent.local_id)
+    for (const until = this.now() + 60_000; item && this.model.outbox.includes(item);) {
+      if (this.now() > until) return null
+      await new Promise(r => setTimeout(r, 250))
+    }
+    if (item?.outbox_state === 'failed') return null
+    const wire: Record<string, [number, Uint8Array]> = {}
+    for (const [writer, [seq, hash]] of Object.entries(frontier)) {
+      if (!hash) return null
+      wire[b64u(unhex(writer))] = [seq, unhex(hash)]
+    }
+    const { pruned } = await this.hub.postBoardFrontier(board, wire, fileIdsOf('board_item', { strokes: shapes as unknown[] }))
+    return pruned
+  }
+
+  /**
    * Registers, one envelope per name. Without `session_id`: the room's (shared by human devices, shown at once), and
    * this device's own `device/<id>`. With it: a register of that session's group (`goals`), no echo.
    */

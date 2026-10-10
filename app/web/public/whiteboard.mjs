@@ -697,11 +697,31 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
   const plainMove = (a, b) => a.type === b.type && a.w === b.w && a.h === b.h && a.data === b.data && a.z === b.z && (a.group ?? null) === (b.group ?? null) && a.blob === b.blob
 
   // ---- what comes in ----
-  function take(items) {
-    const changed = new Set()
+  // An item after the applied frontier that the hub served pruned is covered by a newer snapshot (10.3, 10.9): the
+  // board is loaded again from the newest one, after a catch-up. Once more pruned after that: it is not all of the
+  // board (`withheld`), it goes in as unreadable and no snapshot is written from it.
+  let reloading = null, reloads = 0
+  function reloadSoon() {
+    if (reloading || !real) return
+    reloading = (async () => {
+      reloads++
+      await client.catchUp?.().catch(() => {})
+      const old = new Set(st.shapes.keys())
+      const items = await loadBoard()
+      const changed = new Set(old)
+      for (const id of st.shapes.keys()) changed.add(id)
+      reloading = null
+      take(items.sort(byNumber), changed)
+    })().catch(e => { reloading = null; error = e.code ?? e.message; report() })
+  }
+  function take(items, changed = new Set()) {
     for (const it of items) {
       // (an item that cannot be read here goes in too: the canvas state must know that it is not all of the board)
       if (it.pending) continue
+      if (it.item_state === 'pruned' && !st.covered(it.sender_device_id, it.sender_sequence)) {
+        if (reloads < 2) { reloadSoon(); continue }
+        error = 'withheld'
+      }
       if (it.envelope_number > st.last_envelope_number && st.covered(it.sender_device_id, it.sender_sequence)) st.last_envelope_number = it.envelope_number   // an own item, confirmed
       // A piece of a new stroke of a device: the stroke it drew before was dropped, or is on its way as an item.
       if (it.content_type === 'stroke_piece') for (const id of [...st.shapes.keys()]) if (id.startsWith(`live:${it.sender_device_id}/`) && id !== `live:${it.sender_device_id}/${it.content?.stroke}`) { st.shapes.delete(id); changed.add(id) }
@@ -832,8 +852,10 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     try {
       const snap = st.snapshot(), applied = st.applied
       const attachment = await client.uploadAttachment(await packSnapshot(snap), { file_name: 'canvas.json.gz', media_type: 'application/gzip' })
-      await client.setRegisters({ [`scribble_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number, shapes: snap.shapes.length } })
+      const sent = await client.setRegisters({ [`scribble_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number, shapes: snap.shapes.length } })
       st.applied -= applied
+      // (10.9: once the hub took the register, it hears what the snapshot covers and prunes behind it)
+      if (sent && client.postBoardFrontier) client.postBoardFrontier(timeline_id, sent, snap.frontier, snap.shapes).catch(e => console.warn('canvas frontier', e))
     } catch (e) {
       // (the canvas state refuses: an item without its hash yet, or one that could not be read: no snapshot now)
       if (!['newer-version', 'no-key', 'bad-format'].includes(e?.code)) console.warn('canvas snapshot', e)
@@ -849,10 +871,10 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
   // The pad's page goes (the Desk was left): it stops listening to the app's client at once.
   addEventListener('pagehide', () => off?.(), { once: true })
   const t0 = performance.now()
-  if (real) {
-    // The snapshot register and the tail need the room caught up (a fresh page paints before that).
-    for (const until = Date.now() + 8000; client.model.room.connection !== 'live' && Date.now() < until;) await new Promise(r => setTimeout(r, 100))
+  /** The newest snapshot and the tail after it (10.3). Returns the tail's items, not yet taken. */
+  async function loadBoard() {
     const snap = client.model.human?.scribble_snapshots?.get(timeline_id)
+    st.load(null)
     if (snap?.attachment) {
       try {
         // (the file names no change number: the register's says from where the tail is read)
@@ -863,14 +885,16 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
       }
       catch (e) { console.warn('scribble: the snapshot is not readable, the whole timeline is read', e); st.load(null) }
     }
+    try { return (await client.loadTimelineAfter(key, st.last_envelope_number)).items ?? [] }
+    catch (e) { error = e.code ?? e.message; return [...(client.model.timelines.get(key)?.items.values() ?? [])] }
+  }
+  if (real) {
+    // The snapshot register and the tail need the room caught up (a fresh page paints before that).
+    for (const until = Date.now() + 8000; client.model.room.connection !== 'live' && Date.now() < until;) await new Promise(r => setTimeout(r, 100))
+    const items = await loadBoard()
     const t1 = performance.now()
-    let items = []
-    try { items = (await client.loadTimelineAfter(key, st.last_envelope_number)).items ?? [] }
-    catch (e) { error = e.code ?? e.message; items = [...(client.model.timelines.get(key)?.items.values() ?? [])] }
     started = true
-    const before = new Set(st.shapes.keys())
     take(items.sort(byNumber))
-    for (const id of before) if (!st.shapes.has(id)) before.delete(id)
     mode = connection()
     timing.snapshotMs = t1 - t0
     timing.tail = items.length

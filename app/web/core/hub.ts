@@ -1312,6 +1312,19 @@ export class Hub {
     const limit = Math.min(2000, Math.max(1, ownInt(opts.limit ?? 500, 'limit'))), after = ownInt(opts.after_change ?? 0, 'after_change')
     return envelopePage(await this.get(`/v1/boards/${own(board, 'board', 16)}`, { after_change: after, limit }, CAP_LIST), limit, after, 1)
   }
+  /**
+   * `POST /v1/boards/{board}/frontier` (10.9): after this device's snapshot register was taken, what the snapshot covers
+   * (`frontier`: per writer `[seq, hash]`, wire ids) and the files its shapes still name. The hub prunes the board's
+   * items behind the frontiers of every human device. Returns how many item bodies it pruned now.
+   */
+  async postBoardFrontier(board: Uint8Array, frontier: Record<string, [number, Uint8Array]>, files: Uint8Array[]): Promise<{ pruned: number }> {
+    const json = {
+      frontier: Object.fromEntries(Object.entries(frontier).map(([w, [seq, hash]]) => [own(unb64u(w), 'writer', 32), [ownInt(seq, 'seq'), own(hash, 'hash', 32)]])),
+      files: files.map(f => own(f, 'file_id', 16)),
+    }
+    const o = obj(await this.send('POST', `/v1/boards/${own(board, 'board', 16)}/frontier`, json), 'a frontier answer')
+    return { pruned: int(o.pruned, 'pruned') }
+  }
   /** `GET /v1/cards/{object}?after=&limit=` and its siblings: every envelope of the object, by change. */
   async objectEnvelopes(route: ObjectRoute, object_id: Uint8Array, opts: { after?: number; limit?: number } = {}): Promise<ObjectEnvelopes> {
     if (!['cards', 'notes', 'permission-requests', 'artifacts'].includes(route)) wrong('no such object route')
