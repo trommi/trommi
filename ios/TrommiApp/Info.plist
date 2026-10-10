@@ -5,7 +5,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>Trommi</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<true/>
+	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Trommi uses the camera to scan the pairing code a signed-in device shows.</string>
 	<key>NSSupportsLiveActivities</key>
