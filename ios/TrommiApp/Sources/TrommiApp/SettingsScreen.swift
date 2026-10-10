@@ -736,7 +736,7 @@ struct AgentInviteSheet: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
           Text(label.isEmpty ? "Invite Agent" : "Invite \(label)").font(Face.display(26, .heavy))
-          Text("On a computer with Claude Code and Node 22+.").font(Face.text(15)).foregroundStyle(Ink.muted)
+          Text("On a computer with Claude Code or Codex.").font(Face.text(15)).foregroundStyle(Ink.muted)
           step(1, done: state != "making" && state != "open", "Copy these into a terminal") {
             if let i = inv, state == "open" {
               ForEach(Array(agentConnectSteps(link: i.pairing.link).enumerated()), id: \.offset) { _, s in
