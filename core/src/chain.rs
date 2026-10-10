@@ -385,10 +385,11 @@ impl Chains {
     pub fn apply_cut(&mut self, effect: &CutEffect) {
         if let Some(head) = effect.head {
             self.heads.insert(effect.sender, head);
-            // A chain that began at a frontier beyond the Cut ends at the Cut: what is still to be verified
-            // from number 1 leads there.
+            // A chain that began at a frontier at or beyond the Cut ends at the Cut: what is still to be
+            // verified from number 1 leads there, also where the frontier named another envelope under the
+            // Cut's number.
             let whole = match self.starts.get_mut(&effect.sender) {
-                Some(start) if head.seq < start.frontier.seq => {
+                Some(start) if head.seq <= start.frontier.seq => {
                     start.frontier = head;
                     start.verified.seq >= head.seq
                 }
@@ -449,10 +450,11 @@ impl Chains {
         }
         for StartEntry(sender, start) in starts {
             // A start is kept only while envelopes below its frontier are unverified, and the chain it
-            // belongs to stands at the frontier or beyond.
+            // belongs to stands at the frontier, on the frontier's envelope, or beyond.
+            let head = chains.head(&sender);
             let fits = start.verified.seq < start.frontier.seq
                 && (start.verified.seq == 0) == start.verified.hash.is_zero()
-                && chains.head(&sender).seq >= start.frontier.seq;
+                && (head.seq > start.frontier.seq || head == start.frontier);
             if !fits || chains.starts.insert(sender, start).is_some() {
                 return Err(corrupt(Error::BadFormat));
             }
