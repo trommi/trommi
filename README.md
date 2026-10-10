@@ -55,7 +55,7 @@ Updates: `trommi-connector update`.
    web app in        iPhone and        Claude Code and       the server:
    the browser          iPad           Codex sessions     stores ciphertext,
        │                  │                  │            checks MLS changes
-       └──────────────────┴────── HTTPS ─────┴──────────────────▲
+       └───────────── MLS (end-to-end encrypted) ───────────────▲
                     sealed messages only; keys stay on devices
 ```
 
