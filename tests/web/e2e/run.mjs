@@ -10,8 +10,8 @@
 // Exit 0: every step of every run passed · 1: a step failed · 2: a run could not start (Chromium, esbuild, the
 // core's WASM package or the hub's binary is missing: the message says which).
 // It needs Chromium (`chromium` on the PATH or CHROMIUM), which cannot run inside a command sandbox. Everything it
-// writes goes under TROMMI_E2E_TMP (default ~/.cache/trommi-work/v2/web-tmp/e2e), screenshots under
-// TROMMI_E2E_SHOTS (default ~/.cache/trommi-work/v2/web-shots/e2e).
+// writes goes under TROMMI_E2E_TMP (default: trommi-e2e in the system's temporary folder), screenshots under
+// TROMMI_E2E_SHOTS (default: trommi-e2e-shots there).
 import { runScenario } from './harness.mjs'
 
 const RUNS = {

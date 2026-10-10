@@ -2928,3 +2928,11 @@ export const roomPage = (title, inner, lead = '') => settingsPage(title, inner, 
 /** The short list of keys (the "?" sheet's), for Settings · Keyboard Shortcuts. */
 export const keysList = () => html`<dl class="set-keys">${SHORT.map(k => html`<div><dt>${k.keys.map((spec, i) => html`${i ? html`<i>or</i>` : ''}${caps(spec)}`)}</dt><dd>${k.does}</dd></div>`)}</dl>`
 export const errorLine = e => (e ? html`<p class="room-error" role="alert">${e}</p>` : '')
+/** What a refused action says on screen: the line for a refusal every screen may meet (by its code), else the
+ *  error's own words (the app's own errors are written to be read), else `fallback`. A screen with refusals of its
+ *  own words those first (auth.mjs accountError). */
+const REFUSALS = {
+  offline: 'Can\'t reach Trommi. Check your connection.', 'core-missing': 'This version cannot do that yet.',
+  'worker-failed': 'That did not start. Reload and try again.', 'worker-timeout': 'That took too long. Try again.',
+}
+export const sayError = (err, fallback = '') => REFUSALS[err?.code] ?? (err?.message || fallback)

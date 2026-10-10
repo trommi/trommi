@@ -14,11 +14,10 @@ import { emptyChange, emptyModel, sessionOf, timelineOf } from '../../../app/web
 import { CanvasState } from '../../../app/web/core/scribble.ts'
 import { foldWork, isWork } from '../../../app/web/core/work.ts'
 import { World, canon, hex, id16 } from './factory.mjs'
-import { demo } from '../views/demo-room.mjs'
+import { demo, RICH as FIXTURE } from '../views/demo-room.mjs'
 
-const FIXTURE = '/home/christopher/.cache/trommi-work/v2/web-tmp/fixtures/demo/fixture.json'
-const present = fs.existsSync(FIXTURE)
-const skip = present ? false : `the demo fixture is not at ${FIXTURE} (another helper exports it there): nothing was checked`
+const present = Boolean(FIXTURE) && fs.existsSync(FIXTURE)
+const skip = present ? false : 'TROMMI_DEMO_FIXTURE names no rich demo room: nothing was checked'
 
 /** The model as demo.mjs's own client makes it from a fixture (the real module: ../views/demo-room.mjs), with every
  *  stored item in its timeline's window. */
