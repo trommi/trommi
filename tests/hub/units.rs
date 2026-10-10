@@ -1193,13 +1193,21 @@ mod live_tests {
     fn events_reach_only_their_audience() {
         let live = Live::default();
         let (h, mut hrx) = live
-            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, None)
+            .open(auth(1, Who::Human), true, None, 8, 1 << 20, u64::MAX, None)
             .unwrap();
         let (a, mut arx) = live
-            .open(auth(2, Who::Agent), 8, 1 << 20, u64::MAX, None)
+            .open(auth(2, Who::Agent), true, None, 8, 1 << 20, u64::MAX, None)
             .unwrap();
         let (r, mut rrx) = live
-            .open(auth(3, Who::Recovery), 8, 1 << 20, u64::MAX, None)
+            .open(
+                auth(3, Who::Recovery),
+                true,
+                None,
+                8,
+                1 << 20,
+                u64::MAX,
+                None,
+            )
             .unwrap();
         for s in [&h, &a, &r] {
             s.go_live(0);
@@ -1234,6 +1242,8 @@ mod live_tests {
         let (s, mut rx) = live
             .open(
                 auth(1, Who::Human),
+                true,
+                None,
                 8,
                 1 << 20,
                 u64::MAX,
@@ -1261,6 +1271,8 @@ mod live_tests {
         let (s, rx) = live
             .open(
                 auth(2, Who::Human),
+                true,
+                None,
                 8,
                 1 << 20,
                 u64::MAX,
@@ -1285,7 +1297,7 @@ mod live_tests {
     fn what_arrives_during_the_catch_up_follows_it_once() {
         let live = Live::default();
         let (s, mut rx) = live
-            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, None)
+            .open(auth(1, Who::Human), true, None, 8, 1 << 20, u64::MAX, None)
             .unwrap();
         live.publish(&event(Some(7), true, vec![], None), &json!({ "n": 7 }));
         live.publish(&event(Some(9), true, vec![], None), &json!({ "n": 9 }));
@@ -1298,23 +1310,55 @@ mod live_tests {
         assert!(got[0].contains("\"n\":9") && got[1].contains("relay"));
     }
 
+    /// 13.7: whatever order the lease checks of two processes ran in, a stream of an earlier lease generation
+    /// never ends one of a later one: it is refused instead.
     #[test]
-    fn a_device_has_a_limit_of_streams_and_a_slow_reader_is_cut() {
+    fn an_agent_stream_never_ends_one_of_a_later_lease_generation() {
+        let live = Live::default();
+        // B (generation 2) is registered while A (generation 1) waits after its check of the lease
+        let b = live
+            .open(auth(2, Who::Agent), true, Some(2), 8, 64, u64::MAX, None)
+            .unwrap();
+        assert_eq!(
+            live.open(auth(2, Who::Agent), true, Some(1), 8, 64, u64::MAX, None)
+                .err(),
+            Some(trommi_hub::live::Refused::LeaseLost)
+        );
+        assert!(!b.0.is_closed());
+        // the holder reconnecting (the same generation) and a later one replace it
+        let again = live
+            .open(auth(2, Who::Agent), true, Some(2), 8, 64, u64::MAX, None)
+            .unwrap();
+        assert!(b.0.is_closed());
+        let later = live
+            .open(auth(2, Who::Agent), true, Some(3), 8, 64, u64::MAX, None)
+            .unwrap();
+        assert!(again.0.is_closed() && !later.0.is_closed());
+        // a stream without a lease is taken beside it and cuts nothing
+        let plain = live
+            .open(auth(2, Who::Agent), false, None, 8, 64, u64::MAX, None)
+            .unwrap();
+        assert!(!later.0.is_closed() && !plain.0.is_closed());
+    }
+
+    #[test]
+    fn a_new_stream_ends_the_older_ones_of_its_device_and_a_slow_reader_is_cut() {
         let live = Live::default();
         let mut keep = vec![];
-        for _ in 0..2 {
+        for _ in 0..3 {
             keep.push(
-                live.open(auth(1, Who::Human), 2, 64, u64::MAX, None)
+                live.open(auth(1, Who::Human), true, None, 2, 64, u64::MAX, None)
                     .unwrap(),
             );
         }
-        assert!(live
-            .open(auth(1, Who::Human), 2, 64, u64::MAX, None)
-            .is_none());
-        assert!(live
-            .open(auth(2, Who::Human), 2, 64, u64::MAX, None)
-            .is_some());
-        let (s, rx) = &mut keep[0];
+        // each new one ended those before it, so the limit of two is never reached; another device's stay
+        let other = live
+            .open(auth(2, Who::Human), true, None, 2, 64, u64::MAX, None)
+            .unwrap();
+        assert!(keep[0].0.is_closed() && keep[1].0.is_closed() && !keep[2].0.is_closed());
+        assert!(!other.0.is_closed());
+        assert_eq!(drain(&mut keep[0].1), vec!["END"]);
+        let (s, rx) = &mut keep[2];
         s.go_live(0);
         live.publish(
             &event(Some(1), true, vec![], None),

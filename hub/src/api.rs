@@ -276,6 +276,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
                 &conn,
                 &app,
                 bearer.as_deref(),
+                lease,
                 &query,
                 http::header(&parts.headers, "last-event-id"),
             )
@@ -895,7 +896,12 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
 
         // ---- invites, by human devices
         ("POST", ["invites"]) => {
-            let (offer, signature, mac) = (rq.bytes("offer")?, rq.bytes("signature")?, rq.opt_bytes("mac")?);
+            // `mac` may be left out for now; when it is there (null too) it must be the 32 bytes
+            let mac = match rq.body.get("mac") {
+                None => None,
+                Some(_) => Some(rq.bytes("mac")?),
+            };
+            let (offer, signature) = (rq.bytes("offer")?, rq.bytes("signature")?);
             let auth = read_auth()?;
             app.write_as(&auth, rq.lease, |x, _| invites::publish(x, &auth, &offer, &signature, mac.as_deref()))
         }
@@ -1317,6 +1323,7 @@ async fn stream(
     conn: &Conn,
     app: &Arc<App>,
     bearer: Option<&str>,
+    lease: Option<u64>,
     query: &[(String, String)],
     last_event_id: Option<&str>,
 ) -> Res<Answer> {
@@ -1335,18 +1342,44 @@ async fn stream(
         .or(last_event_id)
         .and_then(|v| v.parse().ok())
         .filter(|v| *v >= 0);
+    // A new stream ends the device's older ones (a browser may never close the stream of a reloaded page).
+    // An agent device's processes overlap while one restarts: there only the lease holder's stream replaces
+    // the others, a stale holder is told `lease-lost`, and a stream opened without `Trommi-Lease` (a client
+    // before this rule) takes its place beside them, as before, within the limit.
+    let replace = match (auth.who, lease) {
+        (Who::Agent, Some(given)) => {
+            let a = app.clone();
+            blocking(move || a.read(|x| crate::app::check_lease(x.c, &auth, Some(given), x.now)))
+                .await?;
+            true
+        }
+        (Who::Agent, None) => false,
+        _ => true,
+    };
     // the stream lives as long as the token it was opened with; the device resumes with a new one
-    let Some((s, rx)) = app.live.open(
+    let generation = if auth.who == Who::Agent { lease } else { None };
+    let (s, rx) = match app.live.open(
         auth,
+        replace,
+        generation,
         app.cfg.streams_per_device,
         app.cfg.stream_buffer_bytes,
         until,
         Some(conn.clone()),
-    ) else {
-        return Err(refuse(
-            "too-many",
-            "this device has its limit of streams open",
-        ));
+    ) {
+        Ok(opened) => opened,
+        Err(live::Refused::TooMany) => {
+            return Err(refuse(
+                "too-many",
+                "this device has its limit of streams open",
+            ))
+        }
+        Err(live::Refused::LeaseLost) => {
+            return Err(refuse(
+                "lease-lost",
+                "this process does not hold the device's lease",
+            ))
+        }
     };
     // the device may have been removed between the check of its token and the registration of its stream
     let (a, registered) = (app.clone(), s.clone());
