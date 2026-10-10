@@ -443,7 +443,8 @@ struct AccountPage: View {
           SettingsGroup(header: "Passkeys", footer: "This account opens with a passkey; it has no password. If you lose your passkeys and your Emergency Kit, nobody (not even Trommi) can recover your data.") {
             SettingsRow(title: st.passkeys.count == 1 ? "1 Passkey" : "\(st.passkeys.count) Passkeys") { Sketch("key") }
           }
-          if model.passkeysOn {
+          // (an account that opens only with passkeys keeps its passkey controls whatever the switch says)
+          if model.passkeysOn || !st.passkeys.isEmpty {
             SettingsGroup(footer: "For after you removed a device that is lost or no longer yours. You get a new Emergency Kit; the old kit stops working, and your other passkeys have to be added again.") {
               Button { codeAsk = true } label: { SettingsRow(title: "New Recovery Code…") { Sketch("key") } }.buttonStyle(.plain)
             }
@@ -484,7 +485,8 @@ struct AccountPage: View {
             Button("Cancel", role: .cancel) { codePassword = "" }
           } message: { Text("Your password opens the account. Then save or print the new Emergency Kit.") }
         }
-        if model.passkeysOn && st.hasPassword {
+        // ("Add Passkey" only where passkeys are offered, or for an account that has one already)
+        if (model.passkeysOn || !st.passkeys.isEmpty) && st.hasPassword {
           SettingsGroup {
             Button { passkeyAsk = true } label: { SettingsRow(title: "Add Passkey") { Sketch("key") } }.buttonStyle(.plain)
           }

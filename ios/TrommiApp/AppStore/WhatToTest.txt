@@ -13,7 +13,7 @@ Please look at, in this order:
 Known not to work in this build:
 - New in this build: the Emergency Kit shows your account ID, as text and as a QR code; Log in and New password take "Email or account ID"; Log Out ends the session at the hub too. Please look at the Emergency Kit page after creating an account: the ID and the QR code should be there.
 - New in this build: the demo shows a full made-up Desk again (agents, cards, pictures). If the Desk ever loads for more than a few seconds, it now says why and offers Try Again.
-- New in this build: passkeys turn on by themselves once app.trommi.com names this app for them. Then Create account offers "Create with passkey" first (email optional, no password needed) and Log in offers "Log in with passkey" with no field. Until then the screens look as before. A passkey has never been made on a phone: please try it once it shows, on a test account.
+- Passkeys are switched off for now: Create account and Log in use the password.
 - Chat, cards, notes, the Scribble Board and pairing a device are wired to the core and pass their tests on Linux, but have never met a real hub.
 - New in this build: a device that joins by scanning a code now also shows what was written before it joined. It can take a moment after joining, and the board fills a second time while it reads back.
 - New in this build: Settings, Account, "New Recovery Code…" (asks for your password, then shows a new Emergency Kit; the old kit stops working). Removing a device under Devices offers it too. Use it after a device was lost.
@@ -21,4 +21,4 @@ Known not to work in this build:
 - All three have passed tests on Linux and have never met the real hub.
 - Notifications show the fixed text only ("A new question."), never a title. A tap opens the app on the board, not on a card.
 - New in this build: a device you remove from another device notices it at its next start, checks it, forgets everything and says so on the start screen.
-- While passkeys are not on, "All my devices are lost" does not work for an account without an email.
+- With passkeys off, "All my devices are lost" does not work for an account without an email.

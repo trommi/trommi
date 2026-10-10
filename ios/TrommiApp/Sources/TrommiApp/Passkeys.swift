@@ -32,15 +32,22 @@ enum Passkeys {
    * domain's file names this app (`probe`), which the web app serves; the entitlement is in the app already.
    */
   static let forcedOn = false
+  /**
+   * The one switch for offering passkeys (the owner's decision, 10 October 2026, as on the web): off. Password managers
+   * do not all give the prf output (1Password does not), so an account that opens only with a passkey is not reliable.
+   * Off: no "Create with passkey", no "Log in with passkey", no "Add Passkey" unless the account has one already. All
+   * the passkey code stays; switched on, the domain's file decides as before.
+   */
+  static let offered = false
   private static let known = "trommi.passkeys.associated"
-  /** Whether the controls are shown: the last probe's word, kept between starts (offline, the last word holds). */
-  static private(set) var available: Bool = forcedOn || UserDefaults.standard.bool(forKey: known)
+  /** Whether the controls are shown: the switch, then the last probe's word (offline, the last word holds). */
+  static private(set) var available: Bool = offered && (forcedOn || UserDefaults.standard.bool(forKey: known))
   /**
    * Reads https://app.trommi.com/.well-known/apple-app-site-association and switches passkeys on or off by whether
    * its `webcredentials` names this app. No answer changes nothing. Whether it changed is returned.
    */
   @discardableResult static func probe() async -> Bool {
-    if forcedOn { return false }
+    if forcedOn || !offered { return false }
     guard let bundle = Bundle.main.bundleIdentifier, let url = URL(string: "https://\(relyingParty)/.well-known/apple-app-site-association") else { return false }
     var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
     req.httpMethod = "GET"
