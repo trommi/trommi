@@ -173,8 +173,14 @@ open class LiveCore: CoreTools {
   /// The app's origin, the hub, the room and the invite's id a link names. The link's secret is not among them.
   public func parseInviteLink(_ text: String) throws -> TrommiClient.InviteLinkParts {
     let parts = try core { try inviteLinkParse(text: text) }
-    return TrommiClient.InviteLinkParts(app: parts.app, hub: parts.hub, room: parts.roomId.bytes, invite: parts.inviteId.bytes)
+    return TrommiClient.InviteLinkParts(app: parts.app, hub: parts.hub, room: parts.roomId.bytes, invite: parts.inviteId.bytes, expiresAt: parts.expiresAt)
   }
+  public func inviteLinkCheck(_ text: String, nowMs: UInt64) throws -> TrommiClient.InviteLinkParts {
+    let parts = try core { try TrommiCoreRust.inviteLinkCheck(text: text, nowMs: nowMs) }
+    return TrommiClient.InviteLinkParts(app: parts.app, hub: parts.hub, room: parts.roomId.bytes, invite: parts.inviteId.bytes, expiresAt: parts.expiresAt)
+  }
+  public func inviteLifeMs(_ role: TrommiClient.InviteRole) -> UInt64 { TrommiCoreRust.inviteLifeMs(role: role == .human ? .human : .agent) }
+  public func inviteClockToleranceMs() -> UInt64 { TrommiCoreRust.inviteClockToleranceMs() }
   public func checkEmoji() -> [(emoji: String, word: String)] { TrommiCoreRust.checkEmoji().map { ($0.emoji, $0.word) } }
 
   // the Scribble Board (10.7, 10.8)

@@ -37,14 +37,18 @@ extension Room {
    */
   public static func join(link: String, base: URL = Store.defaultBase(), pollMs: UInt64 = 800, timeoutMs: UInt64 = 15 * 60_000, onEvent: (JoinEvent) -> Void) async throws -> Room {
     let tools = Core.tools
-    let l = try tools.parseInviteLink(link)
-    let roomId = hex(l.room)
-    let made = try newDevice(base: base, roomId: roomId)
+    // (a link past its deadline is refused here, before a device is made or anything is asked)
+    let parts = try tools.inviteLinkCheck(link, nowMs: nowMs())
+    let made = try newDevice(base: base, roomId: hex(parts.room))
     do {
+      // What the Offer is fetched by is the core's reading of the link, its deadline checked once more.
+      let l = try made.device.joinLink(link, nowMs: nowMs())
       let hub = try HubClient(hubURL: l.hub, room: l.room, signer: made.device)
       let inv = try await hub.getInvite(l.invite)
       guard let offer = (inv["offer"] as? String).flatMap({ try? unb64u($0) }), let sig = (inv["signature"] as? String).flatMap({ try? unb64u($0) }) else { throw TrommiError("bad-invite", "the hub gave no Offer") }
-      let join = try made.device.joinRequest(link: link, offer: SignedOffer(offer: offer, signature: sig), nowMs: nowMs())
+      // (the MAC as the hub serves it; a missing one is the core's to refuse)
+      let mac = (inv["mac"] as? String).flatMap { try? unb64u($0) } ?? []
+      let join = try made.device.joinRequest(link: link, offer: SignedOffer(offer: offer, signature: sig, mac: mac), nowMs: nowMs())
       if join.role != .human { throw TrommiError("bad-invite", "this is an invite for an agent: make one for a device in the app") }
       try await hub.postInviteRequest(l.invite, request: join.request.request, mac: join.request.mac, signature: join.request.signature)
       onEvent(.requested)
