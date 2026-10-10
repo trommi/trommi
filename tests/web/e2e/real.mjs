@@ -74,7 +74,9 @@ const q = s => JSON.stringify(s)
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 export const NOTE = '#corner-note-box .corner-note-field'
 export const noteIs = text => `document.querySelector(${q(NOTE)})?.value === ${q(text)}`
-export const openNote = async P => { if (!await P.js("return !!document.querySelector('#corner-note-box.is-open')")) { await P.until("document.querySelector('#corner-note-box .corner-note-head')?.getClientRects().length", `the note's head drawn on ${P.name}`); await P.click('#corner-note-box .corner-note-head') } await P.until("document.querySelector('#corner-note-box.is-open')", `the note open on ${P.name}`) }
+// (a note just folded is saved, and the box drawn anew from what was saved may stand in for it a moment later: a press
+//  that meets the box between the two is pressed again)
+export const openNote = async P => { for (let i = 0; i < 3 && !await P.js("return !!document.querySelector('#corner-note-box.is-open')"); i++) { await P.until("document.querySelector('#corner-note-box .corner-note-head')?.getClientRects().length", `the note's head drawn on ${P.name}`); try { await P.click('#corner-note-box .corner-note-head') } catch (err) { if (i === 2) throw err; await sleep(200) } } await P.until("document.querySelector('#corner-note-box.is-open')", `the note open on ${P.name}`) }
 export const foldNote = async P => { await P.key('Escape', 27); await P.until("!document.querySelector('#corner-note-box.is-open')", `the note folded on ${P.name}`) }
 export const appendNote = async (P, text) => { await P.click(NOTE); await P.key('End', 35, 2); await P.session.send('Input.insertText', { text }) }
 /** What a page holds when something does not arrive: for a failure's line. */
@@ -328,11 +330,11 @@ export const steps = [
     const made = ['Workshop'], lost = []
     for (let round = 1; round <= 3; round++) for (const wait of [0, 50, 100, 200, 300]) {
       const name = `R${round}-${wait}`
-      // (the desk made in the round before opens the menu again once its page is drawn, sidebar.mjs trommi-menu-keep:
-      //  that is waited for first, so the press below neither meets it opening nor a menu drawn anew under it)
-      await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open again after the desk before', 1000).catch(() => {})
+      // (a desk made in the menu goes to its own page with the menu shut: that page is waited for first)
+      if (made.length > 1) await A.until(`new URLSearchParams(location.search).get('desk') && document.getElementById('brand-doors')?.hidden !== false`, 'the page of the desk made before', 5000).catch(() => {})
       if (await A.js("return document.getElementById('brand-doors')?.hidden !== false")) { await A.click('.desk-switch-open'); await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open') }
-      await A.until("document.querySelector('#desk-add')?.getClientRects().length", 'the menu\'s New Desk')
+      // (the menu's list already holds the desk made before: no redraw of it comes between the press and the line)
+      await A.until(`document.querySelector('#desk-add')?.getClientRects().length && ${has(made.at(-1))}`, 'the menu\'s New Desk, with the desk made before listed')
       await A.click('#desk-add')
       await A.until("document.activeElement?.matches('.menu-desk-field')", 'the field for the new desk\'s name')
       await A.session.send('Input.insertText', { text: name })
