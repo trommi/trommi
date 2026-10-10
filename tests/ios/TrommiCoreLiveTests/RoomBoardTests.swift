@@ -83,8 +83,8 @@ final class RoomBoardTests: XCTestCase {
   }
 
   /// With a snapshot: the shapes it holds and the items after its frontier. A hub that leaves out an item after
-  /// the frontier is caught by the core (`withheld`), and nothing is drawn. Opened again, the board this device
-  /// made is the start (the same snapshot again would be `replay`).
+  /// the frontier is caught by the core (`withheld`), and nothing is drawn. Opened again, the same snapshot loads
+  /// anew.
   func testASnapshotAndTheItemsAfterItAndAWithheldItem() async throws {
     let (a, b, room) = try await roomOfTwo()
     let one = try draw(a, stroke(0))
@@ -110,7 +110,7 @@ final class RoomBoardTests: XCTestCase {
     let ids: Set<String> = Set([one, two, three].map { "\(hex(a.id))/\($0.seq)/0" })
     XCTAssertEqual(Set(st.shapes.keys), ids)
 
-    // opened again (the core holds that frontier as applied): the board kept on this device, and what came since
+    // opened again: the same snapshot loads anew, with what came since
     let four = try draw(a, stroke(300))
     _ = try await b.sync()
     let again = try await b.loadCanvas(timeline)
@@ -145,6 +145,35 @@ final class RoomBoardTests: XCTestCase {
     hub.welcomes = [[1], [2], [3]]
     let welcomes = try await b.hub.welcomes()
     XCTAssertEqual(welcomes.compactMap { $0["welcome"] as? String }, [[1], [2], [3]].map { b64u($0) })
+  }
+
+  /// C draws after the Cut A takes of it, then A removes C: B's next sync drops C's item (the core's Cut), counts a
+  /// reset of the boards, and the board loaded again shows A's shape alone.
+  func testABoardLoadsAnewWithoutWhatLayBeyondACut() async throws {
+    let (a, b, room) = try await roomOfTwo()
+    let c = try newDevice()
+    let exchanged = try exchangeInvite(from: a, to: c, tools: tools)
+    _ = try a.inviteConfirm(invite: exchanged.invite, numbers: exchanged.inviterShows, requestHash: exchanged.requestHash, matches: true, nowMs: nowMs())
+    try hub.post(a)
+    _ = try c.joinInvited(try XCTUnwrap(hub.welcomes.last), nowMs: nowMs())
+    _ = try a.inviteHandover(invite: exchanged.invite); try hub.post(a)
+    try hub.deliver(to: c)
+    let mine = try draw(a, stroke(0))
+    let cut = try a.cutOf(group: room, device: c.id)
+    let sealed = try c.seal(.boardItem(board: board, payload: stroke(100)), files: [], nowMs: nowMs())
+    try hub.postWaiting(c)
+    PocketRoutes.boards[hex(board), default: []].append(hub.change)
+    _ = try await b.sync()
+    let before = try await b.loadCanvas(timeline)
+    XCTAssertEqual(Set(before.shapes.keys), ["\(hex(a.id))/\(mine.seq)/0", "\(hex(c.id))/\(sealed.seq)/0"])
+    let resets = b.boardsReset
+
+    _ = try a.removeHumanDevices([cut], nowMs: nowMs())
+    try hub.postWaiting(a)
+    _ = try await b.sync()
+    XCTAssertEqual(b.boardsReset, resets + 1, "the screen is told to load its board again")
+    let after = try await b.loadCanvas(timeline)
+    XCTAssertEqual(Set(after.shapes.keys), ["\(hex(a.id))/\(mine.seq)/0"])
   }
 
   /// gzip with one stored block (no compression): what `gunzip` reads.
