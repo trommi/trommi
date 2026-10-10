@@ -68,7 +68,7 @@ final class InviteTests: XCTestCase {
     XCTAssertEqual(shown.emoji, shown.numbers.map { all[Int($0)].emoji })
     XCTAssertEqual(shown.words, shown.numbers.map { all[Int($0)].word })
     // The link names the app, the hub, the room and the invite's id, which is all a new device needs to ask for the Offer.
-    XCTAssertEqual(try tools.parseInviteLink(opened.link), InviteLinkParts(app: "https://app.example", hub: "https://hub.example", room: room, invite: opened.inviteId))
+    XCTAssertEqual(try tools.parseInviteLink(opened.link), InviteLinkParts(app: "https://app.example", hub: "https://hub.example", room: room, invite: opened.inviteId, expiresAt: opened.expiresAt))
 
     // Nothing of the room changed yet; B is in none.
     XCTAssertEqual(try a.inviteSteps(), [])

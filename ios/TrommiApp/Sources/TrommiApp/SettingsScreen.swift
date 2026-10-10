@@ -581,7 +581,9 @@ struct InviteDeviceSheet: View {
               ShareLink(item: link) { Label("Send Link", systemImage: "square.and.arrow.up").font(Face.text(15, .medium)) }
               Button { revealed = false; pairing.cancel(); pairing.state = .making } label: { Label("Hide Code", systemImage: "eye.slash").font(Face.text(15, .medium)) }
             }
-            Text("Waiting for the new device… The code works once, until \(clockOf(until)).").font(Face.text(14)).foregroundStyle(Ink.muted)
+            TimelineView(.periodic(from: .now, by: 30)) { _ in
+              Text("Waiting for the new device… The code works once, \(validFor(until)).").font(Face.text(14)).foregroundStyle(Ink.muted)
+            }
           case .confirm(let code):
             Text("A device wants to join. Does it show these six emoji, in this order?").font(Face.text(17, .medium)).multilineTextAlignment(.center)
             EmojiGrid(code: code)
@@ -734,11 +736,16 @@ struct AgentInviteSheet: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
           Text(label.isEmpty ? "Invite Agent" : "Invite \(label)").font(Face.display(26, .heavy))
-          Text("On a computer with Claude Code and Node 22+.").font(Face.text(15)).foregroundStyle(Ink.muted)
-          step(1, done: state != "making" && state != "open", "Copy this into a terminal in your project") {
+          Text("On a computer with Claude Code or Codex.").font(Face.text(15)).foregroundStyle(Ink.muted)
+          step(1, done: state != "making" && state != "open", "Copy these into a terminal") {
             if let i = inv, state == "open" {
-              let cmd = "curl -fsSL https://app.trommi.com/connect | sh -s '\(i.pairing.link)'"
-              CodeChip(text: cmd)
+              ForEach(Array(agentConnectSteps(link: i.pairing.link).enumerated()), id: \.offset) { _, s in
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(s.title).font(Face.text(13, .medium)).foregroundStyle(Ink.muted)
+                  CodeChip(text: s.command)
+                }
+              }
+              Text("For Codex instead of Claude Code: \(agentConnectSteps(link: "", codex: true)[1].command)").font(Face.text(13)).foregroundStyle(Ink.muted)
             }
           }
           step(2, done: state == "joined", state == "confirm" ? "An agent wants to join. Its terminal shows six emoji, each with a word. Are they these, in this order?" : "Compare the six emoji") {
@@ -753,7 +760,7 @@ struct AgentInviteSheet: View {
             else if state == "failed" { Text(error).font(Face.text(15)).foregroundStyle(Ink.urgCritical) }
           }
           step(3, done: state == "joined", "Start Claude Code there") { CodeChip(text: "claude") }
-          if state == "open", let i = inv { Text("The link works once · until \(clockOf(i.pairing.expiresAt)).").font(Face.text(13)).foregroundStyle(Ink.muted) }
+          if state == "open", let i = inv { TimelineView(.periodic(from: .now, by: 30)) { _ in Text("The link works once · \(validFor(i.pairing.expiresAt)).").font(Face.text(13)).foregroundStyle(Ink.muted) } }
         }.padding(22)
       }
       .background(Clipboard().padding(10).ignoresSafeArea(edges: .bottom))
