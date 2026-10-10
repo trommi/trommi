@@ -238,6 +238,13 @@ public final class CanvasState {
   public init() {}
   public func covered(_ sender: String, _ seq: UInt64) -> Bool { (frontier[sender]?.seq ?? 0) >= seq }
 
+  /** The demo's pictures get back the path of their file (`url`), by their attachment id. */
+  func putBack(urls: [String: JV]) {
+    for (id, s) in shapes {
+      guard var a = s.attachment?.object, let fid = a["attachment_id"]?.string ?? a["file_id"]?.string else { continue }
+      if let url = urls[fid] ?? urls[(try? unb64u(fid)).map(hex) ?? ""] ?? urls.first(where: { (try? unb64u($0.key)).map(hex) == fid })?.value { a["url"] = url; var t = s; t.attachment = .obj(a); shapes[id] = t }
+    }
+  }
   /**
    * Shows the board the core made: its snapshot file (wire form) turned into the model's shapes by
    * `Records.boardSnapshot`, which converts and judges nothing. The ids whose shape changed.

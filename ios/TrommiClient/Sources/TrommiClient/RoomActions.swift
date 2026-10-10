@@ -383,7 +383,40 @@ extension Room {
    * The board's items this device's chains hold (loaded, not provisional), in the hub's order: the head each is
    * (sender, number, hash) and its body in the wire's form, as the core reduces it.
    */
-  func boardItems(_ key: String) -> [(head: WriterHead, payload: Bytes, change: UInt64)] {
+  func boardItems(_ key: String) -> [(head: WriterHead, payload: Bytes, change: UInt64)] { Room.boardItems(board, key) }
+  /**
+   * A board without a room (the demo's, from its fixture): its items merged by the core (`boardReduce`), no snapshot.
+   * The items are the fixture's, made up; nothing is verified, since there is no chain to verify them against.
+   */
+  public static func demoCanvas(_ board: Board, _ timelineId: String) throws -> CanvasState {
+    // The demo's pictures name their files by a path in the app (`url`), with no key: for the core they get a key of
+    // zeros, and the path is put back on each picture afterwards (DemoData reads the file by it).
+    var urls = [String: JV]()
+    func keyed(_ v: JV) -> JV {
+      if var o = v.object {
+        if let url = o["url"], let id = o["attachment_id"]?.string ?? o["file_id"]?.string {
+          urls[id] = url
+          o["url"] = nil
+          if (o["file_key"]?.string ?? "").isEmpty { o["file_key"] = .str(b64u(ZERO32)) }
+          if (o["sha256"]?.string ?? "").isEmpty { o["sha256"] = .str(b64u(ZERO32)) }
+        }
+        return .obj(o.mapValues(keyed))
+      }
+      if let a = v.array { return .arr(a.map(keyed)) }
+      return v
+    }
+    let items = boardItems(board, timelineKeyOf("scribble", timelineId)).map { item -> (head: WriterHead, payload: Bytes, change: UInt64) in
+      guard let j = JV.parse(item.payload) else { return item }
+      return (item.head, keyed(j).encoded(), item.change)
+    }
+    let frontier = Room.frontier(of: items.map { $0.head }, over: [])
+    let out = try Core.tools.boardReduce(snapshot: nil, snapshotFrontier: [], items: items.map { BoardItemBody(sender: $0.head.writer, seq: $0.head.seq, payload: $0.payload) }, frontier: frontier)
+    let st = CanvasState()
+    try st.show(reduced: out, frontier: frontier)
+    st.putBack(urls: urls)
+    return st
+  }
+  static func boardItems(_ board: Board, _ key: String) -> [(head: WriterHead, payload: Bytes, change: UInt64)] {
     guard let t = board.timelines[key] else { return [] }
     return t.items.keys.sorted().compactMap { n in
       guard let it = t.items[n], it.itemState == "loaded", !it.pending, let c = it.content, let seq = it.senderSequence,

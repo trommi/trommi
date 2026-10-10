@@ -323,7 +323,12 @@ struct ScribbleScreen: View {
   // ---- reading ---------------------------------------------------------------------------------------------
 
   private func load() async {
-    guard let room = model.room else { return }
+    guard let room = model.room else {
+      // (the demo: its made-up board, merged by the core; never a spinner without end)
+      if model.demo, let b = model.desk?.board { canvas = (try? Room.demoCanvas(b, timeline)) ?? CanvasState() }
+      loaded = true; tick += 1
+      return
+    }
     // another board (the desk in view changed): nothing of the one before stays
     let tl = timeline
     loaded = false
@@ -472,7 +477,13 @@ struct BoardDesks: View {
   }
 
   private func load(_ desks: [DeskDesc]) async {
-    guard let room = model.room else { return }
+    guard let room = model.room else {
+      if model.demo, let b = model.desk?.board {
+        for d in desks where boards[d.id] == nil { boards[d.id] = (try? Room.demoCanvas(b, deskBoard(d.id))) ?? CanvasState() }
+        tick += 1
+      }
+      return
+    }
     if boards.isEmpty { loadedAt = room.boardsReset }
     boards = boards.filter { b in desks.contains { $0.id == b.key } }
     for d in desks where boards[d.id] == nil {
