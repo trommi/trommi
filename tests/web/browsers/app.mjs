@@ -10,36 +10,27 @@
 // Before "forgot password" (which removes every other device) this file adds what the brief asks of an engine:
 // passkeys, the live stream and the service worker, a screenshot of each main screen at a desktop's and a phone's
 // width, and an account made in a private window.
-import { spawn } from 'node:child_process'
 import fs from 'node:fs'
-import { createServer } from 'node:net'
 import path from 'node:path'
 import { buildApp, serveApp, TMP } from '../e2e/harness.mjs'
 import { steps as realSteps } from '../e2e/real.mjs'
 import * as ui from '../e2e/ui.mjs'
 import { cannot, counted, openProfile, sleep, watch } from './pw.mjs'
+import { spawnHub } from '../hub-process.mjs'
 
 export const ownServer = true
 
 export async function startHub(publicUrl) {
-  const probe = createServer()
-  await new Promise(r => probe.listen(0, '127.0.0.1', r))
-  const { port } = probe.address()
-  await new Promise(r => probe.close(r))
-  const url = `http://127.0.0.1:${port}`
   const data = fs.mkdtempSync(path.join(TMP, 'tmp', 'hub-'))
-  const env = { HUB_HOST: '127.0.0.1', HUB_PORT: String(port), HUB_URL: publicUrl, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_ORIGINS: publicUrl, PATH: process.env.PATH ?? '' }
-  const child = spawn(process.env.TROMMI_HUB_BIN, [], { env, stdio: ['ignore', 'ignore', 'pipe'] })
-  let stderr = ''
-  child.stderr.on('data', d => { stderr += d })
-  const exited = new Promise(resolve => child.once('exit', resolve))
+  const env = { HUB_HOST: '127.0.0.1', HUB_URL: publicUrl, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_ORIGINS: publicUrl, PATH: process.env.PATH ?? '' }
+  const { child, url, stderr: errors, exited } = await spawnHub(process.env.TROMMI_HUB_BIN, env)
   for (let i = 0; ; i++) {
     if (await fetch(`${url}/healthz`).then(r => r.ok, () => false)) break
-    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${stderr.slice(0, 500)}`)
+    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${errors().slice(0, 500)}`)
     await sleep(50)
   }
   return {
-    url, stderr: () => stderr,
+    url, stderr: errors,
     async close() { child.kill('SIGTERM'); const killer = setTimeout(() => child.kill('SIGKILL'), 1000); await exited; clearTimeout(killer); fs.rmSync(data, { recursive: true, force: true }) },
   }
 }

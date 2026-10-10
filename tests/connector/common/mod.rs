@@ -85,29 +85,36 @@ impl HubProc {
             "no hub binary at {}: cargo build -p trommi-hub, or set TROMMI_HUB_BIN",
             binary.display()
         );
-        let port = if port != 0 {
-            port
-        } else {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
-            listener.local_addr().expect("its address").port()
-        };
-        let url = format!("http://127.0.0.1:{port}");
-        let child = Command::new(&binary)
+        // Port 0: the hub binds a port the system picks and announces it on its first line of stdout. Probing a
+        // free port here and handing it over would race the other tests' hubs for it.
+        let mut command = Command::new(&binary);
+        command
             .env_clear()
             .env("HUB_HOST", "127.0.0.1")
             .env("HUB_PORT", port.to_string())
             .env("HUB_DATA", data.path())
-            .env("HUB_URL", &url)
             .env("HUB_QUIET", "1")
             .env("HUB_TEST_CONTROL", "1")
             .env("HUB_LIMIT_FOUND_PER_IP_HOUR", "100000")
             .env("HUB_PUSH_HOSTS", "127.0.0.1:9")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("the hub starts");
-        let hub = HubProc {
+            .stdout(if port == 0 {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stderr(Stdio::inherit());
+        if port != 0 {
+            command.env("HUB_URL", format!("http://127.0.0.1:{port}"));
+        }
+        let mut child = command.spawn().expect("the hub starts");
+        let port = if port != 0 {
+            port
+        } else {
+            announced_port(&mut child)
+        };
+        let url = format!("http://127.0.0.1:{port}");
+        let mut hub = HubProc {
             child,
             url,
             port,
@@ -115,6 +122,9 @@ impl HubProc {
         };
         let client = Hub::new(&hub.url, None, None).expect("a client");
         for _ in 0..1200 {
+            if let Ok(Some(status)) = hub.child.try_wait() {
+                panic!("the hub exited before it answered: {status}");
+            }
             if client
                 .open_call(reqwest::Method::GET, "/healthz", None)
                 .await
@@ -134,6 +144,36 @@ impl HubProc {
         let data = std::mem::replace(&mut self.data, TempDir(PathBuf::new()));
         (data, self.port)
     }
+}
+
+/// The port a hub started with `HUB_PORT=0` announces on its first line of stdout; the rest of its stdout is read
+/// and dropped on a thread of its own, so that the hub never writes into a full pipe.
+fn announced_port(child: &mut Child) -> u16 {
+    use std::io::{BufRead, BufReader};
+    let stdout = child.stdout.take().expect("the hub's stdout");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut lines = BufReader::new(stdout).lines();
+        let first = lines.next().and_then(|l| l.ok());
+        let _ = tx.send(first);
+        for _ in lines {}
+    });
+    let line = rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the hub announces its port")
+        .unwrap_or_else(|| {
+            panic!(
+                "the hub exited before it announced its port: {:?}",
+                child.wait()
+            )
+        });
+    let value: Value = serde_json::from_str(&line).expect("the hub's port line is JSON");
+    assert_eq!(value["event"], "port", "the hub's first line: {line}");
+    value["port"]
+        .as_u64()
+        .and_then(|p| u16::try_from(p).ok())
+        .filter(|p| *p != 0)
+        .expect("a port")
 }
 
 impl Drop for HubProc {

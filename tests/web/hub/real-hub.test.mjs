@@ -28,10 +28,8 @@
 //   A pass ends with the line "REMOTE SMOKE TEST PASSED …" and node's summary with `fail 0`.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -39,6 +37,7 @@ import { Hub, HubError, accountCopiesBytes, logEntry } from '../../../app/web/co
 import { b64u } from '../../../app/web/core/ids.ts'
 import { startFakeHub } from '../stand-in/hub.mjs'
 import { id, utf8, txt } from './helpers.mjs'
+import { spawnHub } from '../hub-process.mjs'
 
 const here = path => new URL(path, import.meta.url)
 const BIN = process.env.TROMMI_HUB_BIN
@@ -69,25 +68,14 @@ async function carefulFetch(input, init) {
 }
 const newHubAt = (url, client_name = CLIENT) => new Hub({ hub_url: url, client_name, ...(REMOTE ? { fetch: carefulFetch } : {}) })
 
-async function freePort() {
-  const probe = createServer()
-  await new Promise(r => probe.listen(0, '127.0.0.1', r))
-  const { port } = probe.address()
-  await new Promise(r => probe.close(r))
-  return port
-}
 async function startRealHub() {
-  const port = await freePort(), url = `http://127.0.0.1:${port}`
   const data = await mkdtemp(join(process.env.TROMMI_HUB_TMP ?? tmpdir(), 'trommi-hub-test-'))
-  const env = { HUB_HOST: '127.0.0.1', HUB_PORT: String(port), HUB_URL: url, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_MIN_CLIENT: MIN_CLIENT, PATH: process.env.PATH ?? '' }
-  const child = spawn(BIN, [], { env, stdio: ['ignore', 'ignore', 'pipe'] })
-  let stderr = ''
-  child.stderr.on('data', d => { stderr += d })
-  const exited = new Promise(resolve => child.once('exit', resolve))
+  const env = { HUB_HOST: '127.0.0.1', HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_MIN_CLIENT: MIN_CLIENT, PATH: process.env.PATH ?? '' }
+  const { child, url, stderr: errors, exited } = await spawnHub(BIN, env)
   for (let i = 0; ; i++) {
     const ok = await fetch(`${url}/healthz`).then(r => r.ok, () => false)
     if (ok) break
-    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${stderr.slice(0, 500)}`)
+    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${errors().slice(0, 500)}`)
     await new Promise(r => setTimeout(r, 50))
   }
   return {

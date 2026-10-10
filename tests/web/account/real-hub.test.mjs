@@ -14,14 +14,13 @@
 // (the one the room was founded with). A recovery and the replacement of the code are not run here at all.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Hub } from '../../../app/web/core/hub.ts'
 import { account as A, core, no_core, stage, resetStage, b64u, bytes, refused, thrown, told } from './setup.mjs'
 import { softPasskey } from './authenticator.mjs'
+import { spawnHub } from '../hub-process.mjs'
 
 const BIN = process.env.TROMMI_HUB_BIN
 const skip = !BIN ? 'TROMMI_HUB_BIN is not set' : no_core ?? false
@@ -30,20 +29,12 @@ const CLIENT = 'app/2.0.0', ORIGIN = 'https://app.trommi.test'
 const PASSWORD = 'correct horse battery staple 42', OTHER = 'another-long-password-for-ada'
 
 async function startRealHub() {
-  const probe = createServer()
-  await new Promise(r => probe.listen(0, '127.0.0.1', r))
-  const { port } = probe.address()
-  await new Promise(r => probe.close(r))
-  const url = `http://127.0.0.1:${port}`
   const data = await mkdtemp(join(process.env.TROMMI_HUB_TMP ?? tmpdir(), 'trommi-account-test-'))
-  const env = { HUB_HOST: '127.0.0.1', HUB_PORT: String(port), HUB_URL: url, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_MIN_CLIENT: CLIENT, HUB_ORIGINS: ORIGIN, PATH: process.env.PATH ?? '' }
-  const child = spawn(BIN, [], { env, stdio: ['ignore', 'ignore', 'pipe'] })
-  let stderr = ''
-  child.stderr.on('data', d => { stderr += d })
-  const exited = new Promise(resolve => child.once('exit', resolve))
+  const env = { HUB_HOST: '127.0.0.1', HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_MIN_CLIENT: CLIENT, HUB_ORIGINS: ORIGIN, PATH: process.env.PATH ?? '' }
+  const { child, url, stderr: errors, exited } = await spawnHub(BIN, env)
   for (let i = 0; ; i++) {
     if (await fetch(`${url}/healthz`).then(r => r.ok, () => false)) break
-    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${stderr.slice(0, 500)}`)
+    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${errors().slice(0, 500)}`)
     await new Promise(r => setTimeout(r, 50))
   }
   return { url, async close() { child.kill('SIGTERM'); const killer = setTimeout(() => child.kill('SIGKILL'), 1000); await exited; clearTimeout(killer); await rm(data, { recursive: true, force: true }) } }

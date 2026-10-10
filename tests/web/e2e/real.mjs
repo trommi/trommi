@@ -14,36 +14,27 @@
 // THERE IS NO AGENT HERE: the connector is not part of this run and nothing else is a real agent device, so cards,
 // permission requests, chats with a session, the work trail, Artifacts and takeover are NOT covered against the
 // real hub (an agent invite is made, nothing joins with it).
-import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import { createServer } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import zlib from 'node:zlib'
 import { buildApp, main, openProfile, run, serveApp, skip, sleep, TMP, watch } from './harness.mjs'
 import * as ui from './ui.mjs'
+import { spawnHub } from '../hub-process.mjs'
 
 /** The hub's binary on a free port, its public address `publicUrl`; `env` adds to (or overrides) its settings. */
 export async function startHub(publicUrl, env = {}) {
-  const probe = createServer()
-  await new Promise(r => probe.listen(0, '127.0.0.1', r))
-  const { port } = probe.address()
-  await new Promise(r => probe.close(r))
-  const url = `http://127.0.0.1:${port}`
   const data = fs.mkdtempSync(path.join(TMP, 'tmp', 'hub-'))
-  const settings = { HUB_HOST: '127.0.0.1', HUB_PORT: String(port), HUB_URL: publicUrl, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_ORIGINS: publicUrl, PATH: process.env.PATH ?? '', ...env }
-  const child = spawn(process.env.TROMMI_HUB_BIN, [], { env: settings, stdio: ['ignore', 'ignore', 'pipe'] })
-  let stderr = ''
-  child.stderr.on('data', d => { stderr += d })
-  const exited = new Promise(resolve => child.once('exit', resolve))
+  const settings = { HUB_HOST: '127.0.0.1', HUB_URL: publicUrl, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_ORIGINS: publicUrl, PATH: process.env.PATH ?? '', ...env }
+  const { child, url, stderr: errors, exited } = await spawnHub(process.env.TROMMI_HUB_BIN, settings)
   for (let i = 0; ; i++) {
     if (await fetch(`${url}/healthz`).then(r => r.ok, () => false)) break
-    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${stderr.slice(0, 500)}`)
+    if (child.exitCode !== null || i > 200) throw new Error(`the hub did not start: ${errors().slice(0, 500)}`)
     await sleep(50)
   }
   return {
-    url, stderr: () => stderr,
+    url, stderr: errors,
     async close() { child.kill('SIGTERM'); const killer = setTimeout(() => child.kill('SIGKILL'), 1000); await exited; clearTimeout(killer); fs.rmSync(data, { recursive: true, force: true }) },
   }
 }

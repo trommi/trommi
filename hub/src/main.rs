@@ -36,7 +36,7 @@ fn healthcheck(cfg: &Config) -> i32 {
 }
 
 fn main() {
-    let cfg = Config::from_env();
+    let mut cfg = Config::from_env();
     match std::env::args().nth(1).as_deref() {
         None => {}
         Some("healthcheck") => std::process::exit(healthcheck(&cfg)),
@@ -82,6 +82,23 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        // HUB_PORT=0: the system picks a free port, which the hub takes as its own (and as its address, unless
+        // HUB_URL says otherwise) and announces on the first line of stdout, also when quiet. For tests, which
+        // otherwise race each other for a port they probed free.
+        if cfg.port == 0 {
+            let port = match listener.local_addr() {
+                Ok(a) => a.port(),
+                Err(e) => {
+                    eprintln!("cannot read the port: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if std::env::var_os("HUB_URL").is_none() {
+                cfg.url = format!("http://127.0.0.1:{port}");
+            }
+            cfg.port = port;
+            println!("{}", json!({ "event": "port", "port": port }));
+        }
         let app = match App::new(cfg, transport) {
             Ok(app) => app,
             Err(e) => {

@@ -23,14 +23,30 @@ final class HubProcess {
   /// Starts the hub and waits until it answers. nil: the environment names no binary.
   init?(data: URL) throws {
     guard let binary = ProcessInfo.processInfo.environment["TROMMI_HUB_BIN"], !binary.isEmpty else { return nil }
-    let port = Int.random(in: 20_000..<40_000)
-    url = "http://127.0.0.1:\(port)"
     process.executableURL = URL(fileURLWithPath: binary)
-    // What the hub reads (hub/src/config.rs): where it listens, where it keeps its data, and the address devices sign.
-    process.environment = ["HUB_HOST": "127.0.0.1", "HUB_PORT": String(port), "HUB_DATA": data.path, "HUB_URL": url, "HUB_QUIET": "1", "HUB_LOGIN_THROTTLE": "off"]
-    process.standardOutput = FileHandle.nullDevice
+    // What the hub reads (hub/src/config.rs): where it listens, where it keeps its data. HUB_PORT=0: the hub binds a
+    // port the system picks, takes http://127.0.0.1:<port> as the address devices sign, and announces the port on its
+    // first line of stdout; a port picked here could be taken by another test's hub before this one binds it.
+    process.environment = ["HUB_HOST": "127.0.0.1", "HUB_PORT": "0", "HUB_DATA": data.path, "HUB_QUIET": "1", "HUB_LOGIN_THROTTLE": "off"]
+    let stdout = Pipe()
+    process.standardOutput = stdout
     process.standardError = FileHandle.nullDevice
     try process.run()
+    var first = Data()
+    while !first.contains(UInt8(ascii: "\n")) {
+      let chunk = stdout.fileHandleForReading.availableData
+      if chunk.isEmpty { break }
+      first.append(chunk)
+    }
+    // the rest of stdout is read and dropped, so that the hub never writes into a full pipe
+    stdout.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
+    let line = first.split(separator: UInt8(ascii: "\n")).first.map { Data($0) } ?? Data()
+    guard let announced = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+          announced["event"] as? String == "port", let port = announced["port"] as? Int, port > 0 else {
+      process.terminate()
+      throw TrommiError("test", "the hub announced no port")
+    }
+    url = "http://127.0.0.1:\(port)"
     let until = Date().addingTimeInterval(10)
     while Date() < until {
       if process.isRunning, let data = try? Data(contentsOf: URL(string: "\(url)/healthz")!), !data.isEmpty { return }
