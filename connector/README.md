@@ -5,7 +5,8 @@ The Trommi connector: one static binary through which a Claude Code session talk
 the wire comes from [`trommi-core`](../core); nothing of the first protocol is in it.
 
 ```
-trommi-connector                     MCP stdio server "trommi" (what Claude Code starts)
+trommi-connector                     MCP stdio server "trommi" (what Claude Code starts): the launcher, which runs `serve`
+trommi-connector serve               the MCP server itself, as the launcher's child (TROMMI_LAUNCH=0 runs it without one)
 trommi-connector connect <link>      join a room with an agent invite link, for scripts (also: join; or TROMMI_INVITE)
 trommi-connector say "<text>" [--session <name>] [--urgent]
 trommi-connector permission|notice|denied|resolved    the plugin's hooks (JSON on stdin)
@@ -73,7 +74,8 @@ changed.
 | `src/bridge.rs`, `src/html.rs` | every tool, and a human's command as a channel event |
 | `src/server.rs`, `src/mcp.rs`, `src/member.rs`, `src/slots.rs`, `src/slotstore.rs`, `src/door.rs` | the MCP server, this process as a member, key slots per folder, the sockets hooks reach it through |
 | `src/line.rs`, `src/mirror.rs`, `src/trail.rs`, `src/hooks.rs` | the monitor's line, the terminal mirror, the work trail, the permission hooks |
-| `src/update.rs` | the check a new binary must pass |
+| `src/update.rs` | the check a new binary must pass, and `update` |
+| `src/launch.rs` | the launcher: passes the MCP session through to the connector and swaps in a new one |
 | `prompt.md`, `tools.json` | every text the agent reads and every tool's schema: the one source, compiled in and checked by `build.rs` |
 
 `prompt.md` and `tools.json` are also what the web app's help page is built from. They used to be read at
@@ -92,8 +94,20 @@ connector here learns it from the Commit, wipes the slot and says that it is ret
 
 ## Updates and releases
 
-Nothing is loaded into a running process. A new binary at the connector's path is announced once
-(`kind="update"`); `reload_connector` answers with the restart line.
+Updates apply without a restart or reconnect. What Claude Code starts is a small launcher (`src/launch.rs`); it
+owns the session's stdin and stdout and runs the connector as its child (`serve`). The installed connector looks for
+a newer signed release every hour (`TROMMI_UPDATE_CHECK_MS`), and at once when the hub refuses it as too old, and
+puts it in place as `update` does. When a new binary stands at the connector's path and is not refused, the child
+asks the launcher to swap it in: the launcher holds the client's new messages back, waits until the old child
+answered every open request (each request gets exactly one answer), tells it to hand its key back and exit (no
+last report, no witness), awaits its end, so that the lease and the slot are never held twice, then starts the new
+child, gives it the session's `initialize` and `notifications/initialized` again, sends what it held, and tells the
+client `notifications/tools/list_changed`; the new child signs in and opens the stream. Open requests that take
+longer than a minute call the swap off; it is tried again 30 s later. `reload_connector` asks for the same swap.
+
+The launcher almost never changes. When a new binary needs another launcher (its `launch-abi` differs), or the
+session runs without one, the update is announced once as before (`kind="update"`, restart required: /mcp →
+Reconnect), and `reload_connector` answers with that restart line.
 
 Releases are built and signed in CI: the releases `v<N>` of `trommi/trommi` (every part; earlier `connector-v<N>`)
 hold the four binaries, `manifest.json` and `manifest.json.sig` (`release/manifest.sh`, `release/sign.sh`: Ed25519 over

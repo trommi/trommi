@@ -12,8 +12,17 @@ use std::path::{Path, PathBuf};
 pub fn pid() -> u32 {
     std::process::id()
 }
+/// The Claude Code process this connector belongs to: its parent, or, under the launcher (`launch.rs`), the
+/// launcher's parent, which the launcher names.
 pub fn ppid() -> u32 {
-    std::os::unix::process::parent_id()
+    static P: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        std::env::var(crate::launch::ENV_PARENT)
+            .ok()
+            .and_then(|pid| pid.parse().ok())
+            .filter(|pid| *pid > 1)
+    })
+    .unwrap_or_else(std::os::unix::process::parent_id)
 }
 pub fn uid() -> u32 {
     rustix::process::getuid().as_raw()

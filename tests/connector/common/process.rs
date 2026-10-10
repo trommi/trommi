@@ -109,7 +109,12 @@ impl Seat {
 
     /// The connector's command with this seat's environment and nothing of the machine's.
     pub fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(connector_binary());
+        self.command_of(&connector_binary(), args)
+    }
+
+    /// The same with another copy of the connector's binary.
+    pub fn command_of(&self, program: &std::path::Path, args: &[&str]) -> Command {
+        let mut command = Command::new(program);
         command
             .args(args)
             .env_clear()
@@ -122,6 +127,12 @@ impl Seat {
             .env("TROMMI_HUB", &self.hub_url)
             .env("TROMMI_SESSION_KEY", &self.session_key)
             .env("TROMMI_CHANNEL_EVENTS", "on")
+            // the server itself, not its launcher, unless TROMMI_TEST_LAUNCH=1 runs the suites through it
+            // (tests/connector/swap.rs starts the launcher in any case)
+            .env(
+                "TROMMI_LAUNCH",
+                std::env::var("TROMMI_TEST_LAUNCH").unwrap_or("0".into()),
+            )
             // `say` gives up after half a minute by default; a busy test machine may need longer to go online
             .env("TROMMI_SAY_MS", "120000")
             .current_dir(&self.folder)
@@ -153,6 +164,17 @@ impl Seat {
     /// Starts the MCP server.
     pub async fn serve(&self) -> Mcp {
         Mcp::start(self.command(&[])).await
+    }
+
+    /// Starts the MCP server as Claude Code does, through the launcher, from `program` (a copy of the binary
+    /// that a test may replace).
+    pub async fn serve_launched(&self, program: &std::path::Path, env: &[(&str, &str)]) -> Mcp {
+        let mut command = self.command_of(program, &[]);
+        command.env_remove("TROMMI_LAUNCH");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        Mcp::start(command).await
     }
 
     /// Starts the MCP server for a host that shows no channel events (a plain MCP client, Codex): board events
@@ -207,7 +229,7 @@ impl Mcp {
         mcp
     }
 
-    async fn send(&mut self, message: &Value) {
+    pub async fn send(&mut self, message: &Value) {
         self.stdin
             .write_all(format!("{message}\n").as_bytes())
             .await
@@ -216,7 +238,7 @@ impl Mcp {
     }
 
     /// One line from the server, or none within `ms`.
-    async fn read(&mut self, ms: u64) -> Option<Value> {
+    pub async fn read(&mut self, ms: u64) -> Option<Value> {
         let line =
             tokio::time::timeout(std::time::Duration::from_millis(ms), self.lines.next_line())
                 .await

@@ -260,6 +260,10 @@ name = "connector_update"
 path = "connector/update.rs"
 
 [[test]]
+name = "connector_swap"
+path = "connector/swap.rs"
+
+[[test]]
 name = "deploy_updater"
 path = "deploy/updater.rs"
 

@@ -1,6 +1,7 @@
 //! The connector: the MCP stdio server `trommi` and the commands around it.
 //!
-//!   trommi-connector                  MCP server (Claude Code starts it from the plugin or .mcp.json)
+//!   trommi-connector                  the launcher of the MCP server (launch.rs; Claude Code starts it)
+//!   trommi-connector serve            MCP server (the launcher's child)
 //!   trommi-connector join <link>      join a room with an agent invite link, then exit
 //!   trommi-connector whoami           print room, key file and folder
 //!   trommi-connector say "<text>" [--session <name>] [--urgent]
@@ -285,6 +286,9 @@ pub struct Conn {
     spare: bool,
     here: Mutex<Option<PathBuf>>,
     leaving: AtomicBool,
+    /// Told by the launcher to hand over to a new connector (`launch.rs`): this process leaves without a last
+    /// word and without a witness, as the new one takes over at once.
+    handing_over: AtomicBool,
     parent: u32,
     watch_on: bool,
     grace_ms: u64,
@@ -741,7 +745,10 @@ impl Conn {
         });
         let claude = reason != "parent-gone" && ppid() == self.parent && alive(self.parent);
         let who = self.presence();
-        if self.member.phase() == "ready" && reason != "lease-lost" {
+        // A hand-over to a new connector: no last word (the new process reports with its lease at once), no
+        // witness (nothing was lost); the key is handed back below before this process exits.
+        let swap = self.handing_over.load(Ordering::SeqCst);
+        if self.member.phase() == "ready" && reason != "lease-lost" && !swap {
             let exit = json!({ "reason": reason, "claude": if claude && self.watch_on { "checking" } else { "gone" } });
             let _ = tokio::time::timeout(
                 std::time::Duration::from_millis(800),
@@ -751,7 +758,7 @@ impl Conn {
         }
         if let Some(here) = self.here.lock().unwrap().clone() {
             check_out(&here, &self.cfg.base);
-            if self.watch_on && claude && loss_matters(&who, now_ms(), self.idle_ms) {
+            if !swap && self.watch_on && claude && loss_matters(&who, now_ms(), self.idle_ms) {
                 leave_mark(&here, &self.cfg.base, &who, now_ms(), reason, pid());
                 spawn_witness(&self.cfg);
             }
@@ -1193,8 +1200,18 @@ impl Conn {
         }
     }
 
-    fn reload(&self) -> String {
+    async fn reload(&self) -> String {
+        if let Some(ms) = std::env::var("TROMMI_TEST_SLOW_RELOAD_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+        {
+            // (tests only: a call that is still open while the launcher swaps the connector)
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+        }
         let disk = disk_version();
+        if disk != self.loaded && self.swap_in().await {
+            return format!("A new connector is in place; it is swapped in now, without a restart, and the tools are listed again. (This answer is from the connector that ran so far, version {}.)", self.loaded);
+        }
         if disk != self.loaded {
             return format!("A new connector is in place; it runs once this session's connector is started again. {RESTART} Tell the human so.");
         }
@@ -1405,6 +1422,23 @@ impl member::Host for ConnHost {
         Box::pin(async move {
             if let Some(c) = self.0.upgrade() {
                 c.member.stop().await;
+                if crate::launch::launched() {
+                    // The hub refuses this connector: a newer release is fetched at once; once it is in place,
+                    // the launcher swaps it in (the update watch below).
+                    tokio::spawn(async {
+                        match crate::update::update(false).await {
+                            Ok(said) => eprintln!("[trommi] {said}"),
+                            Err(why) => eprintln!("[trommi] no update: {why}"),
+                        }
+                    });
+                    c.notify(
+                        "notifications/claude/channel",
+                        json!({ "content": "The Trommi hub needs a newer connector. It is being downloaded and swapped in by itself, without a restart; until then the board tools wait.", "meta": { "kind": "chat", "upgrade_required": "1" } }),
+                        None,
+                    )
+                    .await;
+                    return;
+                }
                 let text = c
                     .member
                     .me
@@ -1468,6 +1502,8 @@ fn spawn_witness(cfg: &Cfg) {
     }
     let mut cmd = std::process::Command::new(self_path());
     cmd.args(["witness", &cfg.session])
+        .env_remove(crate::launch::ENV_ABI)
+        .env_remove(crate::launch::ENV_PARENT)
         .current_dir(&cfg.folder)
         .env("TROMMI_FOLDER", &cfg.folder)
         .stdin(std::process::Stdio::null())
@@ -1588,7 +1624,7 @@ impl mcp::Server for Conn {
                 .filter(|s| !s.is_empty());
             let res: Value = async {
                 if name == "reload_connector" {
-                    return text(self.with_missed(&self.reload(), child.as_deref()));
+                    return text(self.with_missed(&self.reload().await, child.as_deref()));
                 }
                 if name == "connect" {
                     return match self.clone().connect(&args).await {
@@ -1657,6 +1693,11 @@ impl mcp::Server for Conn {
         })
     }
     fn notification(self: Arc<Self>, method: String, params: Value) {
+        if method == crate::launch::STOP && crate::launch::launched() {
+            self.handing_over.store(true, Ordering::SeqCst);
+            tokio::spawn(async move { self.bye("handed over to a new connector", "swap").await });
+            return;
+        }
         if method != "notifications/claude/channel/permission_request" {
             return;
         }
@@ -1733,6 +1774,7 @@ pub async fn main_server() {
         spare: is_spare(None),
         here: Mutex::new(None),
         leaving: AtomicBool::new(false),
+        handing_over: AtomicBool::new(false),
         parent: ppid(),
         watch_on: std::env::var("TROMMI_FOLDER_WATCH").as_deref() != Ok("0"),
         grace_ms: env_ms("TROMMI_CUT_GRACE_MS", 20_000),
@@ -1838,7 +1880,24 @@ pub async fn main_server() {
                     "[trommi] a new connector binary is in place ({})",
                     crate::update::standing(&release)
                 );
+                if c.swap_in().await {
+                    continue;
+                }
                 c.on_update(&disk, true).await;
+            }
+        });
+    }
+    // under the launcher, the installed connector looks for a newer release now and then and puts it in place;
+    // the watch above then has the launcher swap it in
+    let every = env_ms("TROMMI_UPDATE_CHECK_MS", 3_600_000);
+    if crate::launch::launched() && every > 0 && crate::setup::is_installed(&self_path()) {
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(every.max(60_000))).await;
+                match crate::update::update(false).await {
+                    Ok(said) => eprintln!("[trommi] update: {said}"),
+                    Err(why) => eprintln!("[trommi] update: {why}"),
+                }
             }
         });
     }
@@ -1974,6 +2033,19 @@ impl Conn {
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+    }
+
+    /// Under a launcher that can take the binary at this connector's path: asks it to swap that one in (no card,
+    /// no reconnect). False when it cannot: then the update goes the way of the card.
+    async fn swap_in(&self) -> bool {
+        if !crate::launch::launched() || !crate::launch::swappable(&self_path()) {
+            return false;
+        }
+        eprintln!("[trommi] a new connector is in place: the launcher swaps it in");
+        self.out
+            .notification(crate::launch::SWAP, Value::Null)
+            .await
+            .is_ok()
     }
 
     async fn on_update(&self, version: &str, restart: bool) {

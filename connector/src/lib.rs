@@ -13,6 +13,7 @@ pub mod html;
 pub mod hub;
 pub mod join;
 pub mod keeper;
+pub mod launch;
 pub mod line;
 pub mod mcp;
 pub mod member;

@@ -1,8 +1,9 @@
 //! Updates of the connector itself, and the check a release must pass.
 //!
 //! The connector is one file, code and shell together, so nothing is loaded into a running process: a new binary
-//! put in place of the running one is noticed (`server.rs` polls its own path), announced to the agent once, and
-//! runs after `reload_connector` and a reconnect of the MCP server.
+//! put in place of the running one is noticed (`server.rs` polls its own path) and swapped in by the launcher
+//! (`launch.rs`) without a reconnect; where that cannot be, it is announced to the agent once and runs after a
+//! reconnect of the MCP server.
 //!
 //! **Release signatures.** Releases are built and signed in CI (`.github/workflows/release.yml`), in the
 //! form every signed part of the repository uses (`release/manifest.sh`, `release/sign.sh`): one `manifest.json`
@@ -469,6 +470,6 @@ pub async fn update(only_look: bool) -> Result<String, String> {
     let version = install(&expect, &dir, &manifest, &signature, &binary)
         .map_err(|why| format!("release {tag}: {why}; nothing was changed"))?;
     Ok(format!(
-        "installed release {version} ({tag}), signature verified. A running connector says so on its next event; `reload_connector` and a reconnect start the new one."
+        "installed release {version} ({tag}), signature verified. A running connector swaps it in by itself; an older one says so on its next event, and a reconnect starts the new one."
     ))
 }
