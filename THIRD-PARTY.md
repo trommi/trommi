@@ -4,7 +4,8 @@ Every crate of `Cargo.lock` that is a dependency of a client library on a target
 (`core/wasm`, wasm32-unknown-unknown), the iOS app (`core/swift`, aarch64-apple-ios and its simulator) and the
 connector (`core`, Linux musl and macOS, both architectures). The tables are what `cargo tree` reports per package
 and target (`-e normal,no-proc-macro` for what is linked; `-e normal,build` minus that for what only runs at build
-time), with the licence each crate declares. The web app's own third-party material:
+time), with the licence each crate declares. The tables are written by `node .github/scripts/third_party.mjs`; the
+build checks that they are current. The web app's own third-party material:
 [`app/web/THIRD-PARTY.md`](app/web/THIRD-PARTY.md).
 
 ## MPL-2.0
@@ -47,8 +48,8 @@ the crates' licence texts with the client.
 | chacha20poly1305 | 0.10.1 | Apache-2.0 OR MIT | all |
 | cipher | 0.4.4 | MIT OR Apache-2.0 | all |
 | cmov | 0.5.4 | Apache-2.0 OR MIT | all |
-| const-oid | 0.10.2 | Apache-2.0 OR MIT | all |
 | const-oid | 0.9.6 | Apache-2.0 OR MIT | all |
+| const-oid | 0.10.2 | Apache-2.0 OR MIT | all |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | iOS, connector |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | iOS, connector |
 | crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 | all |
@@ -130,10 +131,10 @@ the crates' licence texts with the client.
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | all |
 | primeorder | 0.13.6 | Apache-2.0 OR MIT | all |
 | rand | 0.10.3 | MIT OR Apache-2.0 | all |
-| rand_chacha | 0.10.0 | MIT OR Apache-2.0 | all |
 | rand_chacha | 0.3.1 | MIT OR Apache-2.0 | all |
-| rand_core | 0.10.1 | MIT OR Apache-2.0 | all |
+| rand_chacha | 0.10.0 | MIT OR Apache-2.0 | all |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 | all |
+| rand_core | 0.10.1 | MIT OR Apache-2.0 | all |
 | rayon | 1.12.0 | MIT OR Apache-2.0 | all |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 | all |
 | rfc6979 | 0.4.0 | Apache-2.0 OR MIT | all |
