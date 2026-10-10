@@ -1995,8 +1995,12 @@ async function start(client, { fresh = false } = {}) {
   window.trommi = { client, board, router, model, mock: Boolean(mock), view, ...(demo ? { demoState: demo.demoState } : {}) }   // (view: a lazy view's module, for the dev tools)
   // The Emergency Kit's page comes first while the account's kit was never saved (auth.mjs kitGate: the register `kit`,
   // or this browser's mark from the moment the account was asked for): at the start, and when the register arrives.
-  const kitWatch = () => { if (!mock && client.model.room.my_role === 'human' && (read('trommi-kit-pending') === '1' || client.model.human?.raw?.get('kit')?.value?.pending === true)) view('auth').then(v => v.kitGate(client)).catch(err => console.warn('kit', err)) }
-  client.on('change', change => { if (change.registers?.has?.('kit')) kitWatch() })
+  // (the register is looked at only once the client has started: before that the model is the cache's, which may
+  //  not yet show a kit saved just before the page was loaded again; the client lays its own unsent writes over it
+  //  as it starts, client.ts restoreRegisters. This browser's mark needs no wait.)
+  const started = () => client.model.room.connection !== 'offline'
+  const kitWatch = () => { if (!mock && client.model.room.my_role === 'human' && (read('trommi-kit-pending') === '1' || (started() && client.model.human?.raw?.get('kit')?.value?.pending === true))) view('auth').then(v => v.kitGate(client)).catch(err => console.warn('kit', err)) }
+  client.on('change', change => { if (change.registers?.has?.('kit') || change.room) kitWatch() })
   kitWatch()
 
   // Changes come in batches; one frame patches the page for all that came meanwhile. A navigation or the end of a

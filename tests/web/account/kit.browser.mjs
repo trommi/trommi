@@ -41,12 +41,25 @@ steps.push(['"Open Trommi", then a reload at once, before the hub took that writ
   await sleep(1500)
   // (the write that clears the kit is slow to reach the hub, as on a real line: the page is loaded again before it)
   ctx.fake.faults.add({ method: 'POST', path: '/v2/envelopes', delay_ms: 3000, times: 5 })
+  // (and the hub is slow to answer what the page asks first after the reload, as production is: the page shows its
+  //  cache meanwhile)
+  for (const path of ['/v2/desk', '/v2/changes']) ctx.fake.faults.add({ method: 'GET', path, delay_ms: 1200, times: 3 })
+  // (every moment counts: the page itself notes when the kit's dialog opens, however briefly)
+  await P.session.send('Page.addScriptToEvaluateOnNewDocument', { source: "window.__kitOpened = []; new MutationObserver(() => { const d = document.querySelector('#kit-gate'); if (d?.open && !window.__kitOpened.length) window.__kitOpened.push(Math.round(performance.now())) }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] })" })
   await ui.leaveKit(P)
+  // (the page goes before its cache caught up with the device: the cache is marked one step behind, so the reload
+  //  draws from it and reads the rest back from the hub first, the slow path production took)
+  await P.js(`const db = await new Promise((ok, no) => { const r = indexedDB.open('trommi:cache'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error) })
+    const name = [...db.objectStoreNames][0], tx = db.transaction(name, 'readwrite'), store = tx.objectStore(name)
+    const at = await new Promise(ok => { const g = store.get('client/at'); g.onsuccess = () => ok(g.result) })
+    if (at && at.cursor > 0) store.put({ ...at, cursor: at.cursor - 1 }, 'client/at')
+    await new Promise(ok => { tx.oncomplete = ok }); db.close(); return true`)
   await P.reload()
-  const seen = []
-  for (let i = 0; i < 60; i++) { if (await P.js("return !!document.querySelector('#kit-gate[open]')").catch(() => false)) seen.push(i * 100); await sleep(100) }
+  if (process.env.KIT_TRACE) for (let i = 0; i < 40; i++) { console.log(await P.js("const m = window.trommi?.client?.model; const r = m?.human?.raw?.get('kit'); return JSON.stringify({ t: Math.round(performance.now()), gate: !!document.querySelector('#kit-gate[open]'), kit: r === undefined ? 'absent' : { v: r.value ?? null, p: r.pending ?? null, n: r.envelope_number ?? null }, conn: m?.room.connection })").catch(e => e.message)); await sleep(50) }
+  await sleep(6000)
+  const opened = await P.js('return window.__kitOpened')
   ctx.fake.faults.clear()
-  ctx.run.check(!seen.length, 'no Emergency Kit screen at any moment of six seconds after the reload', seen.length ? `shown from ${seen[0]} ms to ${seen.at(-1)} ms` : undefined)
+  ctx.run.check(!opened.length, 'no Emergency Kit screen at any moment of six seconds after the reload', opened.length ? `opened ${opened[0]} ms after the page began` : undefined)
   await ctx.closeProfile('kit-reload')
 }])
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) await main('kit', { setUp: setUpKit, steps, tearDown }, {})

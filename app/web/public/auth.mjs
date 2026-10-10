@@ -710,7 +710,7 @@ ${obError(error)}${obSubmit(ways.password ? 'Make kit' : 'Use passkey')}</form>$
 const KIT_MARK = 'trommi-kit-pending'
 let gate = null, freshKit = null
 /** Is the kit of this account still to be saved? (app.mjs asks at the start and on every change of the register) */
-const kitDue = client => client?.model?.room?.my_role === 'human' && Boolean(client.hub) && (read(KIT_MARK) === '1' || client.model.human?.raw?.get('kit')?.value?.pending === true)
+const kitDue = client => client?.model?.room?.my_role === 'human' && Boolean(client.hub) && (read(KIT_MARK) === '1' || (client.model.room.connection !== 'offline' && client.model.human?.raw?.get('kit')?.value?.pending === true))
 /** This device processed the Commit that removed it (engine.ts `lost`: never on the hub's word alone). Its keys
  *  and everything Trommi kept on this origin are wiped, and one screen says so: the account and the person's other
  *  devices stay; logging in again makes this a new device. Once per page. */
@@ -751,12 +751,13 @@ export function kitGate(client, { fresh = false } = {}) {
   // A kit made on this page just now (sign-up, recovery) closes only by "Open Trommi": no other device saw it, and a
   // device catching up meets the account's older values of the register first. A gate opened for a kit that is due
   // (a reload, another device) closes as soon as the register no longer says so: saved on another device, or by
-  // this one before the reload (its write arriving after the page had read the older value from its cache). A
-  // register this device is still writing, or this browser's mark, keeps it open.
+  // this one before the reload (its write still in the outbox when the page read the older value from its cache).
+  // Only the register's value saying "due", or this browser's mark, keeps it open.
   const watch = () => {
     if (kit?.words) return
     const r = client.model.human?.raw?.get('kit')
-    if (r?.value?.pending === true || r?.pending || read(KIT_MARK) === '1') return
+    // (due is what the register says now, this device's own unsent write included: a write that clears it is not due)
+    if (r?.value?.pending === true || read(KIT_MARK) === '1') return
     close()
   }
   const off = (() => { const un = client.on?.('change', watch); return typeof un === 'function' ? un : () => client.off?.('change', watch) })()
