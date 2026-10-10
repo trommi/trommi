@@ -27,7 +27,7 @@ printf '{\n  "product": "%s",\n  "repository": "%s",\n  "version": %s,\n  "tag":
   "$product" "$repository" "$version" "$tag" "$commit"
 # per part: "inputs": {"hub": "<sha256>", ...} (the updater reads its two) and "changed": {"hub": true, ...}
 if [ -n "${PARTS:-}" ]; then
-  inputs= changed= sep=
+  inputs='' changed='' sep=''
   for line in $(printf '%s\n' "$PARTS" | tr ' ' ':'); do
     part=${line%%:*} rest=${line#*:}
     sum=${rest%%:*} flag=${rest#*:}
