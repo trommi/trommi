@@ -117,6 +117,9 @@ final class Hub {
         change += 1
         accepted = change
         envelopes.insert(change)
+        // The header reads without a device, and is the one the outbox entry is for.
+        let info = try envelopeHeader(envelope: part(0))
+        guard info.header.group == group, info.header.sender == (try device.id()), !info.pruned else { throw Unexpected("the envelope's header is another") }
         posted[change] = try device.id()
         log.append(LogEntry(change: change, group: group, kind: .message, bytes: part(0), recoveryAuth: nil))
       } else if entry.kind == .relayMessage, let group = entry.group {

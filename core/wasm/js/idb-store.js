@@ -117,7 +117,11 @@ export class IdbStore {
     }
   }
 
-  async apply(write) {
+  apply(write) { return this.applyAll([write]) }
+
+  /** Several writes, in order, in ONE transaction: all of them or none. Each names the revision the one before it
+   *  left; the first must name the stored one. */
+  async applyAll(writes) {
     if (this.#lost) throw new StoreConflict('another tab or worker took this state over')
     if (this.#state !== 'open') throw new Error('the store is closed')
     const transaction = this.#db.transaction([ENTRIES, META], 'readwrite', { durability: 'strict' })
@@ -131,10 +135,14 @@ export class IdbStore {
     let conflict = false
     const stored = meta.get('revision')
     stored.onsuccess = () => {
-      if ((stored.result ?? 0) !== write.expectedRevision) { conflict = true; transaction.abort(); return }
-      for (const key of write.delete) entries.delete(exact(key))
-      for (const { key, value } of write.put) entries.put(exact(value), exact(key))
-      meta.put(write.expectedRevision + 1, 'revision')
+      let revision = stored.result ?? 0
+      for (const write of writes) {
+        if (revision !== write.expectedRevision) { conflict = true; transaction.abort(); return }
+        for (const key of write.delete) entries.delete(exact(key))
+        for (const { key, value } of write.put) entries.put(exact(value), exact(key))
+        revision += 1
+      }
+      meta.put(revision, 'revision')
     }
     try {
       await finished

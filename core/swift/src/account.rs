@@ -88,6 +88,68 @@ pub fn kit_keys(email: String, words: String) -> Result<AccountKeys, CoreError> 
     })
 }
 
+record! {
+    /// What names an account where its Emergency Kit's keys are derived: its e-mail address, or, for an account
+    /// without one, its account id. Exactly one of the two is given.
+    pub struct AccountName {
+        /// The e-mail address, as typed.
+        pub email: Option<String>,
+        /// The account id in its one text form, as [`account_id_parse`] gives it.
+        pub id: Option<String>,
+    }
+}
+
+/// The two keys of the Emergency Kit's words, as typed, for the account `name` names. An account with an e-mail
+/// is always named by the e-mail, although its kit shows its id as well; the two give unrelated keys.
+/// `bad-email`, `bad-recovery-words`; `bad-format` for an id that is not in its text form, and unless exactly
+/// one of e-mail and id is given.
+#[cfg_attr(feature = "uniffi", uniffi::export)]
+pub fn kit_keys_for(name: AccountName, words: String) -> Result<AccountKeys, CoreError> {
+    let keys = match (&name.email, &name.id) {
+        (Some(email), None) => account::kit_keys_for(account::AccountName::Email(email), &words)?,
+        (None, Some(id)) => {
+            let id = account::AccountId::parse(id)?;
+            account::kit_keys_for(account::AccountName::Id(&id), &words)?
+        }
+        _ => {
+            return Err(CoreError::bad_format(
+                "an account is named by its e-mail or by its id",
+            ))
+        }
+    };
+    Ok(AccountKeys {
+        auth_key: keys.auth_key.expose().to_vec(),
+        wrap_key: keys.wrap_key.expose().to_vec(),
+    })
+}
+
+/// An account id as a person typed it from an Emergency Kit, in its one text form
+/// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, lower case). Spaces and hyphens anywhere and upper-case digits are
+/// what typing adds and are tidied away; anything else that is not 32 hex digits is `bad-format`. The id is a
+/// public value.
+#[cfg_attr(feature = "uniffi", uniffi::export)]
+pub fn account_id_parse(text: String) -> Result<String, CoreError> {
+    let digits: String = text
+        .chars()
+        .filter(|character| !matches!(character, ' ' | '-'))
+        .map(|character| character.to_ascii_lowercase())
+        .collect();
+    if digits.len() != 32 || !digits.bytes().all(|digit| digit.is_ascii_hexdigit()) {
+        return Err(CoreError::bad_format("not an account id"));
+    }
+    let part = |from: usize, to: usize| digits.get(from..to).unwrap_or_default();
+    let tidy = format!(
+        "{}-{}-{}-{}-{}",
+        part(0, 8),
+        part(8, 12),
+        part(12, 16),
+        part(16, 20),
+        part(20, 32)
+    );
+    // The core's own reading is the judge of the form.
+    Ok(account::AccountId::parse(&tidy)?.to_string())
+}
+
 /// The key that opens the copy of the code sealed under one passkey, from the passkey's prf output over
 /// [`passkey_prf_input`]. `no-prf` unless `prf` is 32 bytes.
 #[cfg_attr(feature = "uniffi", uniffi::export)]

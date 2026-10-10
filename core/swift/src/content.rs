@@ -7,6 +7,8 @@
 
 use crate::error::core_error;
 use crate::records::{board_id, device_id, group_id, hash32, session_id, Cut};
+use crate::records::{LogEntry, Processed};
+use crate::recovery::ServedEnvelope;
 use crate::{CoreError, ErrorCode};
 use trommi_core::chain::{Head, HeadStanding as CoreStanding};
 use trommi_core::crypto::SecretBytes;
@@ -1063,6 +1065,68 @@ pub fn board_reduce(
         .collect::<Result<Vec<_>, CoreError>>()?;
     let board = core::board_reduce(snapshot.as_ref(), &items, &core_heads(&frontier)?)?;
     Ok(board.expose().to_vec())
+}
+
+record! {
+    /// One thing of the hub's one order for [`crate::CoreDevice::feed`]: a log entry, or a stored envelope.
+    /// Exactly one of the two.
+    pub struct FeedItem {
+        /// An entry of the log.
+        pub entry: Option<LogEntry>,
+        /// A stored envelope with its change number.
+        pub envelope: Option<ServedEnvelope>,
+    }
+}
+
+record! {
+    /// What one fed item did: for a log entry `processed`, for an envelope `envelope`.
+    pub struct FeedOutcome {
+        /// What processing a log entry did.
+        pub processed: Option<Processed>,
+        /// What became of an envelope.
+        pub envelope: Option<ReceivedEnvelope>,
+    }
+}
+
+record! {
+    /// The answer of [`crate::CoreDevice::feed`].
+    pub struct Fed {
+        /// The outcome of every item that was taken, in order.
+        pub outcomes: Vec<FeedOutcome>,
+        /// The place of the item that was refused, from 0; none when all were taken. Nothing after it was
+        /// touched.
+        pub refused_at: Option<u32>,
+        /// The code of that refusal: what `process_log_entry` or `receive_envelope` would have failed with.
+        pub code: Option<ErrorCode>,
+        /// Its text for a log.
+        pub message: Option<String>,
+    }
+}
+
+record! {
+    /// An envelope's readable part, read without a device.
+    pub struct EnvelopeInfo {
+        /// Its hash, 32 bytes.
+        pub envelope_hash: Vec<u8>,
+        /// Its header.
+        pub header: EnvelopeHeader,
+        /// Whether its body was removed (the pruned form).
+        pub pruned: bool,
+    }
+}
+
+/// Reads the header of an envelope, in full or in pruned form, without a device: for sorting what the hub
+/// serves before it is handed to [`crate::CoreDevice::receive_envelope`]. The sender's signature is verified
+/// (`bad-signature`), which says that the device named as sender wrote it and nothing more: whether that device
+/// was a member, and where the envelope stands in its chain, only a device's own checks tell.
+#[cfg_attr(feature = "uniffi", uniffi::export)]
+pub fn envelope_header(envelope: Vec<u8>) -> Result<EnvelopeInfo, CoreError> {
+    let envelope = envelope::Envelope::decode(&envelope)?;
+    Ok(EnvelopeInfo {
+        envelope_hash: envelope.verify()?.as_bytes().to_vec(),
+        header: EnvelopeHeader::from(&envelope.header),
+        pruned: envelope.is_pruned(),
+    })
 }
 
 /// The Cut of a device as a record.
