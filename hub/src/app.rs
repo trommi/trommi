@@ -284,7 +284,7 @@ impl App {
                 .retry(30));
             }
             if auth.who == Who::Agent {
-                check_lease(x, auth, lease)?;
+                check_lease(x.c, auth, lease, x.now)?;
             }
             f(x, fx)
         })
@@ -921,10 +921,10 @@ pub fn still(x: &Ctx, auth: &Auth) -> Res<()> {
 }
 
 /// 13.7: every write of an agent device carries its lease's generation; an older one is refused.
-fn check_lease(x: &Ctx, auth: &Auth, given: Option<u64>) -> Res<()> {
+pub fn check_lease(c: &rusqlite::Connection, auth: &Auth, given: Option<u64>, now: u64) -> Res<()> {
     let held: Option<(i64, i64)> = {
         use rusqlite::OptionalExtension;
-        x.c.prepare_cached(
+        c.prepare_cached(
             "SELECT generation, expires_at FROM agent_leases WHERE room_id = ?1 AND device = ?2",
         )?
         .query_row(params![&auth.room[..], &auth.device[..]], |r| {
@@ -934,7 +934,7 @@ fn check_lease(x: &Ctx, auth: &Auth, given: Option<u64>) -> Res<()> {
     };
     match (held, given) {
         (Some((generation, expires)), Some(g))
-            if generation as u64 == g && expires as u64 > x.now =>
+            if generation as u64 == g && expires as u64 > now =>
         {
             Ok(())
         }
