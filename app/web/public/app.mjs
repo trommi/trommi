@@ -1141,7 +1141,35 @@ function defineTurbo() {
   window.Turbo = { visit, renderStreamMessage }
 }
 
+/** The Trommi menu (#brand-doors) stays as it stood when a live update or the page drawn again replaces it: a person
+ *  who just opened it does not see it shut under the pointer. Returns a function that puts it back. */
+export function keepMenu() {
+  const doors = document.getElementById('brand-doors')
+  if (!doors || doors.hidden) return () => {}
+  const from = doors.dataset.from ?? null
+  // (and the line for a new desk's name, open, with what is typed in it and the focus in it)
+  const form = document.getElementById('desk-new'), field = form?.querySelector('.menu-desk-field')
+  const typing = form && !form.hidden ? { value: field?.value ?? '', focused: document.activeElement === field, at: field?.selectionStart ?? null } : null
+  return () => {
+    const now = document.getElementById('brand-doors')
+    // (only a menu that was replaced: one still in the page was shut on purpose)
+    if (!now || now === doors || !now.hidden) return
+    now.hidden = false
+    if (from) now.dataset.from = from
+    for (const b of document.querySelectorAll('#brand-menu, .desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', 'true')
+    const again = document.getElementById('desk-new'), line = again?.querySelector('.menu-desk-field')
+    if (typing && again && line) {
+      again.hidden = false
+      line.value = typing.value
+      if (typing.focused) { line.focus({ preventScroll: true }); if (typing.at !== null) line.setSelectionRange(typing.at, typing.at) }
+    }
+  }
+}
 async function perform(stream) {
+  const back = keepMenu()
+  try { return await performNow(stream) } finally { back() }
+}
+async function performNow(stream) {
   const action = stream.action, target = stream.targetElements[0]
   if (action === 'refresh') return refresher?.()
   if (action === 'visit') return visit(stream.getAttribute('target') || '/', { action: 'replace' })   // (a form's answer that leads on: the page it names)
@@ -1551,7 +1579,7 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
   async function refresh() {
     if (!page) return
     const res = await board.request({ method: 'GET', path: page.path, headers: { accept: 'text/html' } })
-    if (res.kind === 'page') { const y = window.scrollY; paint(page.path, res.opts, { scroll: y }) }
+    if (res.kind === 'page') { const y = window.scrollY, back = keepMenu(); paint(page.path, res.opts, { scroll: y }); back() }
     else if (res.kind === 'redirect') visit(res.to, { action: 'replace' })
   }
   setVisitor((path, opts) => visit(path, { action: opts.action === 'replace' ? 'replace' : 'advance' }))

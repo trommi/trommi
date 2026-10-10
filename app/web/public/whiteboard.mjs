@@ -1005,6 +1005,8 @@ function mountPad(main, { canvasId: PAD, client }) {
   const MAX_IMG = 2000, KEEP_BYTES = 1_500_000
 
   const $ = id => document.getElementById(id)
+  /** A control's disabled state; a control that left the page (the board was closed meanwhile) is passed over. */
+  const disable = (id, off) => { const b = $(id); if (b) b.disabled = off }
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
   const root = document.documentElement
   const pad = $('pad'), canvas = $('canvas'), editor = $('editor')
@@ -1387,9 +1389,9 @@ function mountPad(main, { canvasId: PAD, client }) {
 
   // ── chrome ──────────────────────────────────────────────────────────────────
   function refresh() {
-    $('undo').disabled = !undo.length
-    $('redo').disabled = !redo.length
-    $('fit').disabled = !els.size
+    disable('undo', !undo.length)
+    disable('redo', !redo.length)
+    disable('fit', !els.size)
     $('hint').dataset.show = String(!els.size && !edit && !gesture)
     for (const b of main.querySelectorAll('.pad-tool')) b.setAttribute('aria-pressed', String(b.dataset.tool === tool))
     pad.dataset.tool = tool
@@ -1400,7 +1402,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     ;[...$('widths').children].forEach((b, i) => b.setAttribute('aria-pressed', String(i === st.w)))
     const list = selected()
     const grouped = list.length > 1 && list[0].group && list.every(e => e.group === list[0].group)
-    $('group').disabled = list.length < 2
+    disable('group', list.length < 2)
     $('group').setAttribute('aria-pressed', String(Boolean(grouped)))
     $('group').setAttribute('aria-label', grouped ? 'Ungroup' : 'Group')
     $('group').dataset.tip = grouped ? 'Ungroup · Ctrl+Shift+G' : 'Group · Ctrl+G'
@@ -2145,7 +2147,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     $('send-ids').textContent = payload.elements.map(e => `${e.id}  ${e.type}`).join('\n')
     $('send-ids-info').textContent = `${payload.elements.length}`
     $('send-result').hidden = true
-    $('send-go').disabled = false
+    disable('send-go', false)
     $('send-go').textContent = 'Send'
     const dialog = $('send-dialog')
     dialog.showModal()
@@ -2167,7 +2169,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     if (!sending) return
     const { session, payload } = sending
     const out = $('send-result')
-    $('send-go').disabled = true
+    disable('send-go', true)
     $('send-go').textContent = 'Sending…'
     try {
       await sendTo(session, payload)
@@ -2178,7 +2180,7 @@ function mountPad(main, { canvasId: PAD, client }) {
       out.textContent = `Not sent. ${sayError(err)}`
       out.hidden = false
       $('send-go').textContent = 'Try again'
-      $('send-go').disabled = false
+      disable('send-go', false)
     }
   })
 

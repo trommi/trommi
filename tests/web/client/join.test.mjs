@@ -2,7 +2,7 @@
 // groups, plain JSON content and invites) and the FAKE hub.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { addHuman, modelsAgree, scene, until } from './helpers.mjs'
+import { addHuman, modelsAgree, scene, storage, until } from './helpers.mjs'
 
 test('a second human device joins by link: the same six numbers, history by handover, every live session', async t => {
   const { fake, R, a, agent } = await scene(t, { agent: true })
@@ -51,4 +51,28 @@ test('an agent joins by link and gets its main session; "they do not match" adds
   assert.equal([...fake.state.rooms.values()][0].devices.size, 2)
   // nothing of the refused device is left: the same name founds or joins again
   assert.equal(await R.openRoom({ storage: { name: 'refused-device' } }), null)
+})
+
+test('an invite link past its deadline is refused here, before anything is asked of the hub', async t => {
+  const { fake, R, a } = await scene(t)
+  // an Offer opened twenty minutes ago (the inviter's clock): its link's deadline is long past
+  const opened = await a.engine.device.inviteOpen('human', null, 'https://app.example', a.hub.hub_url, Date.now() - 20 * 60_000)
+  await a.hub.postInvite(opened.offer, opened.signature, opened.mac)
+  const since = fake.requests.length
+  const joining = R.joinRoom({ link: opened.link, storage: storage('late'), poll_ms: 20 })
+  await assert.rejects(joining.client, e => e.code === 'invite-expired')
+  assert.equal(fake.requests.slice(since).filter(r => r.path.startsWith('/v2/invites')).length, 0, 'no request about the invite')
+})
+
+test('an Offer served without its MAC, or with another one, is not answered: bad-invite, nothing stored', async t => {
+  const { fake, R, a } = await scene(t)
+  for (const mac of [null, Buffer.alloc(32, 9).toString('base64url')]) {
+    const invite = await a.createInvite({ device_role: 'human', app_url: 'https://app.example/join' })
+    const held = [...fake.state.invites.values()].find(i => i.invite_id === Buffer.from(invite.invite_id, 'hex').toString('base64url'))
+    held.mac = mac
+    const since = fake.requests.length, name = storage('nomac')
+    const joining = R.joinRoom({ link: invite.link, storage: name, poll_ms: 20 })
+    await assert.rejects(joining.client, e => e.code === 'bad-invite', `MAC ${mac === null ? 'missing' : 'wrong'}`)
+    assert.equal(fake.requests.slice(since).filter(r => r.method === 'POST' && r.path.endsWith('/request')).length, 0, 'no Request was posted')
+  }
 })
