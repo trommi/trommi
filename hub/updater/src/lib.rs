@@ -29,6 +29,7 @@
 
 use std::io::Write;
 use std::net::SocketAddr;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -458,11 +459,28 @@ fn sync_dir(dir: &Path) -> std::io::Result<()> {
 /// Writes a small file so that it is either the old or the new one, also after a power cut.
 fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let part = path.with_extension("part");
-    let mut f = std::fs::File::create(&part)?;
+    let mut f = create_file(&part)?;
     f.write_all(bytes)?;
     f.sync_all()?;
     std::fs::rename(&part, path)?;
     sync_dir(path.parent().unwrap_or(Path::new(".")))
+}
+
+/// Whatever the caller's umask (a shell may hand down 0): nothing under the root is writable by anyone but its owner.
+fn create_file(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(path)
+}
+
+fn create_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(path)
 }
 
 fn remove_whole(path: &Path) -> std::io::Result<()> {
@@ -504,7 +522,7 @@ impl Updater {
             .timeout(Duration::from_secs(300))
             .build()
             .map_err(|e| format!("http client: {e}"))?;
-        std::fs::create_dir_all(cfg.root.join("releases"))
+        create_dir(&cfg.root.join("releases"))
             .map_err(|e| format!("{}: {e}", cfg.root.display()))?;
         let mut updater = Updater {
             cfg,
@@ -758,7 +776,7 @@ impl Updater {
                 .get(&url, "application/octet-stream")
                 .await
                 .map_err(|e| Failure::Fetch(format!("{name}: {e}")))?;
-            let mut file = std::fs::File::create(&to).map_err(local)?;
+            let mut file = create_file(&to).map_err(local)?;
             let mut size = 0u64;
             while let Some(chunk) = answer
                 .chunk()
@@ -824,7 +842,7 @@ impl Updater {
             .releases()
             .join(format!(".tmp-{tag}-{}-{unique}", std::process::id()));
         let result = async {
-            std::fs::create_dir_all(&tmp).map_err(|e| Failure::Local(format!("releases: {e}")))?;
+            create_dir(&tmp).map_err(|e| Failure::Local(format!("releases: {e}")))?;
             self.fetch(tag, &tmp).await?;
             let proved = self.proved(&tmp, tag).map_err(Failure::Verify)?;
             std::fs::rename(&tmp, &dir)
@@ -877,6 +895,7 @@ impl Updater {
     /// The lock other processes see (the command line on the server uses the same one).
     async fn file_lock(&self) -> Result<std::fs::File, String> {
         let file = std::fs::OpenOptions::new()
+            .mode(0o644)
             .create(true)
             .truncate(false)
             .write(true)
