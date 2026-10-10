@@ -1,11 +1,11 @@
 // remote.mjs: a DEPLOYED app loaded in an engine, read only: the welcome screen and the self-test page
-// (/settings/proof), at a desktop's and a phone's width. Nothing is typed, no account is made, no screen that asks
+// (/settings/proof), at a desktop's and a phone's width and in a private window. Nothing is typed, no account is made, no screen that asks
 // the hub anything is opened; what the app itself requests on those two pages is listed.
 //   node tests/web/browsers/run.mjs --browser webkit remote [--app https://app.trommi.com]
 import { counted } from './pw.mjs'
 
 export const ownServer = true
-const SIZES = [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844, phone: true }]]
+const SIZES = [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844, phone: true }], ['private', { width: 1440, height: 900, private: true }]]
 
 /** The proof page as it stands: its first line, its steps, its facts. */
 export const readProof = page => page.js(`const root = document.querySelector('.proof')
@@ -14,7 +14,7 @@ export const readProof = page => page.js(`const root = document.querySelector('.
     steps: [...document.querySelectorAll('#proof-steps li')].map(li => li.innerText.replace(/\\s*\\n\\s*/g, ' | ')),
     facts: [...document.querySelectorAll('.proof-facts > div')].map(d => d.innerText.replace(/\\s*\\n\\s*/g, ': ')) }`)
 
-export const steps = SIZES.map(([size, opts]) => [`the deployed app at a ${size}'s width: the welcome screen, then /settings/proof passes`, async ctx => {
+export const steps = SIZES.map(([size, opts]) => [`the deployed app ${size === 'private' ? 'in a private window' : `at a ${size}'s width`}: the welcome screen, then /settings/proof passes`, async ctx => {
   const { check, note } = ctx.run
   const app = (ctx.appUrl ?? 'https://app.trommi.com').replace(/\/$/, '')
   await ctx.within(`remote-${size}`, { ...opts, requests: true }, async (profile, seen) => {
