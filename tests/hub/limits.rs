@@ -45,6 +45,30 @@ fn world(env: &[(&str, &str)]) -> World {
     World::on(TestHub::start_with(env))
 }
 
+/// An agent device's processes overlap while one restarts: only the lease holder's stream replaces the others;
+/// a stale holder is told `lease-lost` and cuts nothing; a stream without `Trommi-Lease` takes its place beside.
+#[test]
+fn only_the_lease_holder_replaces_an_agent_devices_stream() {
+    let mut w = world(&[]);
+    let mut agent = w.enrol_agent();
+    let hub = &w.hub;
+    let old_generation = agent.lease;
+    let mut first = agent.events(hub, None);
+    assert_eq!(first.status, 200);
+    // a new process takes the lease and opens its stream: the old process's stream ends
+    agent.link(hub).ok();
+    let mut second = agent.events(hub, None);
+    assert_eq!(second.status, 200);
+    assert!(first.ended(), "the old process's stream was ended");
+    // the old process, which no longer holds the lease, opens again: refused, and nothing is cut
+    agent.lease = old_generation;
+    assert_eq!(agent.events(hub, None).status, 409);
+    // a client that sends no lease: taken beside the holder's stream
+    agent.lease = None;
+    assert_eq!(agent.events(hub, None).status, 200);
+    assert!(!second.ended(), "the holder's stream stays open");
+}
+
 #[test]
 fn counts_per_device() {
     let mut w = world(&[]);
