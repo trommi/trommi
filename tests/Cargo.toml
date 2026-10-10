@@ -302,3 +302,7 @@ path = "deploy/updater.rs"
 [[test]]
 name = "deploy_hub_settings"
 path = "deploy/hub_settings.rs"
+
+[[test]]
+name = "connector_dead_hub"
+path = "connector/dead_hub.rs"
