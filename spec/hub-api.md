@@ -123,8 +123,10 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   room, a recovery or an invite of it (devices, groups, logs, GroupInfos, Welcomes, sealed keys, recovery rows,
   envelopes and the indexes over them, files and Share links, invites, requests, KeyPackages, push subscriptions,
   Live Activities, leases, passkeys, the sources the account knows). After the commit the room's tokens and
-  streams end and its files leave the disk. The proof is fresh: the login key of the password or the kit as at a
-  login (one slow hash, counted with the address's logins and per room), or an assertion of one of the account's
+  streams end and its files leave the disk (a folder of a room that has no row any more, left by a crash or an
+  upload admitted before, goes with the next sweep). The proof is fresh: the login key of the password or the kit as
+  at a login (one slow hash, counted with the address's logins and per room, and with the login's lasting back-off
+  on the account: a wrong proof makes its source wait 1 s, 2 s, 4 s …), or an assertion of one of the account's
   passkeys on a challenge of `POST /v1/account/passkeys/challenge`. Kept, since they name no account, room or
   device: `spent_key_packages` (a KeyPackage is never handed out twice), the login throttle's tables (hashes of
   what was typed at a login, alike for e-mails without an account; swept within a day) and the counters

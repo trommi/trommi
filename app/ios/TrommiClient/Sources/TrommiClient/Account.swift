@@ -391,6 +391,7 @@ extension Room {
    * answered, nothing of the room is left on this device either.
    */
   public func deleteAccount(password: String) async throws {
+    if try await deletedMeanwhile() { return }
     let st = try await status()
     guard let copy = st.passwordCopy else { throw TrommiError("wrong-login", "this account has no password") }
     let keys = try Core.tools.passwordKeys(email: st.email, password: password, kdf: st.kdfRecord)
@@ -402,6 +403,7 @@ extension Room {
    * hub's challenge for this account, offering the account's passkeys (`passkeys`).
    */
   public func deleteAccount(assert: (_ challenge: Bytes, _ passkeys: [Bytes]) async throws -> PasskeyAssertion) async throws {
+    if try await deletedMeanwhile() { return }
     let st = try await status()
     guard !st.passkeys.isEmpty else { throw TrommiError("wrong-login", "this account has no passkey") }
     let challenge = try passkeyChallenge(try await hub.request("POST", "/account/passkeys/challenge", body: [:]))
@@ -410,8 +412,36 @@ extension Room {
                                                 "client_data_json": b64u(a.clientDataJSON), "signature": b64u(a.signature)]])
   }
   private func deleteAccount(proof: JSON) async throws {
-    try await hub.request("DELETE", "/account", body: proof)
+    deletionSent = true
+    do {
+      try await hub.request("DELETE", "/account", body: proof)
+    } catch let e as HubError where e.isOffline || e.status >= 500 {
+      // no answer: the hub may have deleted all the same. Only its word that the room is gone counts (asked once
+      // more now, and again before the next try); anything else leaves everything here and says so
+      guard try await deletedMeanwhile() else { throw e }
+      return
+    }
+    await forgetDeleted()
+  }
+  /**
+   * After a deletion this device sent whose answer was lost: whether the hub now refuses this device as no member
+   * (or has no token for it), which is what a deleted room answers. Then the device forgets the room as after a
+   * deletion. Never asked unless a deletion was sent from here.
+   */
+  func deletedMeanwhile() async throws -> Bool {
+    guard deletionSent else { return false }
+    do {
+      _ = try await hub.request("GET", "/account")
+      deletionSent = false
+      return false
+    } catch let e as HubError where e.code == "not-member" || e.code == "unauthorised" {
+      await forgetDeleted()
+      return true
+    }
+  }
+  private func forgetDeleted() async {
     // (the room is gone at the hub, with this device's token and push registration: nothing is left to tell it)
+    deletionSent = false
     await shutdown()
     Store.lifecycle.withLock { store.wipe() }
   }

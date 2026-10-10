@@ -191,6 +191,8 @@ public final class ShareInbox: @unchecked Sendable {
   }
   /** Signed out: nothing of the room stays for the extension. */
   public func clearSnapshot() { try? fm.removeItem(at: snapshotURL) }
+  /** The account is gone (or this device left the room): every share that waits, its payloads and the snapshot go. */
+  public func wipe() { try? fm.removeItem(at: dir) }
 
   // ---- writing a share (the extension) ---------------------------------------------------------------
 

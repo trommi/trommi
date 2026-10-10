@@ -152,6 +152,9 @@ final class AccountHub: URLProtocol, @unchecked Sendable {
     var posted: [(method: String, path: String, body: [String: Any], token: String?)] = []
     /** The next request to this path is refused with this status, body and headers (a throttled login). */
     var refusal: (path: String, status: Int, body: [String: Any], headers: [String: String])?
+    var roomGone = false
+    var loseDeleteAnswer = false
+    var refuseDelete = false
     func paths(_ method: String) -> [String] { lock.withLock { posted.filter { $0.method == method }.map { $0.path } } }
     func body(_ method: String, _ path: String) -> [String: Any]? { lock.withLock { posted.last { $0.method == method && $0.path == path }?.body } }
 
@@ -183,6 +186,8 @@ final class AccountHub: URLProtocol, @unchecked Sendable {
         if let p = account?["passkey"] as? [String: Any] { passkeys[p["attestation_object"] as! String] = p["sealed_copy"] as? String; account?["passkey"] = nil }
         return (200, ["room_id": room])
       case ("GET", "/v1/account"):
+        // (a deleted room: its tokens ended, and this device is a member of nothing)
+        if roomGone { return refuse(401, "unauthorised") }
         guard account != nil else { return refuse(404, "not-found") }
         return (200, ["email": email, "account": id, "kit_form": email is String ? "email" : "id", "revision": revision, "has_password": password != nil, "kdf": password?["kdf"] ?? NSNull(),
                       "password_copy": password?["sealed_copy"] ?? NSNull(), "kit_copy": kit?["sealed_copy"] ?? NSNull(), "user_handle": b64u(handle),
@@ -218,12 +223,15 @@ final class AccountHub: URLProtocol, @unchecked Sendable {
         guard let copy = passkeys[body["credential_id"] as? String ?? ""] else { return refuse(401, "wrong-login") }
         return login(copy)
       case ("DELETE", "/v1/account"):
+        if refuseDelete { refuseDelete = false; return refuse(503, "overloaded") }
         guard account != nil else { return refuse(404, "not-found") }
         let byPassword = (body["password"] as? [String: Any])?["auth_key"] as? String
         let byPasskey = (body["passkey"] as? [String: Any])?["credential_id"] as? String
         let proven = byPassword.map { $0 == password?["auth_key"] as? String } ?? byPasskey.map { passkeys[$0] != nil } ?? false
         guard proven else { return refuse(401, "wrong-login") }
-        account = nil; passkeys = [:]
+        account = nil; passkeys = [:]; roomGone = true
+        // (the deletion done, the answer lost on the way)
+        if loseDeleteAnswer { return refuse(502, "internal") }
         return (200, ["deleted": true])
       case ("GET", _) where path.hasSuffix("/challenge"): return (200, ["challenge": b64u(Bytes(repeating: 9, count: 32))])
       case ("POST", _) where path.hasSuffix("/tokens"): return (200, ["token": "t", "expires_at": nowMs() + 600_000, "role": "human"])
@@ -687,6 +695,23 @@ final class AccountTests: XCTestCase {
     // the account is gone: its e-mail signs in nowhere
     let gone = await failure { _ = try await Room.signInWithPassword(hubURL: self.hubURL, account: self.email, password: self.password, base: self.device("second")) }
     XCTAssertEqual(code(of: try XCTUnwrap(gone)), "wrong-login")
+  }
+
+  func testADeletionWhoseAnswerIsLostIsConfirmedByTheHubAndLeavesNothingHere() async throws {
+    let (room, _) = try await created()
+    hub.lock.withLock { hub.loseDeleteAnswer = true }
+    // the hub deleted, the answer was lost: asked once more, the hub knows this device no more, so it forgets
+    try await room.deleteAccount(password: password)
+    XCTAssertEqual(hub.paths("DELETE").filter { $0 == "/v1/account" }.count, 1)
+    XCTAssertEqual(Store.rooms(base: device("first")), [], "nothing of the room is left on the device")
+  }
+
+  func testADeletionTheHubDidNotTakeLeavesEverythingHere() async throws {
+    let (room, _) = try await created()
+    hub.lock.withLock { hub.refuseDelete = true }
+    let failed = await failure { try await room.deleteAccount(password: self.password) }
+    XCTAssertEqual(code(of: try XCTUnwrap(failed)), "overloaded")
+    XCTAssertEqual(Store.rooms(base: device("first")), [room.roomIdHex], "the room stays while the hub has it")
   }
 
   func testAPasskeyAccountIsDeletedWithAnAssertionOnTheAccountsChallenge() async throws {

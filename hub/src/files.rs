@@ -283,6 +283,36 @@ pub fn sweep_parts(dir: &Path) -> usize {
     removed
 }
 
+/// Folders of rooms that are gone (`DELETE /v1/account`): what a crash between the deletion's commit and the
+/// removal of its folder left behind, a removal that failed, or an upload admitted before the deletion that wrote
+/// its folder anew. A folder is named by its room id in hex; one whose room has no row any more goes.
+pub fn sweep_deleted_rooms(db: &crate::db::Db, dir: &Path) -> usize {
+    let Ok(rooms) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in rooms.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(room) = crate::util::unhex(&name).filter(|r| r.len() == 32) else {
+            continue;
+        };
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let exists = db.read(|c| {
+            c.prepare_cached("SELECT 1 FROM rooms WHERE room_id = ?1")?
+                .exists([&room[..]])
+        });
+        if matches!(exists, Ok(false)) {
+            match std::fs::remove_dir_all(entry.path()) {
+                Ok(()) => removed += 1,
+                Err(e) => crate::log::warn("files", json!({ "deleted_room_folder_left": name, "error": e.to_string() })),
+            }
+        }
+    }
+    removed
+}
+
 // ---- Share links (11.5)
 
 /// `POST /v1/shares`: its maker (the session's agent or helper device, or a human device) registers the id, the

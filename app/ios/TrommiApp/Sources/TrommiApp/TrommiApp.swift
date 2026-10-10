@@ -818,7 +818,7 @@ final class BoardModel: ObservableObject {
     LiveActivities.endAll()
     #endif
     room = nil; desk = nil; path = []
-    ShareImport.shared.signedOut()
+    ShareImport.shared.forgetAll()
     kit = nil
     UserDefaults.standard.removeObject(forKey: Self.kitMark)
     error = nil; loggedOut = false; removed = false; accountDeleted = true
@@ -837,7 +837,7 @@ final class BoardModel: ObservableObject {
     LiveActivities.endAll()
     #endif
     room = nil; desk = nil; path = []
-    ShareImport.shared.signedOut()
+    ShareImport.shared.forgetAll()
     kit = nil
     UserDefaults.standard.removeObject(forKey: Self.kitMark)
     error = nil; loggedOut = false; removed = true

@@ -150,6 +150,8 @@ public final class Room {
    * room then sends and reads nothing more; forgetting what is stored here is the app's act, after it said so.
    */
   public internal(set) var removedAt: UInt64?
+  /** DELETE /v1/account was sent from here and its answer may have been lost (Account.swift deleteAccount). */
+  var deletionSent = false
   /** Whether the board came from the cache (shown before the first catch-up). */
   public internal(set) var restored = false
 

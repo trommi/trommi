@@ -66,6 +66,11 @@ public enum ShareKeychain {
     guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { return nil }
     return k
   }
+  /** The key goes with the inbox it opened (ShareInbox.wipe): a new room gets a new one. */
+  public static func remove(group: String) {
+    SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                   kSecAttrAccount as String: account, kSecAttrAccessGroup as String: group] as CFDictionary)
+  }
 }
 #endif
 

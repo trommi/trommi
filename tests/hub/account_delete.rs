@@ -50,6 +50,12 @@ fn login(hub: &TestHub, email: &str, auth: &[u8; 32]) -> Reply {
     )
 }
 
+/// The test's own source forgets its waits (a wrong proof makes it wait a second, then two …), so the next refusal
+/// is checked at once.
+fn forget_waits(hub: &TestHub) {
+    db(hub).execute_batch("DELETE FROM login_sources; DELETE FROM login_turns;").unwrap();
+}
+
 fn db(hub: &TestHub) -> rusqlite::Connection {
     rusqlite::Connection::open(hub.dir.join("hub.db")).unwrap()
 }
@@ -241,18 +247,32 @@ fn deleting_the_account_removes_every_row_and_file_of_its_room_and_nothing_else(
     w.ada.call(hub, "DELETE", "/v1/account", &json!({})).refused(400, "bad-format");
     w.ada.call(hub, "DELETE", "/v1/account", &json!({ "password": { "auth_key": b64(&random::<32>()) } }))
         .refused(401, "wrong-login");
+    // a wrong proof makes the source wait like a wrong login (throttle.rs), in the database, so a restart keeps it
+    w.ada.call(hub, "DELETE", "/v1/account", &json!({ "password": { "auth_key": b64(&random::<32>()) } }))
+        .refused(429, "rate-limited");
+    let waits: i64 = db(hub)
+        .query_row("SELECT count(*) FROM login_sources WHERE failures > 0", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(waits, 1, "the failure is on record");
+    forget_waits(hub);
     w.ada.call(hub, "DELETE", "/v1/account", &json!({ "kit": { "auth_key": b64(&auth) } }))
         .refused(401, "wrong-login");
+    forget_waits(hub);
     let assertion = |challenge: &[u8]| {
         let client = Authenticator::client_data("webauthn.get", challenge, ORIGIN);
         let (data, signature) = key.assertion(RP, UP_UV, &client);
         json!({ "passkey": { "credential_id": b64(&key.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature) } })
     };
     w.ada.call(hub, "DELETE", "/v1/account", &assertion(&[1; 32])).refused(401, "wrong-login");
+    forget_waits(hub);
     // a sign-in challenge is not this account's
     let sign_in = unb64(hub.post("/v1/account/passkey/challenge", &json!({})).ok()["challenge"].as_str().unwrap()).unwrap();
     w.ada.call(hub, "DELETE", "/v1/account", &assertion(&sign_in)).refused(401, "wrong-login");
-    assert_eq!(settled(hub), filled, "a refused deletion changes nothing");
+    forget_waits(hub);
+    let unkept = |state: BTreeMap<String, BTreeSet<String>>| {
+        state.into_iter().filter(|(t, _)| !KEPT.contains(&t.as_str())).collect::<BTreeMap<_, _>>()
+    };
+    assert_eq!(unkept(settled(hub)), unkept(filled.clone()), "a refused deletion changes nothing but the throttle");
 
     // ---- deleted, with a passkey on the account's challenge
     let mut events = bea.events(hub, None);
@@ -269,8 +289,16 @@ fn deleting_the_account_removes_every_row_and_file_of_its_room_and_nothing_else(
             assert_eq!(rows, &before[table.as_str()], "{table} holds rows of the deleted room");
         }
     }
-    // the files are gone from the disk
+    // the files are gone from the disk; a folder of the deleted room that comes back (an upload admitted before
+    // the deletion, a crash before its removal) goes with the next sweep, and a living room's folder stays
     assert!(!files.exists());
+    std::fs::create_dir_all(&files).unwrap();
+    std::fs::write(files.join("left"), b"x").unwrap();
+    let living = w.hub.dir.join("files").join(hex(&other_room));
+    std::fs::create_dir_all(&living).unwrap();
+    hub.post("/v1/__test/sweep", &json!({})).ok();
+    assert!(!files.exists(), "the sweep removes the folder of a deleted room");
+    assert!(living.exists(), "the sweep leaves a living room's folder");
     // the old e-mail is an e-mail nobody has; the tokens and streams of the room ended
     login(hub, "ada@example.org", &auth).refused(401, "wrong-login");
     w.ada.get(hub, "/v1/account").refused(401, "unauthorised");

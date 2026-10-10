@@ -34,6 +34,20 @@ final class ShareInboxTests: XCTestCase {
     XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("Trommi Share/items").path), [])
   }
 
+  func testWipeLeavesNoShareNoPayloadNoSnapshot() throws {
+    let key = SymmetricKey(size: .bits256)
+    let inbox = ShareInbox(container: dir, key: key)
+    var r = ShareRequest(action: .note, text: "waiting")
+    let f = try inbox.addPayload(Data([1, 2, 3]), request: r.id, index: 0, name: "a.bin")
+    r.items = [ShareItem(kind: .file, file: f, name: "a.bin", type: "application/octet-stream", size: 3)]
+    try inbox.commit(r)
+    try inbox.writeSnapshot(ShareSnapshot(room: "r", desks: []))
+    inbox.wipe()
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("Trommi Share").path))
+    XCTAssertTrue(inbox.pending().isEmpty)
+    XCTAssertNil(inbox.readSnapshot())
+  }
+
   func testNoPlaintextOnDisk() throws {
     let key = SymmetricKey(size: .bits256)
     let inbox = ShareInbox(container: dir, key: key)

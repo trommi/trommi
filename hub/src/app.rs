@@ -344,9 +344,12 @@ impl App {
     pub fn forget_room(&self, room: &store::Room) {
         self.sessions.forget_room(room);
         self.live.end_where(room, |_| true);
+        // (a failure, or a crash before this line, is caught by the sweep: files::sweep_deleted_rooms)
         let dir = self.files.join(util::hex(room));
         if dir.exists() {
-            let _ = std::fs::remove_dir_all(dir);
+            if let Err(e) = std::fs::remove_dir_all(&dir) {
+                crate::log::warn("files", json!({ "deleted_room_folder_left": util::hex(room), "error": e.to_string() }));
+            }
         }
     }
 
@@ -861,6 +864,7 @@ impl App {
         let files = crate::files::sweep_pending(&self.db, now, &mut fx).unwrap_or(0);
         self.after(fx);
         let parts = crate::files::sweep_parts(&self.files);
+        let rooms_gone = crate::files::sweep_deleted_rooms(&self.db, &self.files);
         let _ = self.db.write(|c| {
             c.execute("DELETE FROM shares WHERE expires_at <= ?1", [now as i64])?;
             c.execute(
@@ -896,10 +900,10 @@ impl App {
         self.limits.foundings.sweep(now);
         self.limits.logins.sweep(now);
         let _ = self.db.write(|c| crate::throttle::sweep(c, now));
-        if files > 0 || parts > 0 {
+        if files > 0 || parts > 0 || rooms_gone > 0 {
             crate::log::info(
                 "sweep",
-                json!({ "pending_files_deleted": files, "stale_parts_removed": parts }),
+                json!({ "pending_files_deleted": files, "stale_parts_removed": parts, "deleted_room_folders_removed": rooms_gone }),
             );
         }
     }

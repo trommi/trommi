@@ -70,6 +70,15 @@ final class ShareImport {
     lastSnapshot = nil
     inbox?.clearSnapshot()
   }
+  /** The account was deleted or this device removed: what waits in the inbox and the key that opens it go too. */
+  func forgetAll() {
+    lastSnapshot = nil
+    inbox?.wipe()
+    inbox = nil
+    #if os(iOS)
+    if let g = ShareGroup.resolve() { ShareKeychain.remove(group: g.id) }
+    #endif
+  }
 
   /** Import what waits (one run at a time; a ring during a run runs once more after it). */
   func run() {

@@ -608,7 +608,35 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                 let revision = accounts::revision_of(x.c, account)?;
                 Ok::<_, crate::error::Refused>((account, revision, app.accounts.proof(x.c, account, &rq.body, x.now)?))
             })?;
-            if !app.pooled(|| app.accounts.proven(proof))? {
+            // the login's lasting back-off too (throttle.rs), on the account: a wrong proof makes this source
+            // wait 1 s, 2 s, 4 s … before its next try, across restarts and whichever room of the account it uses
+            let throttle_key = format!("delete:{account}");
+            let source = crate::push::source_hash(&app.ticket_key, &rq.ip);
+            let proven = app.pooled(|| -> Res<bool> {
+                use crate::throttle::{self, Verdict};
+                if !app.cfg.login_throttle {
+                    return Ok(app.accounts.proven(proof));
+                }
+                let key = throttle_key.as_bytes();
+                let attempt = match app.db.write(|c| throttle::admit(c, key, &source, true, now(), t))? {
+                    Verdict::Own(wait) | Verdict::Line { wait, early: None } => {
+                        return Err(refuse("rate-limited", "too many requests").retry(wait))
+                    }
+                    Verdict::Line { early: Some(attempt), .. } | Verdict::Check { attempt } => attempt,
+                };
+                let mut checking = Checking { app, account: key, source: &source, attempt: Some(attempt) };
+                let ok = app.accounts.proven(proof);
+                app.db.write(|c| {
+                    if ok {
+                        throttle::succeeded(c, key, &source, attempt)
+                    } else {
+                        throttle::failed(c, key, &source, attempt, now())
+                    }
+                })?;
+                checking.attempt = None;
+                Ok(ok)
+            })??;
+            if !proven {
                 return Err(refuse("wrong-login", "the password, kit or passkey is wrong"));
             }
             let rooms = app.write_as(&auth, rq.lease, |x, _| {
