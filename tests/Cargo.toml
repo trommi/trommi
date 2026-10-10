@@ -336,5 +336,9 @@ name = "core_groups_scale"
 path = "core/groups_scale.rs"
 
 [[test]]
+name = "hub_account_delete"
+path = "hub/account_delete.rs"
+
+[[test]]
 name = "hub_metrics"
 path = "hub/metrics.rs"

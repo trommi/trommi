@@ -151,6 +151,13 @@ impl Sessions {
             .map(|t| (t.room, t.device))
     }
 
+    /// A deleted room: its tokens and challenges are none any more.
+    pub fn forget_room(&self, room: &Room) {
+        let mut s = self.lock();
+        s.tokens.retain(|_, t| &t.room != room);
+        s.challenges.retain(|_, (r, _)| r != room);
+    }
+
     /// Signing out: the token is no token any more. `false`: it was none.
     pub fn revoke(&self, bearer: Option<&str>) -> bool {
         let token = bearer

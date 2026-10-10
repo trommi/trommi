@@ -595,6 +595,33 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["kit"]]))?;
             app.write_as(&auth, rq.lease, |x, _| accounts::put_email(x.c, &auth.room, &rq.body, x.now, &pre))
         }
+        ("DELETE", ["account"]) => {
+            // a human device, with the way in proved once more: the account, its rooms and all they hold go
+            let auth = read_auth()?;
+            auth.human()?;
+            heavy_limit(&auth)?;
+            // a guess here costs a slow hash: counted with the logins of the address, and per room
+            limited(app.limits.logins.check(rq.ip.as_bytes(), t, true))?;
+            limited(app.limits.logins.check(&[&b"delete-account:"[..], &auth.room[..]].concat(), t, true))?;
+            let (account, revision, proof) = app.read(|x| {
+                let account = accounts::account_of(x.c, &auth.room)?;
+                let revision = accounts::revision_of(x.c, account)?;
+                Ok::<_, crate::error::Refused>((account, revision, app.accounts.proof(x.c, account, &rq.body, x.now)?))
+            })?;
+            if !app.pooled(|| app.accounts.proven(proof))? {
+                return Err(refuse("wrong-login", "the password, kit or passkey is wrong"));
+            }
+            let rooms = app.write_as(&auth, rq.lease, |x, _| {
+                if accounts::account_of(x.c, &auth.room)? != account || accounts::revision_of(x.c, account)? != revision {
+                    return Err(refuse("account-changed", "the account changed meanwhile: read it again"));
+                }
+                accounts::delete_account(x.c, account)
+            })?;
+            for room in &rooms {
+                app.forget_room(room);
+            }
+            Ok(json!({ "deleted": true }))
+        }
         ("POST", ["account", "passkeys", "challenge"]) => app.read(|x| {
             // a human device, or the recovery key before it finishes (8.7: a passkey made anew): with the
             // challenge the account's id, which that passkey must carry as its user handle

@@ -339,6 +339,17 @@ impl App {
         }
     }
 
+    /// After a deleted account's transaction was committed (`accounts::delete_account`): the room's tokens end,
+    /// its streams end, and its files leave the disk (one directory per room, with any upload in progress).
+    pub fn forget_room(&self, room: &store::Room) {
+        self.sessions.forget_room(room);
+        self.live.end_where(room, |_| true);
+        let dir = self.files.join(util::hex(room));
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     /// What follows a committed transaction and needs no order: files, pushes, the Live Activity.
     pub fn after(self: &Arc<Self>, fx: Effects) {
         for ev in &fx.events {

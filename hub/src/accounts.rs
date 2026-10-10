@@ -900,3 +900,169 @@ impl Accounts {
         bump(c, account, now)
     }
 }
+
+/// What deleting an account (`DELETE /v1/account`) is proved with, read in a reading transaction. A login key is
+/// checked by `proven` on the pool, with no database connection held; a passkey's assertion is checked here.
+pub enum Proof {
+    Key {
+        auth: Vec<u8>,
+        held: Option<(Vec<u8>, Vec<u8>)>,
+    },
+    Passkey(bool),
+}
+
+impl Accounts {
+    /// The way in once more, fresh: `password: { auth_key }`, `kit: { auth_key }` (the login key the device
+    /// derives, as for a login) or `passkey: { credential_id, authenticator_data, client_data_json, signature }`,
+    /// an assertion of a passkey of this account on a challenge of `POST /v1/account/passkeys/challenge` (two
+    /// minutes, one use, for this account at its revision).
+    pub fn proof(&self, c: &Connection, account: i64, v: &Value, now: u64) -> Res<Proof> {
+        let key = |p: &Value, salt: &str, hash: &str| -> Res<Proof> {
+            let auth = bytes(p, "auth_key", 32)?;
+            let held: (Option<Vec<u8>>, Option<Vec<u8>>) = c
+                .prepare_cached(&format!(
+                    "SELECT {salt}, {hash} FROM accounts WHERE account_id = ?1"
+                ))?
+                .query_row([account], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            Ok(Proof::Key {
+                auth,
+                held: held.0.zip(held.1),
+            })
+        };
+        match (&v["password"], &v["kit"], &v["passkey"]) {
+            (p, Value::Null, Value::Null) if !p.is_null() => key(p, "auth_salt", "auth_hash"),
+            (Value::Null, k, Value::Null) if !k.is_null() => key(k, "kit_salt", "kit_hash"),
+            (Value::Null, Value::Null, p) if !p.is_null() => {
+                let credential_id = var_bytes(p, "credential_id", 1023)?;
+                let authenticator_data = var_bytes(p, "authenticator_data", 1024)?;
+                let client_data = var_bytes(p, "client_data_json", 4096)?;
+                let signature = var_bytes(p, "signature", 512)?;
+                let Ok((challenge, origin)) =
+                    webauthn::client_challenge(&client_data, "webauthn.get")
+                else {
+                    return Ok(Proof::Passkey(false));
+                };
+                let fresh =
+                    self.take_challenge(&challenge, Some((account, revision_of(c, account)?)), now);
+                let public_key: Option<Vec<u8>> = c
+                    .prepare_cached("SELECT public_key FROM passkeys WHERE credential_id = ?1 AND account_id = ?2")?
+                    .query_row(params![credential_id, account], |r| r.get(0))
+                    .optional()?;
+                let verified = public_key.is_some_and(|key| {
+                    webauthn::assert(
+                        &key,
+                        &authenticator_data,
+                        &client_data,
+                        &signature,
+                        &origin,
+                        &self.origins,
+                    )
+                    .is_ok()
+                });
+                Ok(Proof::Passkey(fresh && verified))
+            }
+            _ => Err(refuse("bad-format", "one of password, kit or passkey")),
+        }
+    }
+
+    /// Whether the proof holds. A login key costs one slow hash, also against an account without that way in.
+    pub fn proven(&self, proof: Proof) -> bool {
+        match proof {
+            Proof::Key {
+                auth,
+                held: Some((salt, hash)),
+            } => same(&slow_hash(&auth, &salt), &hash),
+            Proof::Key { auth, held: None } => {
+                let _ = slow_hash(&auth, &self.dummy_salt);
+                false
+            }
+            Proof::Passkey(ok) => ok,
+        }
+    }
+}
+
+/// Deletes an account and its rooms with everything stored for them, in the caller's transaction: every row of
+/// every table that names the account, a room of it, a group of such a room, a recovery or an invite of it.
+/// Returns the rooms, whose files the caller removes from disk once the transaction is committed.
+///
+/// Kept, since they name no account, room or device: `spent_key_packages` (32-byte references of KeyPackages
+/// handed out, kept for ever so that none is handed out twice), the login throttle's tables (keyed by hashes of
+/// what was typed at a login, which exist alike for e-mails that never had an account, and swept within a day)
+/// and the counters `welcome_ids` and `login_counts`.
+pub fn delete_account(c: &Connection, account: i64) -> Res<Vec<Room>> {
+    let rooms = rooms_of(c, account)?;
+    for room in &rooms {
+        delete_room(c, room)?;
+    }
+    for table in ["passkeys", "account_sources", "account_rooms", "accounts"] {
+        c.execute(
+            &format!("DELETE FROM {table} WHERE account_id = ?1"),
+            [account],
+        )?;
+    }
+    Ok(rooms)
+}
+
+/// Every row of one room, children before the rows they refer to.
+fn delete_room(c: &Connection, room: &Room) -> Res<()> {
+    const GROUPS: &str = "(SELECT group_id FROM groups WHERE room_id = ?1)";
+    let by_group = [
+        "group_members",
+        "group_log",
+        "group_infos",
+        "welcome_bytes",
+        "epoch_counts",
+    ];
+    for table in by_group {
+        c.execute(
+            &format!("DELETE FROM {table} WHERE group_id IN {GROUPS}"),
+            [&room[..]],
+        )?;
+    }
+    c.execute(
+        "DELETE FROM recovery_parts WHERE recovery_id IN (SELECT recovery_id FROM recoveries WHERE room_id = ?1)",
+        [&room[..]],
+    )?;
+    c.execute(
+        "DELETE FROM recovery_memo WHERE recovery_id IN (SELECT recovery_id FROM recoveries WHERE room_id = ?1)",
+        [&room[..]],
+    )?;
+    c.execute(
+        "DELETE FROM invite_requests WHERE invite_id IN (SELECT invite_id FROM invites WHERE room_id = ?1)",
+        [&room[..]],
+    )?;
+    let by_room = [
+        "welcomes",
+        "sealed_keys",
+        "recovery_links",
+        "recovery_keys_held",
+        "recoveries",
+        "envelopes",
+        "cards",
+        "permission_requests",
+        "artifacts",
+        "notes",
+        "chats",
+        "boards",
+        "registers",
+        "shares",
+        "files",
+        "invites",
+        "requests",
+        "push_subscriptions",
+        "live_activities",
+        "agent_leases",
+        "key_packages",
+        "account_rooms",
+        "devices",
+        "groups",
+        "rooms",
+    ];
+    for table in by_room {
+        c.execute(
+            &format!("DELETE FROM {table} WHERE room_id = ?1"),
+            [&room[..]],
+        )?;
+    }
+    Ok(())
+}

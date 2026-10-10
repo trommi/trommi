@@ -113,10 +113,22 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 | `PUT /v1/account/password` · `PUT /v1/account/kit` | `{ auth_key, sealed_copy, kdf?, revision }` → `{ revision }` | `account-changed` when `revision` is not the current one; a password on an account without e-mail: `bad-email` |
 | `PUT /v1/account/email` | `{ email, kit: { auth_key, sealed_copy }, revision }` → `{ revision }` | a human device; only for an account that has none (`forbidden` otherwise); the kit made anew under the e-mail (`incomplete` without); `bad-email`, `account-exists` |
 | `POST /v1/account/passkeys/challenge` · `POST /v1/account/passkeys` · `DELETE /v1/account/passkeys/{credential_id}` | → `{ challenge, account, user_handle, email, kit_form }` · a passkey body as above | a human device (the challenge also the recovery key, before `finish`); the challenge is for that account; `last-way-in` |
+| `DELETE /v1/account` | `{ password: { auth_key } }` or `{ kit: { auth_key } }` or `{ passkey: { credential_id, authenticator_data, client_data_json, signature } }` → `{ deleted: true }` | a human device, with the way in proved once more (see below); `wrong-login` for a proof that does not hold, `not-found` for a room without an account, `account-changed` |
 | `POST /v1/account/login` | `{ account, auth_key }` → `{ rooms: [ { room_id, sealed_copy, challenge } ], kdf, account, email }` | no token; `wrong-login` for an unknown e-mail and a wrong key alike, at one cost; `challenge` is a sign-in challenge of that room (12.3) |
 | `POST /v1/account/recover` | `{ account, auth_key }` (the kit's) → the same with the kit's copy | `wrong-recovery` |
 | `POST /v1/account/passkey/challenge` · `POST /v1/account/passkey/login` | → `{ challenge }` · `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` → as login | every failure is `wrong-login` |
 
+- **Deleting an account** (`DELETE /v1/account`; App Store guideline 5.1.1(v)): the account, each of its rooms and
+  everything stored for them go in one transaction: every row that names the account, the room, a group of the
+  room, a recovery or an invite of it (devices, groups, logs, GroupInfos, Welcomes, sealed keys, recovery rows,
+  envelopes and the indexes over them, files and Share links, invites, requests, KeyPackages, push subscriptions,
+  Live Activities, leases, passkeys, the sources the account knows). After the commit the room's tokens and
+  streams end and its files leave the disk. The proof is fresh: the login key of the password or the kit as at a
+  login (one slow hash, counted with the address's logins and per room), or an assertion of one of the account's
+  passkeys on a challenge of `POST /v1/account/passkeys/challenge`. Kept, since they name no account, room or
+  device: `spent_key_packages` (a KeyPackage is never handed out twice), the login throttle's tables (hashes of
+  what was typed at a login, alike for e-mails without an account; swept within a day) and the counters
+  `welcome_ids` and `login_counts`. The e-mail is free again at once; agents of the room lose their connection.
 - The hub keeps a slow hash (Argon2id) of each login key, never the key. There is no account session: a login
   answers with sealed copies and sign-in challenges, and the device signs in to the room with the recovery key
   (8.4).
