@@ -657,4 +657,76 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
     }
     first.close().await;
     second.close().await;
+    if said.contains("retired") {
+        // Nothing at all is left of the state, not even an empty directory.
+        fn state_dirs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path())
+                .flat_map(|path| {
+                    if path.extension().is_some_and(|ext| ext == "state") {
+                        vec![path]
+                    } else if path.is_dir() {
+                        state_dirs(&path)
+                    } else {
+                        vec![]
+                    }
+                })
+                .collect()
+        }
+        let left = state_dirs(&first_seat.home.path().join("keys"));
+        assert!(
+            left.is_empty(),
+            "a wiped slot leaves no state directory: {left:?}"
+        );
+    }
+}
+
+/// A host without channels and without the plugin's monitor (plain MCP: Codex, or `claude mcp add`): the tool
+/// list has `inbox`, and what the human writes waits there until the agent asks.
+#[tokio::test(flavor = "multi_thread")]
+async fn without_channel_and_monitor_board_events_wait_for_the_inbox_tool() {
+    let (_hub, mut human, seat, group) = joined().await;
+    let mut mcp = seat.serve_plain().await;
+    mcp.ready().await;
+    let listed = mcp.request("tools/list", json!({})).await;
+    assert!(
+        listed["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["name"] == "inbox"),
+        "a host that hears no channel is given the inbox tool"
+    );
+    mcp.ok("reply", json!({ "text": "I am here." })).await;
+    human
+        .say(
+            &group,
+            json!({ "content_type": "message", "text": "Please look at the plain path." }),
+        )
+        .await
+        .expect("the human writes");
+    let mut said = String::new();
+    for _ in 0..450 {
+        said = mcp.ok("inbox", json!({})).await;
+        if said.contains("Please look at the plain path.") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert!(
+        said.contains("Please look at the plain path."),
+        "the human's words come out of the inbox: {said}"
+    );
+    // read once: the next call has nothing new
+    let again = mcp.ok("inbox", json!({})).await;
+    assert!(
+        !again.contains("Please look at the plain path."),
+        "an event is handed out once: {again}"
+    );
+    // (the channel notification still goes out as well: a host that does not show it drops it, and one that
+    // was taken for deaf by mistake still hears it)
+    mcp.close().await;
 }

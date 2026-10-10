@@ -118,6 +118,33 @@ struct Inner {
     staged: Vec<Op>,
     staged_core_batches: u64,
     poisoned: bool,
+    /// The state was removed for good ([`Journal::wipe`]).
+    wiped: bool,
+}
+
+/// A state that holds nothing leaves nothing behind: when the last handle goes, the directory of a journal
+/// that was wiped, or that was opened and never written, is removed with its lock file. (A slot that is only
+/// looked at gets a journal; without this every look would leave an empty directory.)
+impl Drop for Inner {
+    fn drop(&mut self) {
+        let never_written = self.seq == 0 && self.log_len == 0 && self.snap_len == 0;
+        if !(self.wiped || never_written) || !self.entries.is_empty() {
+            return;
+        }
+        for name in [SNAP_FILE, LOG_FILE, "state.log.torn", LOCK_FILE] {
+            let path = self.dir.join(name);
+            // only what holds nothing is removed
+            let empty = std::fs::metadata(&path).is_ok_and(|meta| meta.len() == 0);
+            if empty || (self.wiped && name != LOCK_FILE) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        if std::fs::remove_dir(&self.dir).is_ok() {
+            if let Some(parent) = self.dir.parent() {
+                let _ = sync_dir(parent);
+            }
+        }
+    }
 }
 
 /// The open state of one slot. Cloning gives another handle on the same state.
@@ -440,6 +467,7 @@ impl Journal {
                 staged: Vec::new(),
                 staged_core_batches: 0,
                 poisoned: false,
+                wiped: false,
             })),
         })
     }
@@ -569,6 +597,7 @@ impl Journal {
     pub fn wipe(&self) -> Result<(), StoreError> {
         let mut inner = self.lock();
         inner.poisoned = true;
+        inner.wiped = true;
         inner.entries.clear();
         inner.staged.clear();
         inner.log.set_len(0)?;

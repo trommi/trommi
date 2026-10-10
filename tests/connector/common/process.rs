@@ -122,6 +122,14 @@ impl Seat {
     pub async fn serve(&self) -> Mcp {
         Mcp::start(self.command(&[])).await
     }
+
+    /// Starts the MCP server for a host that shows no channel events (a plain MCP client, Codex): board events
+    /// wait for the `inbox` tool.
+    pub async fn serve_plain(&self) -> Mcp {
+        let mut command = self.command(&[]);
+        command.env("TROMMI_CHANNEL_EVENTS", "off");
+        Mcp::start(command).await
+    }
 }
 
 /// A running connector, as its MCP client sees it.

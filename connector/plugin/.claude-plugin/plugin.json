@@ -1,0 +1,196 @@
+{
+  "name": "trommi",
+  "displayName": "Trommi",
+  "version": "2.0.0",
+  "description": "Connects this Claude Code session to your Trommi board: chat, decision cards and live board events, end-to-end encrypted. Runs the connector that install.sh of github.com/trommi/trommi installed.",
+  "author": {
+    "name": "Trommi",
+    "url": "https://trommi.com"
+  },
+  "homepage": "https://github.com/trommi/trommi",
+  "repository": "https://github.com/trommi/trommi",
+  "mcpServers": {
+    "trommi": {
+      "command": "${HOME}/.local/share/trommi/bin/trommi-connector",
+      "args": []
+    }
+  },
+  "channels": [
+    {
+      "server": "trommi",
+      "displayName": "Trommi"
+    }
+  ],
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" permission",
+            "timeout": 3700
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" resolved",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" resolved",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" denied",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" notice",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" prompt",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" stop",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "MessageDisplay": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=\"${HOME}/.local/share/trommi/bin/trommi-connector\"; [ -x \"$p\" ] || exit 0; exec \"$p\" trail",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "experimental": {
+    "monitors": [
+      {
+        "name": "board",
+        "command": "\"${HOME}/.local/share/trommi/bin/trommi-connector\" monitor",
+        "description": "Trommi board events"
+      }
+    ]
+  }
+}
