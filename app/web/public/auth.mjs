@@ -311,7 +311,7 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
         : joined && inv.takeover ? html`<b class="clip-in">${cont ? avatar(cont, { crown: false }) : ''}<span>${contName} goes on with the new connector</span></b><small>The connector that held it before is retired.</small>`
         : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>`
         : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
-        : dead ? html`<b>${state === 'expired' ? 'This link has run out' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
+        : dead ? html`<b>${state === 'expired' ? 'This link has run out' : inv.error === 'invite-replaced' ? 'A newer link replaced this one' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
         : html`<b>Compare the six emoji Claude shows with the ones here</b><small>Nobody is added before you tap "They match".</small>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
         : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent">${keep}<button type="submit">New link</button></form>`

@@ -877,6 +877,15 @@ export class Client {
     this.invites.set(invite_id, { public: pub })
     this.model.invites.set(invite_id, pub)
     this.setInvite(invite_id, {})
+    // One agent link at a time: a new one for a new session ends this device's earlier one nobody answered yet (it
+    // goes at the hub, so the link does nothing any more). One a connector already answered is left to finish.
+    if (device_role === 'agent' && !takeover) {
+      for (const [id, kept] of this.invites) {
+        if (id === invite_id || kept.done || kept.public.device_role !== 'agent' || kept.public['takeover'] || kept.public.invite_state !== 'open') continue
+        this.setInvite(id, { invite_state: 'failed', error: 'invite-replaced', done: true })
+        void this.hub.deleteInvite(unhex(id)).catch(() => {})
+      }
+    }
     return pub
   }
   /** Once a second while invites are open: expiry, and a look for the Request (the stream's event comes first when it comes). */
@@ -897,6 +906,7 @@ export class Client {
       const id = unhex(invite_id)
       const { requests } = await this.hub.getInvite(id)
       for (const request of requests ?? []) {
+        if (kept.done) return // (replaced by a newer link while the hub was asked)
         let accepted
         try { accepted = await this.engine.do(d => d.inviteAccept(id, request, this.now())) }
         catch (e) { if (this.core.errorCode(e) === 'invite-expired') { this.setInvite(invite_id, { invite_state: 'expired', error: 'invite-expired', done: true }); return } continue }
