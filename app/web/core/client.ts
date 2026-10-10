@@ -318,7 +318,14 @@ export class Client {
     on('batch', () => this.publish())
     on('reopened', () => { void this.reconcile().catch(() => {}) })
     on('closed', ({ code }) => {
-      if (code === 'removed') { this.removed = true; (this.model.room as { connection: string }).connection = 'removed'; this.change.room = true; this.publish() }
+      if (code === 'removed') {
+        this.removed = true
+        ;(this.model.room as { connection: string }).connection = 'removed'
+        this.change.room = true
+        // said once, however this device learned it (its removal in the log, or the hub's `not-member`)
+        if (!this.model.alerts.some(x => x.code === 'removed')) M.pushAlert(this.model, this.change, { code: 'removed', message: 'this device was removed from the room', at: this.now() })
+        this.publish()
+      }
       // tabs.ts drops this client and stands in line for the device's lock again
       else this.emit('device-closed', null)
     })

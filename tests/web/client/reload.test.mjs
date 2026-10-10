@@ -83,3 +83,21 @@ test('fifty kills at random moments within 300 ms of an arrival: nothing is ever
   assert.equal(device.model.notes.get(note).text, 'v49')
   assert.equal(device.model.cards.get(card).title, 't50')
 })
+
+test('a device that is only opened and closed again writes nothing: the room\'s change number stays where it was', async t => {
+  const { fake, R, a, name } = await scene(t)
+  await a.saveNote({ text: 'something to have heads of' })
+  await a.settle()
+  await a.stop()
+  const room = [...fake.state.rooms.values()][0]
+  let device = null
+  const changes = []
+  for (let i = 0; i < 4; i++) {
+    device = await R.openRoom({ storage: name, device_name: 'a' })
+    await device.start()
+    await device.settle()
+    changes.push(room.change)
+    await device.stop()
+  }
+  assert.equal(new Set(changes.slice(1)).size, 1, `a start seals nothing new (change numbers after each start: ${changes.join(', ')})`)
+})
