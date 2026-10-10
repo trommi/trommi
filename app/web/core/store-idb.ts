@@ -39,6 +39,7 @@ export interface DeviceStore extends Store {
   /** Takes the owner lock (rejects with the binding's StoreConflict when another tab holds it, or waits for it with
    *  `wait`), reads and unwraps everything. A second call gives the same state. */
   load(): Promise<StoredState>
+  applyAll(writes: StoreWrite[]): Promise<void>
   /** Closes the database and frees the lock, for good; resolves once the lock is free. A `load()` that still waits
    *  for the lock is given up and rejects. */
   close(): Promise<void>
@@ -149,11 +150,17 @@ export function openDeviceStore({ name, wait = false, IdbStore }: { name: string
 
   return {
     load(): Promise<StoredState> { return closed ? Promise.reject(shut) : state ??= read() },
-    async apply(write: StoreWrite): Promise<void> {
+    apply(write: StoreWrite): Promise<void> { return this.applyAll([write]) },
+    /** The writes of one call of the device (a batch of a catch-up has hundreds), each value wrapped, in the
+     *  binding's ONE strict transaction: all of them or none. */
+    async applyAll(writes: StoreWrite[]): Promise<void> {
       const key = wrapKey
       if (closed || !key) throw fail('the device store is not open')
-      const put = await Promise.all(write.put.map(async (e): Promise<StoreEntry> => ({ key: e.key, value: await wrap(key, e.key, e.value) })))
-      await inner.apply({ expectedRevision: write.expectedRevision, put, delete: write.delete })
+      const wrapped = await Promise.all(writes.map(async (write): Promise<StoreWrite> => ({
+        expectedRevision: write.expectedRevision, delete: write.delete,
+        put: await Promise.all(write.put.map(async (e): Promise<StoreEntry> => ({ key: e.key, value: await wrap(key, e.key, e.value) }))),
+      })))
+      await inner.applyAll(wrapped)
     },
     async close(): Promise<void> {
       closed = true
