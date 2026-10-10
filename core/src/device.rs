@@ -47,7 +47,7 @@ use crate::mls::profile::{
 use crate::mls::provider::{self, DeviceSigner, MlsEntries, Provider};
 use crate::mls::rules::{
     self, CommitFacts, Judged, Parent, RoomHistory, RoomState, SessionBefore, SessionFacts,
-    Verifier,
+    Staleness, Verifier,
 };
 use crate::recovery::{
     self, AuthMessage, CheckedRoom, KeyContext, MacKeys, PublicRules, RecoveryJoin, RecoveryKeys,
@@ -329,6 +329,9 @@ pub struct GroupSummary {
     pub leaves: BTreeSet<DeviceId>,
     /// The leaves the newest room state does not allow: not empty means stale (5.2.8).
     pub disallowed: Vec<DeviceId>,
+    /// The opener this helper session lacks although its main session has an agent leaf: the group is stale
+    /// (5.2.8) until a human device adds that device ([`Device::clean_session`]).
+    pub missing_opener: Option<DeviceId>,
     /// Whether it was archived (5.2.10).
     pub archived: bool,
     /// Whether a Commit of this device waits: for the hub's answer, or for its place in the log.
@@ -338,6 +341,13 @@ pub struct GroupSummary {
     /// Whether it holds the group's epochs before that one too ([`Device::learn_history`]). While false,
     /// an envelope of an earlier epoch is `group-behind`.
     pub past_learned: bool,
+}
+
+impl GroupSummary {
+    /// Whether the group is stale (5.2.8): it holds a leaf the room state does not allow, or lacks its opener.
+    pub fn is_stale(&self) -> bool {
+        !self.disallowed.is_empty() || self.missing_opener.is_some()
+    }
 }
 
 /// One envelope as the hub's chain route serves it.
@@ -419,7 +429,8 @@ struct GroupMeta {
     /// Read from the group's context when the device is opened; none for the room group.
     session: Option<TrommiSession>,
     previous_room_epoch: u64,
-    /// A main session's agent leaf over time.
+    /// A main session's agent leaf over time: the change number of the Commit that changed it, and the
+    /// leaf after it. The first entry of a device that joined later stands for the state it joined at.
     seats: Vec<(u64, Option<DeviceId>)>,
     /// When this device's leaf was last renewed: by an own Commit with a path, or when the group was founded
     /// or joined (a Welcome does not say when the KeyPackage it used was made, so the join counts). And when
@@ -431,6 +442,8 @@ struct GroupMeta {
     founding: bool,
     /// First contact found leaves that do not belong: no content key is handed out.
     distrusted: bool,
+    /// The group's own history broke the rules (5.2.6): it stays distrusted, whatever its leaves are now.
+    closed: bool,
     /// This device was removed: OpenMLS's state is gone, the keys stay.
     removed: bool,
     pending: Option<Pending>,
@@ -476,7 +489,8 @@ impl Encode for GroupMeta {
                 self.pending
                     .as_ref()
                     .is_some_and(|pending| pending.accepted),
-            ) << 6);
+            ) << 6)
+            | (u8::from(self.closed) << 7);
         writer.u8(flags);
         let pending = self.pending.as_ref();
         writer.u64(pending.map_or(0, |pending| pending.outbox));
@@ -505,7 +519,8 @@ impl Decode for GroupMeta {
         let own_leaf_ms = reader.u64()?;
         let last_update_ms = reader.u64()?;
         let flags = reader.u8()?;
-        if flags >= 1 << 7 {
+        // A group is closed only as a distrusted one.
+        if flags & (1 << 7) != 0 && flags & (1 << 2) == 0 {
             return Err(Error::BadFormat);
         }
         let outbox = reader.u64()?;
@@ -532,6 +547,7 @@ impl Decode for GroupMeta {
             archived: flags & 1 != 0,
             founding: flags & (1 << 1) != 0,
             distrusted: flags & (1 << 2) != 0,
+            closed: flags & (1 << 7) != 0,
             removed: flags & (1 << 3) != 0,
             pending,
             joined_epoch: reader.u64()?,
@@ -787,20 +803,36 @@ impl Known {
     }
 }
 
-impl SessionFacts for Known {
-    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+impl recovery::SessionsAt for Known {
+    fn main_session_at(&self, session: &SessionId, change: u64) -> Parent {
         if let Some(seats) = self.closed.get(session) {
             return if self.replay {
-                Parent::Seat(observer::seat_at(seats, room_epoch))
+                observer::parent_at(seats, change)
             } else {
                 Parent::NotAMainSession
             };
         }
         match self.seats.get(session) {
-            Some(seats) => Parent::Seat(observer::seat_at(seats, room_epoch)),
+            Some(seats) => observer::parent_at(seats, change),
             // Neither a leaf nor an observer of it: this device cannot tell who its agent leaf is.
             None => Parent::Unknown,
         }
+    }
+
+    fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
+        SessionFacts::main_session_of(self, agent)
+    }
+
+    fn live_helpers(&self, parent: &SessionId) -> usize {
+        SessionFacts::live_helpers(self, parent)
+    }
+}
+
+/// The sessions as they stand now. A Commit that is judged at a place behind what this device holds asks
+/// [`recovery::At`] instead.
+impl SessionFacts for Known {
+    fn main_session(&self, session: &SessionId, _: u64) -> Parent {
+        recovery::SessionsAt::main_session_at(self, session, u64::MAX)
     }
 
     fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
@@ -1374,6 +1406,9 @@ impl<S: Storage> Device<S> {
             {
                 return Err(contradicts("a room epoch's place"));
             }
+            if !history::ascending(&memory.room_places) {
+                return Err(contradicts("a room epoch's place"));
+            }
         } else if !memory.room_places.is_empty() {
             return Err(contradicts("a room epoch's place"));
         }
@@ -1628,11 +1663,13 @@ impl<S: Storage> Device<S> {
                 .map(|(_, device)| device)
                 .collect();
             let past = self.group_past(id)?;
+            let stale = self.staleness(meta, &leaves, &known);
             summaries.push(GroupSummary {
                 group: *id,
                 session: meta.session,
                 epoch: group.epoch().as_u64(),
-                disallowed: self.disallowed(meta, &leaves, &known),
+                disallowed: stale.disallowed,
+                missing_opener: stale.missing_opener,
                 leaves,
                 archived: meta.archived,
                 pending: meta.pending.is_some(),
@@ -1658,8 +1695,13 @@ impl<S: Storage> Device<S> {
         leaves: &BTreeSet<DeviceId>,
         known: &Known,
     ) -> Vec<DeviceId> {
+        self.staleness(meta, leaves, known).disallowed
+    }
+
+    /// Whether a session group with these leaves is stale under the newest room state, and why (5.2.8).
+    fn staleness(&self, meta: &GroupMeta, leaves: &BTreeSet<DeviceId>, known: &Known) -> Staleness {
         let (Some(session), Some(history)) = (meta.session.as_ref(), self.room_history()) else {
-            return Vec::new();
+            return Staleness::default();
         };
         let room = history.newest();
         let parent = if session.parent.is_zero() {
@@ -1667,7 +1709,7 @@ impl<S: Storage> Device<S> {
         } else {
             known.main_session(&session.parent, room.epoch)
         };
-        rules::disallowed_leaves(history, room, session, parent, leaves)
+        rules::staleness(history, room, session, parent, leaves)
     }
 
     /// What first contact finds among a session group's leaves (5.2.6): the leaves the newest room state does
@@ -1756,8 +1798,24 @@ impl<S: Storage> Device<S> {
         batch.put(followed_key(group), value);
     }
 
-    /// Records that the room Commit at `change` led to the room epoch `epoch`.
+    /// Records that the room Commit at `change` led to the room epoch `epoch`. The places ascend with the
+    /// epochs (5.4.1): a place held for an earlier epoch that does not lie before this one, or for a later
+    /// epoch that does not lie behind it, was a hub's word that the hub's order contradicts, and goes; the
+    /// room epoch at such a place is then unknown (`room-behind`), never a wrong one.
     fn put_room_place(&mut self, batch: &mut Batch, epoch: u64, change: u64) {
+        let contradicted: Vec<u64> = self
+            .memory
+            .room_places
+            .iter()
+            .filter(|(held, place)| {
+                (**held < epoch && **place >= change) || (**held > epoch && **place <= change)
+            })
+            .map(|(held, _)| *held)
+            .collect();
+        for held in contradicted {
+            self.memory.room_places.remove(&held);
+            batch.delete(room_place_key(held));
+        }
         self.memory.room_places.insert(epoch, change);
         batch.put(room_place_key(epoch), change.to_be_bytes().to_vec());
     }
@@ -2292,9 +2350,22 @@ impl<S: Storage> Device<S> {
             meta.previous_room_epoch = room_epoch;
             if let (Some(session), Some(room)) = (meta.session, room) {
                 if session.parent.is_zero() {
+                    // The group's place is the place of the Commit that led here. A Commit of this
+                    // device that is merged before the log shows it (a join from outside, a Commit of
+                    // a recovery) has no place yet: the change it makes stands behind every place
+                    // (`u64::MAX`) until the group's next place is known, and takes that one.
+                    let place = match meta.place {
+                        0 => u64::MAX,
+                        place => place,
+                    };
+                    if let Some((unplaced, _)) = meta.seats.last_mut() {
+                        if *unplaced == u64::MAX {
+                            *unplaced = place;
+                        }
+                    }
                     let now = observer::seat(&session, &leaves, &room);
                     if meta.seats.last().map(|(_, seat)| *seat) != Some(now) {
-                        meta.seats.push((room_epoch, now));
+                        meta.seats.push((place, now));
                     }
                 }
             }
@@ -2928,6 +2999,8 @@ impl<S: Storage> Device<S> {
     ) -> Result<(Vec<u8>, Vec<Cut>), Error> {
         let (facts, leaves, after) = observer::read_commit(public, id, commit)?;
         let mut known = self.known();
+        // Where the log shows it, a helper session's opener is its main session's agent leaf there.
+        let stands = place.unwrap_or(u64::MAX);
         // Where the log shows it, the group it founds is among the groups this device holds: it is not
         // counted against itself (5.2.5: 32 live helper sessions).
         if let (Some(_), Some((session, _))) = (place, session) {
@@ -2938,7 +3011,7 @@ impl<S: Storage> Device<S> {
         let history = self.history()?;
         let verifier = Verifier {
             history,
-            sessions: &known,
+            sessions: &recovery::At(&known, stands),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
             // When built: on the newest room state this device holds, where alone it is taken.
@@ -2968,7 +3041,31 @@ impl<S: Storage> Device<S> {
             }
         }
         let cuts = facts.note.map(|note| note.cuts).unwrap_or_default();
+        // 9.0.10: where the log shows it, a Commit of this device that adds a key again is held to what this
+        // device holds of that key by then, like any other member's.
+        if place.is_some() {
+            self.nothing_beyond(id, &cuts, &facts.adds)?;
+        }
         Ok((after, cuts))
+    }
+
+    /// `bad-commit` when a Commit removes a leaf with one of `cuts` and adds the same key again while this
+    /// device holds an envelope of that key beyond the Cut (9.0.10).
+    fn nothing_beyond(
+        &self,
+        group: &GroupId,
+        cuts: &[Cut],
+        adds: &[DeviceId],
+    ) -> Result<(), Error> {
+        let chains = self.chains(group)?;
+        for cut in cuts.iter().filter(|cut| adds.contains(&cut.device)) {
+            let named = crate::chain::Head {
+                seq: cut.seq,
+                hash: cut.hash,
+            };
+            crate::chain::check_added_again(&chains.head(&cut.device), &named)?;
+        }
+        Ok(())
     }
 
     /// Builds one Commit in `group` and leaves it pending in OpenMLS. `cuts` name the leaves it removes;
@@ -2995,15 +3092,20 @@ impl<S: Storage> Device<S> {
         cuts.sort_unstable_by_key(|cut| cut.device);
         let removes: Vec<DeviceId> = cuts.iter().map(|cut| cut.device).collect();
         let mut group = group::load(&self.provider, id)?;
-        // 5.2.8: nobody writes into a stale group but the Commit that removes every leaf the room disallows.
+        // 5.2.8: nobody writes into a stale group but the Commit that removes every leaf the room disallows
+        // and adds the opener a helper session lacks.
         let leaves: BTreeSet<DeviceId> = rules::leaves_of(group.members())?
             .into_iter()
             .map(|(_, device)| device)
             .collect();
         let known = self.known();
         self.knows_parent(&meta, &known)?;
-        let unfit = self.disallowed(&meta, &leaves, &known);
-        if !unfit.iter().all(|leaf| removes.contains(leaf)) {
+        let stale = self.staleness(&meta, &leaves, &known);
+        let opener_comes = stale.missing_opener.is_none_or(|opener| {
+            adds.iter()
+                .any(|add| key_package::info(add).is_ok_and(|info| info.device == opener))
+        });
+        if !stale.disallowed.iter().all(|leaf| removes.contains(leaf)) || !opener_comes {
             return Err(Error::StaleSession);
         }
         // 5.2.6: a group that failed its first contact takes only the Commit that removes leaves from it.
@@ -3160,21 +3262,9 @@ impl<S: Storage> Device<S> {
         Ok(GroupId::room(room))
     }
 
-    /// Adds a human device to the room group without an invite. Only under the cargo feature `vectors`, for
-    /// the scenario tests and the generator of the vectors, whose subject is not the invite; in a shipped
-    /// build a human device is added by [`Device::invite_confirm`] alone (12.1.4).
-    #[cfg(feature = "vectors")]
-    pub fn add_human_device(
-        &mut self,
-        device: &DeviceId,
-        key_package: &[u8],
-        now_ms: u64,
-    ) -> Result<u64, Error> {
-        self.transact(|this, batch| this.add_human(batch, device, key_package, now_ms))
-    }
-
     /// Commits the Add of the human device `device` to the room group with its KeyPackage (5.1.2, 12.1.5),
-    /// which must verify and be that device's (4.5).
+    /// which must verify and be that device's (4.5). The one caller is the Commit of a confirmed invite
+    /// (12.1.4).
     fn add_human(
         &mut self,
         batch: &mut Batch,
@@ -3237,20 +3327,8 @@ impl<S: Storage> Device<S> {
         self.transact(|this, batch| this.set_agents(batch, &[], remove, now_ms))
     }
 
-    /// Changes the room's enrolled agent devices without an invite. Only under the cargo feature `vectors`,
-    /// like [`Device::add_human_device`].
-    #[cfg(feature = "vectors")]
-    pub fn change_agents(
-        &mut self,
-        enrol: &[DeviceId],
-        remove: &[DeviceId],
-        now_ms: u64,
-    ) -> Result<u64, Error> {
-        self.transact(|this, batch| this.set_agents(batch, enrol, remove, now_ms))
-    }
-
     /// Commits a change of the room's enrolled agent devices (5.1.2): `enrol` are added to `agents`, `remove`
-    /// taken out.
+    /// taken out. A device is enrolled by the Commit of a confirmed invite alone (12.1.4).
     fn set_agents(
         &mut self,
         batch: &mut Batch,
@@ -3344,6 +3422,34 @@ impl<S: Storage> Device<S> {
         })
     }
 
+    /// Lets a human device into a session group again whose Welcome it could not use (3.7): one Commit that
+    /// removes its leaf, with the Cut this device holds for it, and adds the same key with the fresh
+    /// KeyPackage it asked with. Its chain goes on from that Cut, with envelopes of the new epoch on
+    /// (9.0.10). Any human device of the group does this (`forbidden` for another device, and in the room
+    /// group, where a device that cannot join comes back as a new device); `bad-commit` for a device that is
+    /// no human device of the room, for this device itself, and when the hub holds an envelope of the device
+    /// beyond the Cut, which this device then fetches before it asks again.
+    pub fn readmit_human(
+        &mut self,
+        group: &GroupId,
+        device: &DeviceId,
+        key_package: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        self.transact(|this, batch| {
+            if group.is_room() || !this.is_human() {
+                return Err(Error::Forbidden);
+            }
+            if *device == this.id || !this.history()?.newest().is_human(device) {
+                return Err(Error::BadCommit);
+            }
+            key_package::verify_key_package_of(key_package, device)?;
+            let (package, _) = key_package::validated(key_package)?;
+            let cuts = this.cuts_of(group, &[*device])?;
+            this.commit(batch, group, vec![package], &cuts, None, now_ms)
+        })
+    }
+
     /// The own-leaf update of a human device (5.2.9): an empty Commit when its leaf in `group` is older than
     /// seven days and its last update there older than a day; in the room group also when this device sent
     /// [`STROKE_PIECES_PER_EPOCH`] stroke pieces in the epoch (7.2); or at once when `forced` (`epoch-full`
@@ -3390,7 +3496,7 @@ impl<S: Storage> Device<S> {
     /// Joins the group a Welcome is for (12.1.5, 5.2.6). The Welcome must be for one of this device's
     /// KeyPackages, for a group of the expected room that this device does not hold, and committed by the
     /// expected device; one above [`MAX_COMMIT_REQUEST_LEN`] is `too-large` and is not parsed. A room group
-    /// with more than 32 human or 256 agent devices is refused (`too-many`).
+    /// with more human or agent devices than section 16 allows is refused (`too-many`).
     ///
     /// A device that followed the group as an observer becomes its leaf here: what it verified (the room's
     /// roles per epoch with every revocation, a main session's agent leaf over time) becomes its own record,
@@ -3470,10 +3576,13 @@ impl<S: Storage> Device<S> {
         {
             return Err(Error::WrongRoom);
         }
-        // A Welcome never replaces a group this device holds.
-        if self.memory.groups.contains_key(&id) {
+        // A Welcome never replaces a group this device holds. A session group it was removed from it joins
+        // again when its key was added again (3.7).
+        let left = self.memory.groups.get(&id).filter(|held| held.removed);
+        if self.memory.groups.contains_key(&id) && left.is_none() {
             return Err(Error::Replay);
         }
+        let seats = left.map(|held| held.seats.clone()).unwrap_or_default();
         let leaves = rules::leaves_of(staged.members())?;
         let added_by = staged
             .welcome_sender()
@@ -3499,6 +3608,7 @@ impl<S: Storage> Device<S> {
             own_leaf_ms: now_ms,
             joined_epoch: epoch,
             passed: self.memory.record.cursor,
+            seats,
             ..GroupMeta::default()
         };
         let mut offending = Vec::new();
@@ -3506,7 +3616,7 @@ impl<S: Storage> Device<S> {
             GroupKind::Room(_) => {
                 self.invited(batch, &id, &added_by, welcome)?;
                 let state = rules::room_state_of(staged.group_context(), &leaves)?;
-                // Section 16: a device is added to a room of at most 32 human and 256 agent devices.
+                // Section 16: a device is added to a room within its limits of human and agent devices.
                 if state.humans.len() > MAX_HUMAN_DEVICES
                     || state.room.agents.len() > MAX_AGENT_DEVICES
                 {
@@ -3817,6 +3927,8 @@ impl<S: Storage> Device<S> {
             .collect();
         let (posting, copy) = self.shadow(|this, batch| {
             this.take_checked(batch, keys, served.room, checked)?;
+            // Section 16: signing in makes no device beyond the room's limit; only a recovery does (8.7).
+            this.room_takes_one_more(MAX_HUMAN_DEVICES)?;
             this.join_built(batch, keys, served.group.current, &[], &walked, now_ms)
         })?;
         Ok(CodeJoin {
@@ -3824,6 +3936,15 @@ impl<S: Storage> Device<S> {
             missing_link,
             unverified,
         })
+    }
+
+    /// `too-many` when the room this device is about to join from outside holds `most` human devices or
+    /// more: the join would be refused by the hub and by every member, so it is not built.
+    fn room_takes_one_more(&self, most: usize) -> Result<(), Error> {
+        if self.history()?.newest().humans.len() >= most {
+            return Err(Error::TooMany);
+        }
+        Ok(())
     }
 
     /// Joins a live session group with the recovery code (8.4, 5.2.7), as a human device that joined the
@@ -3914,7 +4035,29 @@ impl<S: Storage> Device<S> {
         }
         Ok(new)
     }
+}
 
+/// Served envelopes in the hub's one order across senders and groups: ascending by change number, whatever
+/// order they were handed in. An envelope handed twice is kept once; two different envelopes under one
+/// change number are `bad-format`, since the hub gives every envelope a number of its own.
+fn in_the_hubs_order<'a>(served: &[ServedEnvelope<'a>]) -> Result<Vec<ServedEnvelope<'a>>, Error> {
+    let mut ordered: Vec<ServedEnvelope<'a>> = served.to_vec();
+    ordered.sort_by_key(|envelope| envelope.change);
+    let mut once: Vec<ServedEnvelope<'a>> = Vec::with_capacity(ordered.len());
+    for envelope in ordered {
+        match once.last() {
+            Some(last) if last.change == envelope.change => {
+                if last.bytes != envelope.bytes {
+                    return Err(Error::BadFormat);
+                }
+            }
+            _ => once.push(envelope),
+        }
+    }
+    Ok(once)
+}
+
+impl<S: Storage> Device<S> {
     /// The Cuts for the leaves `gone` of `group`: the head of each one's chain as this device accepted it
     /// (9.0.10), number 0 and zeros for a device of which it accepted nothing.
     fn cuts_of(&self, group: &GroupId, gone: &[DeviceId]) -> Result<Vec<Cut>, Error> {
@@ -3940,6 +4083,11 @@ impl<S: Storage> Device<S> {
     /// Cut is taken from a chain that does not hold. A device of which nothing is handed in is cut at
     /// nothing; what a hub withholds from the end of a chain cannot be seen here (section 17).
     ///
+    /// `chains` may be handed in any order, device after device or as they were fetched: this call reads
+    /// them in the hub's one order across devices and groups, ascending by their change numbers, which is
+    /// the order every envelope is judged in (a Note version builds on another device's). An envelope
+    /// handed twice is read once; two different envelopes under one change number are `bad-format`.
+    ///
     /// The outbox entries are the recovery's Commits in order and its finish. The device's state changes
     /// only when the hub accepted the finish; when the hub refuses any of them, or the recovery ran out,
     /// which the caller reports as a refusal, all of it goes and the state is as before.
@@ -3958,6 +4106,7 @@ impl<S: Storage> Device<S> {
         if !self.memory.staged.is_empty() {
             return Err(Error::Busy);
         }
+        let chains = in_the_hubs_order(chains)?;
         let mut checked = recovery::check_room(keys, served)?;
         let missing_link = checked.missing_link;
         // Every live session is joined and cleaned, or the hub publishes nothing.
@@ -3977,6 +4126,8 @@ impl<S: Storage> Device<S> {
         let room_group = GroupId::room(served.room);
         let (postings, copy) = self.shadow(|this, batch| {
             this.take_checked(batch, keys, served.room, checked)?;
+            // 8.7: while a recovery runs the room holds one human device more than its limit.
+            this.room_takes_one_more(profile::MAX_HUMAN_DEVICES_IN_RECOVERY)?;
             this.hold_mac(batch, replacement.keys.mac_key())?;
             let current = served.group.current;
             let mut postings = vec![this.join_built(batch, keys, current, &[], &walked, now_ms)?];
@@ -3984,7 +4135,7 @@ impl<S: Storage> Device<S> {
                 postings.push(this.join_built(batch, keys, current, seats, walked, now_ms)?);
             }
             // The chains of the devices to go, read from number 1 on this copy.
-            for served in chains {
+            for served in &chains {
                 let read = this.receive_in(
                     batch,
                     served.bytes,
@@ -4089,7 +4240,7 @@ impl<S: Storage> Device<S> {
                 return Err(Error::Gone);
             }
             // 5.2.8: nothing is written for a stale group but the Commit that cleans it, with its own row.
-            if !this.group(group)?.disallowed.is_empty() {
+            if this.group(group)?.is_stale() {
                 return Err(Error::StaleSession);
             }
             let state = group::load(&this.provider, group)?;
@@ -4415,7 +4566,7 @@ impl<S: Storage> Device<S> {
         };
         let context = Context {
             room: room.as_ref(),
-            sessions: &known,
+            sessions: &recovery::At(&known, entry.change),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
         };
@@ -4426,7 +4577,13 @@ impl<S: Storage> Device<S> {
             .ok_or(Error::NotFound)?;
         let followed = match room_epoch {
             None => observer.process_commit(commit, recovery_auth, &context),
-            Some(at) => observer.process_commit_at(commit, recovery_auth, &context, at),
+            Some(at) => {
+                let place = observer::Place {
+                    change: entry.change,
+                    room_epoch: observer::RoomEpochAt::Epoch(at),
+                };
+                observer.process_commit_at(commit, recovery_auth, &context, &place)
+            }
         };
         match followed {
             Ok(facts) => {
@@ -4535,6 +4692,7 @@ impl<S: Storage> Device<S> {
                     return Err(Error::BadGroup);
                 }
                 let (after, cuts) = self.judge_own(id, session, public, commit, Some(change))?;
+                self.meta(id)?.place = change;
                 self.merge_own(batch, id, &cuts)?;
                 // What OpenMLS held as the pending Commit is the Commit the log shows: merged, it leads
                 // to the group context that Commit leads to for everyone. Anything else is a stored
@@ -4571,7 +4729,8 @@ impl<S: Storage> Device<S> {
         let history = self.history()?;
         let verifier = Verifier {
             history,
-            sessions: &known,
+            // 5.2.1: a helper session's opener is its main session's agent leaf at the Commit's place.
+            sessions: &recovery::At(&known, change),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
             room_epoch: match meta.session {
@@ -4597,6 +4756,11 @@ impl<S: Storage> Device<S> {
                 &judged,
             )?,
         }
+        // 9.0.10: a key is added again only if nothing of it is held beyond its Cut. What this device holds it
+        // was served by the hub, which decides this for everyone and should have refused the Commit.
+        if let Some(note) = facts.note.as_ref() {
+            self.nothing_beyond(id, &note.cuts, &facts.adds)?;
+        }
         let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
             return Err(Error::BadGroup);
         };
@@ -4611,8 +4775,10 @@ impl<S: Storage> Device<S> {
             .merge_staged_commit(&self.provider, *staged)
             .map_err(|_| Error::BadGroup)?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
-        if self.meta(id)?.distrusted {
-            // The offending leaves of a first contact may be gone now.
+        let meta = self.meta(id)?;
+        if meta.distrusted && !meta.closed {
+            // The offending leaves of a first contact may be gone now. A group whose history broke the
+            // rules stays closed: no later Commit makes that history another one.
             let after: BTreeSet<DeviceId> = rules::leaves_of(group.members())?
                 .into_iter()
                 .map(|(_, device)| device)
@@ -4712,7 +4878,7 @@ impl<S: Storage> Device<S> {
         let known = self.known();
         let devices: BTreeSet<DeviceId> = leaves.iter().map(|(_, device)| *device).collect();
         if self.knows_parent(&meta, &known).is_err()
-            || !self.disallowed(&meta, &devices, &known).is_empty()
+            || self.staleness(&meta, &devices, &known).is_stale()
         {
             return Ok(Processed::Skipped);
         }
@@ -4907,7 +5073,7 @@ impl<S: Storage> Device<S> {
             .collect();
         let known = self.known();
         self.knows_parent(&meta, &known)?;
-        if !self.disallowed(&meta, &leaves, &known).is_empty() {
+        if self.staleness(&meta, &leaves, &known).is_stale() {
             return Err(Error::StaleSession);
         }
         // A message may carry keys: its plaintext is wiped.

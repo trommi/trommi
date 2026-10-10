@@ -5,12 +5,13 @@
 
 use std::time::{Duration, Instant};
 use trommi_core::ids::GroupId;
+use trommi_core::invite::Role;
 use trommi_core::mls::profile::{Cut, MAX_COMMIT_REQUEST_LEN, MAX_KEY_PACKAGE_LEN};
 use trommi_core::store::OutboxEntry;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, found_room, new_device, now, post_ok, process, settle, sync_ok, take_welcomes,
-    TestDevice,
+    add_human, found_room, join_invited, new_device, now, post_ok, process, settle, sync_ok,
+    try_invite, TestDevice,
 };
 
 /// A room group of `leaves` human devices, each of which has committed once.
@@ -90,17 +91,12 @@ fn sizes_and_times_for_groups_of_3_10_and_30_leaves() {
         let package = newcomer.key_package(now()).unwrap();
         assert!(package.len() < MAX_KEY_PACKAGE_LEN / 4);
         let start = Instant::now();
-        committer
-            .add_human_device(&newcomer.id(), &package, now())
-            .unwrap();
+        try_invite(committer, &mut newcomer, Role::Human, None).unwrap();
         let build = start.elapsed();
         let entry = committer.outbox().remove(0);
         post_ok(&mut hub, committer);
         let start = Instant::now();
-        assert_eq!(
-            take_welcomes(&hub, &mut newcomer, trommi_tests::added_at(&hub)).len(),
-            1
-        );
+        join_invited(&hub, &mut newcomer);
         let add = row("add, join by Welcome", &entry, build, start.elapsed());
         assert!(add.2 > 0);
         sync_ok(&hub, other);

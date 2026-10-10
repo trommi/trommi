@@ -1,7 +1,9 @@
 //! The rules for Commits (sections 3.3, 3.4, 4 and 5) on hand-built facts: every refusal with its code.
 
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId, SessionId};
-use trommi_core::mls::profile::{CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession};
+use trommi_core::mls::profile::{
+    CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_HUMAN_DEVICES, MAX_NOTE_LEN,
+};
 use trommi_core::mls::rules::*;
 use trommi_core::Error;
 
@@ -383,8 +385,24 @@ fn a_join_from_outside_needs_the_recovery_signature() {
 }
 
 #[test]
-fn the_thirty_third_human_device_comes_by_a_join_from_outside_only() {
+fn the_device_beyond_the_limit_comes_by_a_join_from_outside_only() {
     let group = GroupId::room(ROOM);
+    let limit = MAX_HUMAN_DEVICES;
+    // Human device number `n`, from 1.
+    let human = |n: usize| {
+        let mut id = [0x48; 32];
+        id[..8].copy_from_slice(&(n as u64).to_be_bytes());
+        DeviceId::new(id)
+    };
+    let room_of = |humans: usize| {
+        let mut first = state(0, &[], &[]);
+        first.humans = (1..=humans).map(human).collect();
+        RoomHistory::new(first)
+    };
+    let by = |n: usize, mut facts: CommitFacts| {
+        facts.committer = human(n);
+        facts
+    };
     let verdict = |history: &RoomHistory, facts: &CommitFacts, most: usize| {
         let verifier = Verifier {
             history,
@@ -403,32 +421,46 @@ fn the_thirty_third_human_device_comes_by_a_join_from_outside_only() {
             },
         )
     };
-    let humans: Vec<u8> = (1..=33).collect();
-    let full = RoomHistory::new(state(0, &humans[..32], &[]));
-    let mut join = facts(group, 0, 33, 0);
+    let full = room_of(limit);
+    let mut join = by(limit + 1, facts(group, 0, 0, 0));
     join.external = true;
     join.external_inits = 1;
     join.note.as_mut().unwrap().join = true;
 
-    // A room of 32: a device that cannot know whether a recovery runs allows 33, and still takes no Add of
-    // a 33rd, only a join from outside. A hub outside a recovery allows 32 and takes neither.
-    let add = adding(facts(group, 0, 1, 0), &[33]);
-    assert_eq!(verdict(&full, &add, 33), Err(Error::TooMany));
-    assert_eq!(verdict(&full, &add, 32), Err(Error::TooMany));
-    assert_eq!(verdict(&full, &join, 33), Ok(()));
-    assert_eq!(verdict(&full, &join, 32), Err(Error::TooMany));
+    // A full room: a device that cannot know whether a recovery runs allows one more, and still takes no
+    // Add of that device, only a join from outside. A hub outside a recovery allows the limit and takes
+    // neither.
+    let mut add = by(1, facts(group, 0, 0, 0));
+    add.adds = vec![human(limit + 1)];
+    assert_eq!(verdict(&full, &add, limit + 1), Err(Error::TooMany));
+    assert_eq!(verdict(&full, &add, limit), Err(Error::TooMany));
+    assert_eq!(verdict(&full, &join, limit + 1), Ok(()));
+    assert_eq!(verdict(&full, &join, limit), Err(Error::TooMany));
+    // One below the limit both take the Add.
+    let mut last = by(1, facts(group, 0, 0, 0));
+    last.adds = vec![human(limit)];
+    assert_eq!(verdict(&room_of(limit - 1), &last, limit), Ok(()));
 
-    // A room of 33, as a recovery leaves it for a moment: a Commit that adds nobody passes, so that the
-    // other devices are removed and the room can go on; nobody is added, and nobody else joins.
-    let over = RoomHistory::new(state(0, &humans, &[]));
-    assert_eq!(verdict(&over, &facts(group, 0, 33, 0), 33), Ok(()));
-    let removal = removing(facts(group, 0, 33, 0), &humans[..32]);
-    assert_eq!(verdict(&over, &removal, 33), Ok(()));
-    assert_eq!(verdict(&over, &removal, 32), Ok(()));
-    let swap = adding(removing(facts(group, 0, 33, 0), &[1]), &[34]);
-    assert_eq!(verdict(&over, &swap, 33), Err(Error::TooMany));
-    join.committer = device(34);
-    assert_eq!(verdict(&over, &join, 33), Err(Error::TooMany));
+    // One above the limit, as a recovery leaves the room for a moment: a Commit that adds nobody passes, so
+    // that the other devices are removed and the room can go on; nobody is added, and nobody else joins.
+    let over = room_of(limit + 1);
+    let own = by(limit + 1, facts(group, 0, 0, 0));
+    assert_eq!(verdict(&over, &own, limit + 1), Ok(()));
+    let mut removal = own.clone();
+    removal.removes = (1..=limit).map(human).collect();
+    removal.note.as_mut().unwrap().cuts = removal.removes.iter().copied().map(Cut::none).collect();
+    assert_eq!(verdict(&over, &removal, limit + 1), Ok(()));
+    assert_eq!(verdict(&over, &removal, limit), Ok(()));
+    // Its note, with a Cut for every device that goes, is within what a note may have.
+    let note = trommi_core::codec::encode(removal.note.as_ref().unwrap()).unwrap();
+    assert!(note.len() <= MAX_NOTE_LEN);
+    let mut swap = own.clone();
+    swap.removes = vec![human(1)];
+    swap.note.as_mut().unwrap().cuts = vec![Cut::none(human(1))];
+    swap.adds = vec![human(limit + 2)];
+    assert_eq!(verdict(&over, &swap, limit + 1), Err(Error::TooMany));
+    join.committer = human(limit + 2);
+    assert_eq!(verdict(&over, &join, limit + 1), Err(Error::TooMany));
 }
 
 #[test]
@@ -881,4 +913,182 @@ fn a_human_device_gives_a_helper_session_its_new_opener() {
     // A verifier that does not follow the main session cannot tell which agent device that is: it takes
     // none for it and does not judge the Commit.
     assert_eq!(verdict(Parent::Unknown), Err(Error::RoomBehind));
+}
+
+#[test]
+fn a_helper_session_that_lacks_its_opener_is_stale_until_it_is_added() {
+    let history = history();
+    let helper = session(MAIN, HELPER);
+    let seated = Parent::Seat(Some(device(AGENT)));
+    let leaves = |bytes: &[u8]| bytes.iter().map(|byte| device(*byte)).collect();
+    let stale = |parent: Parent, bytes: &[u8]| {
+        staleness(&history, history.newest(), &helper, parent, &leaves(bytes))
+    };
+    // The main session has an agent leaf that is no leaf here: stale, and the predicate says why.
+    let lacking = stale(seated, &[H1, H2, SUB]);
+    assert!(lacking.is_stale());
+    assert_eq!(
+        (lacking.disallowed, lacking.missing_opener),
+        (vec![], Some(device(AGENT)))
+    );
+    assert!(!stale(seated, &[H1, H2, AGENT, SUB]).is_stale());
+    // While the main session has no agent leaf the helper session waits without an opener (5.2.3, 5.3.3);
+    // so it does under a main session the verifier holds for none, and a main session is never stale so.
+    assert!(!stale(Parent::Seat(None), &[H1, H2, SUB]).is_stale());
+    assert!(!stale(Parent::NotAMainSession, &[H1, H2, SUB]).is_stale());
+    let main = session(SessionId::ZERO, MAIN);
+    assert!(!staleness(
+        &history,
+        history.newest(),
+        &main,
+        seated,
+        &leaves(&[H1, H2])
+    )
+    .is_stale());
+    // An outdated opener leaf and the missing opener are named together.
+    let both = stale(Parent::Seat(Some(device(OTHER_AGENT))), &[H1, AGENT]);
+    assert_eq!(
+        (both.disallowed, both.missing_opener),
+        (vec![device(AGENT)], Some(device(OTHER_AGENT)))
+    );
+
+    let verdict = |before: &SessionBefore, facts: &CommitFacts| {
+        session_verdict(&history, &SESSIONS, before, facts)
+    };
+    let waiting = before(helper, &[H1, H2, SUB], 2);
+    let group = helper.group_id();
+    // Nothing is taken but the Commit that adds the opener: no update, no Add of a human device, no Remove.
+    assert_eq!(
+        verdict(&waiting, &facts(group, 4, H1, 2)),
+        Err(Error::StaleSession)
+    );
+    let small = before(helper, &[H1, SUB], 2);
+    assert_eq!(
+        verdict(&small, &adding(facts(group, 4, H1, 2), &[H2])),
+        Err(Error::StaleSession)
+    );
+    // The repair: the Add of the main session's agent leaf alone, by any human device of the group.
+    for human in [H1, H2] {
+        assert_eq!(
+            verdict(&waiting, &adding(facts(group, 4, human, 2), &[AGENT])),
+            Ok(())
+        );
+    }
+    // Or with the Remove of an outdated opener leaf in one Commit; the Remove alone leaves the group stale.
+    let outdated = before(helper, &[H1, H2, OTHER_AGENT, SUB], 2);
+    let sessions = Sessions {
+        seat: seated,
+        elsewhere: None,
+        helpers: 1,
+    };
+    let mut gone_history = history.clone();
+    gone_history.record(state(3, &[H1, H2], &[AGENT])).unwrap();
+    let verdict = |facts: &CommitFacts| session_verdict(&gone_history, &sessions, &outdated, facts);
+    let remove = removing(facts(group, 4, H1, 3), &[OTHER_AGENT]);
+    assert_eq!(verdict(&remove), Err(Error::StaleSession));
+    assert_eq!(verdict(&adding(remove, &[AGENT])), Ok(()));
+    // A helper device commits nothing, stale or not.
+    assert_eq!(
+        verdict(&adding(facts(group, 4, SUB, 3), &[AGENT])),
+        Err(Error::BadCommit)
+    );
+}
+
+#[test]
+fn a_leaf_is_removed_and_its_key_added_again_in_a_session_group_only() {
+    let history = history();
+    // 3.7: into a session group a human device is let in again by one Commit of a human device.
+    let main = session(SessionId::ZERO, MAIN);
+    let leaves = before(main, &[H1, H2, AGENT], 2);
+    let again = adding(removing(facts(main.group_id(), 4, H1, 2), &[H2]), &[H2]);
+    assert_eq!(
+        session_verdict(&history, &SESSIONS, &leaves, &again),
+        Ok(())
+    );
+    // Also in a helper session that waits without an opener, where no other allowed leaf is removed.
+    let helper = session(MAIN, HELPER);
+    let waiting = Sessions {
+        seat: Parent::Seat(None),
+        elsewhere: None,
+        helpers: 1,
+    };
+    let leaves = before(helper, &[H1, H2, SUB], 2);
+    let group = helper.group_id();
+    let again = adding(removing(facts(group, 4, H1, 2), &[H2]), &[H2]);
+    assert_eq!(session_verdict(&history, &waiting, &leaves, &again), Ok(()));
+    assert_eq!(
+        session_verdict(
+            &history,
+            &waiting,
+            &leaves,
+            &removing(facts(group, 4, H1, 2), &[H2])
+        ),
+        Err(Error::BadCommit)
+    );
+    // The opener lets no human device in again: it removes no human leaf (5.2.4).
+    let leaves = before(helper, &[H1, H2, AGENT, SUB], 2);
+    let by_opener = adding(removing(facts(group, 4, AGENT, 2), &[H2]), &[H2]);
+    assert_eq!(
+        session_verdict(&history, &SESSIONS, &leaves, &by_opener),
+        Err(Error::BadCommit)
+    );
+    // Into the room group there is no second try: a Commit that removes a leaf and adds its key is
+    // refused, as is the Add of a key that an earlier Commit removed (4.2).
+    let room = GroupId::room(ROOM);
+    let again = adding(removing(facts(room, 2, H1, 2), &[H2]), &[H2]);
+    assert_eq!(room_verdict(&history, &again), Err(Error::BadCommit));
+    let mut later = history.clone();
+    later
+        .record(state(3, &[H1], &[AGENT, OTHER_AGENT]))
+        .unwrap();
+    let returning = adding(facts(room, 3, H1, 3), &[H2]);
+    assert_eq!(room_verdict(&later, &returning), Err(Error::BadCommit));
+}
+
+#[test]
+fn the_repair_of_a_stale_session_does_nothing_beside() {
+    let history = history();
+    let helper = session(MAIN, HELPER);
+    let group = helper.group_id();
+    let verdict = |before: &SessionBefore, facts: &CommitFacts| {
+        session_verdict(&history, &SESSIONS, before, facts)
+    };
+    // The helper session lacks its opener. The Add of the opener is the repair; with the Remove of a human
+    // device the room allows, or the Add of another human device, it is not.
+    let lacking = before(helper, &[H1, H2, SUB], 2);
+    let repair = adding(facts(group, 4, H1, 2), &[AGENT]);
+    assert_eq!(verdict(&lacking, &repair), Ok(()));
+    let and_a_removal = removing(repair.clone(), &[H2]);
+    assert_eq!(verdict(&lacking, &and_a_removal), Err(Error::StaleSession));
+    let and_a_helper_gone = removing(repair, &[SUB]);
+    assert_eq!(
+        verdict(&lacking, &and_a_helper_gone),
+        Err(Error::StaleSession)
+    );
+    let small = before(helper, &[H1, SUB], 2);
+    let and_a_human = adding(facts(group, 4, H1, 2), &[AGENT, H2]);
+    assert_eq!(verdict(&small, &and_a_human), Err(Error::StaleSession));
+
+    // A main session with a leaf the room no longer allows: the Remove of that leaf, with the agent device
+    // that takes over, and no other Remove with it.
+    let mut later = history.clone();
+    later.record(state(3, &[H1, H2], &[OTHER_AGENT])).unwrap();
+    let main = session(SessionId::ZERO, MAIN);
+    let stale = before(main, &[H1, H2, AGENT], 2);
+    let sessions = Sessions {
+        seat: Parent::NotAMainSession,
+        elsewhere: None,
+        helpers: 0,
+    };
+    let verdict = |facts: &CommitFacts| session_verdict(&later, &sessions, &stale, facts);
+    let takeover = adding(
+        removing(facts(main.group_id(), 4, H1, 3), &[AGENT]),
+        &[OTHER_AGENT],
+    );
+    assert_eq!(verdict(&takeover), Ok(()));
+    let and_more = adding(
+        removing(facts(main.group_id(), 4, H1, 3), &[H2, AGENT]),
+        &[OTHER_AGENT],
+    );
+    assert_eq!(verdict(&and_more), Err(Error::StaleSession));
 }
