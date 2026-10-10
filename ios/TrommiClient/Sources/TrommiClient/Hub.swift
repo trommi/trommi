@@ -242,7 +242,7 @@ public final class HubClient: @unchecked Sendable {
     case .sealedKey:
       return try await request("PUT", "/sealed-keys", body: ["sealed_key": part(0)])
     case .recoveryCode:
-      return try await request("POST", "/rooms/\(b64u(room))/recovery-code", body: ["epoch": e.epoch, "commit": part(0), "group_info": part(1), "sealed_key": part(2), "recovery_link": part(3), "account": accountPart(4)])
+      return try await request("POST", "/rooms/\(b64u(room))/recovery-code", body: ["commit": ["epoch": e.epoch, "commit": part(0), "group_info": part(1), "sealed_key": part(2)] as JSON, "recovery_link": part(3), "account": accountPart(4)])
     case .recoveryCommit, .recoveryFinish:
       guard let id = recovery else { throw TrommiError("incomplete", "a part of a recovery is posted into the recovery it was built for") }
       if e.kind == .recoveryFinish { return try await request("POST", "/rooms/\(b64u(room))/recovery/\(b64u(id))/finish", body: ["recovery_link": part(0), "account": accountPart(1)]) }
