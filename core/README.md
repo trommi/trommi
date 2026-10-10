@@ -96,6 +96,11 @@ its finish, and the device's state changes only when the hub accepted the finish
 Newest first. The interface grows by adding; these are the additions that an exhaustive `match` or a caller's
 assumptions have to take in.
 
+- Four more codes a hub answers with (spec section 16): `Error::AccountChanged` (`account-changed`, 409),
+  `Error::BadEmail` (`bad-email`, 400), `Error::BadPasskey` (`bad-passkey`, 400), `Error::Range` (`range`,
+  416); `Error::from_code` reads them. An exhaustive `match` on `Error` takes them in. `bad-email` is also a
+  code of `account::AccountError`, where the device refuses an address before it derives anything. The local
+  codes (`busy`, `storage`, `entropy`, and the account's own) never travel; section 16 names them.
 - A full room (spec section 16). `join_room_with_code` answers `too-many` for a room that already holds its
   limit of human devices, before anything is built; `recover` one device later (8.7). A hub that took a join
   past the limit all the same leaves a history that no later joiner takes (`bad-group`): the hub refuses such
