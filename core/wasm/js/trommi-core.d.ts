@@ -721,6 +721,37 @@ export interface Learned {
   epochs: number
 }
 
+/** What a hub serves to begin the check of a room in steps: everything but the Commits. */
+export interface ServedStart {
+  room: Uint8Array
+  founding: Uint8Array
+  anchor: Uint8Array
+  rows: Uint8Array[]
+  /** The founding GroupInfo of every live session group, main sessions before helper sessions. */
+  sessions: Uint8Array[]
+}
+
+/** One Commit of a room's logs, with its group (the room group or a session named at the start). */
+export interface PlacedCommit {
+  group: Uint8Array
+  commit: ServedCommit
+}
+
+/** What a hub serves to end the check of a room: the GroupInfos it offers as current, and the keys. */
+export interface ServedEnd {
+  current: Uint8Array
+  /** One per session of the start, in its order (`bad-format` for another number). */
+  sessions: Uint8Array[]
+  rows: Uint8Array[]
+  links: Uint8Array[]
+}
+
+/** Where a walk of a group's past stands: the epoch reached, and the one it ends at. */
+export interface LearnProgress {
+  epoch: number
+  upto: number
+}
+
 /** Where a device's knowledge of a group begins. */
 export interface GroupPast {
   /** The epoch its own knowledge begins at: the one it joined at, or began to follow at. */
@@ -892,6 +923,30 @@ export class Device {
   /** Where this device's knowledge of a group begins, also for a followed group (not in `groups`); null for a
    *  group it neither is a leaf of nor follows. */
   groupPast(group: Uint8Array): Promise<GroupPast | null>
+  // The same walks in steps, for a history too large for one call. Each walk is held in memory only, one of each
+  // kind at a time (a new start replaces it); a reopened device holds none. A slice: at most 256 Commits of at
+  // most 16 MiB together (`too-large`, and the walk stands); any other refusal of a slice ends the walk.
+  /** Begins the walk of a group's past at its founding GroupInfo (`learnHistory` in steps). */
+  learnStart(group: Uint8Array, founding: Uint8Array): Promise<LearnProgress>
+  learnSlice(group: Uint8Array, commits: ServedCommit[]): Promise<LearnProgress>
+  /** Takes the walk if it arrived at the device's own state (`bad-group` otherwise); the walk is gone. */
+  learnFinish(group: Uint8Array): Promise<Learned>
+  learnAbandon(group: Uint8Array): Promise<void>
+  /** Begins the check of a room for a join or a recovery with the code (`joinRoomWithCode` in steps). */
+  codeCheckStart(recoveryCode: Uint8Array, served: ServedStart): Promise<void>
+  /** The next Commits of the room group and the sessions named at the start, ascending by change number. */
+  codeCheckSlice(commits: PlacedCommit[]): Promise<void>
+  joinRoomChecked(recoveryCode: Uint8Array, served: ServedEnd, nowMs: number): Promise<CodeJoin>
+  /** `recover` on the held check, with the plan of `prepareRecovery` or `recoveryPlanFinish`. */
+  recoverChecked(recoveryCode: Uint8Array, served: ServedEnd, chains: ServedEnvelope[], account: Uint8Array, nowMs: number): Promise<CodeJoin>
+  /** Begins the check of a session group to join with the code; returns the group. */
+  sessionCheckStart(founding: Uint8Array): Promise<Uint8Array>
+  sessionCheckSlice(group: Uint8Array, commits: ServedCommit[]): Promise<void>
+  joinSessionChecked(recoveryCode: Uint8Array, group: Uint8Array, current: Uint8Array, nowMs: number): Promise<number>
+  /** `prepareRecovery` in steps, on a check of its own (the device's check for `recoverChecked` is another). */
+  recoveryPlanStart(recoveryCode: Uint8Array, served: ServedStart): Promise<void>
+  recoveryPlanSlice(commits: PlacedCommit[]): Promise<void>
+  recoveryPlanFinish(recoveryCode: Uint8Array, served: ServedEnd): Promise<RecoveryPlan>
 }
 
 // ---- files --------------------------------------------------------------------------------------------------------
