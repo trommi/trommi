@@ -250,14 +250,16 @@ pub fn tag_number(tag: &str) -> Option<u64> {
 }
 
 /// The release tags in GitHub's feed of a repository's releases (`https://github.com/<repo>/releases.atom`),
-/// highest number first, whatever the series is called. Which of them hold a connector for this machine is
-/// asked of each in turn ([`update`]): the feed does not list a release's files.
+/// highest number first, of the series that hold a connector: `connector-v<N>` and `v<N>`. Which of them hold a
+/// connector for this machine is asked of each in turn ([`update`]): the feed does not list a release's files.
 pub fn tags_in_feed(feed: &str) -> Vec<String> {
     let link = format!("href=\"https://github.com/{REPOSITORY}/releases/tag/");
     let mut tags: Vec<(u64, String)> = feed
         .split(link.as_str())
         .skip(1)
         .filter_map(|rest| rest.split('"').next())
+        // only the series that hold a connector; other parts' releases share the numbers (hub-v34)
+        .filter(|tag| tag.starts_with('v') || tag.starts_with("connector-v"))
         .filter_map(|tag| tag_number(tag).map(|number| (number, tag.to_string())))
         .collect();
     tags.sort_by(|a, b| b.cmp(a));
