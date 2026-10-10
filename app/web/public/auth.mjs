@@ -1236,7 +1236,7 @@ ${obError()}${obSubmit('Next')}</form></details>
       if (err.code === 'cancelled') return
       console.error(err)
       if (err.code === 'room-exists') return roomExists()
-      joinFailed({ 'invite-used': 'This code was used already.', 'invite-expired': 'This code has run out.', 'invite-burned': 'The emoji did not match there.' }[err.code] ?? accountError(err))
+      joinFailed({ 'invite-used': 'This code was used already.', 'invite-expired': 'This code has run out.', 'invite-burned': 'The emoji did not match there.', 'bad-invite': 'This link is not a valid invite. Ask for a new one.' }[err.code] ?? accountError(err))
     }
   }
   function joinWait() { show(obShell('Log in', html`<p class="room-wait">Asking the other device…</p>`), null) }
