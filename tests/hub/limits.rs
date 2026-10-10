@@ -927,3 +927,45 @@ fn a_claim_names_at_most_1024_devices() {
         )
         .refused(400, "bad-format");
 }
+
+/// A page of the list of groups in a room of thousands of groups the asker may not see: read by the index of
+/// founding, not by sorting the room again for every step.
+#[test]
+fn a_page_of_groups_among_thousands_hidden() {
+    let mut w = world(&[]);
+    let agent = w.enrol_agent();
+    let room = w.room;
+    {
+        let db = rusqlite::Connection::open(w.hub.dir.join("hub.db")).unwrap();
+        db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        db.execute_batch("BEGIN").unwrap();
+        for i in 0..5000u32 {
+            let mut session = [0u8; 16];
+            session[..4].copy_from_slice(&i.to_be_bytes());
+            db.execute(
+                "INSERT INTO groups (group_id, room_id, kind, session_id, founder, epoch, room_epoch, epoch_at, live, founded_change, state)
+                 VALUES (?1, ?2, 'main', ?3, ?4, 1, 0, 0, 0, ?5, x'00')",
+                rusqlite::params![[&room[..], &session[..]].concat(), &room[..], &session[..], &w.ada.id()[..], 1_000_000 + i as i64],
+            )
+            .unwrap();
+        }
+        db.execute_batch("COMMIT").unwrap();
+    }
+    let path = format!("/v2/rooms/{}/groups", b64(&room));
+    let t = std::time::Instant::now();
+    let first = agent.get(&w.hub, &format!("{path}?limit=1")).ok();
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["items"][0]["kind"], "room");
+    let after = first["after"].as_i64().unwrap();
+    let rest = agent
+        .get(&w.hub, &format!("{path}?after={after}&limit=1"))
+        .ok();
+    assert_eq!(rest["items"], json!([]));
+    assert_eq!(rest["more"], false);
+    let took = t.elapsed();
+    assert!(took < std::time::Duration::from_secs(2), "{took:?}");
+    // a human device sees them all, page by page
+    let page = w.ada.get(&w.hub, &format!("{path}?limit=1000")).ok();
+    assert_eq!(page["items"].as_array().unwrap().len(), 1000);
+    assert_eq!(page["more"], true);
+}
