@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# TestFlight without CI: builds the App Store version of ios/TrommiApp on this Linux machine (xtool, the darwin SDK,
-# rcodesign; ios/README.md "TestFlight without CI"), signs it for App Store distribution, uploads it with the App Store
+# TestFlight without CI: builds the App Store version of app/ios/TrommiApp on this Linux machine (xtool, the darwin SDK,
+# rcodesign; app/ios/README.md "TestFlight without CI"), signs it for App Store distribution, uploads it with the App Store
 # Connect Build Uploads API, waits until it is VALID, puts it into the internal group "Intern" and sets its German
 # "What to Test" from the commit subjects since the last build.
 #
@@ -22,7 +22,7 @@
 # They may stand in ~/.config/trommi/ios.env (shell assignments; TROMMI_IOS_ENV names another file), read first.
 # Nothing here prints key material or tokens. The app extensions (PlugIns/: TrommiShare, com.trommi.ios.share;
 # TrommiNotify, .notify; TrommiLive, .live) ship each with its own App Store profile; all carry the App Group
-# group.com.trommi.ios (ios/README.md "Share Extension", "Push").
+# group.com.trommi.ios (app/ios/README.md "Share Extension", "Push").
 set -euo pipefail
 
 dry=0
@@ -65,7 +65,7 @@ case "$ref" in origin/*) git -C "$repo" fetch -q origin "${ref#origin/}" ;; esac
 git -C "$repo" worktree add -q --detach "$work/src" "$ref"
 src="$work/src"
 sha=$(git -C "$src" rev-parse --short=7 HEAD)
-app_dir="$src/ios/TrommiApp"
+app_dir="$src/app/ios/TrommiApp"
 asc() { python3 "$here/asc.py" "$@"; }
 version=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' "$app_dir/AppStore/project.yml")
 [ -n "$version" ] || { echo "no MARKETING_VERSION in AppStore/project.yml" >&2; exit 1; }
@@ -75,7 +75,7 @@ echo "building $BUNDLE_ID $version ($build) from $sha"
 
 echo "== 2. Release build (the Rust core, then xtool) =="
 # The app links trommi-core (Rust) as a static library. The library and UniFFI's Swift file and C header are build
-# output, not in the repository, so a clean worktree has none: build them first (ios/README.md "The Rust core").
+# output, not in the repository, so a clean worktree has none: build them first (app/ios/README.md "The Rust core").
 # The cargo target folder is kept between runs (CARGO_TARGET_DIR), so only the first run compiles everything.
 command -v cargo >/dev/null || { echo "no cargo on PATH (rustup; the compiler and targets are named in rust-toolchain.toml)" >&2; exit 1; }
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$out_dir/target} sh "$src/core/swift/build.sh" ios
@@ -123,15 +123,15 @@ ent = plistlib.load(open(out, "rb"))
 raw = open(prov, "rb").read()
 granted = plistlib.loads(raw[raw.index(b"<?xml"):raw.index(b"</plist>") + 8])["Entitlements"]
 # Communication notifications (the session's drawing on a push) need a tick in the developer portal the API cannot
-# make (ios/README.md "Push"): without it the build ships without them, and a push shows the title without the drawing.
+# make (app/ios/README.md "Push"): without it the build ships without them, and a push shows the title without the drawing.
 OPTIONAL = {"com.apple.developer.usernotifications.communication"}
 for k, v in plistlib.load(open(extra, "rb")).items():
     if granted.get(k) != v and not (isinstance(v, list) and granted.get(k) == "*"):
         if k in OPTIONAL:
-            print(f"warning: {k} left out (the profile does not grant it; ios/README.md \"Push\")")
+            print(f"warning: {k} left out (the profile does not grant it; app/ios/README.md \"Push\")")
             continue
         sys.exit(f"the App Store profile does not grant {k} = {v} (it grants {granted.get(k)!r}); for the App Group: "
-                 "ios/README.md \"Share Extension\" (assign group.com.trommi.ios to the id in the developer portal)")
+                 "app/ios/README.md \"Share Extension\" (assign group.com.trommi.ios to the id in the developer portal)")
     ent[k] = v
 plistlib.dump(ent, open(out, "wb"))
 print("entitlements:", ", ".join(f"{k}={v}" for k, v in sorted(ent.items())))
@@ -178,7 +178,7 @@ asc internal "$build_id" Intern "$tester"
 if [ -z "${NOTES:-}" ]; then
   since=$(asc last-sha || true)
   if [ -n "$since" ] && git -C "$src" merge-base --is-ancestor "$since" HEAD 2>/dev/null; then
-    subjects=$(git -C "$src" log --no-merges --format='- %s' "$since..HEAD" -- ios)
+    subjects=$(git -C "$src" log --no-merges --format='- %s' "$since..HEAD" -- app/ios)
   fi
   [ -n "${subjects:-}" ] || subjects=$(git -C "$src" log -1 --format='- %s')
   NOTES=$(printf 'Neu in Build %s (%s):\n%s' "$build" "$sha" "$subjects")

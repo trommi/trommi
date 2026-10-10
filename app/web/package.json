@@ -16,13 +16,13 @@
   "scripts": {
     "test": "npm run typecheck && npm run test:app && npm run test:web",
     "typecheck": "tsc -p .",
-    "test:app": "node app/web/dev/check.mjs",
-    "test:demo": "node demo/check.mjs",
-    "test:web": "node --test tests/web/model/ tests/web/views/ tests/web/hub/ tests/web/account/ tests/web/client/ tests/web/worker/",
-    "test:browser": "node tests/web/store/run.mjs && node --test tests/web/build/build.test.mjs && node tests/web/build/wasm-load.mjs && node tests/web/proof/proof.mjs",
-    "build:core": "core/wasm/build.sh",
-    "build": "node app/web/dev/build.mjs",
-    "serve": "node app/web/dev/serve.mjs"
+    "test:app": "node dev/check.mjs",
+    "test:demo": "node ../../demo/check.mjs",
+    "test:web": "node --test ../../tests/web/model/ ../../tests/web/views/ ../../tests/web/hub/ ../../tests/web/account/ ../../tests/web/client/ ../../tests/web/worker/",
+    "test:browser": "node ../../tests/web/store/run.mjs && node --test ../../tests/web/build/build.test.mjs && node ../../tests/web/build/wasm-load.mjs && node ../../tests/web/proof/proof.mjs",
+    "build:core": "../../core/wasm/build.sh",
+    "build": "node dev/build.mjs",
+    "serve": "node dev/serve.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

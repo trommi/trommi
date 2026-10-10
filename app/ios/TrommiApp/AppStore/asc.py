@@ -122,8 +122,8 @@ def prepare(bundle):
     # The app (push, the App Group of its extensions, universal links of app.trommi.com) and its extensions: Share, the
     # Notification Service Extension, the Live Activity widget (each the App Group). The API turns the App Groups
     # capability on but cannot create the group or assign it: group.com.trommi.ios is made and assigned to every id once
-    # in the developer portal (ios/README.md "Share Extension"). Communication Notifications (the session's drawing on a
-    # push) is no capability type of the API: ticked once in the portal (ios/README.md "Push").
+    # in the developer portal (app/ios/README.md "Share Extension"). Communication Notifications (the session's drawing on a
+    # push) is no capability type of the API: ticked once in the portal (app/ios/README.md "Push").
     bundle_id(bundle, "Trommi", ["PUSH_NOTIFICATIONS", "APP_GROUPS", "ASSOCIATED_DOMAINS"])
     extensions = [(f"{bundle}.share", "Trommi Share"), (f"{bundle}.notify", "Trommi Notify"), (f"{bundle}.live", "Trommi Live")]
     for ident, name in extensions:
@@ -139,7 +139,7 @@ def prepare(bundle):
     aid = app_id(bundle)
     if not aid:
         die(f"no App Store Connect app record for {bundle}: create it once in App Store Connect (Apps > + > New App; "
-            "the API cannot create apps), ios/README.md 'TestFlight from CI'")
+            "the API cannot create apps), app/ios/README.md 'TestFlight from CI'")
     gh_out("app_id", aid)
 
 
@@ -157,7 +157,7 @@ def wait(version, build):
             if attrs.get("usesNonExemptEncryption") is None:
                 print("::warning::export compliance is not answered for this build: testers cannot install it until "
                       "it is answered in App Store Connect (TestFlight > the build), or the variable "
-                      "ITS_NON_EXEMPT_ENCRYPTION (YES or NO) answers it for every build (ios/README.md)")
+                      "ITS_NON_EXEMPT_ENCRYPTION (YES or NO) answers it for every build (app/ios/README.md)")
             gh_out("build_id", rows[0]["id"])
             return
         if state in ("FAILED", "INVALID"):

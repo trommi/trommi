@@ -5,7 +5,7 @@ bundles it); the page holds an exact copy of its model and calls it by name. Eve
 protocol is in the Rust core (`trommi-core`, loaded as WebAssembly); this layer owns the device's store, talks to
 the hub, and turns what the core accepted into the model the views render.
 
-**TypeScript.** Strict (`tsconfig.json` at the repository root, `npx tsc -p .`). Modules import each other with
+**TypeScript.** Strict (`app/web/tsconfig.json`, `npx tsc -p .` in `app/web/`). Modules import each other with
 their real extension (`'./codec.ts'`). Nothing is compiled ahead: Node 26 runs `.ts` itself (type stripping, hence
 `erasableSyntaxOnly`), and the build erases the types for the browser.
 

@@ -263,7 +263,7 @@ The whole list, with everything that is in place: [SECURITY.md](SECURITY.md).
 | `core/` | the shared Rust core on OpenMLS; `core/wasm` for the browser, `core/swift` for iOS |
 | `hub/` | the hub (the server) and its updater; `hub/deploy/` installs it |
 | `app/web/` | the web app |
-| `ios/` | the iOS app (Swift, SwiftUI) |
+| `app/ios/` | the iOS app (Swift, SwiftUI) |
 | `connector/` | the connector: the program and the Claude Code plugin |
 | `demo/` | the demo room, built into the web app and the iOS app |
 | `tests/` | every part's tests, one folder per part |
@@ -287,10 +287,10 @@ cargo test --locked -p trommi-core
 cargo test --locked -p trommi-tests          # core, hub, connector and deploy tests
 cargo build --release -p trommi-hub -p trommi-connector
 
-# Web app
-npm ci
-npm run build:core                            # the core as WebAssembly
-npm test
+# Web app (its package.json is in app/web)
+(cd app/web && npm ci)
+(cd app/web && npm run build:core)            # the core as WebAssembly
+(cd app/web && npm test)
 node app/web/dev/serve.mjs 8900               # the app; ?mock=1 for the demo room
 
 # iOS
@@ -298,7 +298,7 @@ core/swift/build.sh                           # the core for Swift
 (cd tests/ios && swift test)
 ```
 
-More: [`app/web/README.md`](app/web/README.md), [`ios/README.md`](ios/README.md),
+More: [`app/web/README.md`](app/web/README.md), [`app/ios/README.md`](app/ios/README.md),
 [`connector/README.md`](connector/README.md), [`core/README.md`](core/README.md).
 
 </details>

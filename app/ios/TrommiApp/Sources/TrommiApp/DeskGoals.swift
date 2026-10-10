@@ -4,7 +4,7 @@
 // behind "+N more", which opens them in place (kept per desk on this device). A tap on the words writes in place: the
 // field has the words' face and size and grows with them to ROWS rows, then it scrolls; Return is a new line (none
 // past the last); the keyboard going away (a drag down, a tap in the content) keeps what he wrote, an emptied field
-// takes the goals away. No control of our own for the keyboard (ios/README "Keyboard and tab bar").
+// takes the goals away. No control of our own for the keyboard (app/ios/README "Keyboard and tab bar").
 // Not on All desks (the caller leaves it out there).
 import SwiftUI
 import TrommiClient

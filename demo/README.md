@@ -61,7 +61,7 @@ request: an edit here shows at the next reload.
 
 ## The check
 
-`node demo/check.mjs` (`npm run test:demo`; also run by `npm run test:app` and by the web app's build). It fails when
+`node demo/check.mjs` (`npm run test:demo` in `app/web/`; also run by `npm run test:app` and by the web app's build). It fails when
 
 - `fixture.json` or `screens.json` does not parse, lacks a key, has a list or an object of the wrong kind, names no
   human device as the one looking, or is not in its written form (`node demo/check.mjs --write` writes both);

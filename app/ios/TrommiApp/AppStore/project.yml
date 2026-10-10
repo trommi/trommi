@@ -2,12 +2,12 @@
 # XcodeGen (`xcodegen generate --spec project.yml`; the project is not checked in) and archives it with the official
 # Xcode. The app itself is the SwiftPM package one folder up (the same one `xtool dev` builds on Linux); this target
 # only links its library product and adds what a store build needs: the app icon, the production push entitlement and
-# the Info.plist keys xtool writes for its own builds. ios/README.md "TestFlight from CI".
+# the Info.plist keys xtool writes for its own builds. app/ios/README.md "TestFlight from CI".
 #
 # The package builds the Rust core from sources that are not in the repository: run core/swift/build.sh before
-# generating or building this project (ios/README.md "The Rust core"). Not yet usable as it stands on a Mac: the
+# generating or building this project (app/ios/README.md "The Rust core"). Not yet usable as it stands on a Mac: the
 # package links the core by a search path to the device library (lib/ios), which is wrong for the simulator; an Apple
-# host needs an XCFramework with a device and a simulator slice (ios/README.md "TestFlight from CI").
+# host needs an XCFramework with a device and a simulator slice (app/ios/README.md "TestFlight from CI").
 name: Trommi
 options:
   deploymentTarget:

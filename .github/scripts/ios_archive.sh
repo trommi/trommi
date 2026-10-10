@@ -19,7 +19,7 @@ derived=$2
 shift 2
 
 here=$(cd "$(dirname "$0")" && pwd)
-appstore=$(cd "$here/../.." && pwd)/ios/TrommiApp/AppStore
+appstore=$(cd "$here/../.." && pwd)/app/ios/TrommiApp/AppStore
 
 xcodebuild archive \
   -project "$appstore/Trommi.xcodeproj" -scheme Trommi -configuration Release \
