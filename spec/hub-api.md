@@ -33,7 +33,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v2/welcomes?after=` | → `[ { id, group_id, welcome, at } ]` | for the asking device, oldest first, after the one numbered `after`; at most 8 MiB of Welcomes (point 22); deleted when it has joined |
 | `PUT /v2/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
 | `POST /v2/key-packages/claim` | `{ devices: [..] }` (1 to 1024) → `{ key_packages: { device: bytes } }` | one each, all or nothing; a device names 64 a second, bursts of 2 048 (`rate-limited`); the last-resort one when none is left; none uploaded more than 90 days ago |
-| `GET /v2/rooms/{room}/groups` | → `[ { group_id, kind, session_id, parent, epoch, live, stale, leaves } ]` | what the asker may see: a human device all, another device its own groups and the room group |
+| `GET /v2/rooms/{room}/groups?after=&limit=` | → `{ items: [ { group_id, kind, session_id, parent, epoch, room_epoch, live, stale, leaves } ], more, after }` | what the asker may see: a human device all, another device its own groups and the room group; in the order of founding, at most `limit` (1 to 1000) and 8 MiB a page, the next page from the answer's `after`; `leaves` only of a live group (an archived one: `[]`). Without `limit`: the bare list of every group, as before (point 43) |
 | `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; writing: a human device that is the row's `writer`; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
 | `POST /v2/requests` · `GET /v2/requests` | `{ kind: readmit \| handover \| session, group?, key_package? }` | an unsigned wish of the signed-in device to the human devices (5.2.7, 5.3.5, 7.1, 13.4); nothing follows from it without a Commit |
 | **Content** | | |
@@ -67,7 +67,8 @@ written. Catch-up is "everything above N".
 | `groups` | `group_id`, `room_id`, `kind` (room, main, helper), `session_id`, `parent`, `epoch`, `room_epoch`, `live`, `archived_at`, `log_n`, the serialised public group | | by room |
 | `group_log` | `group_id`, `n`, `epoch`, `kind`, `bytes` (a Commit: readable; a message: opaque), `sender` (the posting device), `at`, `change` | messages | **catch up a group**: (`group_id`, `n`) |
 | `group_infos` | `group_id`, `epoch`, `bytes` | | current, epoch 0, epochs without an authenticated `SealedKey`; room group: all |
-| `welcomes` | `device`, `group_id`, `at` | `bytes` | by device |
+| `welcomes` | `device`, `group_id`, `at`, `epoch` | `bytes` (rows written before `welcome_bytes`) | by device |
+| `welcome_bytes` | `group_id`, `epoch` | `bytes`: a Welcome once for all the devices it adds | by group and epoch; gone when no `welcomes` row points to it |
 | `sealed_keys`, `recovery_links` | `group_id`, `epoch`, `writer`, `recovery_hpke_key` | `sealed` | (`room_id`, `change`) |
 | `envelopes` | `change`, `group_id`, `epoch`, `sender`, `seq`, `prev`, `hash`, `recipient`, `kind`, `flags`, `time`, `received_at`, `timeline` (kind, scope, ref), `object_id`, `object_type`, `object_state`, `urgency`, `answered_at`, `object_ref`, `register_id`, `file_ids`, `padded_size`, `header`, `nonce`, `body_hash`, `signature`, `void_code` | `body` (null once pruned) | truth for all stored content. **Chain**: unique (`group_id`, `sender`, `seq`). **Catch-up**: (`room_id`, `change`). **Page a chat, load a board**: (`timeline`, `change`) |
 | `cards`, `notes`, `permission_requests`, `artifacts` | `object_id`, `group_id`, `state`, `urgency`, `answered_at`, `owner`, `first_change`, `head_change`, `closed_at` | | **the Desk**: partial index on `state = open` by (`urgency` desc, `first_change`). Derived from `envelopes`, rebuildable |
@@ -414,3 +415,23 @@ encrypted.
     removed, and one removed longer ago; a key that was never in the room gets no token (`not-member`).
     Nothing is shown that the device could not read while it was a member: Commits are public group state, and
     none after its removal is given. No messages, envelopes, files, stream, KeyPackages or writes.
+43. **The list of groups at 1000 human devices** (10 October 2026). A live group's leaves are some 46 kB of JSON
+    at 1000 human devices, and a room may have up to 5 000 groups. The list therefore gives the leaves of live
+    groups only and is read in pages (`limit`). The bare list without `limit`, and the Desk's `groups`, stay as
+    they were (with the leaves of live groups only) until the clients read the pages; then the bare form and the
+    Desk's `groups` go.
+
+## Known limits
+
+- **The room group's GroupInfos.** The hub keeps the GroupInfo of every epoch of the room group (a device that
+  comes with the code walks the room from its anchor, 8.4 to 8.7). At 1000 human devices each is about 206 kB, and
+  the own-leaf updates alone (v2.md 5.2.9: every human device weekly) make some 52 000 room Commits a year: about
+  10 GB a room and year. Proposed: keep the room group's GroupInfo only at the epochs a SealedKey row or a
+  RecoveryLink names as an anchor, plus epoch 0 and the current one, and let the device rebuild the others from the
+  Commits of the log (which are kept for ever and are small), as session groups already do.
+- **Push fan-out.** One envelope that pushes is sent to every human device's registrations one after another,
+  from one task: at 1000 human devices with up to ten registrations each that is up to 10 000 requests to push
+  services for one envelope, minutes of sending, while the next envelopes wait. Proposed: a bounded pool of
+  senders (for example 32 at a time) per hub, the pushes of one room coalesced per device (the newest change
+  wins, as the Web Push `Topic` already does at the service), and a per-room budget a minute above which only
+  the urgent ones go out.

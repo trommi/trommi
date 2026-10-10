@@ -911,8 +911,17 @@ fn commit_in(
             }
         }
         let welcome = body.welcome.as_ref().expect("checked above");
-        x.c.prepare_cached("INSERT INTO welcomes (room_id, device, group_id, at, bytes) VALUES (?1, ?2, ?3, ?4, ?5)")?
-            .execute(params![&room[..], &add.device[..], group_id, x.now as i64, welcome])?;
+        // stored once for the group and epoch; each added device's row points to it
+        x.c.prepare_cached(
+            "INSERT OR IGNORE INTO welcome_bytes (group_id, epoch, bytes) VALUES (?1, ?2, ?3)",
+        )?
+        .execute(params![group_id, new_epoch as i64, welcome])?;
+        let id: i64 = x.c.prepare_cached(
+            "UPDATE welcome_ids SET last = max(last, (SELECT coalesce(max(id), 0) FROM welcomes)) + 1 WHERE one = 1 RETURNING last",
+        )?
+        .query_row([], |r| r.get(0))?;
+        x.c.prepare_cached("INSERT INTO welcomes (id, room_id, device, group_id, at, bytes, epoch) VALUES (?1, ?2, ?3, ?4, ?5, x'', ?6)")?
+            .execute(params![id, &room[..], &add.device[..], group_id, x.now as i64, new_epoch as i64])?;
         fx.events.push(Event {
             room,
             audience: Audience {
@@ -1299,7 +1308,9 @@ pub fn info(c: &Connection, auth: &Auth, group_id: &[u8], epoch: Option<u64>) ->
 /// have one for every session founded meanwhile. It asks again from the last `id` until the answer is empty.
 pub fn welcomes(c: &Connection, auth: &Auth, after: i64) -> Res<Value> {
     let mut s = c.prepare_cached(
-        "SELECT id, group_id, bytes, at FROM welcomes WHERE room_id = ?1 AND device = ?2 AND id > ?3 ORDER BY id",
+        "SELECT w.id, w.group_id, coalesce(b.bytes, w.bytes), w.at FROM welcomes w
+           LEFT JOIN welcome_bytes b ON w.epoch IS NOT NULL AND b.group_id = w.group_id AND b.epoch = w.epoch
+         WHERE w.room_id = ?1 AND w.device = ?2 AND w.id > ?3 ORDER BY w.id",
     )?;
     let mut rows = s.query(params![&auth.room[..], &auth.device[..], after])?;
     let (mut out, mut bytes) = (Vec::new(), 0usize);
@@ -1314,32 +1325,81 @@ pub fn welcomes(c: &Connection, auth: &Auth, after: i64) -> Res<Value> {
     Ok(Value::Array(out))
 }
 
+/// One row of the list of groups, if the asker may see the group: a human device and the recovery key see all,
+/// another device its own groups and the room group. The leaves only of a live group: an archived one takes
+/// nobody, and at 1000 human devices a group's leaves are some 46 kB of JSON.
+fn group_item(
+    c: &Connection,
+    auth: &Auth,
+    view: &rules::RoomView,
+    row: &store::GroupRow,
+) -> Res<Option<Value>> {
+    let shown = match auth.who {
+        Who::Human | Who::Recovery => true,
+        _ => row.kind == GroupKind::Room || store::is_leaf(c, &row.group_id, &auth.device)?,
+    };
+    if !shown {
+        return Ok(None);
+    }
+    let leaves = if row.live {
+        store::leaves(c, &row.group_id)?
+    } else {
+        vec![]
+    };
+    Ok(Some(json!({
+        "group_id": b64(&row.group_id),
+        "kind": row.kind.text(),
+        "session_id": row.session_id.map(|s| b64(&s)),
+        "parent": row.parent.map(|s| b64(&s)),
+        "epoch": row.epoch,
+        "room_epoch": row.room_epoch,
+        "live": row.live,
+        "stale": store::is_stale(c, view, row)?,
+        "leaves": leaves.iter().map(|d| b64(d)).collect::<Vec<_>>(),
+    })))
+}
+
+/// Every group the asker may see, in one list (the answer without `limit`, and the Desk's `groups`).
 pub fn group_list(c: &Connection, auth: &Auth) -> Res<Vec<Value>> {
     let view = store::room_view(c, &auth.room)?;
     let mut out = Vec::new();
     for row in store::groups_of_room(c, &auth.room)? {
-        // a human device and the recovery key see all, another device its own groups and the room group
-        let shown = match auth.who {
-            Who::Human | Who::Recovery => true,
-            _ => row.kind == GroupKind::Room || store::is_leaf(c, &row.group_id, &auth.device)?,
-        };
-        if !shown {
-            continue;
+        if let Some(item) = group_item(c, auth, &view, &row)? {
+            out.push(item);
         }
-        let leaves = store::leaves(c, &row.group_id)?;
-        out.push(json!({
-            "group_id": b64(&row.group_id),
-            "kind": row.kind.text(),
-            "session_id": row.session_id.map(|s| b64(&s)),
-            "parent": row.parent.map(|s| b64(&s)),
-            "epoch": row.epoch,
-            "room_epoch": row.room_epoch,
-            "live": row.live,
-            "stale": store::is_stale(c, &view, &row)?,
-            "leaves": leaves.iter().map(|d| b64(d)).collect::<Vec<_>>(),
-        }));
     }
     Ok(out)
+}
+
+/// `GET /v2/rooms/{room}/groups?after=&limit=`: a page of that list, in the order of founding, up to `limit`
+/// groups and the answer's byte budget (the first always); `after` of the next call is the answer's `after`.
+pub fn group_page(c: &Connection, auth: &Auth, after: i64, limit: i64) -> Res<Value> {
+    let view = store::room_view(c, &auth.room)?;
+    let (mut items, mut bytes, mut cursor, mut more) = (Vec::new(), 0usize, after, false);
+    // groups the asker may not see are skipped, so the page is read in steps until it is full or the room ends
+    'pages: loop {
+        let rows = store::groups_of_room_after(c, &auth.room, cursor, limit + 1)?;
+        let ended = (rows.len() as i64) <= limit;
+        for (founded, row) in rows {
+            if items.len() as i64 == limit {
+                more = true;
+                break 'pages;
+            }
+            if let Some(item) = group_item(c, auth, &view, &row)? {
+                bytes += item.to_string().len();
+                if bytes > crate::content::ANSWER_BYTES && !items.is_empty() {
+                    more = true;
+                    break 'pages;
+                }
+                items.push(item);
+            }
+            cursor = founded;
+        }
+        if ended {
+            break;
+        }
+    }
+    Ok(json!({ "items": items, "more": more, "after": cursor }))
 }
 
 pub fn archive(x: &Ctx, auth: &Auth, group_id: &[u8], fx: &mut Effects) -> Res<Value> {
