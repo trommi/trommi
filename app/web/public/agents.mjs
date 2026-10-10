@@ -11,7 +11,7 @@
 //   - live: a line that changed is replaced; when lines come, go or change desks the page fetches itself anew
 //   - hooks for the keys: a line is .ledger-line[data-id][data-state], id="ledger-<id>"; its controls carry
 //     data-ledger="rename|mark|crown|more"; a.ledger-open opens the session
-import { Controller, LATER, agoSpan, answerFields, avatar, badge, controller, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, sessionForms, settingsPage, sk } from './ui.mjs'
+import { Controller, LATER, agoSpan, answerFields, avatar, badge, controller, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, sessionForms, settingsPage, sk, sayError } from './ui.mjs'
 const STAY = { stay: true }
 const lineId = id => `ledger-${id}`
 
@@ -258,7 +258,7 @@ export function register(t) {
     const id = decodeURIComponent(match[1]), stay = form.has('stay') && t.wantsStream(req)
     let error = ''
     const was = t.model().byAgent.get(id)?.desk ?? null   // (for the Undo of a move to another desk)
-    try { await WAYS[match[2]](id, form, t.model()) } catch (err) { error = `Not saved: ${err.message || 'the board did not take it'}` }
+    try { await WAYS[match[2]](id, form, t.model()) } catch (err) { error = `Not saved: ${sayError(err, 'the board did not take it')}` }
     if (!error) {
       // The live stream brings the change to every page, this one too; the form itself adds only the toast of an archiving.
       if (stay && match[2] === 'edit' && form.has('moved') && form.has('desk')) {
@@ -295,7 +295,7 @@ export function register(t) {
       // (a device that also carries a session that stays is left in the room)
       const devices = [...new Set(all.map(x => x.agent_device_id).filter(Boolean))].filter(d => d !== me && members?.get(d)?.device_role !== 'human' && !m.agents.some(x => !ids.has(x.id) && x.agent_device_id === d))
       if (devices.length) await client.removeDevices(devices)
-    } catch (err) { return fail(err.message || 'the board did not take it') }
+    } catch (err) { return fail(sayError(err, 'the board did not take it')) }
     if (!t.wantsStream(req)) return t.redirect(res, `${BASE}/`)
     return t.sendStream(req, res, html`${t.stream('visit', `${BASE}/`)}${t.toast({ head: 'Deleted', line: a.name })}`)
   })

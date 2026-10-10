@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style.
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
-import { BELL, Controller, PLUS, agoSpan, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BELL, Controller, PLUS, agoSpan, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast, sayError } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -896,7 +896,7 @@ controller('menu', class extends Controller {
         row.querySelector('b').textContent = name
         if (row.querySelector('.menu-desk[aria-checked="true"]')) for (const n of document.querySelectorAll('.topbar .desk-name')) n.textContent = name   // (the sidebar's heading is the desk in view)
         done()
-      } catch (err) { done(); toast({ head: 'Not renamed', line: err.message || 'the board did not answer', role: 'alert' }) }
+      } catch (err) { done(); toast({ head: 'Not renamed', line: sayError(err, 'the board did not answer'), role: 'alert' }) }
     })
     field.focus(); field.select()
   }
