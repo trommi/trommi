@@ -170,12 +170,12 @@ const DEVICE_CALLS = [
   'id', 'room', 'cursor', 'is_human', 'is_owner', 'room_roles', 'groups', 'group', 'holds_key',
   'outbox', 'outbox_accepted', 'outbox_refused', 'key_packages_to_upload', 'key_package',
   'found_room', 'found_session', 'found_helper', 'add_to_session', 'remove_agents',
-  'remove_human_devices', 'clean_session', 'readmit_helper', 'update', 'archive',
-  'join_welcome', 'observe_room', 'observe_session', 'process_log_entry',
+  'remove_human_devices', 'clean_session', 'readmit_helper', 'readmit_human', 'update', 'archive',
+  'join_welcome', 'observe_room', 'observe_session', 'process_log_entry', 'feed',
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
   'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
-  'learn_history',
+  'learn_history', 'group_past',
   'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_checked', 'invite_forget',
   'join_request', 'join_reveal', 'join_observe', 'join_invited',
   'seal', 'outbox_voided', 'envelope_abandon', 'receive_envelope', 'receive_relay', 'heads_due', 'compare_heads',
@@ -267,14 +267,14 @@ export class Device {
       throw error
     }
     try {
-      for (const write of writes) {
-        try {
-          await this.#store.apply(write)
-        } catch (error) {
-          const failure = storageError(error)
-          await this.#shut(failure)
-          throw failure
-        }
+      try {
+        // A call that wrote several times (feed) is stored in one step where the store can: all of it or none.
+        if (writes.length > 1 && typeof this.#store.applyAll === 'function') await this.#store.applyAll(writes)
+        else for (const write of writes) await this.#store.apply(write)
+      } catch (error) {
+        const failure = storageError(error)
+        await this.#shut(failure)
+        throw failure
       }
     } finally {
       // Stored or not, this side's copies of what was written go.

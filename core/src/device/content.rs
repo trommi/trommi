@@ -301,7 +301,8 @@ pub struct ReceivedEnvelope {
     /// The object after this envelope, by the replay of headers (9.2.1); none for items and registers, and
     /// for an envelope that changed no object.
     pub object_after: Option<(ObjectId, Object)>,
-    /// For a register whose value was taken: its name and whether it is now the current one.
+    /// For a register whose value was taken, now or before (an envelope the chain holds, handed again out
+    /// of order): its name and whether it is the current one now.
     pub register: Option<RegisterChange>,
     /// For an envelope that came through its chain and had been shown as provisional before.
     pub provisional: Option<Confirmation>,
@@ -536,6 +537,16 @@ fn is_fault(error: &Error) -> bool {
     )
 }
 
+/// The heads of every chain but this device's own, as one hash.
+fn others_heads(chains: &chain::Chains, me: &DeviceId) -> Result<Hash32, Error> {
+    let mut heads = Writer::new();
+    for (sender, head) in chains.heads().iter().filter(|(sender, _)| sender != me) {
+        heads.fixed(sender.as_bytes());
+        heads.value(head)?;
+    }
+    crypto::sha256(&heads.into_bytes())
+}
+
 impl<S: Storage> Device<S> {
     fn own_chain(&self, group: &GroupId) -> Result<OwnChain, Error> {
         // The chain is written when the device begins its first epoch in the group: without it the device
@@ -639,7 +650,7 @@ impl<S: Storage> Device<S> {
                     })?;
                     own_ids = Some(ids);
                     if name == registers::HEADS {
-                        heads = Some(crypto::sha256(value.unwrap_or_default().as_bytes())?);
+                        heads = Some(others_heads(&chains, &this.id)?);
                     }
                     inner
                 }
@@ -689,6 +700,7 @@ impl<S: Storage> Device<S> {
                 let mut state = this.group_state(&group)?;
                 state.heads_at = now_ms;
                 state.heads_hash = hash;
+                state.heads_seq = header.seq;
                 this.put_group_state(batch, &group, &state)?;
             }
             let outbox_id = this.enqueue(
@@ -909,10 +921,12 @@ impl<S: Storage> Device<S> {
     }
 
     /// The value of the register `heads` to write in `group` now (9.0.7), as JSON; none when nothing is
-    /// due. It is due when a head changed since the value this device last wrote there, and this is the
+    /// due. It is due when a head changed since this device last wrote `heads` there, and this is the
     /// first call for the group since the device was opened (it came online) or the last one was written at
-    /// least [`HEADS_EVERY_MS`] ago. The caller seals it as [`Draft::Register`] under the name `heads`,
-    /// which records the writing.
+    /// least [`HEADS_EVERY_MS`] ago. A head changed when another sender's did, or when this device wrote
+    /// anything but `heads` since: the `heads` envelope moves the device's own chain itself, and counting
+    /// that would make every `heads` call for the next. The value lists every chain, the own one too. The
+    /// caller seals it as [`Draft::Register`] under the name `heads`, which records the writing.
     pub fn heads_due(&mut self, group: &GroupId, now_ms: u64) -> Result<Option<Vec<u8>>, Error> {
         self.owner()?;
         let chains = self.chains(group)?;
@@ -922,7 +936,8 @@ impl<S: Storage> Device<S> {
         }
         let value = chain::heads_value(&chains)?;
         let state = self.group_state(group)?;
-        let changed = crypto::sha256(value.as_bytes())? != state.heads_hash;
+        let wrote_since = self.own_chain(group)?.head().seq > state.heads_seq;
+        let changed = wrote_since || others_heads(&chains, &self.id)? != state.heads_hash;
         let waited = now_ms.saturating_sub(state.heads_at) >= HEADS_EVERY_MS;
         Ok((changed && (came_online || waited)).then(|| value.into_bytes()))
     }
@@ -1046,6 +1061,9 @@ impl<S: Storage> Device<S> {
     /// [`board::Snapshot::items_after_change`] on. The device has read the writers' chains up to their heads
     /// before (9.0.6, 9.0.7).
     ///
+    /// `served` may be in any order: each item is looked up in its writer's chain, and the result names
+    /// the items by their place in `served`. An item given twice is `bad-format`.
+    ///
     /// On success the snapshot's frontier is the one applied from now on, and the result says which served
     /// items the snapshot covers and which are to be added to it ([`board_reduce`]). The refusals are those
     /// of [`board::verify_load`]: `withheld`, `hash-mismatch`, `equivocation`, `replay`, `removed-sender`,
@@ -1079,9 +1097,10 @@ impl<S: Storage> Device<S> {
             let mut chains = this.chains(&room)?;
             let mut began = false;
             for (writer, named) in &snapshot.frontier {
-                // A frontier beyond a removed writer's Cut is no start: the load refuses it.
+                // A frontier beyond a removed writer's Cut, or one that names another envelope under
+                // the Cut's number, is no start: the load refuses it.
                 let cut = this.cut(&room, writer)?;
-                let within = cut.is_none_or(|cut| named.seq <= cut.seq);
+                let within = cut.is_none_or(|cut| named.seq < cut.seq || *named == cut);
                 if chains.head(writer).seq == 0 && named.seq > 0 && within {
                     chains.start_at(*writer, *named)?;
                     began = true;
@@ -1210,6 +1229,11 @@ impl<S: Storage> Device<S> {
     /// page of a Chat, an object) and is at most provisional; the chain is not touched.
     ///
     /// `void_code`: the hub served it as a void record with this code.
+    ///
+    /// The order is the caller's: this call takes one envelope and cannot put it in its place. Ordered
+    /// envelopes are handed in the hub's one order, ascending by change number across senders and groups
+    /// (an envelope is judged against what the others wrote before it: a Note version builds on another
+    /// device's), never sender after sender.
     ///
     /// The result says what became of it. [`EnvelopeOutcome::Refused`] consumed nothing; with `group-behind`
     /// for a group this device is a leaf of, whose log it has not processed up to the envelope's epoch, the
@@ -1555,6 +1579,15 @@ impl<S: Storage> Device<S> {
         if record.status == Status::Taken && record.code.is_none() {
             received.outcome = EnvelopeOutcome::Applied;
             received.body = Some(body);
+            // A register value the chain holds is named again, with whether it is the current one now:
+            // read from what is stored, which this reading does not change.
+            if matches!(received.header.subject, Subject::Register(_)) && !record.extra.is_empty() {
+                let (name, of, current) = self
+                    .registers(&group)?
+                    .standing(&received.header, &record.extra)
+                    .map_err(|_| damaged("a register's record"))?;
+                received.register = Some(RegisterChange { name, of, current });
+            }
             if let Some(fields) = received.header.subject.object() {
                 received.object_after = self
                     .object_states(&group)?

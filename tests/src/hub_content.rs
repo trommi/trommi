@@ -75,6 +75,8 @@ struct Epoch {
 pub struct Content {
     epochs: BTreeMap<(GroupId, u64), Epoch>,
     cuts: BTreeMap<(GroupId, DeviceId), Head>,
+    /// The epoch in which a key with a Cut became a leaf again (9.0.10).
+    again: BTreeMap<(GroupId, DeviceId), u64>,
     chains: BTreeMap<GroupId, Chains>,
     objects: BTreeMap<GroupId, Objects>,
     /// Every envelope the hub took, in the order of its change numbers.
@@ -148,6 +150,10 @@ impl GroupFacts for Facts<'_> {
         Ok(self.0.content.cuts.get(&(*group, *device)).copied())
     }
 
+    fn leaf_again_at(&self, group: &GroupId, device: &DeviceId) -> Result<Option<u64>, Error> {
+        Ok(self.0.content.again.get(&(*group, *device)).copied())
+    }
+
     fn epoch_end(&self, group: &GroupId, epoch: u64) -> Result<Option<EpochEnd>, Error> {
         Ok(self
             .0
@@ -161,7 +167,7 @@ impl GroupFacts for Facts<'_> {
         if group.is_room() {
             return Ok(false);
         }
-        Ok(!self.0.stale_leaves(group)?.is_empty())
+        self.0.is_stale(group)
     }
 
     fn is_human_now(&self, device: &DeviceId) -> Result<bool, Error> {
@@ -239,6 +245,10 @@ impl Hub {
                     facts.seat = Some(leaf);
                 }
                 facts.leaves.insert(leaf, role);
+                // A key that an earlier Commit cut and that is a leaf here came back with this epoch.
+                if self.content.cuts.contains_key(&(group, leaf)) {
+                    self.content.again.entry((group, leaf)).or_insert(epoch);
+                }
             }
             self.content.epochs.insert((group, epoch), facts);
         }
@@ -260,14 +270,30 @@ impl Hub {
                 });
             }
             for cut in note.map(|note| note.cuts).unwrap_or_default() {
-                if self.content.cuts.contains_key(&(item.group, cut.device)) {
+                // The Cut of a key that came back is replaced by the Cut of its next removal.
+                let place = (item.group, cut.device);
+                if self.content.cuts.contains_key(&place)
+                    && !self.content.again.contains_key(&place)
+                {
                     continue;
                 }
                 let head = Head {
                     seq: cut.seq,
                     hash: cut.hash,
                 };
-                self.content.cuts.insert((item.group, cut.device), head);
+                self.content.cuts.insert(place, head);
+                // The same Commit may add the key again: then it is a leaf of the epoch it began.
+                let began = item.epoch + 1;
+                let back = self
+                    .content
+                    .epochs
+                    .get(&(item.group, began))
+                    .is_some_and(|facts| facts.leaves.contains_key(&cut.device));
+                if back {
+                    self.content.again.insert(place, began);
+                } else {
+                    self.content.again.remove(&place);
+                }
                 let chains = self.content.chains.entry(item.group).or_default().clone();
                 let effect =
                     chain::cut_chain(&Facts(self), &chains, &item.group, &cut.device, &head)
@@ -304,6 +330,45 @@ impl Hub {
                 }
             }
         }
+    }
+
+    /// 9.0.10: the hub adds a key to a session group again only if it holds nothing of it beyond its Cut:
+    /// the Cut this Commit names for it, or the one that already ended its chain. `bad-commit` otherwise.
+    pub(super) fn check_added_again(
+        &self,
+        group: &GroupId,
+        commit: &[u8],
+        adds: &[DeviceId],
+    ) -> Result<(), Error> {
+        let named = commit_note(commit)
+            .map(|note| note.cuts)
+            .unwrap_or_default();
+        for added in adds {
+            let cut = named
+                .iter()
+                .find(|cut| cut.device == *added)
+                .map(|cut| Head {
+                    seq: cut.seq,
+                    hash: cut.hash,
+                })
+                .or_else(|| self.content.cuts.get(&(*group, *added)).copied());
+            let Some(cut) = cut else {
+                continue;
+            };
+            // Everything the hub ever took of the key counts, also what an earlier Cut ended.
+            let held = self
+                .content
+                .envelopes
+                .iter()
+                .filter(|stored| stored.header.group == *group && stored.header.sender == *added)
+                .max_by_key(|stored| stored.header.seq)
+                .map_or(Head::START, |stored| Head {
+                    seq: stored.header.seq,
+                    hash: stored.hash,
+                });
+            chain::check_added_again(&held, &cut)?;
+        }
+        Ok(())
     }
 
     /// Takes a posted envelope (9.0.11). Refused after check 6, it is kept as a void record and the refusal

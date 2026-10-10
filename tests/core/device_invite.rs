@@ -11,10 +11,11 @@ use trommi_core::invite::{
     CheckCode, InviteLink, Request, Role, CHECK_EMOJI, CONFIRM_MS, INVITE_LIFE_MS,
 };
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    enrol, found_main, found_room, json, new_device, now, post_ok, publish_some, sync_all, write,
-    TestDevice,
+    add_forger, enrol, found_main, found_room, json, new_device, now, post_ok, publish_some,
+    seeded_device, sync_all, try_invite, write, TestDevice,
 };
 
 const APP: &str = "https://app.example";
@@ -576,9 +577,10 @@ fn a_substituted_key_package_does_not_get_in() {
         Ok(None)
     );
 
-    // A Welcome from anyone but the inviter is not taken, also for the right KeyPackage.
-    let mut c = new_device();
-    trommi_tests::add_human(&mut hub, &mut a, &mut c);
+    // A Welcome from anyone but the inviter is not taken, also for the right KeyPackage. No device commits
+    // that Add: the other human device is a member that obeys MLS only.
+    let c = Forger::new();
+    let mut held = add_forger(&mut hub, &mut a, &c);
     sync_all(&hub, &mut a);
     let mut d = new_device();
     let (_, request, accepted) = exchange(&mut a, &mut d, Role::Human, None);
@@ -586,13 +588,14 @@ fn a_substituted_key_package_does_not_get_in() {
     let package = Request::decode(&request.signed_request.request)
         .unwrap()
         .key_package;
-    c.add_human_device(&d.id(), &package, now()).unwrap();
-    post_ok(&mut hub, &mut c);
-    let welcome = hub.welcomes.last().unwrap().bytes.clone();
+    let welcome = c.commit(&mut held, &[], &[package]).welcome.unwrap();
     assert_eq!(d.join_invited(&welcome, now()), Err(Error::BadInvite));
     assert!(d.room().is_none());
     let _ = room;
 }
+
+/// The seed of the key of an invited agent device.
+const INVITED: u8 = 0x1A;
 
 #[test]
 fn an_agent_device_is_enrolled_by_its_inviter_alone() {
@@ -600,7 +603,7 @@ fn an_agent_device_is_enrolled_by_its_inviter_alone() {
     let mut c = new_device();
     trommi_tests::add_human(&mut hub, &mut a, &mut c);
     sync_all(&hub, &mut a);
-    let mut agent = new_device();
+    let mut agent = seeded_device(INVITED);
     let (_, _, accepted) = exchange(&mut a, &mut agent, Role::Agent, None);
     // Before the Reveal was checked the device follows nothing.
     let offered = hub.group_info(&room).unwrap().clone();
@@ -609,8 +612,11 @@ fn an_agent_device_is_enrolled_by_its_inviter_alone() {
     // Nor from any state but the one the Offer names.
     assert_eq!(agent.observe_room(&offered, None), Err(Error::BadInvite));
     agent.join_observe(&offered).unwrap();
-    // Another human device enrols it, not its inviter: the new device does not take that.
-    c.change_agents(&[agent.id()], &[], now()).unwrap();
+    // Another human device enrols its key, not its inviter: that device confirmed an invite of its own,
+    // answered with the same key from elsewhere. The new device does not take that.
+    let mut elsewhere = seeded_device(INVITED);
+    assert_eq!(elsewhere.id(), agent.id());
+    try_invite(&mut c, &mut elsewhere, Role::Agent, None).unwrap();
     post_ok(&mut hub, &mut c);
     let item = hub.log.last().unwrap().clone();
     assert_eq!(
@@ -753,31 +759,24 @@ fn a_takeover_reaches_every_helper_session_and_survives_a_restart() {
     assert_eq!(steps.len(), 1);
     assert!(matches!(&steps[0].1, InviteStep::TakeOver { group, .. } if *group == helper));
 
-    // A clean-up of the stale helper session that only removes the old opener (5.2.8) does not strand it:
-    // the session stands without an opener, and the step now adds the new one.
+    // The main session has its new agent leaf, so the helper session is stale for its outdated opener
+    // leaf and for the opener it lacks (5.2.8): the Remove alone is not taken, the step's one Commit removes
+    // and adds.
     let (_, InviteStep::TakeOver { cuts, .. }) = &steps[0] else {
         unreachable!()
     };
-    a.clean_session(&helper, cuts, None, now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    sync_all(&hub, &mut a);
-    assert!(a.group(&helper).unwrap().disallowed.is_empty());
-    let steps = a.invite_steps().unwrap();
+    let summary = a.group(&helper).unwrap();
     assert_eq!(
-        steps,
-        vec![(
-            id,
-            InviteStep::TakeOver {
-                group: helper,
-                cuts: Vec::new(),
-                agent: new.id(),
-                key_package: None,
-            }
-        )]
+        (summary.disallowed, summary.missing_opener),
+        (vec![old.id()], Some(new.id()))
+    );
+    assert_eq!(
+        a.clean_session(&helper, cuts, None, now()),
+        Err(Error::StaleSession)
     );
     publish_some(&mut hub, &mut new, 2);
     let package = hub.claim(&[new.id()]).unwrap().remove(0);
-    a.clean_session(&helper, &[], Some((&new.id(), &package)), now())
+    a.clean_session(&helper, cuts, Some((&new.id(), &package)), now())
         .unwrap();
     assert_eq!(a.invite_steps().unwrap(), vec![(id, InviteStep::Wait)]);
     post_ok(&mut hub, &mut a);

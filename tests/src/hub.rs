@@ -11,7 +11,9 @@ use trommi_core::mls::key_package::verify_key_package_of;
 use trommi_core::mls::observer::{Context, Observer, PostedCommit};
 use trommi_core::mls::profile::GroupKind;
 use trommi_core::mls::profile::{MAX_HUMAN_DEVICES, MAX_HUMAN_DEVICES_IN_RECOVERY};
-use trommi_core::mls::rules::{CommitFacts, ContextChange, Parent, RoomHistory, SessionFacts};
+use trommi_core::mls::rules::{
+    CommitFacts, ContextChange, Parent, RoomHistory, SessionFacts, Staleness,
+};
 use trommi_core::recovery::{check_posted_row, PostedRow, PublicRules, RecoveryLink, SealedKey};
 use trommi_core::store::{OutboxEntry, OutboxKind};
 use trommi_core::Error;
@@ -499,7 +501,7 @@ impl Hub {
                     if !leaves.contains(from) {
                         return Err(Error::NotMember);
                     }
-                    if !self.staged_stale_leaves(&group)?.is_empty() {
+                    if self.staged_stale(&group)? {
                         return Err(Error::StaleSession);
                     }
                 }
@@ -610,6 +612,10 @@ impl Hub {
                         .transpose()?;
                     let checked = self
                         .check(&group, &posted, from)
+                        .and_then(|facts| {
+                            self.check_added_again(&group, posted.commit, &facts.adds)?;
+                            Ok(facts)
+                        })
                         .and_then(|facts| self.check_replacement(&facts, entry, replaces));
                     if let Err(refusal) = checked {
                         match before {
@@ -666,7 +672,7 @@ impl Hub {
                         if !leaves.contains(&by) {
                             return Err(Error::Incomplete);
                         }
-                        if !self.staged_stale_leaves(&group)?.is_empty() {
+                        if self.staged_stale(&group)? {
                             return Err(Error::StaleSession);
                         }
                     }
@@ -698,7 +704,7 @@ impl Hub {
                     if self.archived.contains(&row.context.group) {
                         return Err(Error::Gone);
                     }
-                    if !self.staged_stale_leaves(&row.context.group)?.is_empty() {
+                    if self.staged_stale(&row.context.group)? {
                         return Err(Error::StaleSession);
                     }
                 }
@@ -864,12 +870,28 @@ impl Hub {
                 &before.archived,
                 group,
             ),
-            None => self.staged_stale_leaves(group),
+            None => Self::stale_in(self.room.as_ref(), &self.sessions, &self.archived, group),
         }
+        .map(|stale| stale.disallowed)
     }
 
-    fn staged_stale_leaves(&self, group: &GroupId) -> Result<Vec<DeviceId>, Error> {
-        Self::stale_in(self.room.as_ref(), &self.sessions, &self.archived, group)
+    /// Whether a session group is stale under the hub's newest room state (5.2.8): a leaf the room does not
+    /// allow, or a helper session's missing opener.
+    pub fn is_stale(&self, group: &GroupId) -> Result<bool, Error> {
+        let stale = match self.published() {
+            Some(before) => Self::stale_in(
+                before.room.as_ref(),
+                &before.sessions,
+                &before.archived,
+                group,
+            ),
+            None => Self::stale_in(self.room.as_ref(), &self.sessions, &self.archived, group),
+        };
+        Ok(stale?.is_stale())
+    }
+
+    fn staged_stale(&self, group: &GroupId) -> Result<bool, Error> {
+        Ok(Self::stale_in(self.room.as_ref(), &self.sessions, &self.archived, group)?.is_stale())
     }
 
     fn stale_in(
@@ -877,11 +899,11 @@ impl Hub {
         sessions: &BTreeMap<GroupId, Observer>,
         archived: &BTreeSet<GroupId>,
         group: &GroupId,
-    ) -> Result<Vec<DeviceId>, Error> {
+    ) -> Result<Staleness, Error> {
         let history = room.and_then(Observer::history);
         let (Some(observer), Some(history)) = (sessions.get(group), history) else {
-            return Ok(Vec::new());
+            return Ok(Staleness::default());
         };
-        observer.disallowed_leaves(history, history.newest(), &Sessions { sessions, archived })
+        observer.staleness(history, history.newest(), &Sessions { sessions, archived })
     }
 }
