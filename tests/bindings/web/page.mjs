@@ -137,7 +137,11 @@ const cases = {
       navigator.locks.request(`trommi-core:${name}`, { steal: true }, () => { granted(); return new Promise(free => { giveBack = free }) })
     })
     await taken
-    found.stolen = await outcome(owner.apply({ expectedRevision: 0, put: [], delete: [] })) instanceof StoreConflict
+    // The browser tells the first holder in a task of its own: the write is tried once that had its turn. The
+    // message tells the mark from the revision check, which would refuse nothing here.
+    await new Promise(turn => setTimeout(turn, 50))
+    const late = await outcome(owner.apply({ expectedRevision: 0, put: [], delete: [] }))
+    found.stolen = late instanceof StoreConflict && /took this state over/.test(late.message)
     giveBack()
     await owner.close()
 
