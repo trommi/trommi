@@ -38,7 +38,7 @@ pub struct CommitBody {
 /// What surrounds a Commit: an ordinary request, the replacing of the code (8.6), or a recovery (8.7).
 #[derive(Debug, Default)]
 pub struct Scope {
-    /// inside a recovery: the room may hold 33 human devices and its member Commits are the joiner's
+    /// inside a recovery: the room may hold one human device more (1001) and its member Commits are the joiner's
     pub recovery: bool,
     /// the RecoveryLink that came with this request: the room's recovery keys may change
     pub link: Option<RecoveryLink>,
@@ -1294,16 +1294,24 @@ pub fn info(c: &Connection, auth: &Auth, group_id: &[u8], epoch: Option<u64>) ->
     }
 }
 
-pub fn welcomes(c: &Connection, auth: &Auth) -> Res<Value> {
+/// A device's Welcomes after the one numbered `after`, oldest first, up to the answer's byte budget (the first
+/// always): at 1000 human devices a Welcome carries the tree, some 200 kB, and a device back after a while may
+/// have one for every session founded meanwhile. It asks again from the last `id` until the answer is empty.
+pub fn welcomes(c: &Connection, auth: &Auth, after: i64) -> Res<Value> {
     let mut s = c.prepare_cached(
-        "SELECT group_id, bytes, at FROM welcomes WHERE room_id = ?1 AND device = ?2 ORDER BY id",
+        "SELECT id, group_id, bytes, at FROM welcomes WHERE room_id = ?1 AND device = ?2 AND id > ?3 ORDER BY id",
     )?;
-    let rows = s
-        .query_map(params![&auth.room[..], &auth.device[..]], |r| {
-            Ok(json!({ "group_id": b64(&r.get::<_, Vec<u8>>(0)?), "welcome": b64(&r.get::<_, Vec<u8>>(1)?), "at": r.get::<_, i64>(2)? }))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(Value::Array(rows))
+    let mut rows = s.query(params![&auth.room[..], &auth.device[..], after])?;
+    let (mut out, mut bytes) = (Vec::new(), 0usize);
+    while let Some(r) = rows.next()? {
+        let welcome = b64(&r.get::<_, Vec<u8>>(2)?);
+        bytes += welcome.len();
+        if bytes > crate::content::ANSWER_BYTES && !out.is_empty() {
+            break;
+        }
+        out.push(json!({ "id": r.get::<_, i64>(0)?, "group_id": b64(&r.get::<_, Vec<u8>>(1)?), "welcome": welcome, "at": r.get::<_, i64>(3)? }));
+    }
+    Ok(Value::Array(out))
 }
 
 pub fn group_list(c: &Connection, auth: &Auth) -> Res<Vec<Value>> {
@@ -1717,11 +1725,14 @@ pub fn requests(c: &Connection, auth: &Auth) -> Res<Value> {
 
 // ---- recovery (8.6, 8.7)
 
-/// A join and a cleaning Commit for each group: enough for 4 000 live sessions.
+/// A join and a cleaning Commit for each group: enough for 4 000 live sessions in parts. In bytes: at 1000 human
+/// devices a join carries a GroupInfo of 0.2 MB and a Commit of up to 0.1 MB (some 0.4 MB as JSON), and what its
+/// verification leaves is a public state of about 1.1 MB; the cleaning Commit that follows leaves a small tree.
+/// So a recovery of a full room carries about 1000 live groups.
 pub const MAX_RECOVERY_PARTS: i64 = 8192;
-pub const MAX_RECOVERY_BYTES: i64 = 64 << 20;
+pub const MAX_RECOVERY_BYTES: i64 = 512 << 20;
 pub const MAX_RECOVERY_PARTS_PER_GROUP: i64 = 8;
-pub const MAX_RECOVERY_MEMO_BYTES: i64 = 512 << 20;
+pub const MAX_RECOVERY_MEMO_BYTES: i64 = 1 << 30;
 
 /// A room in recovery takes nothing else (8.7).
 pub fn open_recovery_of(c: &Connection, room: &Room, now: u64) -> Res<Option<Vec<u8>>> {
@@ -1893,7 +1904,7 @@ pub fn recovery_rehearse(
     {
         return Err(refuse(
             "too-many",
-            "a recovery has at most 8192 parts and 64 MiB",
+            "a recovery has at most 8192 parts and 512 MiB",
         ));
     }
     // A part is checked against the parts it can depend on (see `replay_recovery`): with few parts per group

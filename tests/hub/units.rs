@@ -218,7 +218,7 @@ mod config_tests {
         let c = Config::from_map(&env);
         assert_eq!(
             (c.json_limit, c.port, c.share_days, c.retention_days),
-            (1 << 20, 8790, 180, 30)
+            (1_572_864, 8790, 180, 30)
         );
     }
 }
@@ -2430,5 +2430,44 @@ mod pem_tests {
             pem("-----BEGIN EC PRIVATE KEY----- AAAA -----END EC PRIVATE KEY-----")
                 .starts_with("-----BEGIN EC PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----")
         );
+    }
+}
+
+mod tree_size {
+    use trommi_hub::observer::{MlsObserver, Observer, MAX_LEAVES};
+    use trommi_hub::wire::Writer;
+
+    /// A GroupInfo whose tree is `nodes` blank nodes (one byte each), signed by nobody.
+    fn group_info(nodes: usize) -> Vec<u8> {
+        let mut tree = Writer::default();
+        tree.vec(&vec![0u8; nodes]);
+        let mut extensions = Writer::default();
+        extensions.raw(&[0, 2]).vec(&tree.0);
+        let mut w = Writer::default();
+        w.raw(&[0, 1, 0, 4])
+            .raw(&[0, 1, 0, 3])
+            .vec(&[1; 32])
+            .u64(1)
+            .vec(&[2; 32])
+            .vec(&[3; 32])
+            .vec(&[])
+            .vec(&extensions.0)
+            .vec(&[4; 32])
+            .u32(0)
+            .vec(&[5; 64]);
+        w.0
+    }
+
+    #[test]
+    fn a_tree_larger_than_any_group_of_the_profile_is_refused_before_it_is_unpacked() {
+        let obs = MlsObserver::default();
+        let refused = format!("{:?}", obs.open(&group_info(2 * MAX_LEAVES)).unwrap_err());
+        assert!(refused.contains("more leaves than any group"), "{refused}");
+        // the largest tree passes the count; this one then fails as what it is
+        let refused = format!(
+            "{:?}",
+            obs.open(&group_info(2 * MAX_LEAVES - 1)).unwrap_err()
+        );
+        assert!(!refused.contains("more leaves than any group"), "{refused}");
     }
 }

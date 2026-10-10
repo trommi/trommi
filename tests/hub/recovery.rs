@@ -699,3 +699,53 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
         w.ada.clear(&room);
     }
 }
+
+/// 16, 8.7: while a recovery runs the room holds one human device more than its limit (1001 of 1000); outside a
+/// recovery the joiner is one too many. Here with a limit of one: the founder alone.
+#[test]
+fn a_recovery_may_hold_one_human_device_over_the_limit() {
+    let w = World::on(TestHub::start_with(&[("HUB_LIMIT_HUMANS", "1")]));
+    let room = w.room;
+    let rec = recovery_token(&w.hub, &room, &w.recovery);
+    let now = w.ada.room_now();
+    let base = group_info(&w.hub, &rec, &room);
+    let mut neo = Dev::new();
+    neo.room = room;
+    let join = neo.external_join(&base, now);
+    let auth = recovery_auth(&w.recovery.sign, &join, &base, now, &neo.id());
+    let key = neo.sealed_key(
+        &room,
+        join.epoch + 1,
+        &join.group_info,
+        join.epoch,
+        &w.recovery.hpke_public,
+        true,
+    );
+    // outside a recovery: the second human device is refused
+    rec.post(
+        &w.hub,
+        &format!("/v2/groups/{}/commits", b64(&room)),
+        &commit_json(&join, &key, Some(&auth)),
+    )
+    .refused(429, "too-many");
+    // inside one it is taken
+    let opened = rec
+        .post(
+            &w.hub,
+            &format!("/v2/rooms/{}/recovery", b64(&room)),
+            &json!({}),
+        )
+        .ok();
+    let mut body = commit_json(&join, &key, Some(&auth));
+    body["group_id"] = json!(b64(&room));
+    rec.post(
+        &w.hub,
+        &format!(
+            "/v2/rooms/{}/recovery/{}/commits",
+            b64(&room),
+            opened["recovery_id"].as_str().unwrap()
+        ),
+        &body,
+    )
+    .ok();
+}
