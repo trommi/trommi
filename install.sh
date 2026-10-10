@@ -7,6 +7,9 @@
 #   install.sh --tag <tag>      that release (a release older than the one installed is refused all the same)
 #   install.sh --from <dir>     a release that lies in a folder already: manifest.json, manifest.json.sig and
 #                               trommi-connector-<target>, as downloaded from a release page
+#   install.sh --verbose        also the details of each step: hashes, paths, what setup did (or TROMMI_VERBOSE=1)
+#
+# It prints one line per step; colour and bold only when the output is a terminal and NO_COLOR is not set.
 #
 # What it does, in this order:
 #   1. finds the release (GitHub's feed of releases, then each asked for its files) and downloads manifest.json, manifest.json.sig and the connector of this
@@ -44,15 +47,28 @@ MAX_MANIFEST=1048576
 MAX_BINARY=209715200
 MAX_LISTING=8388608
 
+# Colour and bold only on a terminal, and never with NO_COLOR (https://no-color.org) or TERM=dumb.
+paint() { [ -t "$1" ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; }
+if paint 1; then B=$(printf '\033[1m') G=$(printf '\033[32m') Y=$(printf '\033[33m') D=$(printf '\033[2m') Z=$(printf '\033[0m')
+else B='' G='' Y='' D='' Z=''; fi
+if paint 2; then R=$(printf '\033[31m') RZ=$(printf '\033[0m'); else R='' RZ=''; fi
+verbose=${TROMMI_VERBOSE:-}
+[ "$verbose" != 0 ] || verbose=''
+
 say() { printf '%s\n' "$*"; }
-fail() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
+# one finished step; its details (hashes, paths) only with --verbose
+step() { printf '  %s✓%s %s\n' "$G" "$Z" "$*"; }
+detail() { [ -z "$verbose" ] || printf '    %s%s%s\n' "$D" "$*" "$Z"; }
+note() { printf '  %s!%s %s\n' "$Y" "$Z" "$*"; }
+fail() { printf '%s✗ install.sh: %s%s\n' "$R" "$*" "$RZ" >&2; exit 1; }
 
 from='' tag=''
 while [ $# -gt 0 ]; do
   case $1 in
     --from) [ $# -ge 2 ] || fail "--from needs a folder"; from=$2; shift 2 ;;
     --tag) [ $# -ge 2 ] || fail "--tag needs a tag"; tag=$2; shift 2 ;;
-    *) fail "unknown argument $1 (use --tag <tag> or --from <dir>)" ;;
+    --verbose|-v) verbose=1; shift ;;
+    *) fail "unknown argument $1 (use --tag <tag>, --from <dir> or --verbose)" ;;
   esac
 done
 [ -z "$from" ] || [ -z "$tag" ] || fail "--from and --tag do not go together"
@@ -67,6 +83,7 @@ if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] && [ "$SUDO_USER" != "$(i
   fail "started through sudo by $SUDO_USER: run it as $SUDO_USER without sudo (the connector belongs to the user whose Claude Code or Codex starts it)."
 fi
 case ${HOME:-} in /*) ;; *) fail "HOME is not set to a folder" ;; esac
+printf '%s🔔 Trommi%s %sconnector%s\n' "$B" "$Z" "$D" "$Z"
 [ -d "$HOME" ] || fail "HOME is not set to a folder"
 
 case "$(uname -s)/$(uname -m)" in
@@ -170,7 +187,7 @@ else
     done < "$work/tags"
     [ -n "$tag" ] || fail "no recent release of $REPOSITORY has a connector for $target"
   fi
-  say "Downloading the Trommi connector, release $tag, for $target"
+  detail "downloading release $tag for $target"
   fetch "$tag" manifest.json "$work/manifest.json" "$MAX_MANIFEST"
   fetch "$tag" manifest.json.sig "$work/manifest.json.sig" 1024
   fetch "$tag" "$name" "$work/$name" "$MAX_BINARY"
@@ -229,34 +246,46 @@ ln -sf "$bin/trommi-connector" "$link_dir/.trommi-connector.new"
 mv -f "$link_dir/.trommi-connector.new" "$link_dir/trommi-connector"
 
 # ---- 6. what was installed -------------------------------------------------------------------------------------
-say "Installed: trommi-connector, release $version ($stated_tag), signature verified"
-[ "$uid" != 0 ] || say "Installed for root."
-say "  manifest.json SHA-256: $(sha256 "$bin/manifest.json")"
-say "  program: $bin/trommi-connector"
-say "  command: $link_dir/trommi-connector"
+if [ -n "$from" ]; then step "Release $stated_tag taken from the folder"; detail "$from"; else step "Downloaded release $stated_tag"; fi
+detail "for $target"
+step "Signature verified"
+detail "release $version ($stated_tag), signature verified"
+detail "manifest.json SHA-256: $(sha256 "$bin/manifest.json")"
+if [ "$uid" = 0 ]; then step "Installed to ~/.local/bin, for root"; else step "Installed to ~/.local/bin"; fi
+detail "program: $bin/trommi-connector"
+detail "command: $link_dir/trommi-connector"
 case ":${PATH:-}:" in
   *":$link_dir:"*) ;;
-  *) say "  $link_dir is not on your PATH: add the line"
-     say "    export PATH=\"\$HOME/.local/bin:\$PATH\""
-     say "  to ~/.profile (or the start file of your shell) and log in again, or call the program by its full path." ;;
+  *) note "Your PATH lacks ~/.local/bin: add this line to ~/.profile and log in again"
+     say "      export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
 esac
 
 # ---- 7. the programs that start it -----------------------------------------------------------------------------
 # Claude Code and Codex, where they are on the PATH, are told about the connector (`trommi-connector setup`, which
 # changes nothing it does not own and says what it did). That step failing leaves the connector installed.
-found=''
+found='' codex=''
 for program in claude codex; do
   command -v "$program" >/dev/null 2>&1 || continue
   found=1
-  say "Setting up $program:"
-  if ! "$bin/trommi-connector" setup "$program" </dev/null; then
-    say "  $program was not set up (see above); once that is solved: trommi-connector setup $program"
+  case $program in claude) label='Claude Code' ;; *) label=Codex codex=1 ;; esac
+  if "$bin/trommi-connector" setup "$program" --details </dev/null >"$work/setup.out" 2>"$work/setup.err"; then
+    step "$label set up"
+    while IFS= read -r line; do detail "$line"; done < "$work/setup.out"
+  else
+    why=$(sed -n 's/^.*\[trommi\] //p' "$work/setup.err" | head -n 1)
+    [ -n "$why" ] || why=$(head -n 1 "$work/setup.err")
+    printf '  %s✗ %s was not set up%s%s\n' "$R" "$label" "${why:+: $why}" "$RZ" >&2
+    printf '    once that is solved, run: trommi-connector setup %s\n' "$program" >&2
   fi
 done
 if [ -z "$found" ]; then
-  say "Neither claude nor codex is on your PATH. Once one is installed: trommi-connector setup claude (or: setup codex)"
+  note "Neither claude nor codex is on your PATH. Once one is installed: trommi-connector setup claude (or: setup codex)"
 fi
-say "Next: start claude in a project folder, then: /trommi:connect '<invite link>'"
+say ""
+say "${B}Next${Z}"
+say "  Start claude in a project folder and paste the line from \"Invite an agent\" in the Trommi app:"
+say "    ${B}/trommi:connect '<link>'${Z}"
+[ -z "$codex" ] || say "  Codex: start it in a project folder and ask it to connect to Trommi with that link."
 }
 
 main "$@"

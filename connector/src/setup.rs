@@ -67,6 +67,82 @@ fn here(name: &str) -> Result<(), String> {
     }
 }
 
+/// The program's name as people know it.
+fn label(which: &str) -> &'static str {
+    if which == "codex" {
+        "Codex"
+    } else {
+        "Claude Code"
+    }
+}
+
+/// What to do next, one line.
+fn next(which: &str) -> &'static str {
+    if which == "codex" {
+        "start codex in a project folder and ask it to connect to Trommi with the link from \"Invite an agent\" in the Trommi app."
+    } else {
+        "start claude in a project folder and paste /trommi:connect '<link>' from \"Invite an agent\" in the Trommi app."
+    }
+}
+
+/// Bold, green, red and dim, only when that stream is a terminal and `NO_COLOR` is not set.
+fn paint(terminal: bool, code: &str, text: &str) -> String {
+    let plain = !terminal
+        || std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+        || std::env::var("TERM").is_ok_and(|term| term == "dumb");
+    if plain {
+        text.to_string()
+    } else {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    }
+}
+
+/// Whether the per-step details are wanted: `--verbose` or `TROMMI_VERBOSE=1`.
+fn verbose(flags: &[String]) -> bool {
+    flags.iter().any(|flag| flag == "--verbose" || flag == "-v")
+        || std::env::var("TROMMI_VERBOSE").is_ok_and(|value| !value.is_empty() && value != "0")
+}
+
+/// `setup claude|codex [--verbose]`: one ✓ line, the details under it when asked for, then what to do next.
+/// `--details` prints only the details, one per line (install.sh frames them itself). Returns the exit code.
+pub fn run_cli(which: Option<&str>, flags: &[String]) -> i32 {
+    use std::io::IsTerminal;
+    let done = match which {
+        Some("claude") => claude(),
+        Some("codex") => codex(),
+        _ => Err("use `setup claude` or `setup codex` (add --verbose for the details)".to_string()),
+    };
+    let out = std::io::stdout().is_terminal();
+    match done {
+        Ok(lines) if flags.iter().any(|flag| flag == "--details") => {
+            for line in lines {
+                println!("{line}");
+            }
+            0
+        }
+        Ok(lines) => {
+            let which = which.unwrap_or("claude");
+            println!(
+                "{} {}",
+                paint(out, "32", "✓"),
+                paint(out, "1", &format!("{} set up", label(which)))
+            );
+            if verbose(flags) {
+                for line in lines {
+                    println!("    {}", paint(out, "2", &line));
+                }
+            }
+            println!("{} {}", paint(out, "1", "Next:"), next(which));
+            0
+        }
+        Err(why) => {
+            let err = std::io::stderr().is_terminal();
+            eprintln!("{}", paint(err, "31", &format!("✗ [trommi] {why}")));
+            1
+        }
+    }
+}
+
 /// `setup claude`. The lines say what was done.
 pub fn claude() -> Result<Vec<String>, String> {
     let program = program()?;
@@ -130,9 +206,6 @@ pub fn claude() -> Result<Vec<String>, String> {
         done.push("plugin trommi@trommi: installed for your user".to_string());
     }
     done.push(format!("the plugin starts {program}"));
-    done.push(
-        "Start Claude Code in a project folder, then: /trommi:connect '<invite link>'".to_string(),
-    );
     Ok(done)
 }
 
@@ -181,7 +254,7 @@ pub fn codex() -> Result<Vec<String>, String> {
         );
     }
     done.push(format!("Codex starts {program}"));
-    done.push("Start Codex in a project folder, then ask it to connect to Trommi with '<invite link>' (its tool connect). Board events wait for the `inbox` tool: Codex has no live events.".to_string());
+    done.push("board events wait for the `inbox` tool: Codex has no live events".to_string());
     Ok(done)
 }
 

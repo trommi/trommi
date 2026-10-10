@@ -202,16 +202,21 @@ fn a_signed_release_is_installed_and_says_what_was_verified() {
     let output = bench.install_from(&release);
     let text = said(&output);
     assert!(output.status.success(), "{text}");
+    // short by default: one line per step, the hashes and paths only with --verbose
+    for line in [
+        "Release connector-v7 taken from",
+        "✓ Signature verified",
+        "✓ Installed to ~/.local/bin",
+        "Next",
+    ] {
+        assert!(text.contains(line), "expected {line:?} in: {text}");
+    }
     assert!(
-        text.contains("release 7 (connector-v7), signature verified"),
+        !text.contains("SHA-256") && !text.contains("\x1b["),
         "{text}"
     );
     let manifest = std::fs::read(release.join("manifest.json")).expect("the manifest");
     let sum = trommi_connector::util::hex(&trommi_connector::util::sha256(&manifest));
-    assert!(
-        text.contains(&format!("manifest.json SHA-256: {sum}")),
-        "the manifest's SHA-256 is said: {text}"
-    );
     assert_eq!(
         std::fs::read(bench.installed("trommi-connector")).expect("the program"),
         std::fs::read(release.join(&bench.asset)).expect("the asset")
@@ -243,8 +248,22 @@ fn a_signed_release_is_installed_and_says_what_was_verified() {
         .collect();
     assert_eq!(left, ["bin"], "only the program's folder is there");
 
-    // A second run with the same release changes nothing and ends well; a newer one replaces it.
-    assert!(bench.install_from(&release).status.success());
+    // A second run with the same release changes nothing and ends well (here with the details); a newer one
+    // replaces it.
+    let output = bench.install(
+        &["--verbose", "--from", release.to_str().expect("plain")],
+        None,
+    );
+    let text = said(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("release 7 (connector-v7), signature verified"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("manifest.json SHA-256: {sum}")),
+        "the manifest's SHA-256 is said: {text}"
+    );
     // (a release of the whole repository: product trommi, tag v8)
     let next = bench.release("eight", "trommi-connector", 8, &verified(8), None);
     let manifest = read(&next.join("manifest.json"))
@@ -258,7 +277,7 @@ fn a_signed_release_is_installed_and_says_what_was_verified() {
     bench.sign(&next, None);
     let output = bench.install_from(&next);
     assert!(output.status.success(), "{}", said(&output));
-    assert!(said(&output).contains("release 8 (v8), signature verified"));
+    assert!(said(&output).contains("Release v8 taken from"));
     assert!(read(&bench.installed("manifest.json")).contains("\"version\": 8"));
 }
 
@@ -422,7 +441,10 @@ fn the_installer_installs_for_root_refuses_sudo_by_another_user_and_goes_nowhere
     let output = bench.install(&from, Some(&as_root));
     let text = said(&output);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("Installed for root."), "{text}");
+    assert!(
+        text.contains("Installed to ~/.local/bin, for root"),
+        "{text}"
+    );
     assert!(
         text.contains("export PATH=\"$HOME/.local/bin:$PATH\""),
         "{text}"
@@ -431,11 +453,11 @@ fn the_installer_installs_for_root_refuses_sudo_by_another_user_and_goes_nowhere
     // root through sudo from root (SUDO_USER=root) is root as well
     let output = bench.install_env(&from, Some(&as_root), &[("SUDO_USER", "root")]);
     assert!(output.status.success(), "{}", said(&output));
-    assert!(said(&output).contains("Installed for root."));
+    assert!(said(&output).contains("for root"));
     // an ordinary user gets no such note
     let output = bench.install(&from, None);
     assert!(output.status.success(), "{}", said(&output));
-    assert!(!said(&output).contains("Installed for root."));
+    assert!(!said(&output).contains("for root"));
 
     for args in [
         &["--key", "x"][..],
@@ -558,10 +580,7 @@ esac
     let output = bench.install(&[], Some(&fake));
     let text = said(&output);
     assert!(output.status.success(), "{text}");
-    assert!(
-        text.contains("release 34 (connector-v34), signature verified"),
-        "{text}"
-    );
+    assert!(text.contains("Downloaded release connector-v34"), "{text}");
     let calls = read(&stage.join("calls"));
     assert!(
         !calls.contains("hub-v"),
@@ -601,7 +620,7 @@ fn the_installer_sets_up_the_programs_it_finds() {
     assert!(output.status.success(), "{text}");
     assert_eq!(calls(), ["setup claude", "setup codex"], "{text}");
     assert!(
-        text.contains("Setting up claude:") && text.contains("Setting up codex:"),
+        text.contains("✓ Claude Code set up") && text.contains("✓ Codex set up"),
         "{text}"
     );
     assert!(text.contains("/trommi:connect"), "{text}");
@@ -625,7 +644,8 @@ fn the_installer_sets_up_the_programs_it_finds() {
     let text = said(&output);
     assert!(output.status.success(), "{text}");
     assert_eq!(calls(), ["setup claude"]);
-    assert!(text.contains("claude was not set up"), "{text}");
+    assert!(text.contains("Claude Code was not set up"), "{text}");
+    assert!(text.contains("trommi-connector setup claude"), "{text}");
     assert!(bench.installed("trommi-connector").is_file());
 }
 
@@ -825,6 +845,9 @@ impl Desk {
             .to_string()
     }
     fn setup(&self, which: &str, with_tools: bool) -> Output {
+        self.setup_with(which, with_tools, &["--verbose"])
+    }
+    fn setup_with(&self, which: &str, with_tools: bool, flags: &[&str]) -> Output {
         let mut dirs = vec![];
         if with_tools {
             dirs.push(self.dir.path().join("tools"));
@@ -839,6 +862,7 @@ impl Desk {
         );
         Command::new(common::process::connector_binary())
             .args(["setup", which])
+            .args(flags)
             .env_clear()
             .env("HOME", self.dir.path())
             .env("PATH", std::env::join_paths(dirs).expect("a PATH"))
@@ -873,7 +897,15 @@ fn setup_claude_adds_the_marketplace_and_the_plugin_once() {
             "claude plugin install trommi@trommi -s user -y",
         ]
     );
-    // again: nothing is added a second time
+    // again: nothing is added a second time. Without --verbose it is one line and what to do next.
+    let second = desk.setup_with("claude", true, &[]);
+    let text = said(&second);
+    assert!(second.status.success(), "{text}");
+    assert!(
+        text.contains("✓ Claude Code set up") && text.contains("/trommi:connect"),
+        "{text}"
+    );
+    assert!(!text.contains("marketplace"), "{text}");
     let second = desk.setup("claude", true);
     let text = said(&second);
     assert!(second.status.success(), "{text}");
@@ -883,7 +915,7 @@ fn setup_claude_adds_the_marketplace_and_the_plugin_once() {
         "{text}"
     );
     assert_eq!(
-        desk.calls()[4..],
+        desk.calls()[8..],
         [
             "claude plugin marketplace list --json",
             "claude plugin marketplace update trommi",

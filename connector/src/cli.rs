@@ -461,25 +461,7 @@ pub async fn run(argv: &[String]) -> i32 {
                 1
             }
         },
-        "setup" => {
-            let done = match given.as_deref() {
-                Some("claude") => crate::setup::claude(),
-                Some("codex") => crate::setup::codex(),
-                _ => Err("use `setup claude` or `setup codex`".to_string()),
-            };
-            match done {
-                Ok(lines) => {
-                    for line in lines {
-                        println!("{line}");
-                    }
-                    0
-                }
-                Err(why) => {
-                    eprintln!("[trommi] {why}");
-                    1
-                }
-            }
-        }
+        "setup" => crate::setup::run_cli(given.as_deref(), argv.get(2..).unwrap_or_default()),
         "update" => match crate::update::update(given.as_deref() == Some("--check")).await {
             Ok(said) => {
                 println!("{said}");
