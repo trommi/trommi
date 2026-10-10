@@ -645,12 +645,27 @@ impl Client {
         }
         .encode()?;
         let now = now_ms();
-        self.vault
-            .call(move |v: &mut Vault| {
+        let queued = self
+            .vault
+            .call(move |v: &mut Vault| -> Result<bool> {
+                // A trail is live: while too many steps wait for the hub, new ones are dropped, not queued.
+                let waiting = v
+                    .device
+                    .outbox()
+                    .iter()
+                    .filter(|entry| entry.kind == trommi_core::store::OutboxKind::Message)
+                    .count();
+                if waiting >= crate::client::MAX_WAITING_STEPS {
+                    return Ok(false);
+                }
                 v.device
-                    .send_work_trail(&group, &TurnId::new(turn), number, &step, now)
+                    .send_work_trail(&group, &TurnId::new(turn), number, &step, now)?;
+                Ok(true)
             })
             .await??;
+        if !queued {
+            return Ok(());
+        }
         core.commit()?;
         self.pump(&mut core).await
     }

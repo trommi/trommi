@@ -157,6 +157,13 @@ fn transport(error: &reqwest::Error) -> Fault {
     Fault::new("offline", what)
 }
 
+/// Whether a fault says that what answers is no hub of this protocol, or wants another client: a status
+/// without a code of the protocol (a 404 page, a proxy's answer), an answer that is no JSON or no event
+/// stream, `client-too-old`. Trying again soon helps nothing; the connector stops and says so.
+pub fn is_no_hub(fault: &Fault) -> bool {
+    fault.code.starts_with("http-") || fault.code == "bad-format" || fault.code == "client-too-old"
+}
+
 /// Whether a fault is worth another try later with the same bytes: the hub was not reached, or it asked to wait.
 pub fn is_transient(fault: &Fault) -> bool {
     matches!(
@@ -240,7 +247,9 @@ impl Hub {
             })
             .map(str::to_owned)
             .unwrap_or_else(|| {
-                if status >= 500 {
+                if status == 426 {
+                    "client-too-old".into()
+                } else if status >= 500 {
                     "internal".into()
                 } else {
                     format!("http-{status}")
@@ -472,6 +481,18 @@ impl Hub {
                 self.drop_token();
             }
             return Err(fault.unwrap_or_else(|| Fault::new("offline", "no stream")));
+        }
+        // Anything but an event stream is not this hub's answer (a page of a proxy, another service).
+        let is_stream = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream"));
+        if !is_stream {
+            return Err(Fault::new(
+                "bad-format",
+                "the hub's stream is no event stream",
+            ));
         }
         Ok(Stream {
             body: response.bytes_stream().boxed(),
