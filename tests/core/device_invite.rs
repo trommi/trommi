@@ -8,7 +8,8 @@ use trommi_core::envelope::Urgency;
 use trommi_core::hub_auth::{self, HubAddress, IssuedChallenge};
 use trommi_core::ids::{GroupId, InviteId};
 use trommi_core::invite::{
-    CheckCode, InviteLink, Request, Role, CHECK_EMOJI, CONFIRM_MS, INVITE_LIFE_MS,
+    CheckCode, InviteLink, Request, Role, SignedOffer, SignedReveal, AGENT_INVITE_LIFE_MS,
+    CHECK_EMOJI, CLOCK_TOLERANCE_MS, CONFIRM_MS, HUMAN_INVITE_LIFE_MS,
 };
 use trommi_core::Error;
 use trommi_tests::forge::Forger;
@@ -456,7 +457,7 @@ fn an_invite_expires_and_sixteen_are_open_at_most() {
     let opened = a
         .invite_open(Role::Human, None, APP, &hub_address(), start)
         .unwrap();
-    assert_eq!(opened.expires_at, start + INVITE_LIFE_MS);
+    assert_eq!(opened.expires_at, start + HUMAN_INVITE_LIFE_MS);
     let request = b
         .join_request(&link_text(&opened), &opened.signed_offer, start)
         .unwrap();
@@ -464,19 +465,67 @@ fn an_invite_expires_and_sixteen_are_open_at_most() {
         a.invite_accept(
             &opened.invite_id,
             &request.signed_request,
-            start + INVITE_LIFE_MS + 1
+            start + HUMAN_INVITE_LIFE_MS + 1
         ),
         Err(Error::InviteExpired)
     );
-    // The new device does not answer an Offer that ran out either.
+    // The new device does not answer an Offer that ran out either: by its own clock, two minutes after the
+    // deadline at most. It reads the link before it fetches anything, and checks again before it answers.
     let mut c = new_device();
+    let deadline = start + HUMAN_INVITE_LIFE_MS;
+    let late = deadline + CLOCK_TOLERANCE_MS + 1;
     assert_eq!(
-        c.join_request(
+        c.join_link(&link_text(&opened), late),
+        Err(Error::InviteExpired)
+    );
+    assert_eq!(
+        c.join_request(&link_text(&opened), &opened.signed_offer, late),
+        Err(Error::InviteExpired)
+    );
+    let read = c
+        .join_link(&link_text(&opened), deadline + CLOCK_TOLERANCE_MS)
+        .unwrap();
+    assert_eq!(read.invite_id, opened.invite_id);
+    assert_eq!(read.expires_at, deadline);
+    assert_eq!(read.hub, hub_address());
+    // A clock far behind: the deadline lies further ahead than any invite lives.
+    let early = deadline - AGENT_INVITE_LIFE_MS - CLOCK_TOLERANCE_MS - 1;
+    assert_eq!(
+        c.join_link(&link_text(&opened), early),
+        Err(Error::BadInvite)
+    );
+    assert!(c.join_link(&link_text(&opened), early + 1).is_ok());
+    // An Offer without the link's MAC: missing, short or wrong. The device sends no Request and stores
+    // nothing, so there is no invite whose Reveal it would check.
+    let mut wrong = opened.signed_offer.mac.clone();
+    wrong[0] ^= 1;
+    for mac in [Vec::new(), opened.signed_offer.mac[..16].to_vec(), wrong] {
+        let unbound = SignedOffer {
+            mac,
+            ..opened.signed_offer.clone()
+        };
+        assert_eq!(
+            c.join_request(&link_text(&opened), &unbound, start),
+            Err(Error::BadInvite)
+        );
+    }
+    let nothing = SignedReveal {
+        reveal: Vec::new(),
+        signature: Vec::new(),
+    };
+    assert_eq!(c.join_reveal(&nothing), Err(Error::NotFound));
+    // The refused Offers stored nothing: the device still answers this one in time.
+    assert!(c
+        .join_request(
             &link_text(&opened),
             &opened.signed_offer,
-            start + INVITE_LIFE_MS + 1
-        ),
-        Err(Error::InviteExpired)
+            deadline + CLOCK_TOLERANCE_MS
+        )
+        .is_ok());
+    // A device that holds a room reads no link.
+    assert_eq!(
+        a.join_link(&link_text(&opened), start),
+        Err(Error::RoomExists)
     );
     for _ in 1..MAX_OPEN_INVITES {
         a.invite_open(Role::Human, None, APP, &hub_address(), start)
@@ -493,9 +542,23 @@ fn an_invite_expires_and_sixteen_are_open_at_most() {
         None,
         APP,
         &hub_address(),
-        start + INVITE_LIFE_MS + 1,
+        start + HUMAN_INVITE_LIFE_MS + 1,
     )
     .unwrap();
+    // An invite for an agent device lives fifteen minutes, for a new session and for a takeover.
+    let session = main.session_id().unwrap();
+    let later = start + 3 * HUMAN_INVITE_LIFE_MS;
+    for take_over in [None, Some(&session)] {
+        let agents = a
+            .invite_open(Role::Agent, take_over, APP, &hub_address(), later)
+            .unwrap();
+        assert_eq!(agents.expires_at, later + AGENT_INVITE_LIFE_MS);
+        assert!(
+            link_text(&agents).ends_with(&trommi_core::ids::base64url_encode(
+                &(later + AGENT_INVITE_LIFE_MS).to_be_bytes()
+            ))
+        );
+    }
     // Only a human device invites; a human device is not invited into a session; a session to take over
     // is a live main session.
     assert_eq!(
@@ -504,8 +567,6 @@ fn an_invite_expires_and_sixteen_are_open_at_most() {
             .map(|_| ()),
         Err(Error::Forbidden)
     );
-    let later = start + 3 * INVITE_LIFE_MS;
-    let session = main.session_id().unwrap();
     assert_eq!(
         a.invite_open(Role::Human, Some(&session), APP, &hub_address(), later)
             .map(|_| ()),
