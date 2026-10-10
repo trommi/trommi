@@ -1508,11 +1508,7 @@ fn moved(served: &FetchedGroup, real: u64, claimed: u64) -> FetchedGroup {
 fn takeover_with_a_gap(w: &mut World) -> (u64, u64, u64) {
     let (room, main, side) = (w.room, w.main, w.side);
     let mut next = new_device();
-    w.old
-        .change_agents(&[next.id()], &[w.agent.id()], now())
-        .unwrap();
-    post_ok(&mut w.hub, &mut w.old);
-    observe(&w.hub, &mut next);
+    enrol_over(&mut w.hub, &mut w.old, &mut next, &main);
     let gone = std::mem::replace(&mut w.agent, next).id();
     w.sync();
     // Something else of the room takes the next number.
