@@ -23,7 +23,8 @@ API = "https://api.appstoreconnect.apple.com"
 
 
 def die(msg):
-    print(f"::error::{msg}", flush=True)
+    # (on stderr: the script takes some commands' stdout as their value, and the message must still be seen)
+    print(f"::error::{msg}", file=sys.stderr, flush=True)
     sys.exit(1)
 
 
