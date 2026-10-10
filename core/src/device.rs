@@ -3970,7 +3970,29 @@ impl<S: Storage> Device<S> {
         }
         Ok(new)
     }
+}
 
+/// Served envelopes in the hub's one order across senders and groups: ascending by change number, whatever
+/// order they were handed in. An envelope handed twice is kept once; two different envelopes under one
+/// change number are `bad-format`, since the hub gives every envelope a number of its own.
+fn in_the_hubs_order<'a>(served: &[ServedEnvelope<'a>]) -> Result<Vec<ServedEnvelope<'a>>, Error> {
+    let mut ordered: Vec<ServedEnvelope<'a>> = served.to_vec();
+    ordered.sort_by_key(|envelope| envelope.change);
+    let mut once: Vec<ServedEnvelope<'a>> = Vec::with_capacity(ordered.len());
+    for envelope in ordered {
+        match once.last() {
+            Some(last) if last.change == envelope.change => {
+                if last.bytes != envelope.bytes {
+                    return Err(Error::BadFormat);
+                }
+            }
+            _ => once.push(envelope),
+        }
+    }
+    Ok(once)
+}
+
+impl<S: Storage> Device<S> {
     /// The Cuts for the leaves `gone` of `group`: the head of each one's chain as this device accepted it
     /// (9.0.10), number 0 and zeros for a device of which it accepted nothing.
     fn cuts_of(&self, group: &GroupId, gone: &[DeviceId]) -> Result<Vec<Cut>, Error> {
@@ -3996,6 +4018,11 @@ impl<S: Storage> Device<S> {
     /// Cut is taken from a chain that does not hold. A device of which nothing is handed in is cut at
     /// nothing; what a hub withholds from the end of a chain cannot be seen here (section 17).
     ///
+    /// `chains` may be handed in any order, device after device or as they were fetched: this call reads
+    /// them in the hub's one order across devices and groups, ascending by their change numbers, which is
+    /// the order every envelope is judged in (a Note version builds on another device's). An envelope
+    /// handed twice is read once; two different envelopes under one change number are `bad-format`.
+    ///
     /// The outbox entries are the recovery's Commits in order and its finish. The device's state changes
     /// only when the hub accepted the finish; when the hub refuses any of them, or the recovery ran out,
     /// which the caller reports as a refusal, all of it goes and the state is as before.
@@ -4014,6 +4041,7 @@ impl<S: Storage> Device<S> {
         if !self.memory.staged.is_empty() {
             return Err(Error::Busy);
         }
+        let chains = in_the_hubs_order(chains)?;
         let mut checked = recovery::check_room(keys, served)?;
         let missing_link = checked.missing_link;
         // Every live session is joined and cleaned, or the hub publishes nothing.
@@ -4040,7 +4068,7 @@ impl<S: Storage> Device<S> {
                 postings.push(this.join_built(batch, keys, current, seats, walked, now_ms)?);
             }
             // The chains of the devices to go, read from number 1 on this copy.
-            for served in chains {
+            for served in &chains {
                 let read = this.receive_in(
                     batch,
                     served.bytes,
