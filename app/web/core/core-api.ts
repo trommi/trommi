@@ -22,7 +22,7 @@ export type {
   OutboxKind, OutboxEntry, Cut, Replacement, Joined, LogEntry, CommitSummary, ReceivedMessage, Processed, LogFinding,
   HandoverSent, KeyPackageInfo, SignedHubAuth, FileRef, FileEnd, FileLayout, FileChunk, ShareLink, AccountKeys, AccountWay,
   PushNote, Versions, SelfTestStep, SelfTestReport, FileEncryptor, FileDecryptor,
-  ServedCommit, ServedGroup, ServedRoom, ServedEnvelope, FeedItem, FeedOutcome, Fed, Learned, UnverifiedSession, CodeJoin, Removals, RecoveryPlan, Anchor,
+  ServedCommit, ServedGroup, ServedRoom, ServedStart, ServedEnd, PlacedCommit, LearnProgress, ServedEnvelope, FeedItem, FeedOutcome, Fed, Learned, UnverifiedSession, CodeJoin, Removals, RecoveryPlan, Anchor,
   InviteRole, InviteOpened, SignedOffer, SignedRequest, SignedReveal, InviteLinkParts, EmojiWord, CheckCode, InviteAccepted,
   InviteConfirmed, InviteStepKind, InviteStep, JoinRequest,
   Urgency, ObjectType, ObjectState, DraftKind, Draft, Sealed, EnvelopeKind, TimelineKind, TimelineRef, ObjectHeader,
