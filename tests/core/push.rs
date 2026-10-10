@@ -230,7 +230,7 @@ fn apns_does_not_open_what_was_sealed_for_another_use() {
     let sealed = seal(&key(1), &push(), &mut SystemEntropy).expect("seals");
     let (first, ciphertext) = sealed.split_first_chunk::<NONCE_LEN>().expect("a nonce");
     let json = crypto::aead_open(&key(1), first, APNS_AAD, ciphertext).expect("opens");
-    let other = crypto::aead_seal(&key(1), &nonce, b"trommi apns v1", &json).expect("seals");
+    let other = crypto::aead_seal(&key(1), &nonce, b"trommi apns v2", &json).expect("seals");
     assert_eq!(
         open(&key(1), &[nonce.as_slice(), &other].concat()),
         Err(Error::DecryptFailed)
