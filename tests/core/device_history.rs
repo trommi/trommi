@@ -1166,7 +1166,17 @@ fn a_chain_that_begins_at_a_snapshots_frontier_goes_on_and_is_verified_from_numb
         c.register(&room, DESK).unwrap().unwrap().expose(),
         a.register(&room, DESK).unwrap().unwrap().expose()
     );
-    assert_eq!(c.board_load(&board_id, &[]), Err(Error::Replay));
+    // The snapshot loads again, with the items after it the chain shows.
+    assert_eq!(c.board_load(&board_id, &[]), Err(Error::Withheld));
+    let both = [
+        served[0],
+        ServedItem {
+            sender: a.id(),
+            seq: sixth.seq,
+            hash: sixth.envelope_hash,
+        },
+    ];
+    assert_eq!(c.board_load(&board_id, &both).unwrap().fresh, vec![0, 1]);
 }
 
 #[test]
@@ -1494,6 +1504,91 @@ fn a_refused_board_load_starts_no_chain_at_a_frontier_the_cut_contradicts() {
         assert_ne!(got.outcome, EnvelopeOutcome::Refused, "{:?}", got.code);
     }
     assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 2);
+}
+
+#[test]
+fn a_board_loads_its_snapshot_again_after_a_cut_dropped_items() {
+    use trommi_core::board::{self, ServedItem, Snapshot};
+
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    let mut pen = Pen::new(&forger.key);
+    let signed: Vec<_> = (0..3)
+        .map(|_| pen.sign(&claim, &item, &Objects::new(), now()))
+        .collect();
+    let post = |hub: &mut Hub, envelope: &envelope::Envelope| {
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(envelope))
+            .unwrap();
+    };
+    // The remover reads the writer's first item and writes a snapshot that covers it.
+    post(&mut hub, &signed[0]);
+    sync_all(&hub, &mut a);
+    let snapshot = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: vec![(pen.id(), a.chain_head(&room, &pen.id()).unwrap())],
+        change: a.cursor(),
+    };
+    write(
+        &mut hub,
+        &mut a,
+        &Draft::Register {
+            group: room,
+            name: board::snapshot_name(&BoardId::ALL_DESKS),
+            value: Some(json(&snapshot.value().unwrap())),
+        },
+    );
+    // The remover reads the second item too; the other device reads all three and loads the board with the
+    // two after the frontier.
+    post(&mut hub, &signed[1]);
+    sync_all(&hub, &mut a);
+    post(&mut hub, &signed[2]);
+    sync_all(&hub, &mut b);
+    let served: Vec<ServedItem> = signed[1..]
+        .iter()
+        .enumerate()
+        .map(|(at, envelope)| ServedItem {
+            sender: pen.id(),
+            seq: at as u64 + 2,
+            hash: envelope.hash().unwrap(),
+        })
+        .collect();
+    assert_eq!(
+        b.board_load(&BoardId::ALL_DESKS, &served).unwrap().fresh,
+        vec![0, 1]
+    );
+    // The remover had accepted two of them: the Cut drops the third on the other device.
+    let cut = a.cut_of(&room, &forger.id()).unwrap();
+    assert_eq!(cut.seq, 2);
+    a.remove_human_devices(&[cut], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut b);
+    // The same snapshot loads again: the board is built anew without the dropped item.
+    let loaded = b.board_load(&BoardId::ALL_DESKS, &served[..1]).unwrap();
+    assert_eq!(loaded.fresh, vec![0]);
+    assert!(loaded.frontier.contains(&(
+        pen.id(),
+        trommi_core::chain::Head {
+            seq: 2,
+            hash: signed[1].hash().unwrap()
+        }
+    )));
 }
 
 #[test]
