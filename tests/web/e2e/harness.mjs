@@ -3,7 +3,8 @@
 //
 // THE APP is built the normal way (tests/web/build/built.mjs `writeBuilt`: app/web/dev/build.mjs `generate()`), into a
 // folder under TMP. `standInWorker(dir)` then replaces the ONE worker file of that build with a bundle of the same
-// entry (app/web/core/core-worker.ts) in which core-wasm.ts is standin-core.ts: same address, so nothing else of the
+// entry (app/web/core/core-worker.ts) in which core-wasm.ts is standin-core.ts (the real binding plus the facts the
+// fake hub needs): same address, so nothing else of the
 // build changes (index.html, the page's chunks, the proof worker, the .wasm and the _headers are the build's own).
 //
 // THE SERVER (`serveApp`) answers on ONE origin (http://localhost:<port>): every address under /v2/ is passed on to the hub (the fake hub or
@@ -82,7 +83,7 @@ const workerOf = dir => {
   if (f.length !== 1) throw new Error(`the build has not exactly one core worker in gen/app/ (${f.join(', ') || 'none'})`)
   return `gen/app/${f[0]}`
 }
-/** Replaces the built worker's file by the same worker with the stand-in core (see the header). Not minified: an
+/** Replaces the built worker's file by the same worker with standin-core.ts for core-wasm.ts (see the header). Not minified: an
  *  error in it names its place. Returns the worker's address. */
 export async function standInWorker(dir) {
   const esbuild = await import('esbuild')
@@ -96,7 +97,7 @@ export async function standInWorker(dir) {
   })
   if (made.outputFiles.length !== 1) throw new Error('the stand-in worker is not one file')
   const text = made.outputFiles[0].text
-  if (!text.includes('standInCore') || text.includes('core-missing: the core\'s WASM binding has no')) throw new Error('the stand-in worker still holds core-wasm.ts')
+  if (!text.includes('standInCore')) throw new Error('the stand-in worker does not hold standin-core.ts')
   fs.writeFileSync(path.join(dir, worker), text)
   return `/${worker}`
 }
