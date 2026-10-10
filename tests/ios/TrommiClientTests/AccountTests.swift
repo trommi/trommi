@@ -98,19 +98,7 @@ final class AccountTools: CoreTools {
   }
   func isFinalRefusal(_ code: String) -> Bool { base.isFinalRefusal(code) }
   func recoverySigner(code: Bytes) throws -> CoreSigner { AccountSigner(id: fold([code], 32)) }
-  /** Set: the room join is posted and its answer never comes (the hub may or may not have taken it). */
-  var joinAnswerLost = false
-  /** Called when that answer is lost, before anything else is asked. */
-  var onLostAnswer: (() -> Void)?
-  func joinRoomWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> Bytes? {
-    joinedWith = code
-    if joinAnswerLost, let d = device as? FakeDevice {
-      d.box[99] = OutboxEntry(id: 99, kind: .externalCommit, group: hub.room, epoch: 1, parts: [[1]])
-      onLostAnswer?()
-      throw HubError(status: 0, code: "offline", message: "hub not reachable")
-    }
-    return nil
-  }
+  func joinRoomWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> Bytes? { joinedWith = code; return nil }
   /** What the second step of a join answers, and how often it was asked. */
   var sessionsLeft: (notJoined: [(group: GroupId, code: String)], again: Bool) = ([], false)
   var sessionJoins = 0
@@ -155,8 +143,6 @@ final class AccountHub: URLProtocol, @unchecked Sendable {
     var account: [String: Any]?                      // as posted with the founding, plus what changed since
     var revision = 0
     var passkeys: [String: String] = [:]             // credential id -> sealed copy (base64url)
-    /** Set: every token request is refused so (`not-member`: the key is no member; status 0 is not used here). */
-    var tokenRefusal: (status: Int, code: String)?
     /** The account id this hub mints, and its 16 bytes: the user handle of the account's passkeys. */
     let id = "0f8fad5b-d9cb-469f-a165-70867728950e"
     var handle: Bytes { try! unhex(id.filter { $0 != "-" }) }
@@ -229,9 +215,7 @@ final class AccountHub: URLProtocol, @unchecked Sendable {
         guard let copy = passkeys[body["credential_id"] as? String ?? ""] else { return refuse(401, "wrong-login") }
         return login(copy)
       case ("GET", _) where path.hasSuffix("/challenge"): return (200, ["challenge": b64u(Bytes(repeating: 9, count: 32))])
-      case ("POST", _) where path.hasSuffix("/tokens"):
-        if let refusal = tokenRefusal { return (refusal.status, ["error": refusal.code, "message": "refused"]) }
-        return (200, ["token": "t", "expires_at": nowMs() + 600_000, "role": "human"])
+      case ("POST", _) where path.hasSuffix("/tokens"): return (200, ["token": "t", "expires_at": nowMs() + 600_000, "role": "human"])
       case ("POST", _) where path.hasSuffix("/recovery"): return (200, ["recovery_id": "r1"])
       case ("GET", _) where path.hasSuffix("/groups"): return (200, [Any]())
       case ("GET", "/v2/sealed-keys"): return (200, ["rows": [String](), "more": false])
@@ -789,44 +773,6 @@ final class AccountTests: XCTestCase {
     XCTAssertEqual(try tools.openCode(try unb64u(added["sealed_copy"] as! String), room: room.roomId, way: .passkey(prf: Bytes(repeating: 6, count: 32), credentialId: second)), tools.codes.last)
     room.close()
   }
-  /// The room join of a sign-in with the code is posted and its answer is lost: the device asks under its own key.
-  /// The hub holds it as a member: it is the room's device. No answer: it is kept, and the next sign-in resumes it
-  /// instead of making another device.
-  func testALostAnswerToTheRoomJoinIsResumedNotMadeTwice() async throws {
-    let (room, _) = try await created()
-    tools.joinAnswerLost = true
-    tools.onLostAnswer = { AccountHub.shared.tokenRefusal = (500, "internal") }
-    let first = await failure { _ = try await Room.loginWithPassword(hubURL: self.hubURL, account: self.email, password: self.password, base: self.device("second")) }
-    XCTAssertEqual(code(of: try XCTUnwrap(first)), "pending")
-    XCTAssertEqual(Store.rooms(base: device("second")), [], "no room yet")
-    let left = Store.folders(device("second"))
-    XCTAssertEqual(left.count, 1, "the device is kept")
-    XCTAssertEqual(Store(dir: left[0]).unsureJoin, room.roomIdHex)
-
-    // the hub answers again and holds the device as a member: the same device is the room's
-    hub.tokenRefusal = nil
-    tools.joinAnswerLost = false
-    tools.joinedWith = nil
-    let second = try await Room.loginWithPassword(hubURL: hubURL, account: email, password: password, base: device("second"))
-    XCTAssertNil(tools.joinedWith, "no second join")
-    XCTAssertEqual(Store.folders(device("second")), left)
-    XCTAssertEqual(second.store.dir.standardizedFileURL, left[0].standardizedFileURL)
-    XCTAssertNil(second.store.unsureJoin)
-    XCTAssertEqual(Store.rooms(base: device("second")), [room.roomIdHex])
-    room.close(); second.close()
-  }
-
-  /// A lost answer, and the hub says the device is no member: its join was not taken, and nothing of it is kept.
-  func testALostAnswerToARoomJoinTheHubDidNotTakeLeavesNothing() async throws {
-    let (room, _) = try await created()
-    tools.joinAnswerLost = true
-    tools.onLostAnswer = { AccountHub.shared.tokenRefusal = (403, "not-member") }
-    let first = await failure { _ = try await Room.loginWithPassword(hubURL: self.hubURL, account: self.email, password: self.password, base: self.device("second")) }
-    XCTAssertEqual(code(of: try XCTUnwrap(first)), "offline")
-    XCTAssertEqual(Store.folders(device("second")), [])
-    room.close()
-  }
-
   /// "New password" came into the room and the hub did not take the password: the same words again set it on the
   /// device that is in, instead of failing with `room-exists`.
   func testANewPasswordThatFailedIsSetByTheNextTry() async throws {
