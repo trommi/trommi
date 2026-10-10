@@ -13,7 +13,7 @@ use rusqlite::{Connection, OpenFlags};
 
 pub const SCHEMA_VERSION: i64 = 5;
 
-/// Added to schema 5 in place, on every open (a fresh database and one that holds data alike): nothing is
+/// Added to schema 5 in place (Welcomes stored once, ids never given twice, an index for deleting by group), on every open (a fresh database and one that holds data alike): nothing is
 /// rewritten, rows written before keep working. A Welcome is stored once per group and epoch in
 /// `welcome_bytes`; a row of `welcomes` with `epoch` set points to it and keeps an empty `bytes`, a row without
 /// `epoch` (written before) holds its own. At 1000 human devices a founding's Welcome is some 0.3 MB, and it is
@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS welcome_bytes (
   bytes          BLOB NOT NULL,
   PRIMARY KEY (group_id, epoch)
 ) STRICT, WITHOUT ROWID;
+-- the next id of a `welcomes` row: never one given before, also when the newest row was deleted (a device reads
+-- its Welcomes on from the last id it saw)
+CREATE TABLE IF NOT EXISTS welcome_ids (
+  one            INTEGER PRIMARY KEY CHECK (one = 1),
+  last           INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO welcome_ids (one, last) VALUES (1, (SELECT coalesce(max(id), 0) FROM welcomes));
 ";
 
 pub const SCHEMA: &str = r#"
@@ -672,7 +679,8 @@ impl Db {
                 writer.execute_batch("ALTER TABLE welcomes ADD COLUMN epoch INTEGER;")?;
             }
             writer.execute_batch(
-                "CREATE INDEX IF NOT EXISTS welcomes_by_epoch ON welcomes(group_id, epoch) WHERE epoch IS NOT NULL;",
+                "CREATE INDEX IF NOT EXISTS welcomes_by_epoch ON welcomes(group_id, epoch) WHERE epoch IS NOT NULL;
+                 CREATE INDEX IF NOT EXISTS welcomes_by_group ON welcomes(group_id, device);",
             )
         })();
         match added {
