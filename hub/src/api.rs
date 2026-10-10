@@ -696,7 +696,10 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             own_room(&auth, room)?;
             Ok(Value::Array(delivery::group_list(x.c, &auth)?))
         }),
-        ("GET", ["welcomes"]) => app.read(|x| delivery::welcomes(x.c, &rq.auth(app, x.c)?)),
+        ("GET", ["welcomes"]) => {
+            let after = rq.q_int("after")?.unwrap_or(0);
+            app.read(|x| delivery::welcomes(x.c, &rq.auth(app, x.c)?, after))
+        }
         ("PUT", ["key-packages"]) => {
             let single_use: Vec<Vec<u8>> = match &rq.body["single_use"] {
                 Value::Null => vec![],
@@ -716,8 +719,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         }
         ("POST", ["key-packages", "claim"]) => {
             let devices: Vec<[u8; 32]> = match &rq.body["devices"] {
-                Value::Array(a) if !a.is_empty() && a.len() <= 64 => a.iter().map(|v| id::<32>(v.as_str().unwrap_or(""))).collect::<Res<_>>()?,
-                _ => return Err(refuse("bad-format", "devices: 1 to 64 device ids")),
+                Value::Array(a) if !a.is_empty() && a.len() <= crate::observer::MAX_LEAVES => a.iter().map(|v| id::<32>(v.as_str().unwrap_or(""))).collect::<Res<_>>()?,
+                _ => return Err(refuse("bad-format", "devices: 1 to 1024 device ids")),
             };
             let auth = read_auth()?;
             limited(app.limits.claims.take(&[&auth.room[..], &auth.device[..]].concat(), devices.len() as f64, t))?;

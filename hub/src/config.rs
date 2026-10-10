@@ -253,7 +253,7 @@ impl Config {
             admitted: number(env, "HUB_ADMITTED", 256),
             admitted_per_address: number(env, "HUB_ADMITTED_PER_ADDRESS", 32),
 
-            json_limit: number(env, "HUB_LIMIT_JSON", 1 << 20),
+            json_limit: number(env, "HUB_LIMIT_JSON", 3 << 19),
             commit_limit: number(env, "HUB_LIMIT_COMMIT", 1 << 20),
             message_limit: number(env, "HUB_LIMIT_MESSAGE", 48 << 10),
             file_limit: number(env, "HUB_LIMIT_FILE", 67_125_269),
@@ -273,7 +273,7 @@ impl Config {
             foundings_per_ip_hour: number(env, "HUB_LIMIT_FOUND_PER_IP_HOUR", 10),
             logins_per_ip_10min: number(env, "HUB_LIMIT_LOGINS_PER_IP_10MIN", 30),
             max_rooms: number(env, "HUB_MAX_ROOMS", 1000),
-            humans: number(env, "HUB_LIMIT_HUMANS", 32),
+            humans: number(env, "HUB_LIMIT_HUMANS", 1000),
             agents: number(env, "HUB_LIMIT_AGENTS", 256),
             helpers_per_main: number(env, "HUB_LIMIT_HELPERS_PER_MAIN", 32),
             key_packages: number(env, "HUB_LIMIT_KEY_PACKAGES", 100),

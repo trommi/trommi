@@ -336,8 +336,8 @@ fn a_file_too_large_is_refused_and_the_connection_survives_the_refusal() {
         (over["used"].as_u64(), over["quota"].as_u64()),
         (Some(900), Some(1500))
     );
-    // a JSON body over its limit, on any route
-    let huge = json!({ "envelope": "A".repeat(1_100_000) });
+    // a JSON body over its limit (1.5 MiB), on any route
+    let huge = json!({ "envelope": "A".repeat(3 << 19) });
     w.ada
         .post(hub, "/v2/envelopes", &huge)
         .refused(413, "too-large");
