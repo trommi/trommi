@@ -53,6 +53,7 @@ import type {
 import { HubError, logEntry } from './hub.ts'
 import type { ChangeItem, EnvelopeItem, Hub, LogItem, NewAccount, OutboxAnswer, StreamEvent } from './hub.ts'
 import { hex } from './ids.ts'
+import { halving, inSlices } from './slices.ts'
 import type { Connection } from './types.ts'
 
 /** The engine's own small records beside the device's state (store-idb.ts `Cache` is one). Safe to lose: a lost
@@ -933,7 +934,7 @@ export class Engine {
     if (this.rescanDue && !this.catching) await this.rescan()
   }
   /**
-   * The past of the groups a device joined by link (core `learnHistory`): each group's founding GroupInfo and its
+   * The past of the groups a device joined by link (`learnGroup`): each group's founding GroupInfo and its
    * Commits from the hub, the room group first, then main sessions, then helper sessions. After that the envelopes
    * of the earlier epochs are handed over again (`rescan`); the keys to read them come by the handover. A group
    * that is not learned now (the hub not reached) is tried again with the next upkeep.
@@ -945,8 +946,7 @@ export class Engine {
     const sessions = this.groups.filter(g => g.session && !g.archived).sort((x, y) => rank(x) - rank(y)).map(g => g.group)
     for (const group of [...(this.room_id ? [this.core.roomGroupId(this.room_id)] : []), ...sessions]) {
       try {
-        const served = await this.hub.servedGroup(group)
-        await this.serial(() => this.call(d => d.learnHistory(group, served.founding, served.commits)))
+        await this.learnGroup(group)
       } catch (e) {
         if (this.isLocal(e)) throw e
         if (e instanceof HubError && e.transient) open = true
@@ -956,6 +956,25 @@ export class Engine {
     this.learnDue = false
     await this.opts.meta.delete('learn').catch(() => {})
     await this.wantRescan()
+  }
+  /** One group's past (core `learnStart`, `learnSlice`, `learnFinish`): its Commits are read from the hub's log while
+   *  the core takes them in slices, up to the epoch this device's own knowledge begins at. The walk is the device's,
+   *  in memory: one the hub broke off is given up, and the next upkeep starts again from the founding. */
+  private async learnGroup(group: Uint8Array): Promise<void> {
+    const founding = (await this.hub.groupInfo(group, 0)).group_info
+    let progress = await this.serial(() => this.call(d => d.learnStart(group, founding)))
+    if (progress.epoch < progress.upto) {
+      try {
+        await inSlices(this.hub.groupCommits(group, progress.upto).next, c => c.commit.length, halving(async slice => {
+          progress = await this.serial(() => this.call(d => d.learnSlice(group, slice)))
+          return progress.epoch >= progress.upto
+        }, e => this.core.errorCode(e) === 'too-large'))
+      } catch (e) {
+        if (!this.isLocal(e)) await this.serial(() => this.call(d => d.learnAbandon(group))).catch(() => {})
+        throw e
+      }
+    }
+    await this.serial(() => this.call(d => d.learnFinish(group)))
   }
   /** Closes the gaps any human device closes when it sees them: a stale session group gets its missing Remove
    *  (5.2.8), a live one that lacks a human device gets it added (5.2.7), one Commit and one KeyPackage each. */

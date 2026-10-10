@@ -19,7 +19,7 @@
 // too, as the binding does on its own failure.
 import type * as BindingModule from '../../../core/wasm/js/trommi-core.js'
 import type {
-  Core, Cut, Device, ErrorCode, Fed, FeedItem, InviteConfirmed, LogEntry, OutboxEntry, Processed, ServedCommit, ServedEnvelope, ServedGroup, ServedRoom, Store,
+  Core, Cut, Device, ErrorCode, Fed, FeedItem, InviteConfirmed, LogEntry, OutboxEntry, PlacedCommit, Processed, ServedCommit, ServedEnd, ServedEnvelope, ServedGroup, ServedRoom, ServedStart, Store,
 } from '../../../app/web/core/core-api.ts'
 
 export type Binding = typeof BindingModule
@@ -229,6 +229,10 @@ interface InviteFacts { added?: string[]; agents?: string[]; removed?: string[] 
 
 const bare = (g: ServedGroup): ServedGroup => ({ founding: splitFacts(g.founding).bytes, current: splitFacts(g.current).bytes, commits: g.commits.map(c => ({ ...c, commit: splitFacts(c.commit).bytes })) })
 const bareRoom = (r: ServedRoom): ServedRoom => ({ ...r, group: bare(r.group), anchor: splitFacts(r.anchor).bytes, sessions: r.sessions.map(bare) })
+const bareCommits = (commits: ServedCommit[]): ServedCommit[] => commits.map(c => ({ ...c, commit: splitFacts(c.commit).bytes }))
+const barePlaced = (placed: PlacedCommit[]): PlacedCommit[] => placed.map(p => ({ group: p.group, commit: { ...p.commit, commit: splitFacts(p.commit.commit).bytes } }))
+const bareStart = (s: ServedStart): ServedStart => ({ ...s, founding: splitFacts(s.founding).bytes, anchor: splitFacts(s.anchor).bytes, sessions: s.sessions.map(f => splitFacts(f).bytes) })
+const bareEnd = (e: ServedEnd): ServedEnd => ({ ...e, current: splitFacts(e.current).bytes, sessions: e.sessions.map(c => splitFacts(c).bytes) })
 
 function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): Device {
   const refuse = (code: ErrorCode, what: string): never => { throw new binding.TrommiError(code, `${code}: ${what}`) }
@@ -258,6 +262,16 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
   const forget = async (id: number): Promise<void> => { if (!(await raw.outbox()).some(e => e.id === id)) state.delete(`facts/${id}`) }
 
   let removals: { group: string; devices: string[] }[] = []
+  /** Notes who a recovery's Commits bring in and take out, by the plan's removals. */
+  const recovered = async (done: Awaited<ReturnType<Device['recover']>>): Promise<Awaited<ReturnType<Device['recover']>>> => {
+    const entries = await raw.outbox()
+    for (const id of done.outbox) {
+      const entry = entries.find(e => e.id === id)
+      if (entry?.kind !== 'recoveryCommit' || !entry.group) continue
+      note(id, { 0: { added: [await me()], removed: removals.find(r => r.group === b64(entry.group!))?.devices ?? [] } })
+    }
+    return done
+  }
 
   const device = {
     close: async (): Promise<void> => { await run(async () => {}).catch(() => {}); closed = true; await raw.close(); await state.close() },
@@ -303,7 +317,9 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
     joinObserve: (groupInfo: Uint8Array) => run(() => raw.joinObserve(splitFacts(groupInfo).bytes)),
     processLogEntry: (entry: LogEntry, nowMs: number) => run((): Promise<Processed> => raw.processLogEntry({ ...entry, bytes: splitFacts(entry.bytes).bytes }, nowMs)),
     feed: (items: FeedItem[], nowMs: number) => run((): Promise<Fed> => raw.feed(items.map(item => (item.entry ? { entry: { ...item.entry, bytes: splitFacts(item.entry.bytes).bytes } } : item)), nowMs)),
-    learnHistory: (g: Uint8Array, founding: Uint8Array, commits: ServedCommit[]) => run(() => raw.learnHistory(g, splitFacts(founding).bytes, commits.map(c => ({ ...c, commit: splitFacts(c.commit).bytes })))),
+    learnHistory: (g: Uint8Array, founding: Uint8Array, commits: ServedCommit[]) => run(() => raw.learnHistory(g, splitFacts(founding).bytes, bareCommits(commits))),
+    learnStart: (g: Uint8Array, founding: Uint8Array) => run(() => raw.learnStart(g, splitFacts(founding).bytes)),
+    learnSlice: (g: Uint8Array, commits: ServedCommit[]) => run(() => raw.learnSlice(g, bareCommits(commits))),
     verifyFounding: (g: Uint8Array, served: ServedGroup) => run(() => raw.verifyFounding(g, bare(served))),
 
     inviteConfirm: (inviteId: Uint8Array, code: Uint8Array, requestHash: Uint8Array, matches: boolean, nowMs: number) => run(async () => {
@@ -345,14 +361,32 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       return plan
     }),
     recover: (code: Uint8Array, served: ServedRoom, chains: ServedEnvelope[], account: Uint8Array, nowMs: number) => run(async () => {
-      const done = await raw.recover(code, bareRoom(served), chains, account, nowMs)
-      const entries = await raw.outbox()
-      for (const id of done.outbox) {
-        const entry = entries.find(e => e.id === id)
-        if (entry?.kind !== 'recoveryCommit' || !entry.group) continue
-        note(id, { 0: { added: [await me()], removed: removals.find(r => r.group === b64(entry.group!))?.devices ?? [] } })
-      }
+      return recovered(await raw.recover(code, bareRoom(served), chains, account, nowMs))
+    }),
+    // the same in steps
+    codeCheckStart: (code: Uint8Array, start: ServedStart) => run(() => raw.codeCheckStart(code, bareStart(start))),
+    codeCheckSlice: (placed: PlacedCommit[]) => run(() => raw.codeCheckSlice(barePlaced(placed))),
+    joinRoomChecked: (code: Uint8Array, end: ServedEnd, nowMs: number) => run(async () => {
+      const done = await raw.joinRoomChecked(code, bareEnd(end), nowMs)
+      for (const id of done.outbox) note(id, { 0: { added: [await me()] } })
       return done
+    }),
+    sessionCheckStart: (founding: Uint8Array) => run(() => raw.sessionCheckStart(splitFacts(founding).bytes)),
+    sessionCheckSlice: (g: Uint8Array, commits: ServedCommit[]) => run(() => raw.sessionCheckSlice(g, bareCommits(commits))),
+    joinSessionChecked: (code: Uint8Array, g: Uint8Array, current: Uint8Array, nowMs: number) => run(async () => {
+      const id = await raw.joinSessionChecked(code, g, splitFacts(current).bytes, nowMs)
+      note(id, { 0: { added: [await me()] } })
+      return id
+    }),
+    recoveryPlanStart: (code: Uint8Array, start: ServedStart) => run(() => raw.recoveryPlanStart(code, bareStart(start))),
+    recoveryPlanSlice: (placed: PlacedCommit[]) => run(() => raw.recoveryPlanSlice(barePlaced(placed))),
+    recoveryPlanFinish: (code: Uint8Array, end: ServedEnd) => run(async () => {
+      const plan = await raw.recoveryPlanFinish(code, bareEnd(end))
+      removals = plan.removals.map(r => ({ group: b64(r.group), devices: r.devices.map(b64) }))
+      return plan
+    }),
+    recoverChecked: (code: Uint8Array, end: ServedEnd, chains: ServedEnvelope[], account: Uint8Array, nowMs: number) => run(async () => {
+      return recovered(await raw.recoverChecked(code, bareEnd(end), chains, account, nowMs))
     }),
   } as Record<string, unknown>
   // every other call of the binding's device is passed through as it is

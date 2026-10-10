@@ -13,12 +13,13 @@
 // The hub's address is not part of a device's state. It is kept in the cache (`client/room`, written durably when
 // the room is made); a caller that knows it may pass `hub_url` to `openRoom` for a cache that was lost.
 import { Client, ClientError, engineMeta } from './client.ts'
-import type { Core, Device, ServedEnvelope, Store } from './core-api.ts'
+import type { Core, Device, PlacedCommit, ServedEnvelope, Store } from './core-api.ts'
 import { Engine } from './engine.ts'
 import type { EngineTiming } from './engine.ts'
 import { accountCopiesBytes, Hub, HubError, hubAddress } from './hub.ts'
 import type { AccountCopies, NewAccount } from './hub.ts'
 import { b64u, hex, unb64u, unhex } from './ids.ts'
+import { halving, inSlices } from './slices.ts'
 import type { Cache } from './store-idb.ts'
 
 export interface DeviceOptions {
@@ -237,12 +238,22 @@ export function roomsOn(env: RoomEnv): Rooms {
       const cache = await env.cache(o.storage.name)
       await cache.set('client/room', { hub_url: hub.hub_url }, { durable: true })
       engine = new Engine({ core, hub, meta: engineMeta(cache), ...again(o), ...timing }, device)
+      const tooLarge = (e: unknown): boolean => core.errorCode(e) === 'too-large'
+      const size = (c: PlacedCommit): number => c.commit.commit.length
+      // The room in steps: everything but the Commits at once, the Commits read from the hub's logs while the core
+      // takes them in slices (a room's whole history may be more than one call carries).
+      const steps = await hub.roomInSteps({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
       if (o.recover) {
         // The new code is made, and the account's copies of it (or the person's own copy: the caller's `account`
         // resolves once the code is on their screen), BEFORE the recovery is opened: the hub locks the room for
         // ten minutes from then on, and nothing of a recovery is posted for a code nobody holds.
-        const { served } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
-        const plan = await held.prepareRecovery(code, served)
+        // The plan and the check the recovery builds on are two walks of the core; one reading of the logs feeds both.
+        await held.recoveryPlanStart(code, steps.start)
+        await held.codeCheckStart(code, steps.start)
+        const planSlice = halving(async (slice: PlacedCommit[]) => { await held.recoveryPlanSlice(slice); return false }, tooLarge)
+        const checkSlice = halving(async (slice: PlacedCommit[]) => { await held.codeCheckSlice(slice); return false }, tooLarge)
+        await inSlices(steps.placed().next, size, async slice => { await planSlice(slice); await checkSlice(slice); return false })
+        const plan = await held.recoveryPlanFinish(code, steps.end)
         let copies: Uint8Array
         try { copies = accountCopiesBytes(o.account ? await o.account(plan.newCode) as AccountCopies | null : null) } finally { plan.newCode.fill(0) }
         // A removed device's chain ends at its Cut for everyone (9.0.10). The core takes the Cuts itself, from
@@ -261,17 +272,21 @@ export function roomsOn(env: RoomEnv): Rooms {
         chains.sort((x, y) => x.change - y.change)
         const recovery = await hub.openRecovery()
         try {
-          const done = await held.recover(code, served, chains, copies, Date.now())
+          const done = await held.recoverChecked(code, steps.end, chains, copies, Date.now())
           for (const id of done.outbox) await engine.attach(id, { recovery_id: recovery.recovery_id })
           await postAll(engine)
         } catch (e) { await hub.dropRecovery(recovery.recovery_id).catch(() => {}); throw e }
       } else {
-        const { served } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
-        await held.joinRoomWithCode(code, served, Date.now())
+        await held.codeCheckStart(code, steps.start)
+        await inSlices(steps.placed().next, size, halving(async slice => { await held.codeCheckSlice(slice); return false }, tooLarge))
+        await held.joinRoomChecked(code, steps.end, Date.now())
         await postAll(engine)
-        // every live session group, main sessions first (the order the hub client serves them in)
-        for (const session of served.sessions) {
-          await held.joinSessionWithCode(code, session, Date.now())
+        // every live session group, main sessions first (the order the hub client serves them in), each checked
+        // from its founding up to the GroupInfo the hub offered as current
+        for (const [at, session] of steps.sessions.entries()) {
+          const group = await held.sessionCheckStart(steps.start.sessions[at]!)
+          await inSlices(hub.groupCommits(session.group, session.epoch).next, c => c.commit.length, halving(async slice => { await held.sessionCheckSlice(group, slice); return false }, tooLarge))
+          await held.joinSessionChecked(code, group, steps.end.sessions[at]!, Date.now())
           await postAll(engine)
         }
       }
