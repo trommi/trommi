@@ -320,7 +320,13 @@ is in the room; the new password then logs in as on any new device, and Settings
 web app that opens its recovery screen with hub and id filled in. It is in the fragment, so it reaches no server,
 and it never holds the words. The app itself does not open such a link yet.
 
-### Passkeys: on when the domain names the app
+### Passkeys: switched off
+
+`Passkeys.offered` is `false` (the owner's decision, 10 October 2026, as on the web): password managers do not all
+give the prf output (1Password does not), so an account that opens only with a passkey is not reliable. Create
+account shows the password form, Log in has no passkey button, and Settings offers "Add Passkey" only to an account
+that has a passkey already (such an account keeps its passkey controls). All the passkey code and its tests stay;
+with the switch on, what follows applies.
 
 `Passkeys.available` is read from `https://app.trommi.com/.well-known/apple-app-site-association` at every start
 (`Passkeys.probe`): passkeys are on once its `webcredentials` names this app ("<team id>.<bundle id>"), and the last
