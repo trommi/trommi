@@ -134,6 +134,35 @@ final class RoomRemovalTests: XCTestCase {
     XCTAssertEqual(try b.device.outbox().count, 0)
   }
 
+  /// What a removed device signed beyond its Cut is dropped by the core when it merges the removing Commit, and
+  /// the board follows: B showed C's Note; A removed C with a Cut before it; after B's next sync the Note is gone,
+  /// from the board and from the cache.
+  func testWhatLiesBeyondACutLeavesTheBoard() async throws {
+    let (a, b, room) = try await roomOfTwo()
+    let c = try newDevice()
+    let exchanged = try exchangeInvite(from: a, to: c, tools: tools)
+    _ = try a.inviteConfirm(invite: exchanged.invite, numbers: exchanged.inviterShows, requestHash: exchanged.requestHash, matches: true, nowMs: nowMs())
+    try hub.post(a)
+    _ = try c.joinInvited(try XCTUnwrap(hub.welcomes.last), nowMs: nowMs())
+    _ = try a.inviteHandover(invite: exchanged.invite); try hub.post(a)
+    try hub.deliver(to: c)
+    // A's Cut of C is taken now, before C writes
+    let cut = try a.cutOf(group: room, device: c.id)
+    _ = try c.seal(.noteFirst(payload: utf8(#"{"schema_version":1,"text":"by c","previous_version_hash":"\#(b64u(ZERO32))"}"#)), files: [], nowMs: nowMs())
+    try hub.postWaiting(c)
+    _ = try await b.sync()
+    XCTAssertEqual(notes(b), ["by c", "one"])
+
+    _ = try a.removeHumanDevices([cut], nowMs: nowMs())
+    try hub.postWaiting(a)
+    _ = try await b.sync()
+    XCTAssertEqual(notes(b), ["one"], "C's Note lay beyond its Cut")
+    await b.saveCacheAndWait(snapshot: true)
+    let again = try await pocketRoomAgain(b)
+    _ = await again.restore()
+    XCTAssertEqual(notes(again), ["one"], "and the cache holds it no more")
+  }
+
   /// The same device in a fresh `Room` (an app start): its state as stored.
   private func pocketRoomAgain(_ old: Room) async throws -> Room {
     let store = old.store

@@ -39,6 +39,9 @@ public struct RoomRecord: Codable {
 /** `beforeJoining`: envelopes of an epoch before this device came into their group, which it cannot take until it learned that group's past (RoomPast.swift): passed over. */
 public struct SyncReport { public var envelopes = 0, opened = 0, headerOnly = 0, undecryptable = 0, voids = 0, refused = 0, beforeJoining = 0; public var warnings: [String] = [] }
 
+/** A mark set from the core's queue and read after it. */
+final class Flag: @unchecked Sendable { var on = false }
+
 /** The hub said this app is too old to be served. */
 public struct UpgradeNotice: Equatable { public var minimumVersion: String?; public var message: String }
 
@@ -588,9 +591,18 @@ public final class Room {
   func process(_ parsed: [Item], report: inout SyncReport, change: inout Change) async throws {
     guard !parsed.isEmpty else { return }
     let readingBack = self.readingBack
+    let cutDropped = Flag()
     let (outcomes, coreAt, findings): ([Outcome], UInt64, [ChainFinding]) = try await onCore { device in
       var out = [Outcome]()
       var commits = false
+      /// Per leaf of a group, the last envelope the core accepted of it: asked before and after a Commit, a number
+      /// that went down says the core dropped what lay beyond a removed device's Cut (9.0.10).
+      func heads(_ group: GroupId) -> [DeviceId: UInt64] {
+        guard let held = (try? device.groups())?.first(where: { $0.group == group }) else { return [:] }
+        var out = [DeviceId: UInt64]()
+        for leaf in held.leaves { if let cut = try? device.cutOf(group: group, device: leaf) { out[leaf] = cut.seq } }
+        return out
+      }
       /// The findings the core made while it processed Commits (a Cut that names another envelope than the one
       /// accepted): taken once, then cleared there.
       func done() -> ([Outcome], UInt64, [ChainFinding]) {
@@ -606,7 +618,12 @@ public final class Room {
           switch item {
           case .log(_, let entry):
             if entry.change <= before { out.append(.processed(.skipped)); continue }
+            let isCommit: Bool = { if case .commit = entry.kind { return true }; return false }()
+            let had = isCommit ? heads(entry.group) : [:]
             let p = try device.processLogEntry(entry)
+            for (leaf, seq) in had where seq > 0 {
+              if let now = try? device.cutOf(group: entry.group, device: leaf), now.seq < seq { cutDropped.on = true }
+            }
             if case .message = p {} else { commits = true }
             out.append(.processed(p))
           case .envelope(let c, let bytes, let void):
@@ -642,6 +659,9 @@ public final class Room {
       return done()
     }
     coreCursor = coreAt
+    // (the core dropped what a removed device had signed beyond its Cut: what was shown of it goes, the board and
+    // its cache are built again from the hub's changes, which the core now judges without it: RoomPast.swift)
+    if cutDropped.on && !readingBack { notePast { $0.readBack = true }; pastDue = true }
     for f in findings { board.pushAlert(&change, code: f.code, message: "a removal names another last item of a device than the one this device holds", sender: hex(f.sender)) }
     // The groups are read again from the core after a Commit and before the next item is shown: an envelope right
     // behind the Commit that founded its session must find that session on the board.
