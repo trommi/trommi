@@ -328,7 +328,11 @@ export const steps = [
     const made = ['Workshop'], lost = []
     for (let round = 1; round <= 3; round++) for (const wait of [0, 50, 100, 200, 300]) {
       const name = `R${round}-${wait}`
+      // (the desk made in the round before opens the menu again once its page is drawn, sidebar.mjs trommi-menu-keep:
+      //  that is waited for first, so the press below neither meets it opening nor a menu drawn anew under it)
+      await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open again after the desk before', 1000).catch(() => {})
       if (await A.js("return document.getElementById('brand-doors')?.hidden !== false")) { await A.click('.desk-switch-open'); await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open') }
+      await A.until("document.querySelector('#desk-add')?.getClientRects().length", 'the menu\'s New Desk')
       await A.click('#desk-add')
       await A.until("document.activeElement?.matches('.menu-desk-field')", 'the field for the new desk\'s name')
       await A.session.send('Input.insertText', { text: name })
