@@ -17,9 +17,9 @@
 //   create account      a fresh code; room.ts founds the room and asks for the account's body once the room id
 //                       exists (the copies are sealed for that room), and the hub makes room and account together
 //   log in              the hub's answer to the login key → the sealed copy → the code → joinWithCode (8.4)
-//   forgot password     the kit's words open the kit's copy and the device signs in (8.4); the way in chosen next
-//                       (a new password, or a new passkey) is set, and then the code is replaced by 8.6: the
-//                       copy under that way in and a new kit, every other way in removed
+//   forgot password     the kit's words open the kit's copy; with a new password the device runs the recovery of
+//                       8.7 as one request (resetPassword); for a new passkey it signs in (8.4, recoverWithKit),
+//                       the passkey is added and the code is replaced by 8.6 (addPasskey with the words)
 //   bare recovery code  recoverWithCode: the recovery of 8.7 for a room without an account
 //   settings            a new password, a passkey more or less, a new kit: the code is opened with a way in given
 //                       again and sealed anew; the account's revision guards against a change from elsewhere
@@ -277,13 +277,6 @@ async function signIn(core: Core, device: Opening, room: LoginAnswer['rooms'][nu
  * the two it opens with. One refusal for every miss: `wrong-recovery`; `bad-account` for a text that is neither.
  */
 export async function recoverWithKit(o: Opening & { account: string; words: string }): Promise<{ client: Client }> {
-  const { client } = await kitSignIn(o, false)
-  return { client }
-}
-
-/** `recoverWithKit`, and what the hub said of the account. `password_next`: a password is to be set right after,
- *  so an account without e-mail is refused (`needs-email`) before the device joins. */
-async function kitSignIn(o: Opening & { account: string; words: string }, password_next: boolean): Promise<{ client: Client; email: string | null }> {
   const { account: named, words, ...device } = o
   const core = await loadCore()
   const who = accountName(named)
@@ -293,37 +286,57 @@ async function kitSignIn(o: Opening & { account: string; words: string }, passwo
     const answer = await anonymous(device).recover(who.kind === 'email' ? who.email : who.account, keys.authKey)
     // an answer for another account than the one named opens nothing; said before anything is joined
     if (who.kind === 'id' ? answer.account !== who.account : answer.email !== who.email) throw new AccountError('wrong-recovery', 'the answer is for another account than the one named')
-    if (password_next && answer.email === null) throw new AccountError('needs-email', 'a password needs an e-mail: this account has none')
-    return { ...await signIn(core, device, roomOf(answer), kitWay(keys)), email: answer.email }
+    return await signIn(core, device, roomOf(answer), kitWay(keys))
   } finally { zeroKeys(keys) }
 }
 
 /**
- * Forgot password: the one field, the Emergency Kit's words and a new password. The device signs in with the code
- * the kit opens (8.4), puts the new password, and then replaces the recovery code by 8.6: the account keeps the
- * copy under the new password and gets a new Emergency Kit, and the old password, every passkey and the old kit
- * open nothing after it. Returns the new kit, shown once. `wrong-recovery` for every miss, `weak-password`;
- * `needs-email` for an account without e-mail (its way in is a passkey: `recoverWithKit`, then `addPasskey`).
- *
- * Each step leaves an account that opens: before the password is put nothing has changed; after it the new
- * password and the old kit both work; the replacement is one request, whole or not at all. A failure after the
- * device has joined is told, and the device stays stored (the screen opens it).
- *
- * This is NOT the recovery of 8.7: the other human devices stay.
+ * Forgot password: the one field, the Emergency Kit's words and a new password, as ONE request of spec 8.7: the
+ * device joins with the code the kit opens, every other human device is removed, the recovery code is replaced, and
+ * the finish takes the account's new copies with it: a new Emergency Kit and the password set anew. All or nothing
+ * at the hub. The old password, every passkey and the old kit open nothing after it. Returns the new kit, shown
+ * once. `wrong-recovery` for every miss, `weak-password`; `needs-email` for an account without e-mail, said before
+ * anything is joined (its way in is a passkey: `recoverWithKit`, then `addPasskey`).
  */
 export async function resetPassword(o: Opening & { account: string; words: string; new_password: string }): Promise<{ client: Client; kit: Kit }> {
-  const { new_password, ...kit_in_hand } = o
+  const { account: named, words, new_password, ...device } = o
   const core = await loadCore()
   core.checkPassword(new_password)
-  const { client } = await kitSignIn(kit_in_hand, true)
+  const who = accountName(named)
+  const name: AccountName = who.kind === 'email' ? { kind: 'email', email: core.normaliseEmail(who.email) } : { kind: 'id', id: core.accountIdParse(who.account) }
+  const keys = kitKeysOf(core, name, words)
+  let password: AccountKeys | null = null
   try {
-    const { kit } = await setPassword(signedIn(client), { unlock: { words: o.words }, next: new_password })
-    if (!kit) throw new AccountError('internal', 'the replacement made no kit')
-    return { client, kit }
-  } catch (e) {
-    await stop(client)
-    throw e
-  }
+    const answer = await anonymous(device).recover(who.kind === 'email' ? who.email : who.account, keys.authKey)
+    if (who.kind === 'id' ? answer.account !== who.account : answer.email !== who.email) throw new AccountError('wrong-recovery', 'the answer is for another account than the one named')
+    // a password's keys are derived from the e-mail: an account without one has none to set
+    const email = answer.email
+    if (email === null) throw new AccountError('needs-email', 'a password needs an e-mail: this account has none')
+    const room = roomOf(answer)
+    const code = open(core, kitWay(keys), room.room_id, room.sealed_copy)
+    try {
+      // ONE request of spec 8.7: the room's recovery, whose finish takes the new code's copies with it: a new kit
+      // and the password set anew. All or nothing at the hub: a failure before the finish leaves the account as
+      // it was, opened by the words in hand.
+      const next = password = core.passwordKeys(email, new_password)
+      const made: Kit[] = []
+      const copies = (new_code: Uint8Array): Record<string, unknown> => {
+        const kit = newKit(core, { kind: 'email', email })
+        try {
+          const account: AccountCopies = { kit: kitPart(core, kit, room.room_id, new_code), password: passwordPart(core, next, room.room_id, new_code) }
+          made.push(kitOf(kit, { email, account: answer.account }))
+          return { ...account }
+        } finally { zeroKeys(kit.keys) }
+      }
+      const { client } = await joinWithCode({ ...device, room_id: hex(room.room_id), code, recover: true, account: copies })
+      const kit = made.at(-1)
+      if (kit === undefined) {
+        await stop(client)
+        throw new AccountError('internal', 'the recovery asked for no copies of the new code')
+      }
+      return { client, kit }
+    } finally { zero(code) }
+  } finally { zeroKeys(keys, password) }
 }
 
 /**

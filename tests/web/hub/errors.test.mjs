@@ -20,6 +20,11 @@ test('a refusal becomes a HubError with the hub\'s code, status, voided and the 
   fake.faults.add({ path: '/v2/envelopes', refuse: { error: 'rate-limited', retry_after: 7 } })
   const limited = await hub.postEnvelope(envelope(room_id, device, 1)).catch(e => e)
   assert.deepEqual([limited.code, limited.status, limited.retry_after, limited.transient], ['rate-limited', 429, 7, true])
+
+  // (the hub may name the wait in the refusal's body instead of the header)
+  fake.faults.add({ path: '/v2/envelopes', raw: { status: 429, json: { error: 'rate-limited', message: 'slow down', retry_after: 9 } } })
+  const inBody = await hub.postEnvelope(envelope(room_id, device, 1)).catch(e => e)
+  assert.deepEqual([inBody.code, inBody.status, inBody.retry_after, inBody.transient], ['rate-limited', 429, 9, true])
 })
 
 test('a busy hub (503 overloaded) and an internal error are not refusals', async t => {

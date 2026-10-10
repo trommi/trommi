@@ -17,7 +17,7 @@
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
 import { UNHEARD_MS, blockedOf, linkOf, quietOf, shareControl, sharesLoaded } from './app.mjs'
-import { Controller, fileTile, revokeTiles, EXPLAIN_TEXT, HAND_BACK_TEXT, WORDS, advisedLabels, later, agoSpan, assetGlyph, attIdOf, avatar, controller, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf } from './ui.mjs'
+import { Controller, fileTile, revokeTiles, EXPLAIN_TEXT, HAND_BACK_TEXT, WORDS, advisedLabels, later, agoSpan, assetGlyph, attIdOf, avatar, controller, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, sayError } from './ui.mjs'
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const IN_VIEW = 14            // of them, rendered with the page (a phone shows fewer); the rest of the window right after its first paint
@@ -669,7 +669,7 @@ export function register(t) {
       if (!text.trim() && !files.length && !cards.length) throw new Error('write something first')
       await t.hub.message({ agent: s.id, text, attachments: files, cards })
     } catch (err) {
-      const said = `Not sent: ${err.message || 'the board did not take it'}`
+      const said = `Not sent: ${sayError(err, 'the board did not take it')}`
       // 422: counted as not sent, so the composer keeps the words and files (controller "composer").
       if (stay) return t.sendStream(req, res, t.stream('replace', `session-error-${s.id}`, sendError(s, said)), 422)
       return send(req, res, current(s.id) ?? s, { error: said, text }, 422)

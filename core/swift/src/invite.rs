@@ -245,8 +245,13 @@ choice! {
         /// KeyPackage of every other human device.
         FoundSession = "foundSession",
         /// Take the session `group` over with `clean_session`: `cuts`, and `device` with `key_package` as the
-        /// replacement.
+        /// replacement. There is one such step for the main session's group, and after it one for every live
+        /// helper session under it; there `key_package` is none: claim a fresh one of `device` at the hub.
         TakeOver = "takeOver",
+        /// A takeover has nothing more to do in the groups this device holds: fetch the room's groups, take the
+        /// Welcomes still waiting, and hand the helper sessions the hub lists under `session` to
+        /// `invite_checked`.
+        CheckHelpers = "checkHelpers",
     }
 }
 
@@ -265,6 +270,8 @@ record! {
         pub key_package: Option<Vec<u8>>,
         /// For a takeover, the leaves to remove, each with its Cut.
         pub cuts: Vec<Cut>,
+        /// For `checkHelpers`, the main session that was taken over: 16 bytes.
+        pub session: Option<Vec<u8>>,
     }
 }
 
@@ -277,6 +284,7 @@ impl InviteStep {
             device: None,
             key_package: None,
             cuts: Vec::new(),
+            session: None,
         };
         match step {
             core::InviteStep::Wait => empty(InviteStepKind::Wait),
@@ -291,6 +299,10 @@ impl InviteStep {
                 device: Some(device.as_bytes().to_vec()),
                 ..empty(InviteStepKind::AddToSession)
             },
+            core::InviteStep::CheckHelpers { session } => Self {
+                session: Some(session.as_bytes().to_vec()),
+                ..empty(InviteStepKind::CheckHelpers)
+            },
             core::InviteStep::FoundSession { agent, key_package } => Self {
                 device: Some(agent.as_bytes().to_vec()),
                 key_package: Some(key_package),
@@ -304,7 +316,7 @@ impl InviteStep {
             } => Self {
                 group: Some(group.as_bytes().to_vec()),
                 device: Some(agent.as_bytes().to_vec()),
-                key_package: Some(key_package),
+                key_package,
                 cuts: cuts.iter().map(Cut::from).collect(),
                 ..empty(InviteStepKind::TakeOver)
             },

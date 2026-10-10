@@ -3,6 +3,7 @@
 // the fake hub checks no cryptography and neither does the stand-in.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { hubReaders } from '../stand-in/core.ts'
 import { memoryCache, modelsAgree, scene, shared, sleep, until } from './helpers.mjs'
 
 test('520 changes across groups, taken in pages, strictly in the hub\'s order', async t => {
@@ -54,7 +55,7 @@ test('a hub that serves a page out of order, or an old envelope again: nothing o
   assert.ok(again.model.alerts.some(x => x.code === 'bad-answer'), 'and the human is told')
   fake.faults.clear()
   // (2) an old envelope under a new change number: the core knows it by its chain and refuses it
-  const old = [...fake.state.rooms.values()][0].changes.find(c => c.kind === 'envelope' && JSON.parse(Buffer.from(c.envelope, 'base64url').toString()).object?.object_id === Buffer.from(first, 'hex').toString('base64url'))
+  const old = [...fake.state.rooms.values()][0].changes.find(c => c.kind === 'envelope' && hubReaders.envelope(Buffer.from(c.envelope, 'base64url')).object?.object_id === Buffer.from(first, 'hex').toString('base64url'))
   fake.faults.add({ method: 'GET', path: '/v2/changes', answer: json => ({ ...json, change: json.change + 1, items: [...json.items, { kind: 'envelope', change: json.change + 1, envelope: old.envelope, received_at: 1 }] }) })
   const outcomes = []
   again.engine.on('envelope', ({ received }) => outcomes.push([received.outcome, received.code]))
@@ -88,7 +89,7 @@ test('the stream drops and resumes: nothing is lost and nothing comes twice; an 
   modelsAgree(a.model, b.model)
 })
 
-test('the cache: a warm start shows the Desk before the hub answers; a cache at another cursor is dropped and built again', async t => {
+test('the cache: a warm start shows the Desk before the hub answers; a cache ahead of the device is dropped and built again', async t => {
   const { fake, R, a, agent, name } = await scene(t, { agent: true })
   const card = await agent.askCard({ title: 'Still here after a restart?', options: [{ key: 'yes', label: 'Yes' }] })
   const note = await a.saveNote({ text: 'kept in the cache' })
@@ -112,10 +113,11 @@ test('the cache: a warm start shows the Desk before the hub answers; a cache at 
   assert.equal(warm.model.notes.get(offline).pending, false)
   await warm.stop()
 
-  // a cache that was written at another cursor than the device holds is not shown: it is built again
+  // a cache that claims a cursor beyond the device's is not this device's state: it is dropped and built again
+  // (one that is behind is kept and filled up: tests/web/client/reload.test.mjs)
   const cache = memoryCache(name.name)
   const at = await cache.get('client/at')
-  await cache.set('client/at', { ...at, cursor: at.cursor - 3 })
+  await cache.set('client/at', { ...at, cursor: at.cursor + 3 })
   await cache.set(`note/${note}`, { ...(await cache.get(`note/${note}`)), text: 'a stale cache says this' })
   const cold = await R.openRoom({ storage: name })
   t.after(() => cold.stop().catch(() => {}))

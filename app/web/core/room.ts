@@ -13,7 +13,7 @@
 // The hub's address is not part of a device's state. It is kept in the cache (`client/room`, written durably when
 // the room is made); a caller that knows it may pass `hub_url` to `openRoom` for a cache that was lost.
 import { Client, ClientError, engineMeta } from './client.ts'
-import type { Core, Device, Store } from './core-api.ts'
+import type { Core, Device, ServedEnvelope, Store } from './core-api.ts'
 import { Engine } from './engine.ts'
 import type { EngineTiming } from './engine.ts'
 import { accountCopiesBytes, Hub, HubError, hubAddress } from './hub.ts'
@@ -58,6 +58,8 @@ export interface Rooms {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+/** A joining device's sign-in while it is no leaf yet: asked again after these waits, then every LEAF_WAIT_EVERY_MS, LEAF_WAIT_MS in all. */
+const LEAF_WAITS_MS = [1000, 2000, 4000], LEAF_WAIT_EVERY_MS = 5000, LEAF_WAIT_MS = 5 * 60_000
 const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 const codeText = (numbers: readonly number[]): string => numbers.map(n => String(n).padStart(2, '0')).join('-')
 
@@ -159,6 +161,18 @@ export function roomsOn(env: RoomEnv): Rooms {
       if (Date.now() > until) throw new ClientError('invite-expired', 'nobody confirmed this device in time')
       await sleep(poll)
     }
+    // The sign-in of a device that is no leaf yet is refused `not-member` until the inviter's Commit is in. It is
+    // asked again after 1 s, 2 s and 4 s, then every 5 s, for five minutes in all (the hub's rule for this wait).
+    // A caller that names `poll_ms` or `timeout_ms` (tests) gets its own pace and end for this wait as for the others.
+    const paced = o.poll_ms !== undefined || o.timeout_ms !== undefined
+    let asked = 0, leafUntil = 0
+    const waitForLeaf = async (): Promise<void> => {
+      if (paced) return wait()
+      leafUntil ||= Date.now() + LEAF_WAIT_MS
+      if (cancelled) throw new ClientError('cancelled', 'joining was given up')
+      if (Date.now() > leafUntil) throw new ClientError('invite-expired', 'nobody confirmed this device in time')
+      await sleep(LEAF_WAITS_MS[asked++] ?? LEAF_WAIT_EVERY_MS)
+    }
     const client = (async (): Promise<Client> => {
       const core = await env.core()
       const link = core.inviteLinkParse(o.link)
@@ -182,7 +196,7 @@ export function roomsOn(env: RoomEnv): Rooms {
             if (!(e instanceof HubError) || (e.code !== 'not-member' && !e.transient)) throw e
             // "They don't match" burns the invite: the hub says so on the invite's own route
             try { await hub.getReveal(link.inviteId) } catch (burned) { if (burned instanceof HubError && burned.code === 'invite-burned') throw new ClientError('code-mismatch', 'the other device said the codes do not match') }
-            await wait()
+            await waitForLeaf()
           }
         }
         if (request.role === 'agent') {
@@ -225,31 +239,27 @@ export function roomsOn(env: RoomEnv): Rooms {
         // The new code is made, and the account's copies of it (or the person's own copy: the caller's `account`
         // resolves once the code is on their screen), BEFORE the recovery is opened: the hub locks the room for
         // ten minutes from then on, and nothing of a recovery is posted for a code nobody holds.
-        const { served, session_groups } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+        const { served } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
         const plan = await held.prepareRecovery(code, served)
         let copies: Uint8Array
         try { copies = accountCopiesBytes(o.account ? await o.account(plan.newCode) as AccountCopies | null : null) } finally { plan.newCode.fill(0) }
-        // A removed device's chain ends at its Cut for everyone (9.0.10): the last envelope of its chain as this
-        // device VERIFIED it. A device that wrote nothing is cut at nothing; a chain is verified by the core
-        // (`servedChainCut`, provisional: the binding refuses with `core-missing`, and so does this recovery then, since
-        // cutting a chain unseen would take a person's notes and answers away).
-        const cuts = []
-        for (const removal of plan.removals) {
-          const group = [served.group, ...served.sessions][[room, ...session_groups].findIndex(g => sameBytes(g, removal.group))]
-          for (const gone of removal.devices) {
-            const chain: Uint8Array[] = []
-            for (let more = true; more;) {
-              const page = await hub.chain(removal.group, gone, { after: chain.length, limit: 500 })
-              for (const link of page.items) chain.push(link.envelope)
-              more = page.more && page.items.length > 0
-            }
-            if (chain.length && !group) throw new ClientError('bad-answer', 'the hub names a group in a recovery that it did not serve')
-            cuts.push({ group: removal.group, cut: chain.length ? await held.servedChainCut(group!, gone, chain) : { device: gone, seq: 0, hash: new Uint8Array(32) } })
+        // A removed device's chain ends at its Cut for everyone (9.0.10). The core takes the Cuts itself, from
+        // the chains as the hub serves them, each verified from number 1.
+        const chains: ServedEnvelope[] = []
+        for (const removal of plan.removals) for (const gone of removal.devices) {
+          for (let after = 0, more = true; more;) {
+            const page = await hub.chain(removal.group, gone, { after, limit: 500 })
+            for (const link of page.items) { chains.push({ bytes: link.envelope, change: link.change, voidCode: link.void_code === null ? null : core.errorCodeFromText(link.void_code) ?? 'hub-voided-other' }); after = link.seq }
+            more = page.more && page.items.length > 0
           }
         }
+        // In the hub's ONE order across the removed devices, not chain after chain: the core judges each envelope
+        // against what it was handed before, and a version one device wrote on another's needs that one first
+        // (handed over chain by chain, such a version was `forbidden` on the recovered device for good).
+        chains.sort((x, y) => x.change - y.change)
         const recovery = await hub.openRecovery()
         try {
-          const done = await held.recover(code, served, cuts, copies, Date.now())
+          const done = await held.recover(code, served, chains, copies, Date.now())
           for (const id of done.outbox) await engine.attach(id, { recovery_id: recovery.recovery_id })
           await postAll(engine)
         } catch (e) { await hub.dropRecovery(recovery.recovery_id).catch(() => {}); throw e }
@@ -264,6 +274,9 @@ export function roomsOn(env: RoomEnv): Rooms {
         }
       }
       await engine.load()
+      // what the room holds from before is read once the hub's order was taken: a recovery took the removed
+      // devices' chains already, and their envelopes are then read back
+      await engine.wantRescan()
       return { client: await clientOf(o, core, hub, engine, cache) }
     } catch (e) {
       if (device) await discard(o, device, engine)

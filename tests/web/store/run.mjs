@@ -9,8 +9,8 @@
 // - Chromium: `chromium` on the PATH or the program CHROMIUM names (as app/web/dev/e2e.mjs finds it).
 // - esbuild: the repository's devDependency (`npm install`).
 // - The core's WASM build: core/wasm/pkg/, or the folder TROMMI_CORE_PKG names. `core/wasm/build.sh` makes it.
-// The bundle and the browser's profile are written under TROMMI_TEST_TMP (default: `.cache/trommi-work/v2/web-tmp/
-// store/run` in the home folder) and removed at the end.
+// The bundle and the browser's profile are written under TROMMI_TEST_TMP (default: `trommi-store-test` in the
+// system's temporary folder) and removed at the end.
 //
 // What is real and what is not: the browser's storage, locks, channel and cryptography, the binding's IdbStore and,
 // in the tests named "core:" and "tabs (real core):", the Rust core's Device. The CLIENT in the tabs is a fake
@@ -26,7 +26,7 @@ import { launchChromium } from '../../../app/web/dev/cdp.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.join(here, '../../..')
-const tmp = process.env.TROMMI_TEST_TMP || path.join(os.homedir(), '.cache/trommi-work/v2/web-tmp/store/run')
+const tmp = process.env.TROMMI_TEST_TMP || path.join(os.tmpdir(), 'trommi-store-test')
 const pkg = process.env.TROMMI_CORE_PKG || path.join(repo, 'core/wasm/pkg')
 const out = path.join(tmp, 'page'), profile = path.join(tmp, 'profile')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
