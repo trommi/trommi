@@ -56,6 +56,9 @@ key package (RFC 9420 allows the reuse, the draft defines the mark).
 - **Extensions, approved 2026-10-09.** (1) The authentication tag (`recovery_mac`) on every sealed row and on the
   sealed link, with the message that hands its key to a new device (`v2.md` 7.4, 8.3, 8.5). (2) The join from
   outside under the recovery signature also for session groups, not only for the room group (8.4, 5.2.7).
+- **Extension, approved 2026-10-10.** The Emergency Kit for accounts without an e-mail: the salt of the kit's keys
+  is then a hash of the account id (16 bytes the hub mints) under a label of its own, everything behind it as for
+  an account with an e-mail, whose bytes do not change; the id is printed on every kit (`v2.md` 8.8).
 
 ## D2. Stored content as Trommi's own envelope
 

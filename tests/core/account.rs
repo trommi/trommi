@@ -1,5 +1,6 @@
 //! The account's sealed copies of the recovery code (section 8.8): password, Emergency Kit words and passkey,
-//! against `spec/account-vectors.json`.
+//! against `spec/account-vectors.json`; the Emergency Kit of an account without an e-mail, against
+//! `spec/vectors/account.json`.
 
 use serde_json::Value;
 use trommi_core::account::*;
@@ -674,4 +675,350 @@ fn a_user_handle_is_fresh_random_bytes() {
         generate_user_handle(&mut SystemEntropy).expect("entropy")
     );
     assert_eq!(generate_user_handle(&mut NoEntropy), Err(Error::Entropy));
+}
+
+const KIT_WORDS_TEXT: &str =
+    "acorn velvet tidy hamper oxford banjo cradle dolphin eagle fabric gallery harbor";
+const ID_TEXT: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const ID_BYTES: [u8; ACCOUNT_ID_LEN] = [
+    0x0f, 0x8f, 0xad, 0x5b, 0xd9, 0xcb, 0x46, 0x9f, 0xa1, 0x65, 0x70, 0x86, 0x77, 0x28, 0x95, 0x0e,
+];
+
+#[test]
+fn an_account_id_has_one_text() {
+    let id = AccountId::parse(ID_TEXT).expect("an id");
+    assert_eq!(id, AccountId::new(ID_BYTES));
+    assert_eq!(id.as_bytes(), &ID_BYTES);
+    assert_eq!(id.to_string(), ID_TEXT);
+    assert_eq!(id.to_string().len(), ACCOUNT_ID_TEXT_LEN);
+    assert_eq!(format!("{id:?}"), format!("AccountId({ID_TEXT})"));
+    // No bit has a meaning: every value of the sixteen bytes is an id, and comes back from its text.
+    for bytes in [[0u8; ACCOUNT_ID_LEN], [0xff; ACCOUNT_ID_LEN]] {
+        let id = AccountId::new(bytes);
+        assert_eq!(AccountId::parse(&id.to_string()), Ok(id));
+    }
+    assert_eq!(
+        AccountId::new([0; ACCOUNT_ID_LEN]).to_string(),
+        "00000000-0000-0000-0000-000000000000"
+    );
+    assert_eq!(
+        AccountId::new([0xff; ACCOUNT_ID_LEN]).to_string(),
+        "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    );
+    for seed in 0..=255u8 {
+        let mut bytes = [0u8; ACCOUNT_ID_LEN];
+        for (at, byte) in bytes.iter_mut().enumerate() {
+            *byte = seed
+                .wrapping_mul(37)
+                .wrapping_add((at as u8).wrapping_mul(seed | 1));
+        }
+        let id = AccountId::new(bytes);
+        let text = id.to_string();
+        assert_eq!(text.len(), ACCOUNT_ID_TEXT_LEN);
+        assert_eq!(AccountId::parse(&text), Ok(id), "{text}");
+    }
+    assert_eq!(AccountId::from_slice(&ID_BYTES), Ok(id));
+    for len in [0, 15, 17, 32] {
+        assert_eq!(AccountId::from_slice(&vec![7; len]), Err(Error::BadFormat));
+    }
+}
+
+#[test]
+fn an_account_id_in_another_spelling_is_refused() {
+    let refused = |text: &str| {
+        assert_eq!(
+            AccountId::parse(text),
+            Err(AccountError::Core(Error::BadFormat)),
+            "{text:?}"
+        );
+    };
+    for (text, _) in trommi_tests::vectors::account::REFUSED_ID_TEXTS {
+        refused(text);
+    }
+    // A capital in any place, and anything but the hyphen or a digit in any place.
+    for at in 0..ACCOUNT_ID_TEXT_LEN {
+        let with = |c: char| {
+            let mut text: Vec<char> = ID_TEXT.chars().collect();
+            text[at] = c;
+            text.into_iter().collect::<String>()
+        };
+        let here = ID_TEXT.as_bytes()[at] as char;
+        if here.is_ascii_lowercase() {
+            refused(&with(here.to_ascii_uppercase()));
+        }
+        let swapped = if here == '-' { '0' } else { '-' };
+        refused(&with(swapped));
+        for c in [' ', '_', 'g', 'G', '\0', '\n', '{', '}', '/', ':', '`', '@'] {
+            refused(&with(c));
+        }
+        // A character of several bytes, so that the text is longer in bytes and as long in characters.
+        refused(&with('\u{ff10}'));
+        // Every cut of the text.
+        refused(&ID_TEXT[..at]);
+    }
+    for text in [
+        format!("{ID_TEXT}\n"),
+        format!(" {ID_TEXT}"),
+        format!("{ID_TEXT} "),
+        format!("{{{ID_TEXT}}}"),
+        format!("{ID_TEXT}{ID_TEXT}"),
+        ID_TEXT.replace('-', ""),
+        ID_TEXT.replace('-', "\u{2010}"),
+        // Thirty-six bytes whose characters are not: a two-byte digit in place of two digits.
+        ID_TEXT.replacen("0f", "\u{660}", 1),
+        "x".repeat(100_000),
+    ] {
+        refused(&text);
+    }
+}
+
+#[test]
+fn the_kit_of_an_account_without_an_email_derives_from_its_id() {
+    let id = AccountId::new(ID_BYTES);
+    let keys = kit_keys_for(AccountName::Id(&id), KIT_WORDS_TEXT).expect("derives");
+    assert_ne!(keys.auth_key, keys.wrap_key);
+    assert!(format!("{keys:?}").contains("redacted"));
+    // The words are read as typed, as for every kit, and the id is the one its text names.
+    let typed = KIT_WORDS_TEXT.to_uppercase().replace(' ', ",\n");
+    let parsed = AccountId::parse(ID_TEXT).expect("an id");
+    assert_eq!(
+        kit_keys_for(AccountName::Id(&parsed), &typed).expect("derives"),
+        keys
+    );
+    assert_eq!(
+        kit_keys_for(AccountName::Id(&id), "acorn velvet").err(),
+        Some(AccountError::BadRecoveryWords)
+    );
+
+    // Another id, in a single bit: other keys.
+    for at in 0..ACCOUNT_ID_LEN {
+        for bit in 0..8 {
+            let mut bytes = ID_BYTES;
+            bytes[at] ^= 1 << bit;
+            let other = kit_keys_for(AccountName::Id(&AccountId::new(bytes)), KIT_WORDS_TEXT)
+                .expect("derives");
+            assert_ne!(other.auth_key, keys.auth_key);
+            assert_ne!(other.wrap_key, keys.wrap_key);
+        }
+    }
+    // Other words under the same id: other keys.
+    let other_words = KIT_WORDS_TEXT.replace("acorn", "zebra");
+    let other = kit_keys_for(AccountName::Id(&id), &other_words).expect("derives");
+    assert_ne!(other.auth_key, keys.auth_key);
+    assert_ne!(other.wrap_key, keys.wrap_key);
+}
+
+#[test]
+fn an_email_account_keeps_its_keys_and_shares_none_with_an_id() {
+    let v = vectors();
+    let r = &v["recovery"];
+    let email = text(&v, &["password", "email"]);
+    let words = text(r, &["words"]);
+    // The general entry gives an account with an e-mail the bytes it always had.
+    let by_email = kit_keys_for(AccountName::Email(email), words).expect("derives");
+    assert_eq!(by_email, kit_keys(email, words).expect("derives"));
+    assert_eq!(
+        base64url_encode(by_email.auth_key.expose()),
+        text(r, &["recoveryAuthB64u"])
+    );
+    assert_eq!(
+        by_email.wrap_key.expose().as_slice(),
+        hex(text(r, &["wrapKey"]))
+    );
+    assert_eq!(
+        kit_keys_for(AccountName::Email("owner"), words).err(),
+        Some(AccountError::BadEmail)
+    );
+
+    // The same words under an id: other keys, whatever the id. An id whose bytes or text are the e-mail's
+    // own would be the nearest to a collision; the bytes of an id are sixteen and enter under another label.
+    let normalised = normalise_email(email).expect("an address");
+    let mut from_email = [0u8; ACCOUNT_ID_LEN];
+    from_email.copy_from_slice(&normalised.as_bytes()[..ACCOUNT_ID_LEN]);
+    for id in [
+        AccountId::new(ID_BYTES),
+        AccountId::new([0; ACCOUNT_ID_LEN]),
+        AccountId::new(from_email),
+    ] {
+        let by_id = kit_keys_for(AccountName::Id(&id), words).expect("derives");
+        assert_ne!(by_id.auth_key, by_email.auth_key);
+        assert_ne!(by_id.wrap_key, by_email.wrap_key);
+    }
+}
+
+#[test]
+fn a_kit_copy_opens_only_under_the_form_and_account_it_was_made_for() {
+    let v = vectors();
+    let email = text(&v, &["password", "email"]);
+    let room = RoomId::new([4; 32]);
+    let code = secret(&[5; 32]);
+    let id = AccountId::new(ID_BYTES);
+    let other_id = AccountId::new([7; ACCOUNT_ID_LEN]);
+    let by_id = kit_keys_for(AccountName::Id(&id), KIT_WORDS_TEXT).expect("derives");
+    let by_other_id = kit_keys_for(AccountName::Id(&other_id), KIT_WORDS_TEXT).expect("derives");
+    let by_email = kit_keys_for(AccountName::Email(email), KIT_WORDS_TEXT).expect("derives");
+    let wrong = Err(AccountError::Core(Error::WrongRecovery));
+
+    let of_id =
+        seal_code(&by_id.wrap_key, &room, Way::Kit, &code, &mut SystemEntropy).expect("seals");
+    assert_eq!(of_id.len(), SEALED_COPY_LEN);
+    assert_eq!(
+        open_code(&by_id.wrap_key, &room, Way::Kit, &of_id).as_ref(),
+        Ok(&code)
+    );
+    assert_eq!(
+        open_code(&by_email.wrap_key, &room, Way::Kit, &of_id),
+        wrong
+    );
+    assert_eq!(
+        open_code(&by_other_id.wrap_key, &room, Way::Kit, &of_id),
+        wrong
+    );
+    // Nor in another room, nor as the copy of another way in.
+    assert_eq!(
+        open_code(&by_id.wrap_key, &RoomId::new([6; 32]), Way::Kit, &of_id),
+        wrong
+    );
+    assert_eq!(
+        open_code(&by_id.wrap_key, &room, Way::Password, &of_id),
+        Err(AccountError::Core(Error::WrongLogin))
+    );
+
+    let of_email = seal_code(
+        &by_email.wrap_key,
+        &room,
+        Way::Kit,
+        &code,
+        &mut SystemEntropy,
+    )
+    .expect("seals");
+    assert_eq!(
+        open_code(&by_email.wrap_key, &room, Way::Kit, &of_email).as_ref(),
+        Ok(&code)
+    );
+    assert_eq!(
+        open_code(&by_id.wrap_key, &room, Way::Kit, &of_email),
+        wrong
+    );
+}
+
+#[test]
+fn the_vectors_read_back() {
+    use trommi_core::crypto::{hmac_sha256, sha256};
+    use trommi_tests::vectors::account::{LABEL_ID_SALT, NAME, REFUSED_ID_TEXTS};
+    use trommi_tests::vectors::{hex as to_hex, read, unhex};
+
+    let file = read(NAME).expect("the file");
+    let text = |value: &Value, key: &str| value[key].as_str().expect(key).to_owned();
+    let bytes = |value: &Value, key: &str| unhex(&text(value, key)).expect("hex");
+
+    // The id, in bytes and as every kit prints it.
+    let id = AccountId::from_slice(&bytes(&file, "account_id")).expect("an id");
+    assert_eq!(id.to_string(), text(&file, "account_id_text"));
+    assert_eq!(AccountId::parse(&text(&file, "account_id_text")), Ok(id));
+
+    // The salt by its definition, and the two keys by HKDF written out over HMAC: extract under the salt,
+    // then one block of expand.
+    assert_eq!(text(&file, "label_salt"), LABEL_ID_SALT);
+    let salt_input = [LABEL_ID_SALT.as_bytes(), &[0], id.as_bytes().as_slice()].concat();
+    assert_eq!(to_hex(&salt_input), text(&file, "salt_input"));
+    let salt = sha256(&salt_input).expect("hashes");
+    assert_eq!(to_hex(salt.as_bytes()), text(&file, "salt"));
+    let words = text(&file, "words");
+    assert_eq!(
+        parse_kit_words(&words).expect("twelve words").expose(),
+        words.as_bytes()
+    );
+    let prk = secret(&hmac_sha256(&secret(salt.as_bytes()), words.as_bytes()).expect("hmac"));
+    let expand = |label: &str| {
+        let info = [label.as_bytes(), &[0, 1]].concat();
+        to_hex(&hmac_sha256(&prk, &info).expect("hmac"))
+    };
+    assert_eq!(expand("trommi/v1/recovery-auth"), text(&file, "auth_key"));
+    assert_eq!(
+        expand("trommi/v1/recovery-wrap-key"),
+        text(&file, "wrap_key")
+    );
+
+    // The same through the interface.
+    let keys = kit_keys_for(AccountName::Id(&id), &words).expect("derives");
+    assert_eq!(to_hex(keys.auth_key.expose()), text(&file, "auth_key"));
+    assert_eq!(to_hex(keys.wrap_key.expose()), text(&file, "wrap_key"));
+
+    // The sealed copy is made again with its nonce, and opens.
+    let room = RoomId::from_slice(&bytes(&file, "room_id")).expect("a room id");
+    let code = secret(&bytes(&file, "code"));
+    let sealed = bytes(&file, "sealed");
+    assert_eq!(&sealed[1..13], bytes(&file, "nonce"));
+    assert_eq!(
+        seal_code(
+            &keys.wrap_key,
+            &room,
+            Way::Kit,
+            &code,
+            &mut Fixed(bytes(&file, "nonce"))
+        ),
+        Ok(sealed.clone())
+    );
+    assert_eq!(
+        open_code(&keys.wrap_key, &room, Way::Kit, &sealed).as_ref(),
+        Ok(&code)
+    );
+
+    // Each case: the keys of the account named, and what the copy does under them.
+    let cases = file["cases"].as_array().expect("cases");
+    let mut results = std::collections::BTreeSet::new();
+    let mut auth_keys = std::collections::BTreeSet::new();
+    for case in cases {
+        let why = text(case, "why");
+        let account = &case["account"];
+        let other;
+        let name = match (account.get("id"), account.get("email")) {
+            (Some(id), None) => {
+                other = AccountId::parse(id.as_str().expect("text")).expect("an id");
+                AccountName::Id(&other)
+            }
+            (None, Some(email)) => AccountName::Email(email.as_str().expect("text")),
+            _ => panic!("{why}: an account has one name"),
+        };
+        let keys = kit_keys_for(name, &words).expect("derives");
+        assert_eq!(
+            to_hex(keys.auth_key.expose()),
+            text(case, "auth_key"),
+            "{why}"
+        );
+        assert_eq!(
+            to_hex(keys.wrap_key.expose()),
+            text(case, "wrap_key"),
+            "{why}"
+        );
+        let result = match open_code(&keys.wrap_key, &room, Way::Kit, &sealed) {
+            Ok(code) => format!("opens: {}", to_hex(code.expose())),
+            Err(error) => error.code().to_owned(),
+        };
+        assert_eq!(result, text(case, "result"), "{why}");
+        results.insert(result);
+        auth_keys.insert(text(case, "auth_key"));
+    }
+    assert_eq!(cases.len(), 3);
+    assert_eq!(auth_keys.len(), 3, "three accounts, three keys");
+    assert_eq!(
+        results.into_iter().collect::<Vec<_>>(),
+        [
+            format!("opens: {}", text(&file, "code")),
+            "wrong-recovery".to_owned()
+        ]
+    );
+    assert_eq!(text(&cases[0], "auth_key"), text(&file, "auth_key"));
+
+    let refused = file["refused_id_texts"].as_array().expect("texts");
+    assert_eq!(refused.len(), REFUSED_ID_TEXTS.len());
+    for entry in refused {
+        assert_eq!(
+            AccountId::parse(&text(entry, "text")),
+            Err(AccountError::Core(Error::BadFormat)),
+            "{}",
+            text(entry, "why")
+        );
+    }
 }
