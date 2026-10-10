@@ -137,9 +137,12 @@ const cases = {
       navigator.locks.request(`trommi-core:${name}`, { steal: true }, () => { granted(); return new Promise(free => { giveBack = free }) })
     })
     await taken
-    // The browser tells the first holder in a task of its own: the write is tried once that had its turn. The
-    // message tells the mark from the revision check, which would refuse nothing here.
-    await new Promise(turn => setTimeout(turn, 50))
+    // The browser tells the first holder after the thief's grant, in a task of its own: the mark is waited for, seen
+    // through a write that names a revision no store has (it writes nothing either way), not by counting steps.
+    // The message tells the mark from the revision check, which would refuse nothing in the write after it.
+    const marked = async () => /took this state over/.test((await outcome(owner.apply({ expectedRevision: -1, put: [], delete: [] })))?.message ?? '')
+    const deadline = Date.now() + 5000
+    while (!(await marked()) && Date.now() < deadline) await new Promise(turn => setTimeout(turn, 0))
     const late = await outcome(owner.apply({ expectedRevision: 0, put: [], delete: [] }))
     found.stolen = late instanceof StoreConflict && /took this state over/.test(late.message)
     giveBack()
