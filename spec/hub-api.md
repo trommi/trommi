@@ -30,9 +30,9 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v2/groups/{group}/log?after=&limit=&kind=commit` | → `{ items: [ { n, change, epoch, at, kind: "commit", bytes, recovery_auth? } \| { n, change, epoch, at, kind: "message", bytes } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
 | `POST /v2/groups/{group}/messages` | `{ epoch, message, relay? }` → `{ n }` | application message; `relay: true`: passed on, not stored (7.2); `wrong-epoch` |
 | `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | without `epoch`: the current one; with it exactly that epoch (`not-found`). Kept: the current one and epoch 0 (the founding) of every group, every epoch that still lacks a `SealedKey` with a `mac` (8.3), every epoch of the room group |
-| `GET /v2/welcomes` | → `[ { group_id, welcome, at } ]` | for the asking device; deleted when it has joined |
+| `GET /v2/welcomes?after=` | → `[ { id, group_id, welcome, at } ]` | for the asking device, oldest first, after the one numbered `after`; at most 8 MiB of Welcomes (point 22); deleted when it has joined |
 | `PUT /v2/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
-| `POST /v2/key-packages/claim` | `{ devices: [..] }` → `{ key_packages: { device: bytes } }` | one each, all or nothing; the last-resort one when none is left; none uploaded more than 90 days ago |
+| `POST /v2/key-packages/claim` | `{ devices: [..] }` (1 to 1024) → `{ key_packages: { device: bytes } }` | one each, all or nothing; a device names 64 a second, bursts of 2 048 (`rate-limited`); the last-resort one when none is left; none uploaded more than 90 days ago |
 | `GET /v2/rooms/{room}/groups` | → `[ { group_id, kind, session_id, parent, epoch, live, stale, leaves } ]` | what the asker may see: a human device all, another device its own groups and the room group |
 | `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; writing: a human device that is the row's `writer`; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
 | `POST /v2/requests` · `GET /v2/requests` | `{ kind: readmit \| handover \| session, group?, key_package? }` | an unsigned wish of the signed-in device to the human devices (5.2.7, 5.3.5, 7.1, 13.4); nothing follows from it without a Commit |
@@ -279,15 +279,17 @@ encrypted.
     it is uploaded again or its device is removed (its reference is kept for good). A KeyPackage is handed out
     no longer than its own lifetime says. A claim
     names a device once. A helper device claims none. Leaves and KeyPackages carry exactly the capabilities of
-    v2.md section 3; a GroupInfo is at most 96 KiB.
+    v2.md section 3; a GroupInfo is at most 384 KiB (206 kB at 1000 human devices) and its tree at most 2 047
+    nodes (`bad-commit`).
 13. A repeated post of the same bytes gets the first answer for: a founding, a Commit, an application message, an
     envelope, a SealedKey, a file, an Offer, a Reveal, a share. A claim of KeyPackages is not repeatable.
 
 **Recovery**
 
 14. While a recovery is open every other write to the room is answered `overloaded` (503) with `retry-after`;
-    an agent's lease renewal is still taken. A recovery has at most 8 192 parts and 64 MiB, and at most 8 parts
-    for one group (`too-many`); each is checked
+    an agent's lease renewal is still taken. A recovery has at most 8 192 parts and 512 MiB, and at most 8 parts
+    for one group, and what verifying its parts leaves is at most 1 GiB (`too-many`): about 1000 live groups of a
+    room at 1000 human devices; each is checked
     against the state the parts before it leave (those of the room group, of its own group and of its main
     session's group); the same part twice is kept once; one of its parts is the room Commit with the new
     recovery keys (8.7: after the joins, before the session groups' Removes; the hub checks what `finish` leaves,
@@ -319,8 +321,9 @@ encrypted.
     Artifact whose closing version was cut are deleted.
 22. An answer holds at most 8 MiB of envelopes: the list routes say `more`, the Desk `truncated` (then the rest
     comes by `/v2/changes`). The Desk has that one budget for everything it shows, objects of every kind and
-    registers together. A stream ends when the token it was opened with runs out, and the device resumes
-    with a new one by change number.
+    registers together. `GET /v2/welcomes` has the same budget (the first Welcome always goes in); the device
+    asks again after the last one's `id` until the answer is empty. A stream ends when the token it was opened
+    with runs out, and the device resumes with a new one by change number.
 23. `epoch-full` counts the accepted envelopes of a group and epoch. An envelope whose ciphertext is not a
     padded size of 9 is `bad-format` and takes no number; `too-large` is the void of a register over its size
     and of any sealed body beyond the largest padded size (9.0.5).
@@ -372,7 +375,8 @@ encrypted.
     sent, so an end stays due until the activity's token is registered. A token Apple refuses is forgotten; a
     token registered anew is sent the counts in a round after it is stored. "Lost" is never told after the `online` of a
     stream the agent opened first.
-28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
+28. Every code the hub answers is one of v2.md section 16, with its status there (`account-changed` 409, `bad-email`
+    and `bad-passkey` 400 and `range` 416 among them); the hub has none of its own.
 39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`. New recovery keys are refused if the room held either of them before, as
     either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.

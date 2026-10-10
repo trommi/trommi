@@ -126,7 +126,9 @@ pub trait Observer {
     fn verify(&self, key: &[u8], label: &str, content: &[u8], signature: &[u8]) -> bool;
 }
 
-pub const MAX_GROUP_INFO: usize = 96 * 1024;
+/// At 1000 human devices a GroupInfo is about 206 kB (some 205 bytes a leaf); this leaves room for the 1009 leaves
+/// of a session group, unmerged leaves on parent nodes and the room's agent list.
+pub const MAX_GROUP_INFO: usize = 384 * 1024;
 
 #[derive(Default)]
 pub struct MlsObserver {
@@ -196,9 +198,9 @@ fn check_capabilities(caps: &Capabilities) -> Res<()> {
     }
 }
 
-/// The largest tree a group of the profile can have: 33 human devices, an agent device and 7 helper devices fit
-/// in 64 leaves, 127 nodes.
-const MAX_LEAVES: usize = 64;
+/// The largest tree a group of the profile can have: 1001 human devices (1000, one more while a recovery runs), an
+/// agent device and 7 helper devices fit in 1024 leaves, 2047 nodes.
+pub const MAX_LEAVES: usize = 1024;
 
 fn snapshot_of(group: &PublicGroup) -> Res<Snapshot> {
     let ctx = group.group_context();
@@ -288,6 +290,87 @@ fn group_info_signer(bytes: &[u8]) -> Res<u32> {
     ))
 }
 
+/// The number of nodes of the ratchet tree a GroupInfo carries, read from its encoding before OpenMLS unpacks it.
+/// A blank node is one byte, so a byte limit alone would let a GroupInfo grow into hundreds of thousands of nodes
+/// in memory; no group of the profile has more than `2 * MAX_LEAVES - 1`.
+fn tree_nodes(bytes: &[u8]) -> Res<usize> {
+    let cut = |_| bad("GroupInfo encoding");
+    let mut r = Reader::new(bytes);
+    // MLSMessage: version mls10, wire format 4 (GroupInfo)
+    if r.take(4).map_err(cut)? != [0, 1, 0, 4] {
+        return Err(bad("not a GroupInfo"));
+    }
+    // GroupContext: version, cipher suite, group id, epoch, tree hash, confirmed transcript hash, extensions
+    r.take(4).map_err(cut)?;
+    r.vec().map_err(cut)?;
+    r.take(8).map_err(cut)?;
+    for _ in 0..3 {
+        r.vec().map_err(cut)?;
+    }
+    let extensions = r.vec().map_err(cut)?;
+    let mut e = Reader::new(extensions);
+    while e.position() < extensions.len() {
+        let kind = e.take(2).map_err(cut)?;
+        let data = e.vec().map_err(cut)?;
+        if kind != [0, 2] {
+            continue;
+        }
+        // ratchet_tree: optional<Node> nodes<V>
+        let nodes = Reader::new(data).vec().map_err(cut)?;
+        let mut t = Reader::new(nodes);
+        let mut count = 0;
+        while t.position() < nodes.len() {
+            count += 1;
+            if count > 2 * MAX_LEAVES - 1 {
+                return Err(bad("more leaves than any group of the profile has"));
+            }
+            match t.u8().map_err(cut)? {
+                0 => {}
+                1 => skip_node(&mut t).map_err(cut)?,
+                _ => return Err(bad("GroupInfo encoding")),
+            }
+        }
+        return Ok(count);
+    }
+    Err(bad("GroupInfo without the tree"))
+}
+
+fn skip_node(t: &mut Reader) -> wire::Parse<()> {
+    match t.u8()? {
+        // LeafNode: encryption key, signature key, credential (type, content), capabilities (five lists),
+        // source (1: lifetime, 2: update, 3: commit with its parent hash), extensions, signature
+        1 => {
+            t.vec()?;
+            t.vec()?;
+            t.take(2)?;
+            t.vec()?;
+            for _ in 0..5 {
+                t.vec()?;
+            }
+            match t.u8()? {
+                1 => {
+                    t.take(16)?;
+                }
+                2 => {}
+                3 => {
+                    t.vec()?;
+                }
+                _ => return Err(wire::Malformed("leaf node source")),
+            }
+            t.vec()?;
+            t.vec()?;
+        }
+        // ParentNode: encryption key, parent hash, unmerged leaves
+        2 => {
+            t.vec()?;
+            t.vec()?;
+            t.vec()?;
+        }
+        _ => return Err(wire::Malformed("node type")),
+    }
+    Ok(())
+}
+
 impl MlsObserver {
     fn read_group_info(&self, storage: &MemoryStorage, bytes: &[u8]) -> Res<(PublicGroup, Device)> {
         // A tree of the profile's size encodes in a few kB. The bound keeps a GroupInfo full of blank nodes from
@@ -297,6 +380,7 @@ impl MlsObserver {
                 "a GroupInfo larger than any group of the profile needs",
             ));
         }
+        tree_nodes(bytes)?;
         let signer = group_info_signer(bytes)?;
         let MlsMessageBodyIn::GroupInfo(info) = message(bytes)?.extract() else {
             return Err(bad("not a GroupInfo"));
