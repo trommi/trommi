@@ -14,7 +14,7 @@ use rusqlite::{Connection, OpenFlags};
 pub const SCHEMA_VERSION: i64 = 5;
 
 /// Added to schema 5 in place (Welcomes stored once, ids never given twice, an index for deleting by group, the
-/// Offer's MAC, an index for paging the groups, an index of register values with bodies, the board frontiers), on every open (a fresh database and one that holds data alike): nothing is
+/// Offer's MAC, an index for paging the groups, an index of register values with bodies, the board frontiers, settled Notes), on every open (a fresh database and one that holds data alike): nothing is
 /// rewritten, rows written before keep working. A Welcome is stored once per group and epoch in
 /// `welcome_bytes`; a row of `welcomes` with `epoch` set points to it and keeps an empty `bytes`, a row without
 /// `epoch` (written before) holds its own. At 1000 human devices a founding's Welcome is some 0.3 MB, and it is
@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS board_frontiers (
   counts         INTEGER NOT NULL DEFAULT 1 CHECK (counts IN (0, 1)),
   PRIMARY KEY (room_id, board, device)
 ) STRICT, WITHOUT ROWID;
+-- 9.4.1: a Note deleted (closed) settles; one closed before this rule gets its arrival of closing
+CREATE INDEX IF NOT EXISTS notes_due ON notes(settled_at) WHERE settled_at IS NOT NULL AND pruned_at IS NULL;
+UPDATE notes SET settled_at = closed_at WHERE state = 3 AND settled_at IS NULL AND closed_at IS NOT NULL;
 CREATE TABLE IF NOT EXISTS welcome_ids (
   one            INTEGER PRIMARY KEY CHECK (one = 1),
   last           INTEGER NOT NULL

@@ -201,10 +201,8 @@ pub fn step(
             if *object_state == wire::STATE_OPEN {
                 o.answered_at = 0;
             }
+            // a Note too: a deleting version (closed) settles it, its bodies go 30 days later (9.4.1)
             settle(&mut o, *object_state);
-            if note {
-                o.settled_at = None;
-            }
         }
         wire::KIND_ANSWER => {
             if before.object_type != wire::TYPE_CARD
@@ -929,6 +927,10 @@ fn apply_index(
                 if o.object_type == wire::TYPE_ARTIFACT && o.state == wire::STATE_CLOSED {
                     delete_files_of(c, room, object_id, now, fx)?;
                 }
+                // 9.4.2: a Note version prunes the same writer's earlier versions of that Note
+                if o.object_type == wire::TYPE_NOTE {
+                    crate::prune::superseded(c, room, h, now, fx)?;
+                }
             }
         }
         Subject::Item { timeline_kind, .. } => {
@@ -1564,8 +1566,8 @@ pub fn changes(c: &Connection, auth: &Auth, after: i64, limit: Option<i64>) -> R
 // ---- retention (9.4)
 
 /// Prunes the bodies of objects whose newest state became answered or closed more than `days` ago: the bodies of
-/// the object's envelopes and of its card Chat go, header, hash and signature stay; its files are deleted. Notes
-/// are never pruned. One object per transaction, at most `batch` per call. Returns how many were pruned.
+/// the object's envelopes and of its card Chat go, header, hash and signature stay; its files are deleted. A Note
+/// settles when a version deletes it (9.4.1). One object per transaction, at most `batch` per call. Returns how many were pruned.
 pub fn prune_due(
     db: &crate::db::Db,
     now: u64,
@@ -1576,7 +1578,7 @@ pub fn prune_due(
     let cutoff = now.saturating_sub(days * 86_400_000) as i64;
     let mut due: Vec<(&'static str, Vec<u8>, Vec<u8>)> = Vec::new();
     db.read(|c| {
-        for table in ["cards", "permission_requests", "artifacts"] {
+        for table in ["cards", "permission_requests", "artifacts", "notes"] {
             let mut s = c.prepare_cached(&format!(
                 "SELECT room_id, object_id FROM {table} WHERE settled_at IS NOT NULL AND pruned_at IS NULL AND settled_at <= ?1 ORDER BY settled_at LIMIT ?2"
             ))?;

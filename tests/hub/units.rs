@@ -1098,17 +1098,22 @@ mod content_tests {
     }
 
     #[test]
-    fn a_note_takes_any_version_and_is_never_due_for_pruning() {
+    fn a_note_takes_any_version_and_settles_when_deleted() {
         let id = object_id(&[7; 48], &[1; 32], 1);
         let mut h = header(KIND_VERSION, 1, 1, id, TYPE_NOTE, STATE_OPEN, ZERO32);
         let note = step(None, &h, &[31; 32], 1, 10).unwrap();
         // another human device writes on an older version: taken, newest by arrival
         h = header(KIND_VERSION, 2, 1, id, TYPE_NOTE, STATE_CLOSED, [77; 32]);
         let next = step(Some(&note), &h, &[32; 32], 2, 20).unwrap();
+        // a deleting version (closed) settles it: due for pruning 30 days later (9.4.1)
         assert_eq!(
             (next.version_hash, next.state, next.settled_at),
-            ([32; 32], STATE_CLOSED, None)
+            ([32; 32], STATE_CLOSED, Some(20))
         );
+        // opened again by a later version: no longer due
+        h = header(KIND_VERSION, 3, 1, id, TYPE_NOTE, STATE_OPEN, [32; 32]);
+        let again = step(Some(&next), &h, &[33; 32], 3, 30).unwrap();
+        assert_eq!((again.state, again.settled_at), (STATE_OPEN, None));
     }
 }
 

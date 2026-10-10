@@ -103,3 +103,37 @@ fn a_register_value_prunes_the_same_writers_earlier_values_and_their_files() {
     }));
     chain_links(hub, &bea, &room, &w.ada.id());
 }
+
+#[test]
+fn a_note_version_prunes_the_same_writers_earlier_versions_of_that_note() {
+    use trommi_hub::wire::{self, ZERO32};
+    let mut w = World::new();
+    let mut bea = w.add_human();
+    let room = w.room;
+    w.catch_up(&mut bea, &room);
+    let hub = &w.hub;
+    let version = |state: u8, id: [u8; 16], before: [u8; 32]| {
+        object(wire::KIND_VERSION, id, wire::TYPE_NOTE, state, 0, before, ZERO32)
+    };
+    let note = enc::object_id(&room, &w.ada.id(), w.ada.chain(&room).0 + 1);
+    let other = enc::object_id(&room, &w.ada.id(), w.ada.chain(&room).0 + 2);
+    w.ada.send(hub, &room, &version(wire::STATE_OPEN, note, ZERO32)).ok();
+    let a1 = w.ada.chain(&room).1;
+    w.ada.send(hub, &room, &version(wire::STATE_OPEN, other, ZERO32)).ok();
+    let o1 = w.ada.chain(&room).1;
+    bea.send(hub, &room, &version(wire::STATE_OPEN, note, a1)).ok();
+    let b1 = bea.chain(&room).1;
+    w.ada.send(hub, &room, &version(wire::STATE_OPEN, note, b1)).ok();
+    let a2 = w.ada.chain(&room).1;
+
+    let all = bodies(hub, &bea);
+    assert!(!has_body(&all, &a1), "ada's first version of the Note lost its body");
+    assert!(has_body(&all, &a2), "ada's newest version is kept");
+    assert!(has_body(&all, &b1), "bea's version is hers: kept");
+    assert!(has_body(&all, &o1), "another Note is untouched");
+    // the Note's state replays from headers: it is open, its current version ada's newest
+    let n = bea.get(hub, &format!("/v2/notes/{}", trommi_hub::util::hex(&note))).ok();
+    assert_eq!(n["items"].as_array().unwrap().len(), 3);
+    assert_eq!(n["state"], 1);
+    chain_links(hub, &bea, &room, &w.ada.id());
+}

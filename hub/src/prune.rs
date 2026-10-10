@@ -85,8 +85,9 @@ fn prune_where(
     Ok(n)
 }
 
-/// 9.4.2: a register value was taken: the same writer's earlier values of that register lose their bodies. A
-/// writer's lamport rises along its chain, so none of them can be current again.
+/// 9.4.2: a register value or a Note version was taken: the same writer's earlier values of that register, or
+/// versions of that Note, lose their bodies. A writer's lamport rises along its chain, so none of them can be
+/// current again.
 pub fn superseded(
     c: &Connection,
     room: &Room,
@@ -104,12 +105,24 @@ pub fn superseded(
             now,
             fx,
         ),
+        wire::Subject::Object {
+            object_id,
+            object_type,
+            ..
+        } if *object_type == wire::TYPE_NOTE && h.kind == wire::KIND_VERSION => prune_where(
+            c,
+            room,
+            "object_id = ?2 AND sender = ?3 AND kind = ?4 AND seq < ?5 AND group_id = ?6",
+            &[&&object_id[..], &&h.sender[..], &wire::KIND_VERSION, &seq, &h.group_id],
+            now,
+            fx,
+        ),
         _ => Ok(0),
     }
 }
 
 /// The sweep for what was stored before 9.4.2 (and what a crash between two writes left): at most `batch`
-/// writers' registers per call. Returns how many bodies went.
+/// writers' registers and Notes per call. Returns how many bodies went.
 pub fn sweep_superseded(c: &Connection, now: u64, batch: i64, fx: &mut Effects) -> Res<usize> {
     let mut total = 0;
     // registers: every value below the writer's newest
@@ -133,6 +146,33 @@ pub fn sweep_superseded(c: &Connection, now: u64, batch: i64, fx: &mut Effects) 
             &room,
             "group_id = ?2 AND sender = ?3 AND register_id = ?4 AND seq < ?5",
             &[&group, &writer, &register, &seq],
+            now,
+            fx,
+        )?;
+    }
+    // Notes: every version below the same writer's newest version of that Note
+    let rows: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, i64)> = {
+        let mut s = c.prepare_cached(
+            "SELECT room_id, object_id, sender, max(seq) FROM envelopes
+             WHERE object_type = ?1 AND kind = ?2 AND void_code IS NULL AND cut = 0
+             GROUP BY room_id, object_id, sender
+             HAVING min(CASE WHEN body IS NOT NULL THEN seq END) < max(seq)
+             LIMIT ?3",
+        )?;
+        let rows = s
+            .query_map(params![wire::TYPE_NOTE, wire::KIND_VERSION, batch], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (room, object, sender, seq) in rows {
+        let Ok(room) = <Room>::try_from(&room[..]) else { continue };
+        total += prune_where(
+            c,
+            &room,
+            "object_id = ?2 AND sender = ?3 AND kind = ?4 AND seq < ?5",
+            &[&object, &sender, &wire::KIND_VERSION, &seq],
             now,
             fx,
         )?;

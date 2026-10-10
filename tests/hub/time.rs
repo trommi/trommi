@@ -311,6 +311,14 @@ fn lifetimes_and_retention() {
     agent
         .post_message(hub, &group, b"a step of the work trail", false)
         .ok();
+    // a Note written by ada and deleted by bea (a closed version): it settles like a closed card (9.4.1)
+    let deleted_note = enc::object_id(&room, &w.ada.id(), w.ada.chain(&room).0 + 1);
+    w.ada
+        .send(hub, &room, &object(wire::KIND_VERSION, deleted_note, wire::TYPE_NOTE, wire::STATE_OPEN, 0, ZERO32, ZERO32))
+        .ok();
+    let note_v1 = w.ada.chain(&room).1;
+    bea.send(hub, &room, &object(wire::KIND_VERSION, deleted_note, wire::TYPE_NOTE, wire::STATE_CLOSED, 0, note_v1, ZERO32))
+        .ok();
     let log_before = w
         .ada
         .get(hub, &format!("/v1/groups/{}/log", b64(&group)))
@@ -379,9 +387,16 @@ fn lifetimes_and_retention() {
     agent.link(hub).ok();
     assert_eq!(
         hub.post("/v1/__test/retention", &json!({})).ok()["pruned"],
-        3,
-        "the answered card, the closed card, the permission request"
+        4,
+        "the answered card, the closed card, the permission request, the deleted Note"
     );
+    let deleted = w.ada.get(hub, &format!("/v2/notes/{}", hex(&deleted_note))).ok();
+    assert_eq!(deleted["items"].as_array().unwrap().len(), 2);
+    assert!(deleted["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| envelope_of(i).body.is_none()));
     assert_eq!(
         hub.post("/v1/__test/retention", &json!({})).ok()["pruned"],
         0
@@ -452,7 +467,7 @@ fn lifetimes_and_retention() {
         .unwrap()
         .iter()
         .all(|i| envelope_of(i).body.is_none()));
-    // untouched: the open card, the reopened card, the Note (never pruned), the session's Chat, the open Artifact
+    // untouched: the open card, the reopened card, the open Note, the session's Chat, the open Artifact
     for (kind, id) in [
         ("cards", open_card),
         ("cards", reopened_card),
