@@ -174,9 +174,36 @@ export async function runScenario(scenario, world) {
     async invite(step) {
       const [inviter, newcomer] = [device(step.by), device(step.device)]
       const taken = step.session ? group(step.session).subarray(32) : null
-      const opened = await inviter.call('inviteOpen', step.role, taken, 'https://app.example', 'https://hub.example', Date.now())
-      check(same(core.inviteLinkParse(opened.link).inviteId, opened.inviteId) && core.hubAddress('https://hub.example') === 'https://hub.example', 'the link names another invite')
-      const asked = await newcomer.call('joinRequest', opened.link, { offer: opened.offer, signature: opened.signature }, Date.now())
+      const openedAt = Date.now()
+      const opened = await inviter.call('inviteOpen', step.role, taken, 'https://app.example', 'https://hub.example', openedAt)
+      const parts = core.inviteLinkParse(opened.link)
+      check(same(parts.inviteId, opened.inviteId) && core.hubAddress('https://hub.example') === 'https://hub.example', 'the link names another invite')
+      // The deadline is the link's fifth part: ten minutes for a human device, fifteen for an agent device.
+      const life = core.inviteLifeMs(step.role)
+      check(life === (step.role === 'agent' ? 15 : 10) * 60000 && parts.expiresAt === opened.expiresAt && opened.expiresAt === openedAt + life, `the invite does not live ${life} ms`)
+      const late = opened.expiresAt + core.inviteClockToleranceMs() + 1
+      check(same(core.inviteLinkCheck(opened.link, openedAt).inviteId, opened.inviteId) && core.inviteLinkCheck(opened.link, late - 1).expiresAt === opened.expiresAt, 'a live link is refused')
+      check(await refusal(async () => core.inviteLinkCheck(opened.link, late)) === 'invite-expired', 'an expired link is taken by the stateless check')
+      const read = await newcomer.call('joinLink', opened.link, openedAt)
+      check(same(read.inviteId, opened.inviteId) && read.hub === 'https://hub.example' && read.expiresAt === opened.expiresAt, 'joinLink reads another link')
+      check(await refusal(() => newcomer.call('joinLink', opened.link, late)) === 'invite-expired', 'joinLink takes an expired link')
+      const offer = { offer: opened.offer, signature: opened.signature, mac: opened.mac }
+      check(opened.mac.length === 32, 'the Offer comes without its MAC')
+      // An expired link, an altered deadline, an Offer of another invite, a missing or wrong MAC: refused, nothing stored.
+      check(await refusal(() => newcomer.call('joinRequest', opened.link, offer, late)) === 'invite-expired', 'an expired link was answered')
+      const deadline = opened.link.slice(opened.link.lastIndexOf('.') + 1)
+      const moved = new DataView(core.base64urlDecode(deadline).buffer)
+      moved.setBigUint64(0, moved.getBigUint64(0) + 60000n)
+      const altered = opened.link.slice(0, -deadline.length) + core.base64urlEncode(new Uint8Array(moved.buffer))
+      check(core.inviteLinkParse(altered).expiresAt === opened.expiresAt + 60000, 'the deadline was not altered')
+      check(await refusal(() => newcomer.call('joinRequest', altered, offer, openedAt)) === 'bad-invite', 'a link with an altered deadline was answered')
+      const other = await inviter.call('inviteOpen', step.role, taken, 'https://app.example', 'https://hub.example', openedAt)
+      check(await refusal(() => newcomer.call('joinRequest', opened.link, { offer: other.offer, signature: other.signature, mac: other.mac }, openedAt)) === 'bad-invite', 'an Offer of another invite was answered')
+      check(await refusal(() => newcomer.call('joinRequest', opened.link, { ...offer, mac: new Uint8Array(0) }, openedAt)) === 'bad-invite', 'an Offer without its MAC was answered')
+      const wrong = opened.mac.slice()
+      wrong[0] ^= 1
+      check(await refusal(() => newcomer.call('joinRequest', opened.link, { ...offer, mac: wrong }, openedAt)) === 'bad-invite', 'an Offer with a wrong MAC was answered')
+      const asked = await newcomer.call('joinRequest', opened.link, offer, Date.now())
       check(asked.role === step.role && same(asked.inviter, await inviter.call('id')), 'the Request is for another invite')
       const accepted = await inviter.call('inviteAccept', opened.inviteId, { request: asked.request, mac: asked.mac, signature: asked.signature }, Date.now())
       const shown = await newcomer.call('joinReveal', { reveal: accepted.reveal, signature: accepted.signature })
