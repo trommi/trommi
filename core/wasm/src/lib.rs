@@ -115,6 +115,9 @@ functions! {
     fallible recovery_sign_in(recovery_code, room, hub, challenge);
     fallible board_reduce(snapshot, snapshot_frontier, items, frontier);
     fallible invite_link_parse(text);
+    fallible invite_link_check(text, now_ms);
+    plain invite_life_ms(role);
+    plain invite_clock_tolerance_ms();
     plain check_emoji();
     fallible hub_address(text);
     fallible kit_keys_for(name, words);
@@ -232,6 +235,7 @@ methods!(RawDevice {
     invite_handover(invite_id);
     invite_checked(invite_id, helpers);
     invite_forget(invite_id);
+    join_link(link, now_ms);
     join_request(link, offer, now_ms);
     join_reveal(reveal);
     join_observe(group_info);
