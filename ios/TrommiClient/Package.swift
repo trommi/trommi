@@ -6,8 +6,8 @@
 //   TrommiClient     model (Board, Desk, …), the device store, the hub client, the engine `Room`. No crypto of its
 //                    own and no link to the Rust library: it builds and tests on Linux without it.
 //   TrommiCoreLive   `Core.swift` on the Rust core. Only the app links it: +3 MB.
-//   NotifyCoreLive   PushNotify's two calls (open a push, open one envelope) on the Rust core, for the notification
-//                    extension alone, so that it links neither the engine nor the model.
+//   NotifyCoreLive   PushNotify's one call (open a push) on the Rust core, for the notification extension alone,
+//                    so that it links neither the engine nor the model.
 //   ShareInbox       the Share Extension's sealed inbox in the App Group (local storage, Apple's CryptoKit).
 //   PushNotify       what the Notification Service Extension and the Live Activity widget need.
 //

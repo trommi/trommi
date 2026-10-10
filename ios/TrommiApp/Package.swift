@@ -12,7 +12,7 @@ let package = Package(
     .library(name: "TrommiApp", targets: ["TrommiApp"]),
     // The Share Extension (xtool.yml `extensions:`): links only the small ShareInbox, not the sync engine.
     .library(name: "TrommiShare", targets: ["TrommiShare"]),
-    // The Notification Service Extension: the card's title in a push (links PushNotify and the core's two opening calls, not the engine).
+    // The Notification Service Extension: opens a push's sealed part and shows the fixed text (links PushNotify and the core's one opening call, not the engine).
     .library(name: "TrommiNotify", targets: ["TrommiNotify"]),
     // The Live Activity's widget (Dynamic Island, lock screen).
     .library(name: "TrommiLive", targets: ["TrommiLive"]),

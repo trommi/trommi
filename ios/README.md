@@ -19,7 +19,7 @@ Targets of `TrommiClient`:
 | Target | What | Links the Rust core |
 | --- | --- | --- |
 | `TrommiClient` | The board model (`Board.swift`, `Desk.swift`), the device store, the hub client and live stream, the engine. `Core.swift` is the core as Swift sees it: the protocols `CoreTools` and `CoreDevice`, one call for one call of `core/README.md`. No crypto of its own; builds and tests on Linux without the library. | no |
-| `TrommiCoreLive` | `LiveCore`: `CoreTools` on the real library (UniFFI module `TrommiCoreRust`). Its header lists which calls are real and which are still stubs that refuse with `not-built`. | yes |
+| `TrommiCoreLive` | `LiveCore`: `CoreTools` on the real library (UniFFI module `TrommiCoreRust`). Its header lists which calls are real, which are stubbed (none) and what of the binding is not bound. | yes |
 | `ShareInbox` | The Share Extension's sealed inbox in the App Group (local storage, Apple's CryptoKit). | no |
 | `PushNotify` | What the Notification Service Extension and the Live Activity widget share with the app. | no |
 
@@ -29,7 +29,7 @@ The app and its extensions (`TrommiApp/Package.swift` products, `xtool.yml`):
 | --- | --- | --- | --- |
 | `TrommiApp` | `com.trommi.ios` | everything | yes (about 3 MB) |
 | `TrommiShare.appex` | `com.trommi.ios.share` | `ShareInbox` | no |
-| `TrommiNotify.appex` | `com.trommi.ios.notify` | `PushNotify` | only what opens one push and one envelope; see "Who owns the state" |
+| `TrommiNotify.appex` | `com.trommi.ios.notify` | `PushNotify` | only what opens one push (`NotifyCoreLive`); see "Who owns the state" |
 | `TrommiLive.appex` | `com.trommi.ios.live` | `PushNotify` | no |
 
 Each binary that links the core carries its own copy of it. Measured with the proof build of October 2026: the app
@@ -90,11 +90,10 @@ different items under one number.
   - **Share Extension:** writes what was shared into the sealed inbox in the App Group; the app takes it from there
     and sends it.
   - **Notification Service Extension:** gets, in one Keychain item whose access group is the App Group, the push key
-    and of each live session the content key of its newest two epochs and its agent devices. With them it opens the
-    push and the one envelope it names. Know the limit: such a key opens everything of that session in that epoch,
-    and every member of the App Group (the three extensions) can read the item; a narrower hand-over needs either a
-    Keychain group of its own for app and notification extension (the signing scripts and profiles do not carry one
-    today) or a title sealed separately by the core.
+    and the room's id, and nothing else. With the push key it opens the sealed part of a push (room, change number,
+    urgency). It gets no content key: none ever leaves the core, so the extension opens no envelope and shows no
+    title. Every member of the App Group (the three extensions) can read the item. A title in the notification
+    needs a title the core seals separately, or a call of the binding that opens one envelope without the device.
   - **Live Activity widget:** shows two counts; it holds no key and reads no file.
 - **What is not covered:** a phone whose app container AND Keychain an attacker can write. The lock is held while
   the app is suspended; the folder is not a shared container, where iOS would end an app for that, but this is to
@@ -310,17 +309,11 @@ and hands its device token and a push key of its own to the hub. Apple sees a fi
 hub's message rides along sealed under that key. A push in the foreground shows as a banner; arriving, it refreshes
 the board; a tap opens the card (`Links.swift`).
 
-**The card's title, end to end encrypted** (`Sources/TrommiNotify`, the Notification Service Extension; the pushes
-carry `mutable-content: 1`). The extension opens the hub's sealed message with the push key, fetches the one envelope
-it names, opens it with the session's content key ("Who owns the state") and shows the title as a message from the
-session: a communication notification (`INSendMessageIntent`, the session as sender with its name and drawing),
-threaded per session. Anything that does not hold leaves the fixed text. An extension has 24 MB of memory: it never
-opens the device, never follows a group, and handles one envelope (a card is at most 64 KiB).
-
-The communication style needs `com.apple.developer.usernotifications.communication` (in
-`AppStore/TrommiApp.entitlements` only: the App Store Connect API has no capability type for it, and xtool removes
-capabilities it does not know from its development ids). Without it the push shows the session's name and the title,
-without the drawing.
+**The notification** (`Sources/TrommiNotify`, the Notification Service Extension; the pushes carry
+`mutable-content: 1`). The extension opens the hub's sealed message with the push key and shows the fixed text,
+threaded by room. It shows no title of a card: it holds no content key ("Who owns the state", "Not there yet").
+Anything that does not open leaves the fixed text as it came. An extension has 24 MB of memory: it never opens the
+device and never follows a group.
 
 **Live Activity** (`Sources/TrommiLive`, a WidgetKit extension; `LiveActivities.swift`): "2 agents working · 3
 questions waiting" on the lock screen and in the Dynamic Island, with the drawing of the crowned session of the desk
