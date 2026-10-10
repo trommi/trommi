@@ -61,7 +61,7 @@ ${later(html`<div class="ledger-sheet t-sheet set-menu" role="group" aria-label=
 ${sub('Rename…', post(`${forms}/edit`, html`<input type="text" name="label" value="${a.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session">`, html`<button class="set-sub-go" type="submit">Rename</button>`))}
 ${sub('Change Icon…', marksHolder(a, base, { stay: true, where: 's' }), ' t-sheet-marks')}
 ${item(`${forms}/star`, 'starred', a.starred ? '0' : '1', a.starred ? 'Remove as Main Session' : 'Make Main Session')}
-${desks.length > 1 ? sub('Move to Desk…', html`<div class="set-sub-list">${desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, d.name || 'Desk'))}</div>`) : ''}
+${desks.length > 1 ? sub('Move to Desk…', html`<div class="set-sub-list">${desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, d.name || 'Personal'))}</div>`) : ''}
 ${a.parent ? item(`${forms}/edit`, 'parent', '', `Detach from ${m.byAgent.get(a.parent)?.name ?? a.parent}`) : ''}
 ${group ? item(`${forms}/unpair`, 'out', '1', 'Remove from Group') : ''}
 ${item(`${forms}/move`, 'dir', 'up', 'Move Up')}${item(`${forms}/move`, 'dir', 'down', 'Move Down')}
@@ -125,7 +125,7 @@ function sessionsMain(m, base, { find = '', errors = new Map() } = {}) {
   on = on.filter(found); off = off.filter(found)
   const line = u => ledgerLine(u, ctx, { error: errors.get(u.id) })
   const shown = new Set([...on, ...off])
-  const deskList = ctx.desks.length ? ctx.desks : [{ id: null, name: m.deskName || 'Desk' }]
+  const deskList = ctx.desks.length ? ctx.desks : [{ id: null, name: m.deskName || 'Personal' }]
   const deskOf = u => (ctx.desks.some(d => d.id === u.agent.desk) ? u.agent.desk : deskList[0].id)
   // (the crowned session of a desk first, then the board's own order: connected trees first)
   const tops = [...on, ...off].filter(u => !u.parent).sort((x, y) => Number(Boolean(y.agent.starred)) - Number(Boolean(x.agent.starred)))
@@ -135,7 +135,7 @@ function sessionsMain(m, base, { find = '', errors = new Map() } = {}) {
   const desks = deskList.map(d => {
     const mine = tops.filter(u => deskOf(u) === d.id), kids = loose.filter(u => deskOf(u) === d.id)
     const n = mine.reduce((k, u) => k + 1 + (u.subs?.filter(s => shown.has(s)).length ?? 0), 0) + kids.length
-    return n ? group(d.id ?? 'desk', sk('desk'), d.name || 'Desk', n, html`${mine.map(treeOf)}${kids.map(line)}`) : ''
+    return n ? group(d.id ?? 'desk', sk('desk'), d.name || 'Personal', n, html`${mine.map(treeOf)}${kids.map(line)}`) : ''
   })
   const shownArchived = archived.filter(a => !words || [a.name, a.host, a.model].filter(Boolean).join(' ').toLowerCase().includes(words))
   return settingsPage('Sessions', html`
@@ -265,7 +265,7 @@ export function register(t) {
         const to = (t.model().state.desks ?? []).find(d => d.id === form.get('desk'))
         // (from the session's own page: on to the Desk, the session is not on this desk any more; an Undo stays where it is)
         const on = form.has('leave') ? t.stream('visit', `${BASE}/`) : ''
-        return t.sendStream(req, res, html`${on}${t.toast({ head: `Moved to ${to?.name || 'Desk'}`, line: nameOf(t.model(), id).replace(/ · [^·]*$/, ''), undo: was ? { action: `${sessionForms({ id }, BASE)}/edit`, fields: { desk: was, moved: '1' } } : null })}`)
+        return t.sendStream(req, res, html`${on}${t.toast({ head: `Moved to ${to?.name || 'Personal'}`, line: nameOf(t.model(), id).replace(/ · [^·]*$/, ''), undo: was ? { action: `${sessionForms({ id }, BASE)}/edit`, fields: { desk: was, moved: '1' } } : null })}`)
       }
       if (stay) return t.sendStream(req, res, match[2] === 'edit' && form.get('archived') === '1' && !form.has('quiet') ? t.toast({ head: 'Archived', line: nameOf(t.model(), id), undo: { action: `${sessionForms({ id }, BASE)}/edit`, fields: { archived: '0' } } }) : '')
       return t.redirect(res, backOf(form.get('back')) || `${BASE}/settings/sessions`)

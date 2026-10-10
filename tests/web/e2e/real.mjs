@@ -94,7 +94,7 @@ export function picture(width, height) {
   for (let y = 0; y < height; y++) rows[y * (width * 3 + 1)] = 0   // (each row's filter byte: none)
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', head), chunk('IDAT', zlib.deflateSync(rows, { level: 0 })), chunk('IEND', Buffer.alloc(0))])
 }
-/** The first desk ("Desk"), chosen in the menu: where the room's first note lies once there are two desks. */
+/** The first desk ("Personal", desk/main), chosen in the menu: where the room's first note lies once there are two desks. */
 async function firstDesk(P) {
   if (await P.js("return document.getElementById('brand-doors')?.hidden !== false")) {
     await P.click(await P.js("return document.querySelector('.desk-switch-open')?.getClientRects().length ? '.desk-switch-open' : '#brand-menu'"))
@@ -123,7 +123,7 @@ export const steps = [
     const { check } = ctx.run
     const A = await ctx.profile('A')
     await ui.leaveKit(A)
-    check(await A.js("return document.title === 'Desk · Trommi' && !!document.querySelector('#desk-invite-go')"), 'the empty Desk')
+    check(await A.js("return document.title === 'Personal · Trommi' && !!document.querySelector('#desk-invite-go')"), 'the empty Desk')
     await sleep(1500)   // (the kit's register is on its way: the reload below must not find it "still to be saved")
     const device = await A.js('return trommi.client.model.room.my_device_id')
     await A.reload()
@@ -186,7 +186,7 @@ export const steps = [
     await A.click('#set-device[data-state=confirm_code] .check-yes')
     await ui.live(B, 'the new device live', 90000)
     note(`the new device was live ${((Date.now() - t) / 1000).toFixed(1)} s after "They match"`)
-    check(await B.js("return document.title === 'Desk · Trommi' && !!document.querySelector('#inbox') && !document.querySelector('#kit-gate')"), 'the Desk on the second profile', await B.js('return document.body.innerText.slice(0, 160)'))
+    check(await B.js("return document.title === 'Personal · Trommi' && !!document.querySelector('#inbox') && !document.querySelector('#kit-gate')"), 'the Desk on the second profile', await B.js('return document.body.innerText.slice(0, 160)'))
     await arrives(A, "document.querySelector('#set-device[data-state=joined]')", 'the inviting device says the new device is in', 60000)
     await B.shot('real-07-second-device-desk')
     ctx.joined = true
