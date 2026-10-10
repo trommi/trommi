@@ -131,6 +131,8 @@ export async function runRemote({ app, hub, shots = null }) {
       const A = await profile('A')
       try { await ui.leaveKit(A) } catch (err) { kitStuck = true; throw err }
       r.check(await A.js("return !!document.querySelector('#inbox') && !document.querySelector('.inbox-row')"), 'the empty Desk')
+      const desks = await A.until("[...trommi.client.model.human.desks].filter(([, v]) => v).length === 1", 'the account\'s first desk', 15000).then(() => A.js("return JSON.stringify([...trommi.client.model.human.desks].filter(([, v]) => v).map(([id, v]) => [id, v.name]))"), () => 'none')
+      r.check(desks === '[["main","Personal"]]', 'a new account has one desk, "Personal"', desks)
     })
     await step('reload: still signed in (the device from IndexedDB), the connection live again', 'A', async () => {
       const A = await profile('A')

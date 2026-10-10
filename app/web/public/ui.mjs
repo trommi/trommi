@@ -2706,7 +2706,7 @@ export const sideWays = ({ later = true, duck = true, shred = true, many = false
   const it = many ? 'them' : 'it'
   return html`${later ? html`<button type="submit" name="way" value="later" class="sel-later" title="${WORDS.later}: put ${it} off, ${many ? 'they wait' : 'it waits'} in Off the desk" aria-label="${WORDS.later}">${LATER_TAG}${word ? html`<span>${WORDS.later}</span>` : ''}</button>` : ''}${duck ? html`<button type="submit" name="way" value="duck" class="sel-duck" title="${WORDS.duck}: ${many ? 'the agents take their' : 'the agent takes its'} own advice" aria-label="${WORDS.duck}">${sk('duck')}<span>${WORDS.duck}</span></button>` : ''}${between}${shred ? html`<button type="submit" name="way" value="shred" class="sel-shred" title="${WORDS.shred}: throw ${it} away" aria-label="${WORDS.shred}">${sk('bin')}<span>${WORDS.shred}</span></button>` : ''}`
 }
-const deskNameOf = (model, agent) => model.desks.find(d => d.id === model.deskOf?.(agent))?.name || 'Desk'
+const deskNameOf = (model, agent) => model.desks.find(d => d.id === model.deskOf?.(agent))?.name || 'Personal'
 /** One open question as a row. from: the session that asked. error: what went wrong with the last answer.
  *  slim: the Desk's own row (the title, the answers and the pictures' fan): no
  *  session mark, name line or byline in the markup at all (a big room has hundreds of rows; every drawing is dozens of nodes to style). */

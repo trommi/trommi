@@ -35,6 +35,10 @@ import * as M from './model.ts'
 import type { Cache } from './store-idb.ts'
 import type { Answer, AttachmentRef, Card, Change, Invite, Model, Note, OutboxItem, TimelineItem } from './types.ts'
 
+/** The first desk of every account: its id and its register as account creation writes it (spec/v1.md). */
+export const DEFAULT_DESK = 'main'
+export const FIRST_DESK = Object.freeze({ name: 'Personal', created_at: 0 })
+
 export class ClientError extends Error {
   code: string
   constructor(code: string, message: string) { super(message); this.name = 'ClientError'; this.code = code }
@@ -400,6 +404,23 @@ export class Client {
     if (this.rebuild !== null) { this.rebuilding = true; await this.engine.wantRescan(this.rebuild) }
     this.inviteTimer = setInterval(() => this.watchInvites(), 1000)
     void this.nameDevice().catch(() => {})
+    void this.ensureDesk().catch(() => {})
+  }
+  /**
+   * Every account has at least one desk, from its creation on: the first is `desk/main`, "Personal". A human device
+   * writes it once the room is taken up to the hub's head and no desk is there (a new account, a device that joined
+   * or recovered, an account from before, a list that two devices emptied at once). The id and the value are fixed,
+   * so devices that do it at the same moment write the same register: one desk, never two.
+   */
+  async ensureDesk(): Promise<void> {
+    if (!this.is_human || [...this.model.human.desks.values()].some(v => v)) return
+    await this.setDesk(DEFAULT_DESK, FIRST_DESK)
+  }
+  /** Takes a desk away; never the last one (`last-desk`). */
+  async removeDesk(desk_id: string): Promise<Sent> {
+    const live = [...this.model.human.desks].filter(([, v]) => v).map(([id]) => id)
+    if (live.length <= 1 && (live[0] === desk_id || !live.length)) fail('last-desk', 'the last desk stays: every account has one')
+    return this.setRegisters({ [`desk/${desk_id}`]: null })
   }
   /** Stops everything, writes the cache and closes the device (its store and lock with it). */
   async stop(): Promise<void> {
@@ -559,7 +580,10 @@ export class Client {
   snooze(object_id: string, until: number | null | undefined): Promise<Sent> { return this.setRegisters({ [`snooze/${object_id}`]: until == null ? null : { until } }) }
   duck(object_id: string, value: unknown): Promise<Sent> { return this.setRegisters({ [`duck/${object_id}`]: value ?? null }) }
   setCrown(value: unknown): Promise<Sent> { return this.setRegisters({ crown: value ?? null }) }
-  setDesk(desk_id: string, value: unknown): Promise<Sent> { return this.setRegisters({ [`desk/${desk_id}`]: value ?? null }) }
+  setDesk(desk_id: string, value: unknown): Promise<Sent> {
+    if (value == null) return this.removeDesk(desk_id)
+    return this.setRegisters({ [`desk/${desk_id}`]: value })
+  }
 
   /** A note's version this device confirmed last (what came back from the hub), under any echo in front of it. */
   private noteHead(object_id: string): { object_version: number; version_hash: string | null; content: Fields } | null {
