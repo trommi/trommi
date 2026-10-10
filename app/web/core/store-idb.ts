@@ -29,6 +29,7 @@
 //    (is anything stored? does another tab own it: StoreConflict), and once by `Device.open(store)`.
 //
 // Values may be private keys: nothing here logs a value or puts one into an error.
+import { spent, timed } from './spent.ts'
 import type { IdbStore } from '../../../core/wasm/js/idb-store.js'
 import type { Store, StoredState, StoreEntry, StoreWrite } from './core-api.ts'
 
@@ -156,11 +157,14 @@ export function openDeviceStore({ name, wait = false, IdbStore }: { name: string
     async applyAll(writes: StoreWrite[]): Promise<void> {
       const key = wrapKey
       if (closed || !key) throw fail('the device store is not open')
+      const t = performance.now()
       const wrapped = await Promise.all(writes.map(async (write): Promise<StoreWrite> => ({
         expectedRevision: write.expectedRevision, delete: write.delete,
         put: await Promise.all(write.put.map(async (e): Promise<StoreEntry> => ({ key: e.key, value: await wrap(key, e.key, e.value) }))),
       })))
-      await inner.applyAll(wrapped)
+      const w = performance.now()
+      spent.wrap += w - t; spent.writes += writes.length
+      try { await inner.applyAll(wrapped) } finally { const d = performance.now(); spent.idb += d - w; spent.store += d - t }
     },
     async close(): Promise<void> {
       closed = true
@@ -177,7 +181,8 @@ export async function openCache(name: string): Promise<Cache> {
     try { return db.transaction(CACHE, mode, durable ? { durability: 'strict' } : undefined).objectStore(CACHE) } catch (e) { throw failed('the cache is not open', e) }
   }
   /** One write transaction: everything `fill` puts, or, when a value cannot be stored, nothing. */
-  const written = async (fill: (s: IDBObjectStore) => void, durable = false): Promise<void> => {
+  const written = (fill: (s: IDBObjectStore) => void, durable = false): Promise<void> => timed('cache', () => writeNow(fill, durable))
+  const writeNow = async (fill: (s: IDBObjectStore) => void, durable: boolean): Promise<void> => {
     const s = store('readwrite', durable)
     const done = completed(s.transaction)
     try { fill(s) } catch (e) { done.catch(() => {}); s.transaction.abort(); throw failed('a record cannot be stored in the cache', e) }
