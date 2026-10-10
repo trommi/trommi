@@ -1072,6 +1072,15 @@
         ],
         "returns": "Learned"
       },
+      "groupPast": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<GroupPast>"
+      },
       "seal": {
         "arguments": [
           {
@@ -1852,7 +1861,9 @@
       "leaves": "list<bytes>",
       "disallowed": "list<bytes>",
       "archived": "bool",
-      "pending": "bool"
+      "pending": "bool",
+      "ownFrom": "number",
+      "pastLearned": "bool"
     },
     "RoomRoles": {
       "epoch": "number",
@@ -1969,6 +1980,10 @@
     },
     "Learned": {
       "epochs": "number"
+    },
+    "GroupPast": {
+      "fromEpoch": "number",
+      "learned": "bool"
     },
     "Removals": {
       "group": "bytes",

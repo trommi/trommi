@@ -459,8 +459,16 @@ final class ScenarioTests: XCTestCase {
       for name in step.groups! {
         let id = try group(name)
         guard let founding = name == "room" ? hub.roomInfos.first : hub.sessions[id]?.founding else { throw Unexpected("no founding of \(name)") }
+        // Before: its knowledge begins after the founding, and the past is not held; a group it is a leaf of says the same.
+        guard let before = try device(step.device).groupPast(group: id), before.fromEpoch >= 1, !before.learned
+        else { throw Unexpected("the past of \(name) is not shown as missing") }
         let learned = try device(step.device).learnHistory(group: id, founding: founding, commits: hub.served(id, founding: founding, current: founding).commits)
         try check(learned.epochs >= 1, "nothing of \(name) was learned")
+        let after = try device(step.device).groupPast(group: id)
+        try check(after?.learned == true && after?.fromEpoch == before.fromEpoch, "the past of \(name) is not shown as learned")
+        if let summary = try device(step.device).groups().first(where: { $0.group == id }) {
+          try check(summary.pastLearned && summary.ownFrom == before.fromEpoch, "the summary of \(name) does not show its past")
+        }
       }
     case "read_back":
       // Every stored envelope once more, in the hub's order: what was written before the device came opens now.

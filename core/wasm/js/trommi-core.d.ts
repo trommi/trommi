@@ -104,8 +104,13 @@ export interface GroupSummary {
   /** The leaves the newest room state does not allow: not empty means stale. */
   disallowed: Uint8Array[]
   archived: boolean
-  /** Whether a Commit of this device waits for the hub's answer. */
+  /** Whether a Commit of this device waits: for the hub's answer, or for its place in the log. */
   pending: boolean
+  /** The epoch this device's own records of the group begin at: the one it joined at. */
+  ownFrom: number
+  /** Whether it holds the group's epochs before that one too (`learnHistory`); while false, an envelope of an
+   *  earlier epoch is `group-behind`. */
+  pastLearned: boolean
 }
 
 /** The room's roles at its newest epoch. */
@@ -698,6 +703,14 @@ export interface Learned {
   epochs: number
 }
 
+/** Where a device's knowledge of a group begins. */
+export interface GroupPast {
+  /** The epoch its own knowledge begins at: the one it joined at, or began to follow at. */
+  fromEpoch: number
+  /** Whether it holds every epoch before that one too; true for a group it founded. */
+  learned: boolean
+}
+
 export interface Removals {
   group: Uint8Array
   devices: Uint8Array[]
@@ -843,6 +856,9 @@ export class Device {
    * `group-behind` until then, are handed to `receiveEnvelope` again.
    */
   learnHistory(group: Uint8Array, founding: Uint8Array, commits: ServedCommit[]): Promise<Learned>
+  /** Where this device's knowledge of a group begins, also for a followed group (not in `groups`); null for a
+   *  group it neither is a leaf of nor follows. */
+  groupPast(group: Uint8Array): Promise<GroupPast | null>
 }
 
 // ---- files --------------------------------------------------------------------------------------------------------

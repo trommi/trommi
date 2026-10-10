@@ -447,8 +447,15 @@ export async function runScenario(scenario, world) {
       for (const name of step.groups) {
         const id = group(name)
         const founding = name === 'room' ? hub.roomInfos[0] : hub.sessions.get(hex(id)).founding
+        // Before: its knowledge begins after the founding, and the past is not held; a group it is a leaf of says the same.
+        const before = await device(step.device).call('groupPast', id)
+        check(before !== null && before.fromEpoch >= 1 && before.learned === false, `the past of ${name} is not shown as missing: ${JSON.stringify(before)}`)
         const learned = await device(step.device).call('learnHistory', id, founding, hub.served(id, founding, founding).commits)
         check(learned.epochs >= 1, `nothing of ${name} was learned`)
+        const after = await device(step.device).call('groupPast', id)
+        check(after?.learned === true && after.fromEpoch === before.fromEpoch, `the past of ${name} is not shown as learned`)
+        const summary = (await device(step.device).call('groups')).find(held => same(held.group, id))
+        if (summary) check(summary.pastLearned === true && summary.ownFrom === after.fromEpoch, `the summary of ${name} does not show its past`)
       }
     },
     /** Every stored envelope once more, in the hub's order: what was written before the device came opens now. */

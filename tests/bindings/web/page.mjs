@@ -148,6 +148,29 @@ const cases = {
     giveBack()
     await owner.close()
 
+    // A write under way when the lock is taken away: refused with the mark and nothing of it stored, or committed
+    // whole before the browser told the holder (it no longer takes a committing transaction back). Which of the two
+    // happens is the browser's timing; that it is one of them is the check.
+    const inflightName = `${name}-inflight`
+    const writer = new IdbStore(inflightName)
+    await writer.load()
+    const key = new TextEncoder().encode('k')
+    const put = Array.from({ length: 200 }, (_, at) => ({ key: new Uint8Array([at, at >> 8]), value: new Uint8Array(4096) }))
+    const underWay = outcome(writer.applyAll([{ expectedRevision: 0, put, delete: [] }, { expectedRevision: 1, put: [{ key, value: key }], delete: [] }]))
+    let freeThief
+    await new Promise(granted => {
+      navigator.locks.request(`trommi-core:${inflightName}`, { steal: true }, () => { granted(); return new Promise(free => { freeThief = free }) })
+    })
+    const inflight = await underWay
+    freeThief()
+    await writer.close()
+    const reread = new IdbStore(inflightName)
+    const stored = await reread.load()
+    await reread.close()
+    const inflightRefused = inflight instanceof StoreConflict && /took this state over/.test(inflight.message)
+    found.inflight = inflightRefused ? stored.revision === 0 && stored.entries.length === 0
+      : inflight === 'resolved' && stored.revision === 2 && stored.entries.length === 201
+
     // A load that fails after it took the lock gives the lock back: here the database is of a newer layout.
     const other = `${name}-newer`
     await new Promise((resolve, reject) => {
@@ -159,7 +182,7 @@ const cases = {
     found.loadFailed = failing !== 'resolved' && !(failing instanceof StoreConflict)
     found.lockFreed = !(await navigator.locks.query()).held.some(lock => lock.name === `trommi-core:${other}`)
 
-    return { ok: Object.values(found).every(Boolean), ...found }
+    return { ok: Object.values(found).every(Boolean), ...found, inflightRefused }
   },
 
   /**
@@ -213,21 +236,36 @@ const cases = {
     const headOne = await one.chainHead(core.roomGroupId(room), await one.id())
     await one.close()
 
-    const fed = await core.Device.open(new IdbStore(`${name}-fed`))
+    // Through feed: all but the last two in calls of 250, then [the next one, an item that is refused, the last].
+    if (count < 3) throw new Error('catching up needs at least three envelopes')
+    const group = core.roomGroupId(room)
+    let fed = await core.Device.open(new IdbStore(`${name}-fed`))
     start = performance.now()
-    for (let at = 0; at < served.length; at += 250) {
-      const answer = await fed.feed(served.slice(at, at + 250).map(envelope => ({ envelope })), Date.now())
+    const bulk = served.slice(0, -2)
+    for (let at = 0; at < bulk.length; at += 250) {
+      const answer = await fed.feed(bulk.slice(at, at + 250).map(envelope => ({ envelope })), Date.now())
       if (answer.refusedAt !== null || answer.outcomes.some(outcome => outcome.envelope?.outcome !== 'applied')) throw new Error(`feed: refused at ${answer.refusedAt} ${answer.code}`)
     }
     const inCalls = Math.round(performance.now() - start)
-    const headFed = await fed.chainHead(core.roomGroupId(room), await fed.id())
-    // A feed stops at what is refused and touches nothing after it: the same envelopes again are replays.
-    const again = await fed.feed([{ envelope: served[0] }, { envelope: served[1] }], Date.now())
-    const stopped = again.outcomes.length === 1 && again.outcomes[0].envelope.code === 'replay' || again.refusedAt === 0 || again.outcomes.length === 2
-    const mixed = await fed.feed([{ envelope: served[0], entry: { change: 1, group: room, kind: 'commit', bytes: new Uint8Array(1) } }], Date.now())
+    // A feed stops at the first refusal: what came before it is applied and stored, what comes after is not touched.
+    const malformed = { envelope: served.at(-1), entry: { change: 1, group: room, kind: 'commit', bytes: new Uint8Array(1) } }
+    const stop = await fed.feed([{ envelope: served.at(-2) }, malformed, { envelope: served.at(-1) }], Date.now())
+    const stopped = stop.refusedAt === 1 && stop.code === 'bad-format' && stop.outcomes.length === 1 && stop.outcomes[0].envelope?.outcome === 'applied'
+    await fed.close()
+    // Stored before the call answered: a device opened again holds the first, and not the third.
+    fed = await core.Device.open(new IdbStore(`${name}-fed`))
+    const prefix = (await fed.chainHead(group, await fed.id())).seq === count - 1
+    const last = await fed.feed([{ envelope: served.at(-1) }], Date.now())
+    const rest = last.refusedAt === null && last.outcomes[0]?.envelope?.outcome === 'applied'
+    const headFed = await fed.chainHead(group, await fed.id())
+    // What was read is handed again: a replay, and the head stays.
+    const again = await fed.feed([{ envelope: served[0] }], Date.now())
+    const replay = (again.refusedAt === null ? again.outcomes[0]?.envelope?.code : again.code) === 'replay'
+      && (await fed.chainHead(group, await fed.id())).seq === count
     await fed.close()
     const same = headOne.seq === count && headFed.seq === count && headOne.hash.every((byte, at) => byte === headFed.hash[at])
-    return { ok: same && stopped && mixed.refusedAt === 0 && mixed.code === 'bad-format', count, oneByOneMs: oneByOne, feedMs: inCalls, perItemOneMs: Math.round(oneByOne / count * 100) / 100, perItemFeedMs: Math.round(inCalls / count * 100) / 100 }
+    const ok = same && stopped && prefix && rest && replay
+    return { ok, same, stopped, prefix, rest, replay, count, oneByOneMs: oneByOne, feedMs: inCalls, perItemOneMs: Math.round(oneByOne / count * 100) / 100, perItemFeedMs: Math.round(inCalls / bulk.length * 100) / 100 }
   },
 
   /** Times of the heavy calls, for the size and speed report. */
