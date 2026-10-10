@@ -2,7 +2,7 @@
 // chain, who may write it, the object's state) and opened its body; here its header and body become one `Rec`, the
 // record the board's reducer has always taken (Board.swift), so the views read the same model as before.
 //
-// The names the model keeps from before, and what they are in spec/v2.md:
+// The names the model keeps from before, and what they are in spec/v1.md:
 //   envelopeNumber       the room's change number of the item
 //   timelineId           "session/<hex>", "card/<hex>", "desk/<hex>" (a Scribble Board)
 //   attachment_id        a body's `file_id` (base64url there, lower-case hex here), likewise poster_attachment_id
@@ -16,7 +16,7 @@ import Foundation
 enum Records {
   static let typeNames: [ObjectType: String] = [.card: "card", .note: "note", .request: "request", .artifact: "published"]
 
-  /** The header's kind as the number of spec/v2.md section 9, which the model keeps (Wire.swift `KIND`). */
+  /** The header's kind as the number of spec/v1.md section 9, which the model keeps (Wire.swift `KIND`). */
   static func kindNumber(_ kind: EnvelopeKind) -> Int {
     switch kind {
     case .item: return KIND.TIMELINE_ITEM
@@ -133,7 +133,7 @@ enum Records {
     !t.isEmpty && t == t.trimmingCharacters(in: .whitespacesAndNewlines) && t.count <= 160 && !t.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f }
   }
 
-  /** The names of spec/v2.md in a body to the names the model keeps (the table at the top of this file). */
+  /** The names of spec/v1.md in a body to the names the model keeps (the table at the top of this file). */
   static func fromWire(_ c: JV, header h: EnvelopeHeader, sessionId: String?) -> JV {
     var c = renameFiles(c, toWire: false, depth: 0)
     switch h.kind {
@@ -157,7 +157,7 @@ enum Records {
     }
   }
   /**
-   * Byte strings in a body are base64url on the wire (spec/v2.md section 2) and lower-case hex in the model, which
+   * Byte strings in a body are base64url on the wire (spec/v1.md section 2) and lower-case hex in the model, which
    * names things by hex everywhere (timelines, cards, devices): file_id ↔ attachment_id, and every `…object_id`,
    * `…object_ids` and `previous_version_hash`. A value that is not the id it should be is left as it is.
    */
@@ -200,7 +200,7 @@ enum Records {
     return out
   }
 
-  // ---- the Scribble Board's bodies (spec/v2.md 10.5) ---------------------------------------------------------
+  // ---- the Scribble Board's bodies (spec/v1.md 10.5) ---------------------------------------------------------
   //
   // The views and `CanvasState` (Canvas.swift) keep the model they had: positions and lengths in board units with
   // fractions, shape ids "<sender in hex>/<number>/<index>", `stroke_ids`, a picture's size and type beside its

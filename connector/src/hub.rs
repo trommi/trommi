@@ -1,5 +1,5 @@
 //! The hub's routes as a client uses them (`spec/hub-api.md`): JSON over HTTPS with byte strings in base64url,
-//! sign-in by signed challenge (spec/v2.md 12.3), the lease header on an agent's writes (13.7), the live stream
+//! sign-in by signed challenge (spec/v1.md 12.3), the lease header on an agent's writes (13.7), the live stream
 //! as server-sent events, and files as raw bodies.
 //!
 //! Nothing here keeps protocol state or decides anything: the hub is untrusted, and what it returns is checked

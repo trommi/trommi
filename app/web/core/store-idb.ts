@@ -1,7 +1,7 @@
 // store-idb.ts: the web app's storage. Three IndexedDB databases per `name`:
 //
 //   <name>          the device's state. NOT implemented here: it is the binding's IdbStore (core/wasm/js/idb-store.js),
-//                   which gives what the core asks of a store (core/src/store.rs, spec/v2.md 13.2): one strict
+//                   which gives what the core asks of a store (core/src/store.rs, spec/v1.md 13.2): one strict
 //                   transaction per write, the revision compared inside it, and a Web Lock on the name held from
 //                   `load()` until `close()`, so one tab or worker owns a stored state at a time.
 //   <name>:wrap     one record: the key the device's entries are wrapped under (below). Never deleted.

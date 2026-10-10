@@ -1,4 +1,4 @@
-// LiveActivities: "n agents working · m questions waiting" in the Dynamic Island and on the lock screen (spec/v2.md
+// LiveActivities: "n agents working · m questions waiting" in the Dynamic Island and on the lock screen (spec/v1.md
 // 15.3; the widget is Sources/TrommiLive). The hub starts, updates and ends it by push; the app only hands it the
 // tokens (POST /v2/live-activity): the push-to-start token once per room (with a random tag of this phone for that
 // room, which the activity's attributes carry back), and each running activity's own token to the hub whose tag it

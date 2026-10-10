@@ -23,8 +23,8 @@ Chat and decision cards between a person and their Claude Code sessions, end-to-
 ## How the data is organised
 
 The protocol is version 2: MLS (RFC 9420) distributes the keys, content is Trommi's own signed envelope. The whole of
-it is [`spec/v2.md`](spec/v2.md); why it leaves the standard in five places is
-[`spec/v2-deviations.md`](spec/v2-deviations.md). The web app in `app/web` speaks it through the shared Rust core
+it is [`spec/v1.md`](spec/v1.md); why it leaves the standard in five places is
+[`spec/v1-deviations.md`](spec/v1-deviations.md). The web app in `app/web` speaks it through the shared Rust core
 (`core/`, as WebAssembly).
 
 **Content: what a person or an agent has.** Sorting is not encryption: which Desk an Agent is on, the order, the
@@ -83,7 +83,7 @@ group and epoch, the sender's running number and chain link, recipient, time, ki
 a card's id, type, state and urgency, a register's opaque id, file ids, the push flag) and its padded size. **What a
 hub never reads**: a body: texts, card content, choices, verdicts, register names and values, strokes, file keys,
 file names and types. **What goes away**: thirty days after a card is answered or closed its bodies and files; work
-trails after thirty days. The table per stored thing is in `spec/v2.md`, section 14.
+trails after thirty days. The table per stored thing is in `spec/v1.md`, section 14.
 
 ## Delivery
 

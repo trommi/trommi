@@ -307,7 +307,7 @@ public final class CanvasState {
   }
 
   /**
-   * Start from a snapshot: the entries with id and by, the frontier; and of a snapshot file of spec/v2.md 10.8
+   * Start from a snapshot: the entries with id and by, the frontier; and of a snapshot file of spec/v1.md 10.8
    * (as `Records.boardSnapshot` hands it over) `gone`, the ids erased beyond their writer's frontier, and `moved`,
    * the summed moves of shapes still to come.
    */

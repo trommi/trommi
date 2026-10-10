@@ -306,7 +306,7 @@ public final class Room {
     }
   }
 
-  // ---- desk goals for the agents (spec/v2.md 9.3.4, Goals.swift) -----------------------------------------
+  // ---- desk goals for the agents (spec/v1.md 9.3.4, Goals.swift) -----------------------------------------
 
   var goalsTask: Task<Void, Never>?
   /** What this device last wrote to `goals` of a session, in this run. */

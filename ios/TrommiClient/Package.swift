@@ -1,5 +1,5 @@
 // swift-tools-version:6.0
-// TrommiClient: everything of the iOS app that is not a view. The protocol itself (spec/v2.md) is not here: it is
+// TrommiClient: everything of the iOS app that is not a view. The protocol itself (spec/v1.md) is not here: it is
 // trommi-core (Rust, OpenMLS), reached through `Core.swift`, a Swift protocol that mirrors core/README.md, and bound
 // to the real library by the target TrommiCoreLive (UniFFI, core/swift/TrommiCoreRust).
 //

@@ -1,4 +1,4 @@
-//! Scenario clients for the integration tests: real MLS devices (OpenMLS, the profile of spec/v2.md section 3)
+//! Scenario clients for the integration tests: real MLS devices (OpenMLS, the profile of spec/v1.md section 3)
 //! that talk to a real hub over HTTP, one request per connection, one attempt, no retry.
 //!
 //! Seam for the merge with `trommi-core`: `Dev` is what the core's device will be. It builds the structs of the

@@ -1,4 +1,4 @@
-//! One error type for the connector: a stable machine-readable `code` (the protocol's codes of spec/v2.md section
+//! One error type for the connector: a stable machine-readable `code` (the protocol's codes of spec/v1.md section
 //! 16 where the core or the hub refused, a few of the connector's own otherwise), a message for humans, and for a
 //! refusal of the hub its HTTP status and retry-after. A plain error has an empty code and shows only its message.
 //! A message never holds a key or content.

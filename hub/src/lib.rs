@@ -1,4 +1,4 @@
-//! The Trommi hub for protocol v2 (spec/v2.md, spec/hub-api.md): the MLS delivery service and the store. It holds
+//! The Trommi hub for protocol v2 (spec/v1.md, spec/hub-api.md): the MLS delivery service and the store. It holds
 //! no private key of a room and reads no content.
 
 #![forbid(unsafe_code)]

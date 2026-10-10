@@ -1,5 +1,5 @@
 // DeviceStore.swift: where the device's state lives on the phone, the Swift side of the core's `Storage`
-// (core/src/store.rs, spec/v2.md 13.2).
+// (core/src/store.rs, spec/v1.md 13.2).
 //
 // ONE OWNER, by construction and by lock.
 //   - The state is in the APP's own container (Application Support/Trommi/<room>/state), not in the App Group. The

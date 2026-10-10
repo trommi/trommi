@@ -1,5 +1,5 @@
 // room.ts: how a device comes to hold a room, and the `Client` over it: founding one, opening the stored one, joining
-// by an invite link (spec/v2.md 12.1), signing in with the recovery code (8.4) and recovering with it (8.7). What
+// by an invite link (spec/v1.md 12.1), signing in with the recovery code (8.4) and recovering with it (8.7). What
 // account.ts and core-worker.ts call; they hold no key and no device themselves.
 //
 // Every function here returns a client that is NOT started (`client.start()` is the caller's). A step that fails

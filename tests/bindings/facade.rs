@@ -58,7 +58,7 @@ fn the_versions_are_the_workspace_pins() {
 
 #[test]
 fn every_code_of_section_16_is_a_case_with_its_spelling() {
-    let spec = include_str!("../../spec/v2.md");
+    let spec = include_str!("../../spec/v1.md");
     let section = spec
         .split("\n## 16. ")
         .nth(1)

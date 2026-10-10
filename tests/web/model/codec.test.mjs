@@ -1,4 +1,4 @@
-// codec.test.mjs: the bodies of spec/v2.md 9.1 between the wire and the model, both directions (codec.ts): the
+// codec.test.mjs: the bodies of spec/v1.md 9.1 between the wire and the model, both directions (codec.ts): the
 // fields of each kind, ids (base64url on the wire, hex in the model), attachment references, register names and
 // values, and what is refused.
 //   node --test tests/web/model/

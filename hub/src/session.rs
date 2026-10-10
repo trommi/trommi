@@ -1,4 +1,4 @@
-//! Signing in to the hub (spec/v2.md 12.3, D5): a device signs a challenge of the hub with its device key and
+//! Signing in to the hub (spec/v1.md 12.3, D5): a device signs a challenge of the hub with its device key and
 //! gets a token for ten minutes, bound to the device. Challenges and tokens live in memory: a restart ends them
 //! and devices sign in again.
 

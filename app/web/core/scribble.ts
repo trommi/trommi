@@ -1,4 +1,4 @@
-// scribble.ts: the Scribble Board without DOM (spec/v2.md section 10): the shapes the app draws, the merge that
+// scribble.ts: the Scribble Board without DOM (spec/v1.md section 10): the shapes the app draws, the merge that
 // turns a board's items into shapes, and the snapshot file. The app's Scribble Board (app/web/public/whiteboard.mjs
 // openCanvas) drives it with the client; ink.ts packs a stroke's points, palette.ts names its colours, codec.ts
 // knows a board item's body on the wire.

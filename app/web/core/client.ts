@@ -2,7 +2,7 @@
 // by the names the views know, timelines, files, invites, sessions, push. Contract with the views: README.md "The
 // model", "Human actions", "Change notifications", and worker-protocol.ts `CALLS`.
 //
-// The division of labour under protocol v2 (spec/v2.md):
+// The division of labour under protocol v2 (spec/v1.md):
 //   the core (core-api.ts)   every rule and every key: groups, chains, object state, who may write what
 //   engine.ts                owns the device: outbox pump, catch-up in the hub's order, the live stream, upkeep
 //   model.ts                 turns what the core accepted into the model

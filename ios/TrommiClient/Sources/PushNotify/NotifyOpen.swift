@@ -1,5 +1,5 @@
 // NotifyOpen: the Notification Service Extension's work without UIKit, so it is tested on Linux. A notification
-// carries a fixed text and `e`, a sealed blob (spec/v2.md 15.2). `e` is opened with the push key
+// carries a fixed text and `e`, a sealed blob (spec/v1.md 15.2). `e` is opened with the push key
 // (NotifyCore.openPush): the room, the change number and the urgency. That is all the extension learns, and it
 // shows the hub's fixed text: the envelope the push names is not fetched, because nothing here could open it (a
 // content key never leaves the core, NotifyCore.swift). A push that does not open, or names a room this phone is
