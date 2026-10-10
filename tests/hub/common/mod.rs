@@ -1334,7 +1334,7 @@ pub fn invite(
         room_state,
     }
     .bytes();
-    inviter.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&inviter.sign("TrommiInviteOffer", &offer)) })).ok();
+    inviter.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&inviter.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) })).ok();
     let key_package = newcomer.key_package(false);
     let request = wire::InviteRequest {
         room_id: inviter.room,
