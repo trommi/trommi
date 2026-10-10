@@ -267,6 +267,12 @@ export interface AccountKeys {
   wrapKey: Uint8Array
 }
 
+/** What names an account for its Emergency Kit's keys: its e-mail, or its account id. Exactly one of the two. */
+export interface AccountName {
+  email?: string | null
+  id?: string | null
+}
+
 export type AccountWay = 'password' | 'kit' | 'passkey'
 
 export interface PushNote {
@@ -594,6 +600,13 @@ export interface Finding {
   code: ErrorCode
 }
 
+/** An envelope's readable part, read without a device. */
+export interface EnvelopeInfo {
+  envelopeHash: Uint8Array
+  header: EnvelopeHeader
+  pruned: boolean
+}
+
 /** One item of a board for `boardReduce`. `payload` is decrypted content. */
 export interface BoardItem {
   sender: Uint8Array
@@ -850,6 +863,10 @@ export function kdfRecord(): string
 /** The slow step (Argon2id over 64 MiB): call it in a worker. */
 export function passwordKeys(email: string, password: string, kdf?: string | null): AccountKeys
 export function kitKeys(email: string, words: string): AccountKeys
+/** The kit's keys for an account named by e-mail or, when it has none, by its id (as `accountIdParse` gives it). */
+export function kitKeysFor(name: AccountName, words: string): AccountKeys
+/** An account id as typed (any case, spaces, hyphens) in its one text form; `bad-format` otherwise. */
+export function accountIdParse(text: string): string
 export function passkeyWrapKey(prf: Uint8Array, roomId: Uint8Array, credentialId: Uint8Array): Uint8Array
 export function passkeyPrfInput(): Uint8Array
 export function sealRecoveryCode(wrapKey: Uint8Array, roomId: Uint8Array, wayIn: AccountWay, credentialId: Uint8Array | null | undefined, recoveryCode: Uint8Array): Uint8Array
@@ -865,6 +882,9 @@ export function openApnsPush(key: Uint8Array, sealed: Uint8Array): PushNote
 export function readWebPush(payload: Uint8Array): PushNote
 /** The Scribble Board's merge, without state: the snapshot file's JSON after `items` on `snapshot`. */
 export function boardReduce(snapshot: Uint8Array | null | undefined, snapshotFrontier: WriterHead[], items: BoardItem[], frontier: WriterHead[]): Uint8Array
+/** The header of an envelope (full or pruned form), with the sender's signature verified and nothing else:
+ *  membership and the place in the chain are a device's to check (`receiveEnvelope`). */
+export function envelopeHeader(envelope: Uint8Array): EnvelopeInfo
 export function inviteLinkParse(text: string): InviteLinkParts
 export function checkEmoji(): EmojiWord[]
 /** The address if `text` spells it canonically; `bad-format` otherwise. Never normalised. */
