@@ -10,7 +10,7 @@ extension Room {
   /** A local id for an own echo (shown at once, replaced when the hub has it). */
   func newLocalId() -> String { echoSeq += 1; return "local-\(nowMs())-\(echoSeq)" }
 
-  /** A body in the names of spec/v2.md, with its schema version; refused when it is too large to seal. */
+  /** A body in the names of spec/v1.md, with its schema version; refused when it is too large to seal. */
   private func wire(_ content: JV, maxBytes: Int = 60_000) throws -> (payload: Bytes, files: [FileId]) {
     var c = Records.renameFiles(content, toWire: true, depth: 0)
     // (an object gets the schema version; any other value, a register's string or number, goes as it is: `with`
@@ -254,7 +254,7 @@ extension Room {
   }
   public func deleteNote(_ id: String) async throws { try await saveNote(objectId: id, fields: [:], close: true) }
 
-  // ---- files (spec/v2.md section 11) ---------------------------------------------------------------------
+  // ---- files (spec/v1.md section 11) ---------------------------------------------------------------------
 
   /** A file's plain bytes from its reference in a body; checked against the reference's hash by the core. */
   public func fetchAttachment(_ ref: JV) async throws -> Bytes {
@@ -288,7 +288,7 @@ extension Room {
     }
   }
 
-  // ---- the Scribble Board (spec/v2.md section 10) --------------------------------------------------------
+  // ---- the Scribble Board (spec/v1.md section 10) --------------------------------------------------------
 
   private func boardId(_ timelineId: String) throws -> BoardId {
     let p = parseTimelineKey("x:\(timelineId)")
@@ -490,7 +490,7 @@ extension Room {
   /** The bodies of items above the window that are here as headers only. Since v2 the catch-up brings bodies: nothing to do. */
   @discardableResult public func loadNewer(_ key: String) async throws -> Int { 0 }
 
-  // ---- links for people outside the room (spec/v2.md 11.5) -----------------------------------------------
+  // ---- links for people outside the room (spec/v1.md 11.5) -----------------------------------------------
 
   // "Copy link" on an Artifact IS the consent: the first one makes a link that holds 30 days, later ones give the
   // same link while it holds. The links this device made are kept in ShareStore.

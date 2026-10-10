@@ -1,4 +1,4 @@
-//! Files and Share links (spec/v2.md section 11, D3). A file is ciphertext to the hub: bytes under a random id,
+//! Files and Share links (spec/v1.md section 11, D3). A file is ciphertext to the hub: bytes under a random id,
 //! written once, never changed. It lies beside the database, one file per id. A Share link gives one file of an
 //! open Artifact to whoever presents the link's secret; the hub keeps the secret's hash, never the file's key.
 

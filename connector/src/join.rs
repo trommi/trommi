@@ -1,4 +1,4 @@
-//! Joining a room by an agent invite link (spec/v2.md 12.1): the link names the hub, the room and a secret; this
+//! Joining a room by an agent invite link (spec/v1.md 12.1): the link names the hub, the room and a secret; this
 //! device answers the inviter's Offer with a KeyPackage of its own, shows the six emoji of the check code, and is
 //! in once the human confirmed them in the app and the inviter enrolled it.
 //!

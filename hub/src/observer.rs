@@ -1,4 +1,4 @@
-//! The hub as observer of MLS groups (spec/v2.md 14.1): it follows every group's PUBLIC state from GroupInfo and
+//! The hub as observer of MLS groups (spec/v1.md 14.1): it follows every group's PUBLIC state from GroupInfo and
 //! Commits with OpenMLS's `PublicGroup` and reads from it who is in a group and what a Commit does. It holds no
 //! secret of any group: nothing in this module can derive or open one.
 //!

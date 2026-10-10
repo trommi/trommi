@@ -1,5 +1,5 @@
 // TrommiNotify: the Notification Service Extension. Apple delivers a push with a fixed text ("A new question.") and
-// `e`, a blob the hub sealed under this phone's push key (spec/v2.md 15.2). Here, on the phone and nowhere else:
+// `e`, a blob the hub sealed under this phone's push key (spec/v1.md 15.2). Here, on the phone and nowhere else:
 //   1. the context is read from its Keychain item (PushNotify: NotifyGroup; the app writes it): the push key and
 //      the room's id;
 //   2. `e` is opened by trommi-core (NotifyCore.openPush): the room, the change number, the urgency;
@@ -53,7 +53,7 @@ public final class TrommiNotificationService: UNNotificationServiceExtension {
 }
 
 enum NotifyWork {
-  /** The three texts a push may show without anything verified (spec/v2.md 15.2); any other becomes the first. */
+  /** The three texts a push may show without anything verified (spec/v1.md 15.2); any other becomes the first. */
   static let fixedTexts = ["A new question.", "Urgent: a new question.", "An agent lost its connection."]
   static func fixed(_ original: UNNotificationContent) -> UNNotificationContent {
     let c = UNMutableNotificationContent()

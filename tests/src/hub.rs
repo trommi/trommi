@@ -1,4 +1,4 @@
-//! A hub in memory: the ordering rules of `spec/hub-api.md` and the checks of `spec/v2.md` 14.1, 14.2, with no
+//! A hub in memory: the ordering rules of `spec/hub-api.md` and the checks of `spec/v1.md` 14.1, 14.2, with no
 //! network and no token. One change counter for the room, one Commit per group and epoch, the ordered log,
 //! KeyPackage claims, the Welcomes, the sealed keys and links, and a recovery as a transaction of its own. With
 //! `checks` off it orders and stores but verifies nothing, so that a test can see what the devices themselves

@@ -1,4 +1,4 @@
-//! Accounts over HTTP (spec/v1.md §16, spec/v2.md 8.6, 8.8): the hub checks the login and hands out the sealed
+//! Accounts over HTTP (spec/v1.md §16, spec/v1.md 8.6, 8.8): the hub checks the login and hands out the sealed
 //! copy of the recovery code; one answer for an unknown e-mail and a wrong secret; passkeys; the last way in.
 
 mod common;

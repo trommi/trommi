@@ -1,4 +1,4 @@
-// Recovery and signing in on a new device (spec/v2.md section 8) with the real core and no hub: `PocketHub` keeps
+// Recovery and signing in on a new device (spec/v1.md section 8) with the real core and no hub: `PocketHub` keeps
 // what a hub would keep (the log and the envelopes in one order, every GroupInfo, the SealedKeys, the RecoveryLinks)
 // and serves it back. It checks nothing: the core does.
 import Foundation

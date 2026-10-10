@@ -1,4 +1,4 @@
-// Account.swift: the account of a room (spec/v2.md 8.8, which is spec/v1.md section 16; the routes: spec/hub-api.md
+// Account.swift: the account of a room (spec/v1.md 8.8, which is spec/v1.md section 16; the routes: spec/hub-api.md
 // "The account"): a password, passkeys or both, and an Emergency Kit of twelve words. An account is a way to the
 // room's recovery code: the hub keeps one sealed copy of the code per way in and hands it out to who proves that
 // way; the device opens the copy and joins the room with the code (RoomAccount.swift). The hub never sees the
@@ -226,7 +226,7 @@ private func passkeyPart(_ made: PasskeyMade, room: RoomId, code: Bytes) throws 
 }
 /**
  * The way into the account that a person just used on this device: it opens the recovery code in force, and it is
- * the one way in that keeps working when the code is replaced (spec/v2.md 8.6). Both hold a secret.
+ * the one way in that keeps working when the code is replaced (spec/v1.md 8.6). Both hold a secret.
  */
 public enum WayIn {
   case password(String)
@@ -339,7 +339,7 @@ extension Room {
   }
 
   /**
-   * Replaces the room's recovery code (spec/v2.md 8.6): for after a device was removed that is not in the person's
+   * Replaces the room's recovery code (spec/v1.md 8.6): for after a device was removed that is not in the person's
    * hands, since whoever holds it may have learned the code. `way` is the way in the person just proved here: it
    * opens the code in force. The core makes the new code and the room Commit that puts its keys in force; the same
    * request carries the account's new copies: one under a new Emergency Kit, one under `way`. The hub applies all of
@@ -565,7 +565,7 @@ extension Room {
   }
 
   /**
-   * When every device is lost (spec/v2.md 8.7): the Emergency Kit's words open the account as in `resetPassword`,
+   * When every device is lost (spec/v1.md 8.7): the Emergency Kit's words open the account as in `resetPassword`,
    * but this device does not come in beside the others: it removes every other device of the person from the room
    * and every session, and replaces the recovery code, so that a lost device and the old kit open nothing new. The
    * hub applies all of it at once or nothing. The request carries the account's new copies of the new code: one

@@ -1,4 +1,4 @@
-// registers.test.mjs: registers in the model (spec/v2.md 9.3): the room's human registers under the keys and in the
+// registers.test.mjs: registers in the model (spec/v1.md 9.3): the room's human registers under the keys and in the
 // maps the views read, a session's registers from its agent (profile, status lines, the receipt, alerts), each
 // device's own name. Which value is the current one is the core's word (`register.current`). Hand-made core results.
 //   node --test tests/web/model/

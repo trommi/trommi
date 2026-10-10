@@ -314,7 +314,7 @@ struct DevicesPage: View {
     .sheet(isPresented: $inviteDevice) { InviteDeviceSheet() }
     .confirmationDialog("Remove \(removing?.deviceName.isEmpty == false ? removing!.deviceName : "This Device")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
       Button("Remove", role: .destructive) { if let d = removing { model.removeDevice(d.deviceId, name: d.deviceName) } }
-      // (spec/v2.md 8.6: a device that is not in his hands any more may have learned the recovery code; Account makes a new one)
+      // (spec/v1.md 8.6: a device that is not in his hands any more may have learned the recovery code; Account makes a new one)
       if removing?.deviceRole == "human" {
         Button("Remove and Make New Recovery Code…", role: .destructive) {
           if let d = removing { model.removeDevice(d.deviceId, name: d.deviceName); model.path.append(.settings("account")) }
@@ -465,7 +465,7 @@ struct AccountPage: View {
           }.padding(16)
         }
         if st.hasPassword {
-          // (spec/v2.md 8.6: the room gets a new recovery code; the new kit shows in the Emergency Kit group above)
+          // (spec/v1.md 8.6: the room gets a new recovery code; the new kit shows in the Emergency Kit group above)
           SettingsGroup(footer: "For after you removed a device that is lost or no longer yours. You get a new Emergency Kit; the old kit stops working, and passkeys have to be added again.") {
             Button { codeAsk = true } label: { SettingsRow(title: "New Recovery Code…") { Sketch("key") } }.buttonStyle(.plain)
           }

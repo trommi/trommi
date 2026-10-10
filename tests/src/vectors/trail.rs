@@ -130,7 +130,7 @@ pub fn generate() -> Result<Value, Error> {
             .collect::<Vec<_>>()
     };
     Ok(json!({
-        "about": "The bodies of the live messages (spec/v2.md sections 7.2 and 7.3). steps: the step of a work trail message and what it holds. pieces: the piece of a stroke piece message; stroke and packed in hex, width in 1/16 board unit. A reader that decodes and encodes one gets the same text. steps_refused, pieces_refused: with the code of the refusal.",
+        "about": "The bodies of the live messages (spec/v1.md sections 7.2 and 7.3). steps: the step of a work trail message and what it holds. pieces: the piece of a stroke piece message; stroke and packed in hex, width in 1/16 board unit. A reader that decodes and encodes one gets the same text. steps_refused, pieces_refused: with the code of the refusal.",
         "steps": steps.iter().map(|step| Ok(json!({
             "step": text(step.encode()?)?, "text": step.text, "tool": step.tool,
         }))).collect::<Result<Vec<_>, Error>>()?,

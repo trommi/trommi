@@ -1,4 +1,4 @@
-//! Trommi's rules on top of MLS (spec/v2.md sections 4 and 5), as pure functions over what a Commit does and what
+//! Trommi's rules on top of MLS (spec/v1.md sections 4 and 5), as pure functions over what a Commit does and what
 //! the room's public state says. No database, no clock: the delivery service feeds them and stores the outcome.
 //!
 //! Seam for the merge with `trommi-core`: devices run the same checks before they merge a Commit. When the core

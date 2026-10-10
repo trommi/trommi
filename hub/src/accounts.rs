@@ -1,4 +1,4 @@
-//! Accounts (spec/v2.md 8.8, spec/v1.md §16): an e-mail with a password, passkeys or both, and an Emergency Kit.
+//! Accounts (spec/v1.md 8.8, spec/v1.md §16): an e-mail with a password, passkeys or both, and an Emergency Kit.
 //! An account is a way into its rooms: each way in opens a sealed copy of a room's recovery code. The hub checks
 //! the login and hands out the sealed copy; it never sees the password, the kit's words, a prf output or the
 //! code. An account has a list of rooms (one for now).
@@ -632,7 +632,7 @@ pub fn put_password(
     Ok(json!({ "revision": v["revision"].as_i64().unwrap_or(0) + 1 }))
 }
 
-/// Which salt a kit's keys are derived with follows from the account alone (v2.md 8.8.2): the e-mail's where it
+/// Which salt a kit's keys are derived with follows from the account alone (v1.md 8.8.2): the e-mail's where it
 /// has one, else the account id's. The hub cannot check a kit; it says which form the account's kit has.
 fn kit_form(_kit: &Value, has_email: bool) -> Res<&'static str> {
     Ok(if has_email { "email" } else { "id" })
