@@ -117,6 +117,9 @@ functions! {
     fallible invite_link_parse(text);
     plain check_emoji();
     fallible hub_address(text);
+    fallible kit_keys_for(name, words);
+    fallible account_id_parse(text);
+    fallible envelope_header(envelope);
 }
 
 /// The methods of a facade object that return a `Result`, by name and arguments.
@@ -201,6 +204,7 @@ methods!(RawDevice {
     observe_room(group_info, expected_state);
     observe_session(group_info);
     process_log_entry(entry, now_ms);
+    feed(items, now_ms);
     send_handover(group, recipient);
     handovers_sent();
     handover_read(group, recipient);
