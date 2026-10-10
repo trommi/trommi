@@ -8,8 +8,13 @@
 //   - the entitlement com.apple.developer.associated-domains needs the line  webcredentials:app.trommi.com
 //   - https://app.trommi.com/.well-known/apple-app-site-association needs
 //       "webcredentials": { "apps": ["<team id>.<bundle id>"] }
-// Until both are there every request fails, so the two controls (Log in → "Log in with passkey", Settings → Account
-// → "Add passkey") are shown only when `Passkeys.available` says so.
+// Until both are there every request fails, so the controls (Create account → "Create with passkey", Log in → "Log in
+// with passkey", Settings → Account → "Add passkey") are shown only when `Passkeys.available` says so. Switched on,
+// the passkey comes first on Create account and Log in (SignIn.swift). ios/README.md "Account" lists what switching
+// it on needs.
+//
+// A passkey's user id is the 16 bytes of the account id, which the hub names with its challenge; its name is the
+// account's email, or the account id for an account without one (`PasskeyRequest.name`).
 import AuthenticationServices
 import CryptoKit
 import SwiftUI
@@ -27,7 +32,7 @@ enum Passkeys {
   /** Make a passkey for the account, on this device or in the person's password manager. */
   static func make(_ r: PasskeyRequest) async throws -> PasskeyMade {
     let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingParty)
-    let request = provider.createCredentialRegistrationRequest(challenge: Data(r.challenge), name: r.email, userID: Data(r.userHandle))
+    let request = provider.createCredentialRegistrationRequest(challenge: Data(r.challenge), name: r.name, userID: Data(r.userHandle))
     request.userVerificationPreference = .required
     request.prf = .inputValues(.init(saltInput1: Data(PASSKEY_PRF_INPUT)))
     guard let made = try await PasskeySheet().run(request).credential as? ASAuthorizationPlatformPublicKeyCredentialRegistration,

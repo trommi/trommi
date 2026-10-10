@@ -179,7 +179,8 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
   `com.trommi.ios.share`, `.notify` and `.live` (with `APP_GROUPS=group.com.trommi.ios`), created through the API with
   the Admin key (remade on each run, so a capability change is picked up); the distribution key stays in the folder
   `ASC_IDENTITY_DIR` names (0600). Entitlements: the profile's plus `AppStore/TrommiApp.entitlements`
-  (`aps-environment: production`, the App Group, `applinks:app.trommi.com`, communication notifications: left out
+  (`aps-environment: production`, the App Group, `applinks:app.trommi.com` and `webcredentials:app.trommi.com`,
+  communication notifications: left out
   with a warning while the portal has not granted them) and, for each extension, `AppStore/<name>.entitlements`
   (the App Group), each checked against its profile; `rcodesign`, the extensions first.
 - Offline validation (`asc.py validate`), upload with the Build Uploads API (`asc.py upload`), then this folder's
@@ -240,6 +241,95 @@ Distribution in France needs the French encryption declaration to be checked.
 
 When the code starts or stops using one of these, change the manifest with it. To see what a built binary imports:
 `llvm-nm -u xtool/TrommiApp.app/TrommiApp | grep -E '_(f?stat|lstat|statfs|mach_absolute_time)$'`.
+
+## Account
+
+`Account.swift` speaks the account routes of the hub (`spec/hub-api.md` "The account", `spec/v2.md` 8.8). Every key
+and every sealed copy is the core's; the client names routes and moves bytes.
+
+**How an account is named.** Every account has an account id, a UUID the hub mints; it is public and printed on the
+Emergency Kit. An account may have an e-mail: a password needs one (its keys are derived from it), a passkey does
+not. Log-in and recovery name the account in ONE field, `account`: an e-mail if it contains `@`, else the id.
+
+**What the client sends.**
+
+| Step | Request |
+| --- | --- |
+| Create account, password | `POST /v2/rooms` with `account: { email, password: { auth_key, sealed_copy, kdf }, kit: { auth_key, sealed_copy } }`, then `GET /v2/account` for the id |
+| Create account, passkey | `POST /v2/account/passkey/challenge` (no token) → `{ challenge, account, user_handle }`, then `POST /v2/rooms` with `account: { email?, kit: { auth_key, sealed_copy }, passkey: { attestation_object, client_data_json, sealed_copy, transports } }` |
+| Log in, password | `POST /v2/account/login` `{ account, auth_key }` (`account` is the e-mail: an id is refused on the device, `needs-email`) |
+| Log in, passkey | `POST /v2/account/passkey/challenge`, then `POST /v2/account/passkey/login` `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` |
+| Forgot password | `POST /v2/account/recover` `{ account, auth_key }` (e-mail or id), then, named by e-mail, `PUT /v2/account/password` `{ auth_key, sealed_copy, kdf, revision }` |
+| New password, new kit | `PUT /v2/account/password`, `PUT /v2/account/kit` `{ auth_key, sealed_copy, revision }` |
+| An e-mail for an account without one | `PUT /v2/account/email` `{ email, kit: { auth_key, sealed_copy }, revision }` (`Room.setEmail`; no screen yet) |
+| Add passkey | `POST /v2/account/passkeys/challenge`, `POST /v2/account/passkeys` |
+| Log Out | `DELETE /v2/push`, `DELETE /v2/token`, then the device forgets the room |
+
+The kit's keys are derived from the e-mail if the account has one, else from the account id (`kit_form` in the hub's
+answers; never sent). So the kit of an account with an e-mail opens with the e-mail only, and the id in the field
+opens the kit of an account without one. A refusal that names a wait (`retry_after` in the body or the `retry-after`
+header) is shown with it: "Too many tries. Wait 40 seconds."
+
+**What the client keeps.** Nothing of the account is stored on the device: the id, the e-mail and the kit's form are
+asked of the hub when a screen needs them (`Room.accountStatus`). The password, the kit's words and the recovery
+code live for the length of one call. The kit's words are shown once (`KitScreen.swift`).
+
+**The Emergency Kit** carries the twelve words, the account id as text, and a QR code with
+`https://app.trommi.com/#k1.<hub address, base64url>.<account id, 32 hex digits>` (`kitQRText`): an address of the
+web app that opens its recovery screen with hub and id filled in. It is in the fragment, so it reaches no server,
+and it never holds the words. The app itself does not open such a link yet.
+
+**Not bound yet.** The binding of this checkout has no `kit_keys_for` and no `account_id_parse` (v2-bindings 33a943d
+has both). `LiveCore.swift` answers `not-built` for the kit of an account without an e-mail and for reading an
+account id, each marked `NOT BUILT`: so this build makes and recovers accounts with an e-mail only.
+
+### Passkeys: switched off
+
+`Passkeys.available` is `false`. Switched on, Create account shows the e-mail as optional and "Create with passkey"
+first, and Log in shows "Log in with passkey" first, with no field. Before the switch is flipped:
+
+1. The binding with `kit_keys_for` and `account_id_parse` is merged and bound in `LiveCore.swift` (an account
+   without an e-mail has its kit under the id).
+2. `https://app.trommi.com/.well-known/apple-app-site-association` lists the app under `webcredentials` (below).
+3. The entitlement `com.apple.developer.associated-domains` holds `webcredentials:app.trommi.com`. Both
+   `TrommiApp.entitlements` and `AppStore/TrommiApp.entitlements` have the line already; it does nothing while the
+   domain's file does not name the app.
+4. An account with passkeys only has no password, and three screens still ask for one: the kit's page after a
+   relaunch ("Enter your password to make it."), Settings → Account → "Make a New Kit", and "Add Passkey". They need
+   a way to open the code with a passkey first. `Room.setEmail` needs a screen.
+5. A passkey ceremony on a phone: none has ever run (`Passkeys.swift` compiles on a Mac only).
+
+### For the website: the association file
+
+`https://app.trommi.com/.well-known/apple-app-site-association` must be served as `application/json`, without a
+redirect, with exactly this content. `<TEAM_ID>` is the Apple team's prefix and `<XTOOL_ID>` the prefix of the
+development builds; both are in the file the web app serves today (`app/web/public/apple-app-site-association.json`)
+and stay as they are there. The `applinks` part is today's, unchanged; `webcredentials` is new.
+
+```json
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["<TEAM_ID>.com.trommi.ios", "<TEAM_ID>.XTL-<XTOOL_ID>.com.trommi.ios"],
+        "components": [
+          { "/": "/card/*", "comment": "a card, by its Nr. or id" },
+          { "/": "/s/*", "comment": "a session, a card of it, its files" },
+          { "/": "/settings", "comment": "Settings" },
+          { "/": "/settings/*", "comment": "Settings: sessions, devices, account" }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["<TEAM_ID>.com.trommi.ios", "<TEAM_ID>.XTL-<XTOOL_ID>.com.trommi.ios"]
+  }
+}
+```
+
+`webcredentials` is what lets the app use passkeys (and saved passwords) of `app.trommi.com`. The Emergency Kit's
+link (`/#k1.…`) is deliberately not among the `applinks` components: the app does not open it yet, so it stays with
+the browser. Apple's servers fetch the file and keep it for about a day; a new install reads it from them.
 
 ## Keyboard and tab bar
 
@@ -402,9 +492,10 @@ chrome; the minimum is iOS 27.
 
 ## Not there yet
 
-Nothing of `Core.swift` is stubbed: `TrommiCoreLive` binds every call to the core (`core/swift`, v2-bindings
-b2e5b98), and its header (`LiveCore.swift`) lists what is bound and what of the binding is left out. What the app
-still cannot do:
+`TrommiCoreLive` binds every call of `Core.swift` to the core (`core/swift`, v2-bindings b2e5b98) but two, which
+that binding does not have yet and which answer `not-built`: the Emergency Kit's keys of an account without an
+e-mail (`kitKeysFor(.id)`) and the reading of an account id (`accountIdParse`); see "Account". Its header
+(`LiveCore.swift`) lists what is bound and what of the binding is left out. What the app still cannot do:
 
 - **The notification title.** A content key never leaves the core, and the binding opens an envelope only on the
   device that holds the group (`receiveEnvelope`), whose store the app owns. The Notification Service Extension
@@ -421,8 +512,7 @@ still cannot do:
   (`PocketHub` keeps the hub's order) and the engine's on a core that seals nothing (`FakeCore`).
 - The Scribble Board still merges with the reducer of the Swift model (`Canvas.swift`); the core's reducer and its
   check of a loaded board (`boardReduce`, `boardLoad`) are bound, and nothing calls them yet.
-- Passkeys are built and switched off (`Passkeys.available`) until `app.trommi.com` lists the app under
-  `webcredentials` and the entitlement names it.
+- Passkeys are built and switched off (`Passkeys.available`); "Account" says what switching them on needs.
 - The first archive on the Mac runner ("TestFlight from CI") is unproven; licence notices for the Rust crates inside the app bundle
   (`THIRD-PARTY.md` lists them); the memory of the Notification Service Extension with the core linked, measured on
   a phone.
