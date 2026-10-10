@@ -20,7 +20,7 @@ import TrommiCoreRust
 /// One group as the hub serves it to a device that verifies it from its founding: the GroupInfo of epoch 0, every
 /// Commit since in the hub's order (each with its change number and, for a join from outside, its RecoveryAuth), and
 /// the GroupInfo the hub offers as current. Nothing in it is trusted.
-public typealias LiveServedGroup = (founding: Bytes, commits: [(change: UInt64, commit: Bytes, recoveryAuth: Bytes?)], current: Bytes)
+public typealias LiveServedGroup = (founding: Bytes, commits: [PastCommit], current: Bytes)
 /// A room as the hub serves it to a device that comes with the code: the room group, the GroupInfo of the anchor's
 /// epoch (`LiveCore.recoveryAnchor` names the epoch), every SealedKey and RecoveryLink of the room, and every live
 /// session group, main sessions before helper sessions. Nothing in it is trusted.
@@ -149,7 +149,7 @@ extension LiveDevice {
   /// (`room-behind`, `group-behind` otherwise); taken only if it arrives at this device's own state (`bad-group`).
   /// Returns how many epochs were recorded. Envelopes of those epochs, refused with `group-behind` until then, are
   /// handed to `receiveEnvelope` again afterwards.
-  public func learnHistory(group: GroupId, founding: Bytes, commits: [(change: UInt64, commit: Bytes, recoveryAuth: Bytes?)]) throws -> UInt64 {
+  public func learnHistory(group: GroupId, founding: Bytes, commits: [PastCommit]) throws -> UInt64 {
     try core {
       try device.learnHistory(group: group.data, founding: founding.data,
                               commits: commits.map { ServedCommit(change: $0.change, commit: $0.commit.data, recoveryAuth: $0.recoveryAuth?.data) })
@@ -211,28 +211,15 @@ struct ServedByHub {
     }
   }
 
-  /// One group from its founding: GET /v2/groups/{group}/info?epoch=0, the Commits of GET /v2/groups/{group}/log, and
-  /// GET /v2/groups/{group}/info. A Commit that the hub took between the last two would make the current GroupInfo
-  /// one epoch ahead of the Commits read, so the three are read again until they fit.
+  /// One group from its founding: its public history (`HubClient.history`: GET /v2/groups/{group}/info?epoch=0 and
+  /// the Commits of GET /v2/groups/{group}/log), and GET /v2/groups/{group}/info. A Commit that the hub took between
+  /// the last two would make the current GroupInfo one epoch ahead of the Commits read, so they are read again until
+  /// they fit.
   func group(_ id: GroupId) async throws -> LiveServedGroup {
     for _ in 0..<3 {
-      let founding = try bytes(try await hub.groupInfo(id, epoch: 0), "group_info")
-      var commits = [(change: UInt64, commit: Bytes, recoveryAuth: Bytes?)](), after: UInt64 = 0, reached: UInt64 = 0
-      while true {
-        let page = try await hub.groupLog(id, after: after)
-        let items = page["items"] as? [JSON] ?? []
-        for item in items {
-          guard let n = Wire.uint(item["n"]), n > after else { throw TrommiError("bad-format", "the hub's log of a group is not in order") }
-          after = n
-          guard item["kind"] as? String == "commit" else { continue }
-          guard let change = Wire.uint(item["change"]), let epoch = Wire.uint(item["epoch"]) else { throw TrommiError("bad-format", "a Commit of the hub's log has no change number or epoch") }
-          commits.append((change, try bytes(item, "bytes"), (item["recovery_auth"] as? String).flatMap { try? unb64u($0) }))
-          reached = epoch + 1
-        }
-        guard page["more"] as? Bool == true, !items.isEmpty else { break }
-      }
+      let past = try await hub.history(of: id)
       let current = try await hub.groupInfo(id)
-      if Wire.uint(current["epoch"]) == reached { return (founding, commits, try bytes(current, "group_info")) }
+      if Wire.uint(current["epoch"]) == past.reached { return (past.founding, past.commits, try bytes(current, "group_info")) }
     }
     throw TrommiError("busy", "a group kept changing while it was read from the hub")
   }

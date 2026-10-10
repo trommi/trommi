@@ -124,6 +124,8 @@ final class FakeDevice: CoreDevice {
       return .message(.workTrail(from: from, turn: [1, 2], number: (m["number"] as? NSNumber)?.uint32Value ?? 1, time: 5, step: j(["text": m["text"] as? String ?? "", "tool": "Bash"])))
     }
   }
+  /** Nothing to learn: this fake holds every group from its founding. */
+  func learnHistory(group: GroupId, founding: Bytes, commits: [PastCommit]) throws -> UInt64 { 0 }
   func logFinding(_ error: Error) -> LogFinding {
     switch (error as? TrommiError)?.code { case "storage": return .local; case "wrong-epoch": return .duplicate; case "group-behind": return .early; default: return .badGroup }
   }
