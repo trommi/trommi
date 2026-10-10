@@ -276,6 +276,9 @@ pub(super) struct Removal {
     pub cut: Head,
     pub epoch: u64,
     pub again: Option<u64>,
+    /// The epoch the device's first removal began: from it on what the device owned has passed on, for
+    /// good (9.2).
+    pub first: u64,
 }
 
 impl Encode for Removal {
@@ -284,6 +287,7 @@ impl Encode for Removal {
         writer.u64(self.epoch);
         writer.u8(u8::from(self.again.is_some()));
         writer.u64(self.again.unwrap_or(0));
+        writer.u64(self.first);
         Ok(())
     }
 }
@@ -296,7 +300,16 @@ impl Decode for Removal {
             (1, again) if again >= epoch => Some(again),
             _ => return Err(Error::BadFormat),
         };
-        Ok(Self { cut, epoch, again })
+        let first = reader.u64()?;
+        if first > epoch {
+            return Err(Error::BadFormat);
+        }
+        Ok(Self {
+            cut,
+            epoch,
+            again,
+            first,
+        })
     }
 }
 
@@ -1030,6 +1043,9 @@ impl<S: Storage> Device<S> {
         // 9.0.10: where the key is a leaf again from an epoch on, what it signed for that epoch or a later
         // one lies beyond the Cut by right and stays.
         let again = self.leaf_since(group, &cut.device, epoch)?;
+        let first = self
+            .removal(group, &cut.device)?
+            .map_or(epoch, |held| held.first.min(epoch));
         self.put_stored(
             batch,
             group_key(table::CHAIN, SUB_CUT, group, cut.device.as_bytes()),
@@ -1037,25 +1053,29 @@ impl<S: Storage> Device<S> {
                 cut: head,
                 epoch,
                 again,
+                first,
             })?,
         );
         let mut chains = self.chains(group)?;
         let mut effect = chain::cut_chain(&Facts(self), &chains, group, &cut.device, &head)?;
         let prefix = group_key(table::CHAIN, SUB_RECORD, group, cut.device.as_bytes());
         let mut beyond = Vec::new();
-        let mut stays = false;
+        // What is held beyond the Cut stays only if all of it goes on from the Cut: every envelope of the
+        // epoch that added the key again or a later one, and the first of them naming the Cut as `prev`.
+        // Another envelope under the Cut's own number is no continuation, whatever its epoch.
+        let mut goes_on = effect.finding.is_none() && again.is_some();
         for (key, value) in self.stored_under(&prefix) {
             let record: Record =
                 codec::decode(&value, value.len()).map_err(|_| damaged("a chain record"))?;
             if effect.drop_from.is_none_or(|from| record.header.seq < from) {
                 continue;
             }
-            if again.is_some_and(|again| record.header.epoch >= again) {
-                stays = true;
-            } else {
-                beyond.push((key, record.hash));
-            }
+            let after_return = again.is_some_and(|again| record.header.epoch >= again);
+            let next = record.header.seq.checked_sub(1) == Some(head.seq);
+            goes_on &= after_return && (!next || record.header.prev == head.hash);
+            beyond.push((key, record.hash));
         }
+        let stays = goes_on && !beyond.is_empty();
         if stays {
             effect.head = None;
         }
@@ -1068,7 +1088,7 @@ impl<S: Storage> Device<S> {
                 code.code().as_bytes().to_vec(),
             );
         }
-        if effect.drop_from.is_none() || (stays && beyond.is_empty()) {
+        if effect.drop_from.is_none() || stays {
             return Ok(());
         }
         for (key, hash) in beyond {
@@ -1213,7 +1233,7 @@ impl<S: Storage> GroupFacts for Facts<'_, S> {
         Ok(self
             .0
             .removal(group, device)?
-            .is_some_and(|removal| removal.epoch <= epoch))
+            .is_some_and(|removal| removal.first <= epoch))
     }
 
     fn epoch_end(&self, group: &GroupId, epoch: u64) -> Result<Option<EpochEnd>, Error> {
