@@ -28,9 +28,13 @@ public struct RoomRecord: Codable {
   public var myDeviceId: String    // hex
   public var role: String          // "human": the app is always a human device
   public var deviceRegisterSent: Bool
+  /** What is left to do for what was written before this device came (RoomPast.swift); nil: nothing. */
+  public var past: PastWork? = nil
+  /** A sign-in with the recovery code has session groups left to join (RoomAccount.swift `finishCodeJoin`); nil: none. */
+  public var codeJoin: Bool? = nil
 }
 
-/** `beforeJoining`: envelopes of an epoch before this device came into their group, which it cannot take (passed over). */
+/** `beforeJoining`: envelopes of an epoch before this device came into their group, which it cannot take until it learned that group's past (RoomPast.swift): passed over. */
 public struct SyncReport { public var envelopes = 0, opened = 0, headerOnly = 0, undecryptable = 0, voids = 0, refused = 0, beforeJoining = 0; public var warnings: [String] = [] }
 
 /** The hub said this app is too old to be served. */
@@ -156,6 +160,10 @@ public final class Room {
   /** What the hub said to an envelope this device sealed, by outbox id. */
   var outcome: [UInt64: Result<Void, HubError>] = [:]
   var pumping = false
+  /** The changes are being read again from the start (RoomPast.swift): an envelope below the core's cursor is handed in as the next of its chain. */
+  var readingBack = false
+  /** Something came that the past waits for (a Welcome, keys): `tendPast` is due after what is being processed. */
+  var pastDue = false
   /** The highest lamport this device has seen or written (9.3.2): what an echo of an own write is ordered by. */
   var lamport = 0
   // the record cache (RoomCache.swift)
@@ -346,7 +354,10 @@ public final class Room {
     _ = await restoring?.value
     var change = Change()
     try await takeWelcomes(&change)
+    await finishCodeJoin()
     try await readChanges(&report, &change)
+    // (what was written before this device came is upkeep too: what is left of it is noted and goes on next time)
+    try? await tendPast(&report, &change)
     // (stocking KeyPackages and writing `heads` are upkeep: a failure there does not keep the board from showing;
     // the next sync tries again)
     try? await publishKeyPackages()
@@ -368,7 +379,12 @@ public final class Room {
     for w in list {
       guard let bytes = (w["welcome"] as? String).flatMap({ try? unb64u($0) }) else { continue }
       // A Welcome that does not check is left alone: the hub keeps it, an alert says so, nothing is joined.
-      do { _ = try await onCore { try $0.joinWelcome(bytes, room: room, committer: nil, nowMs: nowMs()) } }
+      do {
+        let joined = try await onCore { try $0.joinWelcome(bytes, room: room, committer: nil, nowMs: nowMs()) }
+        // (this device holds the group from here on; what was written in it before is learned: RoomPast.swift)
+        notePast { if !$0.toLearn.contains(hex(joined.group)) { $0.toLearn.append(hex(joined.group)) } }
+        pastDue = true
+      }
       catch let e as TrommiError where e.code == "wrong-epoch" { continue }   // (joined before: the hub still had it)
       catch { board.pushAlert(&change, code: "welcome", message: "a Welcome was refused: \(Self.codeOf(error))") }
     }
@@ -487,6 +503,7 @@ public final class Room {
    */
   func process(_ parsed: [Item], report: inout SyncReport, change: inout Change) async throws {
     guard !parsed.isEmpty else { return }
+    let readingBack = self.readingBack
     let (outcomes, coreAt, findings): ([Outcome], UInt64, [ChainFinding]) = try await onCore { device in
       var out = [Outcome]()
       var commits = false
@@ -509,7 +526,9 @@ public final class Room {
             if case .message = p {} else { commits = true }
             out.append(.processed(p))
           case .envelope(let c, let bytes, let void):
-            let e = try device.receiveEnvelope(bytes, change: c, ordered: c > before, voidCode: void, nowMs: nowMs())
+            var e = try device.receiveEnvelope(bytes, change: c, ordered: c > before || readingBack, voidCode: void, nowMs: nowMs())
+            // Reading back: `replay` says the chain holds this one already, so it is read again for display.
+            if readingBack, c <= before, e.outcome == .refused, e.code == "replay" { e = try device.receiveEnvelope(bytes, change: c, ordered: false, voidCode: void, nowMs: nowMs()) }
             // Refused with `group-behind` and the cursor left where it was: the group's next Commits are still to
             // come. Stop before it, so that it is read again with what it needs, instead of being passed over.
             if e.outcome == .refused, c > before, device.cursor < c { out.append(.stopped(code: e.code ?? "group-behind")); return done() }
@@ -613,7 +632,10 @@ public final class Room {
       onStrokePiece?(hex(from), "desk/\(hex(boardId))", piece)
     case .newerVersion(let from):
       board.pushAlert(&change, code: "newer-version", message: Compat.UPDATE_MESSAGE, sender: hex(from))
-    case .keys, .recoveryAuth, .recoveryAuthConflict, .dropped: break
+    case .keys(_, let taken, _):
+      // Keys of older epochs came (a handover): items that took their place without a body can be opened now.
+      if taken > 0, record.past?.closed == true { notePast { $0.readBack = true }; pastDue = true }
+    case .recoveryAuth, .recoveryAuthConflict, .dropped: break
     }
   }
   /** A piece of a stroke another device is drawing (relayed, never stored): sender, board timeline id, the piece's JSON. */
@@ -638,7 +660,7 @@ public final class Room {
       // finding. Everything else is one (a forged or replayed item, a chain that does not link): shown, once
       // per sender and code, since every later item of a broken chain is refused the same way (section 16).
       let code = e.code ?? "bad-format"
-      if code == "group-behind" { report.beforeJoining += 1; return }
+      if code == "group-behind" { report.beforeJoining += 1; notePast { $0.passedOver = true }; return }
       report.refused += 1
       if report.refused <= 5 { report.warnings.append("change \(n) refused: \(code)") }
       if findingsSaid.insert("\(hex(e.header.group))/\(sender)/\(code)").inserted {
@@ -651,6 +673,7 @@ public final class Room {
     case .chained:
       // Chained and never applied. A body that did not open still counts for its object's state (9.2.1) and goes
       // on as a header; a refusal by who may write it or by its epoch (checks 7 and 8) shows nothing.
+      if e.code == "no-key" { notePast { $0.closed = true } }
       if e.code != "pruned" { board.pushAlert(&change, code: e.code ?? "forbidden", message: "an item was not applied", envelopeNumber: Int(n), sender: sender) }
     case .applied, .provisional: break
     }
@@ -713,8 +736,10 @@ public final class Room {
       _ = try? await serial { [self] in
         var report = SyncReport(), change = Change()
         defer { self.board.project(change); self.emit(change); self.pumpOutbox() }
-        if let i = item, i.change > self.cursor { do { try await self.process([i], report: &report, change: &change); return } catch {} }
-        try await self.readChanges(&report, &change)
+        var taken = false
+        if let i = item, i.change > self.cursor { taken = (try? await self.process([i], report: &report, change: &change)) != nil }
+        if !taken { try await self.readChanges(&report, &change) }
+        if self.pastDue { try await self.tendPast(&report, &change) }
       }
     case "relay":
       // A message the hub only passes on (a piece of a stroke being drawn): no change number, not in the log.
@@ -723,7 +748,12 @@ public final class Room {
         if case let .strokePiece(from, boardId, piece)? = try await self.onCore({ try $0.receiveRelay(group: group, message: bytes, nowMs: nowMs()) }) { self.onStrokePiece?(hex(from), "desk/\(hex(boardId))", piece) }
       }
     case "welcome":
-      _ = try? await serial { [self] in var ch = Change(); try await self.takeWelcomes(&ch); self.board.project(); self.emit(ch) }
+      _ = try? await serial { [self] in
+        var report = SyncReport(), ch = Change()
+        defer { self.board.project(); self.emit(ch) }
+        try await self.takeWelcomes(&ch)
+        if self.pastDue { try await self.tendPast(&report, &ch) }
+      }
     case "presence":
       var ch = Change()
       board.applyPresence(Records.presence(data), change: &ch)

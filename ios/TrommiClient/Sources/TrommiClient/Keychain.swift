@@ -2,6 +2,7 @@
 //   state-<folder>    the key that seals the device's state (DeviceStore.swift)
 //   anchor-<folder>   the revision below which that state does not load (DeviceStore.swift, "Rollback")
 //   cache-<folder>    the key that seals what this device already opened, kept for a quick start (RecordStore.swift)
+//   join-<folder>     the recovery code, only while a sign-in with it has session groups left to join (RoomAccount.swift)
 // All are kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly: a push wakes the app while the phone is locked, and the
 // item never leaves this device (it can come back with a restore of a backup made ON this device; the state itself
 // is left out of backups, so a restored app finds an anchor without a state and asks to sign in again).
@@ -34,7 +35,7 @@ enum LocalKey {
   }
   /** Forgets everything of that state folder (signing out). */
   static func wipe(dir: URL) {
-    for name in ["state", "cache", "anchor"] { delete("\(name)-\(dir.lastPathComponent)", dir: dir) }
+    for name in ["state", "cache", "anchor", "join"] { delete("\(name)-\(dir.lastPathComponent)", dir: dir) }
   }
   static func random(_ n: Int) throws -> Bytes {
     #if os(iOS)

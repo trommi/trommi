@@ -209,6 +209,31 @@ public final class HubClient: @unchecked Sendable {
   public func groupLog(_ group: GroupId, after: UInt64, limit: Int = 500) async throws -> JSON {
     try await request("GET", "/groups/\(b64u(group))/log", query: ["after": String(after), "limit": String(limit)])
   }
+  /**
+   * A group's public history from its founding: the GroupInfo of epoch 0 and every Commit of its log, in the hub's
+   * order. `reached`: the epoch the last Commit read leads to. Nothing in it is trusted: the core checks it.
+   */
+  public func history(of group: GroupId) async throws -> (founding: Bytes, commits: [PastCommit], reached: UInt64) {
+    func bytes(_ json: JSON, _ field: String) throws -> Bytes {
+      guard let text = json[field] as? String, let bytes = try? unb64u(text), !bytes.isEmpty else { throw TrommiError("bad-format", "the hub's answer has no \(field)") }
+      return bytes
+    }
+    let founding = try bytes(try await groupInfo(group, epoch: 0), "group_info")
+    var commits = [PastCommit](), after: UInt64 = 0, reached: UInt64 = 0
+    while true {
+      let page = try await groupLog(group, after: after)
+      let items = page["items"] as? [JSON] ?? []
+      for item in items {
+        guard let n = Wire.uint(item["n"]), n > after else { throw TrommiError("bad-format", "the hub's log of a group is not in order") }
+        after = n
+        guard item["kind"] as? String == "commit" else { continue }
+        guard let change = Wire.uint(item["change"]), let epoch = Wire.uint(item["epoch"]) else { throw TrommiError("bad-format", "a Commit of the hub's log has no change number or epoch") }
+        commits.append((change, try bytes(item, "bytes"), (item["recovery_auth"] as? String).flatMap { try? unb64u($0) }))
+        reached = epoch + 1
+      }
+      guard page["more"] as? Bool == true, !items.isEmpty else { return (founding, commits, reached) }
+    }
+  }
   /** A page of a Chat, newest first below `before` (a change number). `timeline`: "session/<hex>" or "card/<hex>". */
   public func chatItems(timeline: String, before: UInt64? = nil, limit: Int = 50) async throws -> JSON {
     var q = ["limit": String(limit)]

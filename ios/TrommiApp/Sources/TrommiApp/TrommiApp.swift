@@ -275,7 +275,7 @@ final class BoardModel: ObservableObject {
     self.active = active
     // what was shared meanwhile (ShareImport.swift): after the catch-up, so the note and the sessions are current
     if active { startLive(); Task { await refresh(); ShareImport.shared.run() } }
-    else { liveTask?.cancel(); liveTask = nil; live = false; room?.saveCache(snapshot: true); NotifyBridge.shared.writeNow(self) }
+    else { liveTask?.cancel(); liveTask = nil; if !demo { live = false }; room?.saveCache(snapshot: true); NotifyBridge.shared.writeNow(self) }
   }
   private func startLive() {
     #if canImport(Darwin)
@@ -429,6 +429,29 @@ final class BoardModel: ObservableObject {
     do {
       await entered(try await Room.resetPassword(hubURL: Self.hubURL, account: account, words: words, newPassword: password))
     } catch {
+      signing = false
+      self.error = accountError(error)
+    }
+  }
+
+  /**
+   * Every device is lost (spec/v2.md 8.7; he confirmed it on the reset screen): the Emergency Kit's words open the
+   * account, this device removes every other device of his and sets the new password (or, for an account without
+   * an email, a new passkey), and a new Emergency Kit is made. Its page comes next and stays until "Open Trommi",
+   * as after "Create account" (the mark, as there, covers the moment before the register `kit` is out).
+   */
+  func recoverAll(account: String, words: String, password: String?) async {
+    if drawnOnly() { return }
+    await began(account)
+    UserDefaults.standard.set(true, forKey: Self.kitMark)
+    do {
+      let passkey: ((PasskeyRequest) async throws -> PasskeyMade)? = Passkeys.available ? { try await Passkeys.make($0) } : nil
+      let done = try await Room.recoverAccount(hubURL: Self.hubURL, account: account, words: words, newPassword: password, makePasskey: passkey) { _ in true }
+      kit = KitGate(email: done.kit.email, words: done.kit.words, accountId: done.kit.accountId)
+      await entered(done.room)
+      say("Recovered", done.removed == 1 ? "1 other device was removed." : "\(done.removed) other devices were removed.")
+    } catch {
+      UserDefaults.standard.removeObject(forKey: Self.kitMark)
       signing = false
       self.error = accountError(error)
     }

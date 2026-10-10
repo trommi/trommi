@@ -10,6 +10,9 @@ Known not to work in this build:
 - New in this build: the Emergency Kit shows your account ID, as text and as a QR code; Log in and New password take "Email or account ID"; Log Out ends the session at the hub too. Please look at the Emergency Kit page after creating an account: the ID and the QR code should be there.
 - An account ID is for an account without an email, and such accounts are made with a passkey, which is switched off. So an account ID will not log you in yet: with a password the app asks for your email.
 - Chat, cards, notes, the Scribble Board and pairing a device are wired to the core and pass their tests on Linux, but have never met a real hub.
-- Content from before a device joined by link is not shown yet.
+- New in this build: a device that joins by scanning a code now also shows what was written before it joined. It can take a moment after joining, and the board fills a second time while it reads back.
+- New in this build: Settings, Account, "New Recovery Code…" (asks for your password, then shows a new Emergency Kit; the old kit stops working). Removing a device under Devices offers it too. Use it after a device was lost.
+- New in this build: "New password" has a link "All my devices are lost". It asks once more, then removes every other device from your account, sets the new password and shows a new Emergency Kit. Only try it on a test account: it really removes the other devices.
+- All three have passed tests on Linux and have never met the real hub.
 - Notifications show the fixed text only ("A new question."), never a title.
-- Passkeys are switched off. Lost-device recovery and replacing the recovery code have no screen yet.
+- Passkeys are switched off. So "All my devices are lost" does not work for an account without an email yet.

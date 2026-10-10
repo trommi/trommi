@@ -13,7 +13,7 @@
 //                generateRecoveryCode, formatRecoveryCode, parseRecoveryCode, sealCode, openCode,
 //                encryptFile, decryptFile, createShareLink, generatePushKey, isFinalRefusal (the core's table, held
 //                by a test), canonicalHub (`hub_address`), parseInviteLink (`invite_link_parse`), checkEmoji,
-//                boardReduce, recoverySigner, joinWithRecoveryCode (LiveRecovery.swift)
+//                boardReduce, recoverySigner, joinRoomWithRecoveryCode, joinSessionsWithRecoveryCode, recoverWithCode (LiveRecovery.swift)
 //   CoreDevice   id, room, cursor, isOwner, groups, holdsKey, keyPackagesToUpload, keyPackage, foundRoom,
 //                foundSession, addToSession, removeAgents, removeHumanDevices, cleanSession, update, archive,
 //                joinWelcome, processLogEntry, logFinding, sendHandover, sendStrokePiece, receiveRelay,

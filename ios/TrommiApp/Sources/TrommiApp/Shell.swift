@@ -290,7 +290,8 @@ struct MenuPill: View {
           .overlay(alignment: .topLeading) { if (v?.fresh.count ?? 0) > 0 { Circle().fill(Ink.yellow).frame(width: 7, height: 7).offset(x: 3, y: 1) } }
         Text(v?.deskName ?? "Desk").font(Face.display(17, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.muted)
-        if !model.live { Circle().fill(Ink.lead).frame(width: 7, height: 7).accessibilityLabel("Not connected") }
+        // (a dot: no live connection to the hub. The demo has no hub, so it never shows one)
+        if !model.live && !model.demo { Circle().fill(Ink.lead).frame(width: 7, height: 7).accessibilityLabel("Not connected") }
       }
       // a Liquid Glass pill, as the other chrome pills (the agents and Blitz at the top right)
       .padding(.horizontal, 14).frame(height: 44)

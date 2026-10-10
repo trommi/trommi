@@ -124,6 +124,8 @@ final class FakeDevice: CoreDevice {
       return .message(.workTrail(from: from, turn: [1, 2], number: (m["number"] as? NSNumber)?.uint32Value ?? 1, time: 5, step: j(["text": m["text"] as? String ?? "", "tool": "Bash"])))
     }
   }
+  /** Nothing to learn: this fake holds every group from its founding. */
+  func learnHistory(group: GroupId, founding: Bytes, commits: [PastCommit]) throws -> UInt64 { 0 }
   func logFinding(_ error: Error) -> LogFinding {
     switch (error as? TrommiError)?.code { case "storage": return .local; case "wrong-epoch": return .duplicate; case "group-behind": return .early; default: return .badGroup }
   }
@@ -276,7 +278,10 @@ final class FakeTools: CoreTools {
   func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts { ShareLinkParts(link: app + "/a/x", shareId: systemRandom(16), secretHash: [3]) }
   func generatePushKey() throws -> Bytes { systemRandom(32) }
   func recoverySigner(code: Bytes) throws -> CoreSigner { throw TrommiError("not-built") }
-  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (missingLink: Bytes?, notJoined: [(group: GroupId, code: String)]) { throw TrommiError("not-built") }
+  func joinRoomWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> Bytes? { throw TrommiError("not-built") }
+  func joinSessionsWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (notJoined: [(group: GroupId, code: String)], again: Bool) { throw TrommiError("not-built") }
+  func recoverWithCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64, confirm: @escaping ([DeviceId]) async -> Bool,
+                       account: @escaping (Bytes) async throws -> Bytes) async throws -> (removed: [DeviceId], missingLink: Bytes?) { throw TrommiError("not-built") }
 }
 
 /** The hub's routes, answered in the process: one room, a change counter, what was posted in order. */
