@@ -15,7 +15,7 @@ if (!APP_CSP.includes("script-src 'self' 'wasm-unsafe-eval'")) throw new Error("
 export const CSP_WITHOUT_WASM = APP_CSP.replace(" 'wasm-unsafe-eval'", '')
 
 const TYPES = { '.mjs': 'text/javascript', '.js': 'text/javascript', '.json': 'application/json', '.wasm': 'application/wasm' }
-const SERVED = /^\/(core\/wasm\/pkg|tests\/bindings|tests\/web\/browsers\/pages)\//
+const SERVED = /^\/(core\/wasm\/pkg|tests\/bindings|tests\/web\/browsers\/pages|spec\/vectors)\//
 const WORKERS = new Set(['/tests/bindings/web/worker.mjs', '/tests/web/browsers/pages/probe-worker.mjs'])
 const PAGES = { '/': '/tests/bindings/web/page.mjs', '/probe': '/tests/web/browsers/pages/probe-page.mjs' }
 

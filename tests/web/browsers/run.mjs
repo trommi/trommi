@@ -7,6 +7,7 @@
 //     remote     remote.mjs: a deployed app loaded and its self-test page read, nothing written
 //                (--app <URL>, default https://app.trommi.com)
 //     app        app.mjs: the built app against a local hub's binary (TROMMI_HUB_BIN)
+//     --no-sw    the app's service worker blocked in every profile (to tell its effects apart; not the real mode)
 //     all        (default) engine, bindings, private, and app when TROMMI_HUB_BIN is set; not remote
 // Exit 0: every step passed · 1: a step failed · 2: it could not start (the message says what is missing).
 // Needs Playwright in a folder of its own (pw.mjs says how; TROMMI_PLAYWRIGHT, PLAYWRIGHT_BROWSERS_PATH) and the
@@ -20,6 +21,7 @@ const args = process.argv.slice(2)
 const arg = name => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1] ?? null }
 const engine = arg('--browser')
 const flags = new Set(['--browser', '--app'])
+if (args.includes('--no-sw')) process.env.TROMMI_BROWSERS_NO_SW = '1'
 const mode = args.find((a, i) => !a.startsWith('--') && !flags.has(args[i - 1])) ?? 'all'
 const MODES = { engine: './engine.mjs', bindings: './bindings.mjs', private: './private.mjs', remote: './remote.mjs', app: './app.mjs' }
 if (!ENGINES.includes(engine) || (mode !== 'all' && !MODES[mode])) {
@@ -28,11 +30,11 @@ if (!ENGINES.includes(engine) || (mode !== 'all' && !MODES[mode])) {
 }
 // (tests/web/e2e/harness.mjs, whose step list and app server are used, writes under its own folder: ours)
 process.env.TROMMI_E2E_TMP ??= path.join(TMP, 'e2e')
-process.env.TROMMI_E2E_SHOTS ??= path.join(OUT, engine)
+process.env.TROMMI_E2E_SHOTS ??= path.join(OUT, engine + (args.includes('--no-sw') ? '-no-sw' : ''))
 const { run } = await import('../e2e/harness.mjs')
 const { serveEngine, REPO } = await import('./serve.mjs')
 
-const out = path.join(OUT, engine)
+const out = path.join(OUT, engine + (process.env.TROMMI_BROWSERS_NO_SW === '1' ? '-no-sw' : ''))
 fs.mkdirSync(out, { recursive: true })
 let failed = 0, could = true
 try {
