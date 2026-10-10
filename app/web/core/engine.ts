@@ -109,8 +109,10 @@ export interface EngineTiming {
   halted_retry: number
   /** How long `land` waits for the hub to take, and hand back, what it built. */
   land: number
+  /** How long a page that is being taken goes on without a `batch`: what it took so far is reported at least so often. */
+  progress: number
 }
-const TIMING: EngineTiming = { backoff_first: 300, backoff_max: 30_000, blocked_retry: 30_000, heal_delay: 3000, upkeep_every: 600_000, halted_retry: 15_000, land: 60_000 }
+const TIMING: EngineTiming = { backoff_first: 300, backoff_max: 30_000, blocked_retry: 30_000, heal_delay: 3000, upkeep_every: 600_000, halted_retry: 15_000, land: 60_000, progress: 500 }
 
 export interface EngineOptions {
   core: Core
@@ -488,12 +490,16 @@ export class Engine {
 
   /** Takes items in the hub's order, inside a job. `upTo`: the hub's cursor after them. */
   private async ingest(items: readonly ChangeItem[], upTo: number): Promise<void> {
-    let changed = false
+    let changed = false, told = this.now()
     try {
       for (const item of items) {
         if (item.change <= this.position) continue
         if (await this.take(item)) changed = true
         this.position = this.cursor = item.change
+        // Every item is one durable write of the device's store, and a page holds hundreds: on a slow disk a page
+        // takes many seconds. What is taken so far is reported while it goes on, so the position on screen moves
+        // and a slow catch-up cannot be mistaken for one that stands.
+        if (this.now() - told >= this.timing.progress) { told = this.now(); this.emit('batch', null) }
       }
       this.position = Math.max(this.position, upTo)
     } finally {

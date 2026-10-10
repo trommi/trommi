@@ -145,7 +145,8 @@ change = { cards, sessions, permissions, notes, published, timelines, registers,
            members, alerts, outbox, stack, room: boolean }
 ```
 
-One `change` per batch (a catch-up page, one live event, one action's echo). Every field is always present. Other
+One `change` per batch (a catch-up page, or what was taken of a long one every half second; one live event; one
+action's echo). Every field is always present. Other
 events: `'alert'` (each new `model.alerts` entry), `'device-closed'` (the device closed itself; `tabs.ts` takes
 over). The worker adds `'error'` and, through `tabs.ts`, `'reset'` (the model object was replaced: take all of it
 again).
