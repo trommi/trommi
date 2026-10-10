@@ -15,7 +15,7 @@
 #
 # Secrets: the environment `ios` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; APPLE_ASC_KEY,
 # APPLE_ASC_KEY_ID, APPLE_ASC_ISSUER_ID and APPLE_TEAM_ID come from the 1Password Environment. Optional repository
-# variables: IOS_NON_EXEMPT_ENCRYPTION (YES or NO, default NO: standard algorithms only and not distributed in France,
+# variables: IOS_NON_EXEMPT_ENCRYPTION (YES or NO, default NO: standard algorithms only,
 # so exempt; app/ios/README.md "Export compliance"), IOS_EXPORT_COMPLIANCE_CODE (only with YES: the code of the app's
 # export compliance documentation, written into Info.plist as ITSEncryptionExportComplianceCode; left empty, the code
 # of the APPROVED documentation is read from App Store Connect), IOS_TESTFLIGHT_TESTER (an address kept in the group).

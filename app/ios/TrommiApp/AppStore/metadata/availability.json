@@ -1,6 +1,6 @@
 {
-  "_comment": "Pricing and availability, set by store.py upload only when the app has none yet. Free. Every territory but France: the app declares ITSAppUsesNonExemptEncryption NO (standard algorithms only), which holds only without distribution in France (app/ios/README.md 'Export compliance').",
+  "_comment": "Pricing and availability, set by store.py upload only when the app has none yet. Free, every territory (France included): the app declares ITSAppUsesNonExemptEncryption NO, so App Store Connect asks for no export compliance documents, the French declaration included (app/ios/README.md 'Export compliance').",
   "free": true,
   "available_in_new_territories": true,
-  "exclude_territories": ["FRA"]
+  "exclude_territories": []
 }

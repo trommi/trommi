@@ -231,10 +231,11 @@ distribution signing refuses App Manager keys: the key needs the Admin role.
 ## Export compliance
 
 The app uses standard algorithms only (MLS, HPKE, X25519, Ed25519, ChaCha20-Poly1305, AES-GCM, Argon2id in the Rust
-core) and is not distributed in France, so it is exempt: `ITSAppUsesNonExemptEncryption` is `NO` in
+core), so it is exempt: `ITSAppUsesNonExemptEncryption` is `NO` in
 `TrommiApp/Info.plist`, CI and the ship script write the same, and no export compliance code is written or looked up
-(`IOS_NON_EXEMPT_ENCRYPTION=YES` with `asc.py export-code` stays for a later change). If France is added later, the
-French encryption declaration is needed.
+(`IOS_NON_EXEMPT_ENCRYPTION=YES` with `asc.py export-code` stays for a later change). The app is offered in every
+territory, France included: with `NO`, App Store Connect asks for no documents, the French declaration (ANSSI) included;
+that declaration only comes up if the answer ever becomes `YES` with standard algorithms.
 
 ## App Store release
 
@@ -251,7 +252,7 @@ and `screenshots/en-US/ipad-13` (2064x2752), rendered from the demo by `shots.sh
 
 The key comes from `~/.config/trommi/ios.env` (as `ship-local.sh`) or, under `op run --environment <id>`, from
 `APPLE_ASC_KEY*` of the 1Password Environment. CI: Actions → release_ios → Run workflow, step check / upload / submit /
-release / status (environment `ios`). `upload` sets price (free) and territories (all but France, see "Export
+release / status (environment `ios`). `upload` sets price (free) and territories (all, see "Export
 compliance") only when the app has none; it replaces a screenshot set only when its files changed.
 
 Once by hand in App Store Connect, the API has no route for it: App Privacy, from `metadata/app_privacy.json` (Email

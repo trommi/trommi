@@ -64,7 +64,7 @@ printf '%s' "$build" | grep -Eq '^[1-9][0-9]*$' || { echo "::error::no build num
 short=$(printf '%s' "$COMMIT" | cut -c1-7)
 echo "building $BUNDLE_ID $version ($build) from $short"
 
-# NO (the default): the app uses standard algorithms only and is not distributed in France, so it is exempt; no
+# NO (the default): the app uses standard algorithms only, so it is exempt (France included); no
 # export compliance code is written and none is looked up. YES: the code is written (the variable, or App Store
 # Connect's approved documentation).
 its=NO
