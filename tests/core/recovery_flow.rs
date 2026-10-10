@@ -1489,7 +1489,7 @@ fn what_a_thief_of_recovery_mac_can_and_cannot_do() {
     assert_eq!(checked.anchor.epoch, w.hub.epoch(&w.room).unwrap());
 }
 
-// ---- what the second review found ----
+// ---- rows and states a hub makes up ----
 
 #[test]
 fn a_row_for_an_epoch_a_group_has_not_reached_poisons_no_key() {
