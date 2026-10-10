@@ -14,7 +14,7 @@ test('the readers of the fake hub read the real structs as the core made them', 
   const opened = await d.inviteOpen('human', null, 'https://app.example', a.hub.hub_url, Date.now())
   const offer = hubReaders.offer(opened.offer)
   assert.deepEqual(offer, { room_id: b64(a.room_id), invite_id: b64(opened.inviteId), expires_at: opened.expiresAt })
-  await a.hub.postInvite(opened.offer, opened.signature)
+  await a.hub.postInvite(opened.offer, opened.signature, opened.mac)
   const joining = R.joinRoom({ link: opened.link, storage: storage('reader'), poll_ms: 20 })
   joining.client.catch(() => {})
   const request = await until(async () => (await a.hub.getInvite(opened.inviteId)).requests?.[0], 'the Request at the hub')
