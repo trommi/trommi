@@ -961,3 +961,54 @@ fn a_helper_session_that_lacks_its_opener_is_stale_until_it_is_added() {
         Err(Error::BadCommit)
     );
 }
+
+#[test]
+fn a_leaf_is_removed_and_its_key_added_again_in_a_session_group_only() {
+    let history = history();
+    // 3.7: into a session group a human device is let in again by one Commit of a human device.
+    let main = session(SessionId::ZERO, MAIN);
+    let leaves = before(main, &[H1, H2, AGENT], 2);
+    let again = adding(removing(facts(main.group_id(), 4, H1, 2), &[H2]), &[H2]);
+    assert_eq!(
+        session_verdict(&history, &SESSIONS, &leaves, &again),
+        Ok(())
+    );
+    // Also in a helper session that waits without an opener, where no other allowed leaf is removed.
+    let helper = session(MAIN, HELPER);
+    let waiting = Sessions {
+        seat: Parent::Seat(None),
+        elsewhere: None,
+        helpers: 1,
+    };
+    let leaves = before(helper, &[H1, H2, SUB], 2);
+    let group = helper.group_id();
+    let again = adding(removing(facts(group, 4, H1, 2), &[H2]), &[H2]);
+    assert_eq!(session_verdict(&history, &waiting, &leaves, &again), Ok(()));
+    assert_eq!(
+        session_verdict(
+            &history,
+            &waiting,
+            &leaves,
+            &removing(facts(group, 4, H1, 2), &[H2])
+        ),
+        Err(Error::BadCommit)
+    );
+    // The opener lets no human device in again: it removes no human leaf (5.2.4).
+    let leaves = before(helper, &[H1, H2, AGENT, SUB], 2);
+    let by_opener = adding(removing(facts(group, 4, AGENT, 2), &[H2]), &[H2]);
+    assert_eq!(
+        session_verdict(&history, &SESSIONS, &leaves, &by_opener),
+        Err(Error::BadCommit)
+    );
+    // Into the room group there is no second try: a Commit that removes a leaf and adds its key is
+    // refused, as is the Add of a key that an earlier Commit removed (4.2).
+    let room = GroupId::room(ROOM);
+    let again = adding(removing(facts(room, 2, H1, 2), &[H2]), &[H2]);
+    assert_eq!(room_verdict(&history, &again), Err(Error::BadCommit));
+    let mut later = history.clone();
+    later
+        .record(state(3, &[H1], &[AGENT, OTHER_AGENT]))
+        .unwrap();
+    let returning = adding(facts(room, 3, H1, 3), &[H2]);
+    assert_eq!(room_verdict(&later, &returning), Err(Error::BadCommit));
+}

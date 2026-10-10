@@ -193,3 +193,7 @@ path = "core/groups_hardening_content.rs"
 [[test]]
 name = "core_device_history"
 path = "core/device_history.rs"
+
+[[test]]
+name = "core_device_readmit"
+path = "core/device_readmit.rs"

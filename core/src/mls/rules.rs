@@ -448,8 +448,13 @@ pub fn check_room_commit(verifier: &Verifier<'_>, judged: &Judged<'_>) -> Result
     }
     refuse(facts.adds.len() > 1, Error::BadCommit)?;
     for added in &facts.adds {
-        // 4.2: a revoked key never returns, and no key is both a human and an agent device.
-        refuse(revoked(added) || !humans.insert(*added), Error::BadCommit)?;
+        // 4.2: a revoked key never returns, and no key is both a human and an agent device. 3.7: nor does
+        // the key of a leaf that this same Commit removes; into the room group there is no second try.
+        let removed_here = facts.removes.contains(added);
+        refuse(
+            revoked(added) || removed_here || !humans.insert(*added),
+            Error::BadCommit,
+        )?;
     }
 
     let room = match &facts.context {
@@ -749,8 +754,10 @@ pub fn check_session_commit(
             // 5.2.4: the opener removes no human device.
             refuse(human, Error::BadCommit)?;
         } else if helper && parent == Parent::Seat(None) && !facts.external {
-            // 5.2.3: while the main session has no agent leaf, only leaves the room no longer allows go.
-            refuse(allowed.allows(gone), Error::BadCommit)?;
+            // 5.2.3: while the main session has no agent leaf, only leaves the room no longer allows go;
+            // and the leaf of a human device that the same Commit adds again (3.7).
+            let again = human && facts.adds.contains(gone);
+            refuse(allowed.allows(gone) && !again, Error::BadCommit)?;
         }
         // 5.2.3: the opener is a leaf for as long as it is the main session's agent leaf.
         let opener = parent == Parent::Seat(Some(*gone)) && room.is_agent(gone);
