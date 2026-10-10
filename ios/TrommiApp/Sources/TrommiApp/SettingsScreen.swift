@@ -456,7 +456,7 @@ struct AccountPage: View {
           VStack(alignment: .leading, spacing: 8) {
             SecureField("Current Password", text: $current).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
             HStack {
-              SecureField("New Password (at least 12 characters)", text: $next).textContentType(.newPassword).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
+              SecureField("New Password (at least 12 characters)", text: $next).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
               Button { next = generatePassword() } label: { Image(systemName: "dice") }.accessibilityLabel("Suggest a Password")
             }
             if !next.isEmpty && next.count >= 12 { Text(next).font(Face.mono(13)).foregroundStyle(Ink.muted).textSelection(.enabled) }
