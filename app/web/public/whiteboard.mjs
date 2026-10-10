@@ -849,9 +849,16 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     // An item of this board could not be read here: what this device holds is not all of it, so it writes no snapshot.
     if (st.unread) return
     if (Date.now() - lastOp < SNAP_IDLE_MS || flushing || queue.length || lives.size || client.model?.outbox?.length || connection() !== 'online') return snapSoon()
-    // (one snapshot at a time, from its declaration to its bound post: a later one never overtakes an earlier one)
+    // (one snapshot at a time, from its declaration to its bound post: a later one never overtakes an earlier one;
+    //  across the tabs of this device too, by a lock of the browser, taken before the board is captured)
     if (snapping) return snapSoon()
     snapping = true
+    const locks = globalThis.navigator?.locks
+    if (!locks) return snapshotNow()
+    locks.request(`trommi-board-snapshot/${client.model?.room?.room_id ?? ''}/${timeline_id}`, { ifAvailable: true }, lock => lock ? snapshotNow() : (snapping = false, snapSoon()))
+      .catch(e => { snapping = false; console.warn('canvas snapshot lock', e) })
+  }
+  async function snapshotNow() {
     try {
       const snap = st.snapshot(), applied = st.applied
       // (10.9: the hub hears first what the snapshot will cover, so that it holds pruning back for it; not heard: no snapshot)

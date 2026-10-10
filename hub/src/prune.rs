@@ -365,13 +365,13 @@ fn fold_declarations(
     device: &[u8; 32],
     now: u64,
 ) -> Res<()> {
-    let rows: Vec<(Vec<u8>, Vec<u8>)> = {
+    let rows: Vec<(Vec<u8>, Vec<u8>, i64)> = {
         let mut s = c.prepare_cached(
-            "SELECT frontier, files FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0",
+            "SELECT frontier, files, waiting FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0",
         )?;
         let rows = s
             .query_map(params![&room[..], &board[..], &device[..]], |r| {
-                Ok((r.get(0)?, r.get(1)?))
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
@@ -379,7 +379,8 @@ fn fold_declarations(
     let mut folded: Option<Frontier> = None;
     let mut files: Vec<u8> = Vec::new();
     let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
-    for (frontier, kept) in &rows {
+    let waiting: i64 = rows.iter().map(|r| r.2).sum();
+    for (frontier, kept, _) in &rows {
         let f = decode_frontier(frontier);
         folded = Some(match folded {
             None => f,
@@ -400,9 +401,9 @@ fn fold_declarations(
     .execute(params![&room[..], &board[..], &device[..]])?;
     if let Some(folded) = folded {
         c.prepare_cached(
-            "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1)",
+            "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts, waiting) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1, ?7)",
         )?
-        .execute(params![&room[..], &board[..], &device[..], encode_frontier(&folded), files, now as i64])?;
+        .execute(params![&room[..], &board[..], &device[..], encode_frontier(&folded), files, now as i64, waiting])?;
     }
     Ok(())
 }
@@ -412,7 +413,8 @@ fn fold_declarations(
 /// - `{ frontier, files }` before the register is written: a declaration, one row per declared frontier (at most
 ///   `MAX_DECLARED` open ones per device and board; more fold them into one). It only holds pruning back, so that a snapshot that becomes
 ///   current before its device binds it is covered from the start; its own bound post answers it, the 30 days of
-///   10.9 end it otherwise.
+///   10.9 end it otherwise. The same frontier declared twice (two snapshots of the same state, two tabs) waits
+///   for two bound posts (`waiting`).
 /// - `{ frontier, files, snapshot: [seq, hash] }` once the hub took the register value: bound to that envelope
 ///   (the device's own, a register value, its newest of that register, not cut), it replaces the device's bound
 ///   post; a bound post of an older value is `replay`. Its time is the value's arrival, never the post's.
@@ -458,7 +460,7 @@ pub fn post_frontier(
         }
         c.prepare_cached(
             "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1)
-             ON CONFLICT (room_id, board, device, bound, frontier) DO UPDATE SET files = excluded.files, at = excluded.at, counts = 1",
+             ON CONFLICT (room_id, board, device, bound, frontier) DO UPDATE SET files = excluded.files, at = excluded.at, counts = 1, waiting = min(waiting + 1, 1000)",
         )?
         .execute(params![&room[..], &board[..], &auth.device[..], &encoded, files, now as i64])?;
     } else {
@@ -523,9 +525,14 @@ pub fn post_frontier(
             "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, 1)",
         )?
         .execute(params![&room[..], &board[..], &auth.device[..], &encoded, files, arrived, seq as i64, &register_id])?;
-        // the declaration of this very snapshot is answered; others (a snapshot still on its way) hold back on
+        // the declaration of this very snapshot is answered; others (a snapshot still on its way, also one of the
+        // same frontier from another tab of this device) hold back on
         c.prepare_cached(
-            "DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0 AND frontier = ?4",
+            "UPDATE board_frontiers SET waiting = waiting - 1 WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0 AND frontier = ?4",
+        )?
+        .execute(params![&room[..], &board[..], &auth.device[..], &encoded])?;
+        c.prepare_cached(
+            "DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0 AND frontier = ?4 AND waiting <= 0",
         )?
         .execute(params![&room[..], &board[..], &auth.device[..], &encoded])?;
     }

@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS board_frontiers (
   snapshot_seq   INTEGER,
   register_id    BLOB,
   counts         INTEGER NOT NULL DEFAULT 1 CHECK (counts IN (0, 1)),
+  -- of a declaration: how many snapshots declared with this frontier wait for their bound post
+  waiting        INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (room_id, board, device, bound, frontier)
 ) STRICT, WITHOUT ROWID;
 ";
@@ -743,11 +745,22 @@ impl Db {
                 )?;
                 writer.execute_batch(BOARD_FRONTIERS)?;
                 writer.execute_batch(
-                    "INSERT INTO board_frontiers SELECT room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts FROM board_frontiers_second;
+                    "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts)
+                       SELECT room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts FROM board_frontiers_second;
                      DROP TABLE board_frontiers_second;",
                 )?;
             } else {
                 writer.execute_batch(BOARD_FRONTIERS)?;
+            }
+            let has_waiting: i64 = writer.query_row(
+                "SELECT count(*) FROM pragma_table_info('board_frontiers') WHERE name = 'waiting'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_waiting == 0 {
+                writer.execute_batch(
+                    "ALTER TABLE board_frontiers ADD COLUMN waiting INTEGER NOT NULL DEFAULT 1;",
+                )?;
             }
             let has_epoch: i64 = writer.query_row(
                 "SELECT count(*) FROM pragma_table_info('welcomes') WHERE name = 'epoch'",

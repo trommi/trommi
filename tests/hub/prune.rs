@@ -450,6 +450,40 @@ fn a_declaration_holds_back_until_its_own_snapshot_is_bound() {
     assert!(!has_body(&all, &heads[0].1) && has_body(&all, &heads[1].1));
 }
 
+/// 10.9: two tabs of one device declare snapshots of the same state; one is written and bound, then a later
+/// one: the other's declaration still waits for its bound post and holds back what it does not cover.
+#[test]
+fn the_same_frontier_declared_twice_waits_for_two_bound_posts() {
+    let mut w = World::new();
+    let room = w.room;
+    let hub = &w.hub;
+    let board: [u8; 16] = random();
+    let path = board_path(&board);
+    let ada = w.ada.id();
+    let reg: [u8; 16] = random();
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a1 = w.ada.chain(&room);
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a2 = w.ada.chain(&room);
+
+    // tab A declares S1 (covers a1), its upload stalls; tab B declares, writes and binds S2 of the same state
+    w.ada
+        .post(hub, &path, &frontier_post(&[(&ada, a1)], &[]))
+        .ok();
+    write_snapshot(hub, &mut w.ada, &room, &board, &reg, &[(&ada, a1)], &[]);
+    // tab B writes S3 (covers a2): a2 stays, S1 may still come and needs it
+    let r = write_snapshot(hub, &mut w.ada, &room, &board, &reg, &[(&ada, a2)], &[]);
+    assert_eq!(r["pruned"], 0);
+    assert!(has_body(&bodies(hub, &w.ada), &a2.1));
+    // S1 comes and is bound: its declaration is answered, and S1 still finds a2
+    w.ada.send(hub, &room, &register(&reg, "S1")).ok();
+    let s1 = w.ada.chain(&room);
+    w.ada
+        .post(hub, &path, &frontier_body(&[(&ada, a1)], &[], Some(s1)))
+        .ok();
+    assert!(has_body(&bodies(hub, &w.ada), &a2.1));
+}
+
 /// 10.9: a bound post names the device's own newest snapshot value; an older one is `replay`; posting the same
 /// value again changes nothing.
 #[test]
