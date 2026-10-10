@@ -314,8 +314,14 @@ struct DevicesPage: View {
     .sheet(isPresented: $inviteDevice) { InviteDeviceSheet() }
     .confirmationDialog("Remove \(removing?.deviceName.isEmpty == false ? removing!.deviceName : "This Device")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
       Button("Remove", role: .destructive) { if let d = removing { model.removeDevice(d.deviceId, name: d.deviceName) } }
+      // (spec/v2.md 8.6: a device that is not in his hands any more may have learned the recovery code; Account makes a new one)
+      if removing?.deviceRole == "human" {
+        Button("Remove and Make New Recovery Code…", role: .destructive) {
+          if let d = removing { model.removeDevice(d.deviceId, name: d.deviceName); model.path.append(.settings("account")) }
+        }
+      }
     } message: {
-      Text(removing?.deviceRole == "human" ? "It can open nothing new after this. Everyone else gets a new key; that takes a moment." : "It can read nothing new after this. The others get a new key; the session’s history stays.")
+      Text(removing?.deviceRole == "human" ? "It can open nothing new after this. Everyone else gets a new key; that takes a moment. If it is lost or no longer yours, also make a new recovery code." : "It can read nothing new after this. The others get a new key; the session’s history stays.")
     }
     .alert("Rename This Device", isPresented: $renaming) {
       TextField("Name", text: $newName)
@@ -374,6 +380,8 @@ struct AccountPage: View {
   @State private var error = ""
   @State private var passkeyAsk = false
   @State private var passkeyPassword = ""
+  @State private var codeAsk = false
+  @State private var codePassword = ""
   var body: some View {
     SettingsPage(title: "Account") {
       if !said.isEmpty { Text(said).font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
@@ -433,6 +441,21 @@ struct AccountPage: View {
               .buttonStyle(QuietWay()).disabled(passwordProblem(next) != nil || current.isEmpty)
           }.padding(16)
         }
+        if st.hasPassword {
+          // (spec/v2.md 8.6: the room gets a new recovery code; the new kit shows in the Emergency Kit group above)
+          SettingsGroup(footer: "For after you removed a device that is lost or no longer yours. You get a new Emergency Kit; the old kit stops working, and passkeys have to be added again.") {
+            Button { codeAsk = true } label: { SettingsRow(title: "New Recovery Code…") { Sketch("key") } }.buttonStyle(.plain)
+          }
+          .alert("New Recovery Code", isPresented: $codeAsk) {
+            SecureField("Your Password", text: $codePassword)
+            Button("Make New Code") {
+              let p = codePassword
+              codePassword = ""
+              run { let r = try await model.room?.replaceRecoveryCode(way: .password(p)); kit = r?.words; said = "New recovery code made. Save your new Emergency Kit."; await load() }
+            }
+            Button("Cancel", role: .cancel) { codePassword = "" }
+          } message: { Text("Your password opens the account. Then save or print the new Emergency Kit.") }
+        }
         if Passkeys.available && st.hasPassword {
           SettingsGroup {
             Button { passkeyAsk = true } label: { SettingsRow(title: "Add Passkey") { Sketch("key") } }.buttonStyle(.plain)
@@ -483,7 +506,8 @@ struct AccountPage: View {
         // (a wait the hub names is said as it is)
         if code == "rate-limited", let wait = retryWait(of: error) { self.error = "Too many tries. Please wait \(waitText(seconds: wait))."; return }
         self.error = ["wrong-login": "That password is not right.", "weak-password": "The password needs at least 12 characters.", "wrong-code": "Wrong or expired code.",
-                      "account-changed": "Changed on another device meanwhile. Please try again.", "rate-limited": "Too many tries. Please wait a few minutes."][code] ?? model.describe(error)
+                      "account-changed": "Changed on another device meanwhile. Please try again.",
+                      "pending": "Trommi has not answered yet. Check again later; if no new kit shows then, make a new Emergency Kit.", "rate-limited": "Too many tries. Please wait a few minutes."][code] ?? model.describe(error)
       }
     }
   }
