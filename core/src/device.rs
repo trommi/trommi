@@ -2985,7 +2985,31 @@ impl<S: Storage> Device<S> {
             }
         }
         let cuts = facts.note.map(|note| note.cuts).unwrap_or_default();
+        // 9.0.10: where the log shows it, a Commit of this device that adds a key again is held to what this
+        // device holds of that key by then, like any other member's.
+        if place.is_some() {
+            self.nothing_beyond(id, &cuts, &facts.adds)?;
+        }
         Ok((after, cuts))
+    }
+
+    /// `bad-commit` when a Commit removes a leaf with one of `cuts` and adds the same key again while this
+    /// device holds an envelope of that key beyond the Cut (9.0.10).
+    fn nothing_beyond(
+        &self,
+        group: &GroupId,
+        cuts: &[Cut],
+        adds: &[DeviceId],
+    ) -> Result<(), Error> {
+        let chains = self.chains(group)?;
+        for cut in cuts.iter().filter(|cut| adds.contains(&cut.device)) {
+            let named = crate::chain::Head {
+                seq: cut.seq,
+                hash: cut.hash,
+            };
+            crate::chain::check_added_again(&chains.head(&cut.device), &named)?;
+        }
+        Ok(())
     }
 
     /// Builds one Commit in `group` and leaves it pending in OpenMLS. `cuts` name the leaves it removes;
@@ -4643,18 +4667,7 @@ impl<S: Storage> Device<S> {
         // 9.0.10: a key is added again only if nothing of it is held beyond its Cut. What this device holds it
         // was served by the hub, which decides this for everyone and should have refused the Commit.
         if let Some(note) = facts.note.as_ref() {
-            let chains = self.chains(id)?;
-            for cut in note
-                .cuts
-                .iter()
-                .filter(|cut| facts.adds.contains(&cut.device))
-            {
-                let named = crate::chain::Head {
-                    seq: cut.seq,
-                    hash: cut.hash,
-                };
-                crate::chain::check_added_again(&chains.head(&cut.device), &named)?;
-            }
+            self.nothing_beyond(id, &note.cuts, &facts.adds)?;
         }
         let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
             return Err(Error::BadGroup);

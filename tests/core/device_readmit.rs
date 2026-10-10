@@ -234,3 +234,43 @@ fn what_a_device_signed_before_it_was_let_in_again_is_refused_by_everyone() {
     assert_eq!(c.chain_cut(&main, &c.id()).unwrap(), Some(cut));
     assert_eq!(write(&mut hub, &mut c, &chat(&main, "on")).seq, 4);
 }
+
+#[test]
+fn a_device_does_not_merge_its_own_commit_that_adds_a_key_again_of_which_it_holds_more() {
+    let mut c = new_device();
+    let (mut hub, _, main, mut a, mut agent) = room_with(&mut c);
+    sync_all(&hub, &mut c);
+    write(&mut hub, &mut c, &chat(&main, "one"));
+    for device in [&mut a, &mut agent] {
+        sync_all(&hub, device);
+    }
+    let epoch = a.group(&main).unwrap().epoch;
+
+    // The Commit names the Cut at number 1 and waits. A hub hands the members number 2 of that device
+    // before the Commit reaches the log, and denies holding it when the Commit is posted.
+    let package = c.key_package(now()).unwrap();
+    a.readmit_human(&main, &c.id(), &package, now()).unwrap();
+    let entry = a.outbox().remove(0);
+    let two = c.seal(&chat(&main, "two"), None, &[], now()).unwrap();
+    let bytes = c.outbox().remove(0).parts.remove(0);
+    for device in [&mut a, &mut agent] {
+        let read = device
+            .receive_envelope(&bytes, device.cursor(), true, None, now())
+            .unwrap();
+        assert_eq!(read.envelope_hash, two.envelope_hash);
+        assert_eq!(
+            device.chain_head(&main, &read.header.sender).unwrap().seq,
+            2
+        );
+    }
+    let answer = hub.post(&a.id(), &entry).unwrap();
+    a.outbox_accepted(entry.id, answer).unwrap();
+    // Neither the device that made the Commit nor another member merges it.
+    let item = hub.log_after(a.cursor()).remove(0);
+    assert_eq!(process(&mut a, &item).err(), Some(Error::BadCommit));
+    assert_eq!(process(&mut agent, &item).err(), Some(Error::BadCommit));
+    for device in [&a, &agent] {
+        assert_eq!(device.group(&main).unwrap().epoch, epoch);
+        assert_eq!(device.chain_head(&main, &c.id()).unwrap().seq, 2);
+    }
+}

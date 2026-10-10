@@ -126,7 +126,9 @@ assumptions have to take in.
   and seals on: its next envelope is the one after its Cut. Whatever it signed for an epoch before that one
   stays `removed-sender` on every device and at the hub. `chain::GroupFacts` gains the provided method
   `leaf_again_at` (a hub implements it: the epoch that added the key again), `chain::check_added_again` is
-  the hub's check before it takes such a Commit. The stored record of a Cut changed (one more field).
+  the hub's check before it takes such a Commit. The stored record of a Cut changed (two more fields).
+  The repair of a stale session does nothing beside: a Commit in a stale group that removes another leaf
+  than the disallowed ones, or adds a human device, is `stale-session` on every side.
 - Chat to an empty seat (spec 9.2). While a session has no agent leaf (a helper session: no opener) a human
   device's Chat on `session/<S>` or `card/<X>` is taken with `recipient` zeros, where it was `forbidden`
   before; `seal` with `recipient: None` addresses it so. With a seat the recipient must be the seat. Such a
