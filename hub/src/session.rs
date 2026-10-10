@@ -121,6 +121,20 @@ impl Sessions {
     }
 
     /// As `authorise`, with the time the token runs out.
+    /// Signing out: the token is no token any more. `false`: it was none.
+    pub fn revoke(&self, bearer: Option<&str>) -> bool {
+        let token = bearer
+            .and_then(|h| h.split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+            .map(|(_, token)| token);
+        match token {
+            Some(token) if token.len() <= 200 => {
+                self.lock().tokens.remove(&key_of(token)).is_some()
+            }
+            _ => false,
+        }
+    }
+
     pub fn authorise_until(
         &self,
         c: &Connection,
