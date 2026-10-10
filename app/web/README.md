@@ -8,7 +8,7 @@ modules and CSS, one file per view; deployed as one minified bundle that loads e
 
 ## Running it
 
-From the repository root, with Node 26 (`.node-version`) and `npm ci` once:
+With Node 26 (`.node-version`) and `npm ci` once in `app/web/` (its `package.json`), from the repository root:
 
 ```bash
 node app/web/dev/serve.mjs 8900            # the app from its sources, built in memory on every request (never stale, no service worker)
@@ -38,7 +38,7 @@ Not shown anywhere in the app; all are kept for the tab only (sessionStorage).
 ## Checks
 
 ```bash
-npm test                                   # at the root: types, the layout rules below, the demo data, crypto and core tests
+(cd app/web && npm test)                   # types, the layout rules below, the demo data, crypto and core tests
 node app/web/dev/check.mjs                 # the layout rules alone
 node app/web/dev/build.mjs                 # the build, in memory: prints the cold start's size, writes nothing
 node app/web/dev/look.mjs URL 1440,900 out.png [--dark] [--js '...']   # one screenshot, console errors (needs Chromium)
@@ -89,7 +89,7 @@ page's list of tools: `connector/tools.json` and `connector/prompt.md`.
    `account()`, `scribbleWire()`).
 3. `gen/` is never edited by hand and never committed: the build makes it.
 4. A file is split only when it passes about 3000 lines.
-5. The views are `.mjs`, the core is strict TypeScript (`tsconfig.json` at the repository root). Importing a module
+5. The views are `.mjs`, the core is strict TypeScript (`app/web/tsconfig.json`). Importing a module
    does nothing; `app.mjs` boots the page.
 6. A view other than the Desk's (desk, sidebar, notes) is loaded on demand: `app.mjs` `LAZY` names the addresses each
    answers; the router loads it before the first such address, and all of them once the first page is idle. A view
@@ -121,9 +121,9 @@ inline script or style whose hash is not in `_headers`, and broken demo data.
 - `public/demo/fixture.json` and `public/demo/files/`: the demo room, checked first.
 
 `node dev/build.mjs` checks only and prints the cold start's size; `--write` writes into `public/` (never commit that:
-it rewrites `index.html`, `sw.js` and `_headers` too). In Cloudflare's build (`WORKERS_CI=1`) it runs `npm ci` at the
-repository root first, writes, and refuses another Node, esbuild, Rust or wasm-bindgen than the pinned ones
-(`.node-version`, `package-lock.json`, `rust-toolchain.toml`, `core/wasm/Cargo.toml`). `dev/serve.mjs` serves the
+it rewrites `index.html`, `sw.js` and `_headers` too). In Cloudflare's build (`WORKERS_CI=1`) it runs `npm ci` in
+`app/web/` first, writes, and refuses another Node, esbuild, Rust or wasm-bindgen than the pinned ones
+(`.node-version`, `app/web/package-lock.json`, `rust-toolchain.toml`, `core/wasm/Cargo.toml`). `dev/serve.mjs` serves the
 build from memory: by default the sources as modules of their own, with `--bundle` as deployed.
 
 **Integrity.** The bundle's `index.html` carries `integrity` (sha384) on the entry, `core-start` and every
@@ -135,7 +135,7 @@ the Rust core's scripts are inside it, and its `.wasm` is fetched with the SHA-2
 **Deploying.** Cloudflare Workers: root directory `app/web`, build command `node dev/build.mjs` (`wrangler.jsonc`),
 deploy command `npx wrangler deploy`, Node from `.node-version`. The build reads `app/web/`, `demo/data/`,
 `connector/tools.json`, `connector/prompt.md`, `core/` (through `core/wasm/pkg/`), `Cargo.toml`, `Cargo.lock`,
-`rust-toolchain.toml`, `package.json`, `package-lock.json` and `.node-version`: a change to any of them is a new build.
+`rust-toolchain.toml` and `.node-version` (`package.json` and `package-lock.json` are in `app/web/`): a change to any of them is a new build.
 
 ### Verifying the build
 
@@ -146,7 +146,7 @@ runs in), so anyone can check that a server serves exactly this source:
 
 ```bash
 curl -s https://app.trommi.com/gen/build.txt          # commit: <c>, build: <hash>
-git checkout <c> && npm ci
+git checkout <c> && (cd app/web && npm ci)
 node app/web/dev/verify.mjs                           # or --app <url>: builds here, compares the manifests file by
                                                       # file, fetches every file and checks its bytes; exit 0 = verified
 ```

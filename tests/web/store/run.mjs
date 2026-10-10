@@ -7,7 +7,7 @@
 //
 // It needs:
 // - Chromium: `chromium` on the PATH or the program CHROMIUM names (as app/web/dev/e2e.mjs finds it).
-// - esbuild: the repository's devDependency (`npm install`).
+// - esbuild: the web app's devDependency (`npm ci` in app/web).
 // - The core's WASM build: core/wasm/pkg/, or the folder TROMMI_CORE_PKG names. `core/wasm/build.sh` makes it.
 // The bundle and the browser's profile are written under TROMMI_TEST_TMP (default: `trommi-store-test` in the
 // system's temporary folder) and removed at the end.
@@ -18,10 +18,10 @@
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
-import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadEsbuild } from '../../../app/web/dev/build.mjs'
 import { launchChromium } from '../../../app/web/dev/cdp.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -36,7 +36,7 @@ function cannotRun(why) { console.error(`store tests did NOT run: ${why}`); proc
 const chromium = process.env.CHROMIUM || 'chromium'
 if (spawnSync(chromium, ['--version'], { stdio: 'ignore' }).error) cannotRun(`Chromium is missing ('${chromium}' does not start; install it or name it in CHROMIUM)`)
 let esbuild
-try { esbuild = createRequire(import.meta.url)('esbuild') } catch { cannotRun('esbuild is missing (npm install)') }
+try { esbuild = await loadEsbuild() } catch { cannotRun('esbuild is missing (npm ci in app/web)') }
 const PKG_FILES = { 'trommi-core.js': 'text/javascript', 'idb-store.js': 'text/javascript', 'trommi_core_wasm.js': 'text/javascript', 'trommi_core_wasm_bg.wasm': 'application/wasm' }
 for (const file of Object.keys(PKG_FILES)) if (!fs.existsSync(path.join(pkg, file))) cannotRun(`the core's WASM build is missing or old (${path.join(pkg, file)}): run core/wasm/build.sh, or name a built folder in TROMMI_CORE_PKG`)
 

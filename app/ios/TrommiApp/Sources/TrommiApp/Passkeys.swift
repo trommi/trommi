@@ -11,7 +11,7 @@
 // Until both are there every request fails, so the controls (Create account → "Create with passkey", Log in → "Log in
 // with passkey", Settings → Account → "Add passkey") are shown only when `Passkeys.available` says so: on by itself once
 // the domain's file names this app (`Passkeys.probe`, at every start), or by the one constant `forcedOn`. Switched on,
-// the passkey comes first on Create account and Log in (SignIn.swift). ios/README.md "Account" lists what switching
+// the passkey comes first on Create account and Log in (SignIn.swift). app/ios/README.md "Account" lists what switching
 // it on needs.
 //
 // A passkey's user id is the 16 bytes of the account id, which the hub names with its challenge; its name is the

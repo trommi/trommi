@@ -4,7 +4,7 @@
 //   Sources/TrommiCoreFFI                 its C header, written by UniFFI (not in the repository); SwiftPM makes the module
 //   Sources/TrommiCoreRust                the Swift API, written by UniFFI (not in the repository)
 // The library is linked with a search path per platform. SwiftPM allows such a flag only in a root package or one
-// used by path, which is how the app uses this one (ios/TrommiApp → ../TrommiCore → this). Its tests are a
+// used by path, which is how the app uses this one (app/ios/TrommiApp → ../TrommiCore → this). Its tests are a
 // package of their own at the repository's root: tests/bindings/swift.
 import PackageDescription
 

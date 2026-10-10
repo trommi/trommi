@@ -1,5 +1,5 @@
 // verify.mjs: is the app a server serves the build of this repository? Anyone can run it (README "Verifying the build").
-//   git checkout <the commit app.trommi.com names in /gen/build.txt> && npm ci
+//   git checkout <the commit app.trommi.com names in /gen/build.txt> && (cd app/web && npm ci)
 //   node app/web/dev/verify.mjs [--app https://app.trommi.com]   (read only: it builds nothing on disk and changes nothing)
 // 1. reads the server's gen/build.txt (commit, build hash) and gen/manifest.json (every file it serves, with its SHA-256)
 //    and checks that the manifest is the one the build hash names;

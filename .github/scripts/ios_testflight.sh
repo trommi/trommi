@@ -24,7 +24,7 @@ done
 
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-appstore=$repo/ios/TrommiApp/AppStore
+appstore=$repo/app/ios/TrommiApp/AppStore
 BUNDLE_ID=com.trommi.ios
 export BUNDLE_ID
 
@@ -79,7 +79,7 @@ fi
 if [ -n "$code" ]; then
   # written into the app's Info.plist of this checkout only; App Store Connect matches it against the documentation
   printf '%s' "$code" | grep -Eq '^[A-Za-z0-9-]{1,128}$' || { echo "::error::ITS_EXPORT_COMPLIANCE_CODE is not a plain code"; exit 1; }
-  info=$repo/ios/TrommiApp/Info.plist
+  info=$repo/app/ios/TrommiApp/Info.plist
   /usr/libexec/PlistBuddy -c "Delete :ITSEncryptionExportComplianceCode" "$info" 2>/dev/null || true
   /usr/libexec/PlistBuddy -c "Add :ITSEncryptionExportComplianceCode string $code" "$info"
   echo "export compliance code: $code"

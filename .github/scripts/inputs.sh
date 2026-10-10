@@ -13,9 +13,9 @@ commit=${1:-HEAD}
 shared='core/ Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/build.yml .github/workflows/release.yml .github/scripts/inputs.sh release/'
 paths() {
   case $1 in
-    web) echo "app/web/ connector/tools.json connector/prompt.md demo/ package.json package-lock.json .node-version .github/scripts/web_release.mjs .github/tools/wrangler/ .github/workflows/deploy_web.yml" ;;
+    web) echo "app/web/ connector/tools.json connector/prompt.md demo/ .node-version .github/scripts/web_release.mjs .github/tools/wrangler/ .github/workflows/deploy_web.yml" ;;
     connector) echo "connector/ install.sh .claude-plugin/ .node-version" ;;
-    ios) echo "ios/ demo/ .github/scripts/ios_testflight.sh .github/scripts/ios_archive.sh .github/scripts/ios_entitlements.py .github/workflows/deploy_ios.yml" ;;
+    ios) echo "app/ios/ demo/ .github/scripts/ios_testflight.sh .github/scripts/ios_archive.sh .github/scripts/ios_entitlements.py .github/workflows/deploy_ios.yml" ;;
     # the hub program: the hub's crate (hub/updater and hub/deploy belong to the updater)
     hub) echo "hub/Cargo.toml hub/src/ hub/build.rs hub/static/ .github/workflows/deploy_hub.yml" ;;
     updater) echo "hub/updater/ hub/deploy/ .github/workflows/deploy_hub.yml" ;;

@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { generate, coreFiles, coreFromPkg } from '../../../app/web/dev/build.mjs'
+import { generate, coreFiles, coreFromPkg, loadEsbuild } from '../../../app/web/dev/build.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.join(HERE, '..', '..', '..')
@@ -33,7 +33,7 @@ export async function writeBuilt(dir) {
  *  binding's scripts inside it, as the build bundles the app's worker. Needed as long as the app's worker does not
  *  load the Rust core itself. Returns its address. */
 export async function writeProbe(dir) {
-  const esbuild = await import('esbuild')
+  const esbuild = await loadEsbuild()
   const core = coreFiles(REPO)
   if (!fs.existsSync(path.join(dir, core.wasm))) throw new Error(`${dir} is not this checkout's build: ${core.wasm} is missing`)
   const made = await esbuild.build({
