@@ -433,6 +433,89 @@ fn the_installer_refuses_root_and_unknown_arguments_and_goes_nowhere_but_github(
     );
 }
 
+/// The installer finds its release in GitHub's feed, where the releases of other parts share the numbers
+/// (hub-v34 beside connector-v34): run against a stand-in `curl` that serves the feed and the release files
+/// from folders, as github.com and its release store answer.
+#[test]
+fn the_newest_connector_release_is_found_beside_other_parts_of_the_same_number() {
+    let Some(bench) = Bench::new() else { return };
+    let stage = bench.dir.path().join("github");
+    std::fs::create_dir_all(&stage).expect("a folder");
+    // connector-v34 holds the connector; connector-v29 an older one; the hub's releases hold none
+    let newest = bench.release("connector-v34", "trommi-connector", 34, &verified(34), None);
+    let older = bench.release("connector-v29", "trommi-connector", 29, &verified(29), None);
+    for (tag, folder) in [("connector-v34", &newest), ("connector-v29", &older)] {
+        std::fs::rename(folder, stage.join(tag)).expect("moved");
+    }
+    for tag in ["hub-v34", "hub-v29"] {
+        std::fs::create_dir_all(stage.join(tag)).expect("a folder");
+        std::fs::write(stage.join(tag).join("manifest.json"), "{}").expect("written");
+    }
+    let entry = |tag: &str| {
+        format!(
+            "  <entry>\n    <link rel=\"alternate\" type=\"text/html\" href=\"https://github.com/trommi/trommi/releases/tag/{tag}\"/>\n  </entry>\n"
+        )
+    };
+    let feed = format!(
+        "<feed>\n{}</feed>\n",
+        [
+            "hub-v34",
+            "connector-v34",
+            "hub-v29",
+            "connector-v29",
+            "nightly"
+        ]
+        .map(entry)
+        .concat()
+    );
+    std::fs::write(stage.join("releases.atom"), feed).expect("the feed");
+    let fake = bench.dir.path().join("fake");
+    std::fs::create_dir_all(&fake).expect("a folder");
+    executable(
+        &fake.join("curl"),
+        &format!(
+            r#"#!/bin/sh
+stage='{stage}'
+echo "curl $*" >> "$stage/calls"
+out= format= url=
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) out=$2; shift 2 ;;
+    -w) format=$2; shift 2 ;;
+    -H|--proto|--max-time|--max-filesize|--max-redirs) shift 2 ;;
+    https://*) url=$1; shift ;;
+    *) shift ;;
+  esac
+done
+case $url in
+  https://github.com/trommi/trommi/releases.atom) cp "$stage/releases.atom" "$out" ;;
+  https://github.com/trommi/trommi/releases/download/*)
+    file=${{url#https://github.com/trommi/trommi/releases/download/}}
+    case $format in
+      '%{{http_code}}') if [ -f "$stage/$file" ]; then printf 302; else printf 404; fi ;;
+      '%{{redirect_url}}') if [ -f "$stage/$file" ]; then printf 'https://release-assets.githubusercontent.com/%s' "$file"; fi ;;
+    esac ;;
+  https://release-assets.githubusercontent.com/*) cp "$stage/${{url#https://release-assets.githubusercontent.com/}}" "$out" ;;
+  *) echo "unexpected: $url" >&2; exit 22 ;;
+esac
+"#,
+            stage = stage.display()
+        ),
+    );
+    let output = bench.install(&[], Some(&fake));
+    let text = said(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("release 34 (connector-v34), signature verified"),
+        "{text}"
+    );
+    let calls = read(&stage.join("calls"));
+    assert!(
+        !calls.contains("hub-v"),
+        "a release of another part is not asked for a connector: {calls}"
+    );
+}
+
 // ---- the plugin's files ------------------------------------------------------------------------------------
 
 const INSTALLED: &str = "${HOME}/.local/share/trommi/bin/trommi-connector";
