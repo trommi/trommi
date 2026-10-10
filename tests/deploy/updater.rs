@@ -50,6 +50,8 @@ struct Make {
     unit: Vec<u8>,
     /// the tag the release is published under, when it is not the one the manifest names
     published_as: Option<String>,
+    /// further fields of the manifest (signed with it)
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn make(version: u64) -> Make {
@@ -62,16 +64,28 @@ fn make(version: u64) -> Make {
         updater: b"updater A\n".to_vec(),
         unit: format!("[Service]\n# unit of {version}\n").into_bytes(),
         published_as: None,
+        extra: serde_json::Map::new(),
     }
 }
 
 impl Make {
+    /// As releases were published until now: with the hub's unit file, which the updater leaves where it is.
     fn release(&self) -> Release {
-        let files = [
+        self.build(true)
+    }
+
+    fn release_without_unit(&self) -> Release {
+        self.build(false)
+    }
+
+    fn build(&self, with_unit: bool) -> Release {
+        let mut files = vec![
             (format!("trommi-hub-{TARGET}"), self.hub.clone()),
             (format!("trommi-hub-updater-{TARGET}"), self.updater.clone()),
-            ("trommi-hub.service".to_string(), self.unit.clone()),
         ];
+        if with_unit {
+            files.push(("trommi-hub.service".to_string(), self.unit.clone()));
+        }
         let tag = format!("hub-v{}", self.version);
         let manifest = Manifest {
             product: self.product.clone(),
@@ -87,10 +101,13 @@ impl Make {
                     size: bytes.len() as u64,
                 })
                 .collect(),
+            inputs: None,
         };
+        let mut manifest = serde_json::to_value(&manifest).unwrap();
+        manifest.as_object_mut().unwrap().extend(self.extra.clone());
         let manifest = serde_json::to_vec_pretty(&manifest).unwrap();
         let signature = self.key.sign(&manifest).to_bytes().to_vec();
-        let mut assets = files.to_vec();
+        let mut assets = files.clone();
         assets.push((MANIFEST.to_string(), manifest));
         assets.push((SIGNATURE.to_string(), signature));
         Release {
@@ -115,7 +132,6 @@ struct World {
     hub: Mutex<Option<(String, bool)>>,
     starts: AtomicUsize,
     stops: AtomicUsize,
-    reloads: AtomicUsize,
 }
 
 struct FakeSystemd {
@@ -139,20 +155,12 @@ impl Service for FakeSystemd {
             .permissions()
             .mode();
         assert_eq!(mode & 0o111, 0o111, "the hub binary must be executable");
-        assert!(
-            self.root.join("current/trommi-hub.service").exists(),
-            "the unit comes with the release"
-        );
         let commit = text
             .split_whitespace()
             .find_map(|w| w.strip_prefix("commit="))
             .unwrap_or("")
             .to_string();
         *self.world.hub.lock().unwrap() = Some((commit, text.contains("well=true")));
-        Ok(())
-    }
-    fn reload(&self) -> Result<(), String> {
-        self.world.reloads.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -273,7 +281,6 @@ impl Bench {
             api: format!("http://{api}"),
             key: signing_key().verifying_key(),
             target: TARGET.into(),
-            data: root.join("data"),
             root: root.clone(),
             health_url: format!("http://{health}/healthz"),
             health_wait: Duration::from_millis(600),
@@ -364,10 +371,6 @@ async fn a_signed_release_is_deployed_and_reports_what_runs() {
     assert!(outcome.health.as_ref().unwrap().ok);
     assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
-    assert!(
-        b.world.reloads.load(Ordering::SeqCst) >= 1,
-        "the unit is read again"
-    );
     assert!(b.leftovers().is_empty());
     assert!(!b.root.join("deploy-journal.json").exists());
 
@@ -435,7 +438,6 @@ async fn a_file_that_is_not_the_one_the_manifest_names_is_not_taken() {
     for (which, longer) in [
         (hub.as_str(), false),
         (updater.as_str(), false),
-        ("trommi-hub.service", false),
         (hub.as_str(), true),
     ] {
         let mut release = make(5).release();
@@ -547,8 +549,6 @@ async fn a_release_that_is_not_well_is_rolled_back() {
     let mut sick = make(6);
     sick.hub = hub_file(6, false);
     b.publish(sick.release());
-    std::fs::write(b.root.join("data/hub.db"), b"database").unwrap();
-    std::fs::write(b.root.join("data/vapid.key"), b"key").unwrap();
     let updater = b.updater();
     assert!(deploy(&updater, 5).await.ok);
 
@@ -571,10 +571,8 @@ async fn a_release_that_is_not_well_is_rolled_back() {
         !b.root.join("releases/hub-v6").exists(),
         "the release that failed is not kept"
     );
-    // the copy made while the hub stood still
-    let backup = PathBuf::from(outcome.backup.unwrap());
-    assert_eq!(std::fs::read(backup.join("hub.db")).unwrap(), b"database");
-    assert_eq!(std::fs::read(backup.join("vapid.key")).unwrap(), b"key");
+    // the updater made no copy of the hub's data and has no folder for one: that is the hub's own unit's work
+    assert!(!b.root.join("backups").exists());
 
     // the release that failed raised the floor: nothing older comes back through a call
     b.publish(make(4).release());
@@ -727,27 +725,80 @@ async fn a_release_already_on_disk_is_proved_and_used_without_github() {
     assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
 }
 
+/// Starting the hub fails (on the server: its pre-start copy of the database failed, or the unit is broken).
+struct NoStart(FakeSystemd);
+impl Service for NoStart {
+    fn stop(&self) -> Result<(), String> {
+        self.0.stop()
+    }
+    fn start(&self) -> Result<(), String> {
+        let six =
+            std::fs::read_link(self.0.root.join("current")).is_ok_and(|l| l.ends_with("hub-v6"));
+        if six {
+            return Err("hub helper (start): failed: Job for trommi-hub.service failed".into());
+        }
+        self.0.start()
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn when_the_copy_before_the_swap_fails_the_old_hub_runs_on() {
-    let b = bench("backup").await;
+async fn when_the_new_release_cannot_be_started_the_old_hub_runs_on() {
+    let b = bench("nostart").await;
     for v in [5, 6] {
         b.publish(make(v).release());
     }
-    std::fs::write(b.root.join("data/hub.db"), b"database").unwrap();
-    let updater = b.updater();
+    let service = NoStart(FakeSystemd {
+        world: b.world.clone(),
+        root: b.root.clone(),
+    });
+    let updater = Updater::new(b.cfg.clone(), Arc::new(service)).unwrap();
     assert!(deploy(&updater, 5).await.ok);
-    // no room for the copy (here: its folder cannot be made)
-    std::fs::remove_dir_all(b.root.join("backups")).unwrap();
-    std::fs::write(b.root.join("backups"), b"in the way").unwrap();
     let outcome = deploy(&updater, 6).await;
     assert!(!outcome.ok);
     assert_eq!(outcome.result, "rolled-back", "{}", outcome.message);
+    assert!(
+        outcome.message.contains("hub helper (start)"),
+        "{}",
+        outcome.message
+    );
     assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
 }
 
-/// The machine went down after the swap to hub-v6 and before its health was known.
-async fn cut_off(name: &str, six_is_well: bool) -> Bench {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_of_two_programs_and_nothing_else_is_taken() {
+    let b = bench("two-files").await;
+    let mut release = make(5).release();
+    // as the build publishes it from now on: no unit file; the manifest is made anew for it
+    let mut plain = make(5);
+    plain.unit = Vec::new();
+    release.assets = plain.release_without_unit().assets;
+    b.publish(release);
+    let outcome = deploy(&b.updater(), 5).await;
+    assert_eq!(outcome.result, "deployed", "{}", outcome.message);
+    let mut files: Vec<String> = std::fs::read_dir(b.root.join("releases/hub-v5"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        [
+            "manifest.json",
+            "manifest.json.sig",
+            "trommi-hub",
+            "trommi-hub-updater"
+        ]
+    );
+    // and from a release that still has a unit file (as they were published before) it is not fetched
+    b.publish(make(6).release());
+    assert_eq!(deploy(&b.updater(), 6).await.result, "deployed");
+    assert!(!b.root.join("releases/hub-v6/trommi-hub.service").exists());
+}
+
+/// The updater or the machine went down after the swap to hub-v6 and before its health was known. `six_runs`: the
+/// updater went down, hub-v6 runs on; otherwise the machine went down and no hub runs.
+async fn cut_off(name: &str, six_is_well: bool, six_runs: bool) -> Bench {
     let b = bench(name).await;
     b.publish(make(5).release());
     assert!(deploy(&b.updater(), 5).await.ok);
@@ -772,13 +823,13 @@ async fn cut_off(name: &str, six_is_well: bool) -> Bench {
         br#"{"tag":"hub-v6","old":"hub-v5","old_previous":null}"#,
     )
     .unwrap();
-    *b.world.hub.lock().unwrap() = None;
+    *b.world.hub.lock().unwrap() = six_runs.then(|| (commit_of(6), six_is_well));
     b
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
-    let b = cut_off("cut", false).await;
+    let b = cut_off("cut", false, false).await;
     let updater = b.updater();
     assert_eq!(updater.status().await["deploy_cut_off"], true);
     updater.started().await;
@@ -794,18 +845,69 @@ async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_deploy_cut_off_after_the_new_hub_was_in_place_and_well_counts_as_done() {
-    let b = cut_off("cutwell", true).await;
+    let b = cut_off("cutwell", true, true).await;
+    let starts = b.world.starts.load(Ordering::SeqCst);
+    let stops = b.world.stops.load(Ordering::SeqCst);
     b.updater().started().await;
     assert_eq!(b.link("current").as_deref(), Some("hub-v6"));
     assert_eq!(b.link("previous").as_deref(), Some("hub-v5"));
     assert_eq!(b.hub_commit(), Some(commit_of(6)));
+    assert!(!b.root.join("deploy-journal.json").exists());
+    assert_eq!(
+        b.world.stops.load(Ordering::SeqCst),
+        stops,
+        "the hub that runs is not stopped"
+    );
+    // the start every start of the updater makes (a no-op for a unit that runs) and nothing more
+    assert!(b.world.starts.load(Ordering::SeqCst) <= starts + 1);
+}
+
+/// A cut-off release is never started by a recovery: its first start may have been refused for want of a copy of
+/// the database, and a second start would go ahead without one. It is kept only if it runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cut_off_release_that_does_not_run_is_not_started_but_put_back() {
+    let b = cut_off("cutdown", true, false).await;
+    b.updater().started().await;
+    assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
+    assert_eq!(b.hub_commit(), Some(commit_of(5)));
+    assert!(!b.root.join("deploy-journal.json").exists());
+}
+
+/// When not even the link can be put back (a full disk), the release that was not taken is not started a second
+/// time: the hub stays stopped and the note stays, until a later start of the updater settles it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cut_off_release_is_not_started_when_the_way_back_cannot_be_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let b = cut_off("cutfull", true, false).await;
+    let closed = std::fs::Permissions::from_mode(0o555);
+    std::fs::set_permissions(&b.root, closed).unwrap();
+    if std::fs::write(b.root.join("probe"), b"").is_ok() {
+        std::fs::set_permissions(&b.root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: run as root, the folder cannot be closed this way");
+        return;
+    }
+    let starts = b.world.starts.load(Ordering::SeqCst);
+    b.updater().started().await;
+    std::fs::set_permissions(&b.root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        b.world.starts.load(Ordering::SeqCst),
+        starts,
+        "nothing was started"
+    );
+    assert_eq!(b.hub_commit(), None);
+    assert_eq!(b.link("current").as_deref(), Some("hub-v6"));
+    assert!(b.root.join("deploy-journal.json").exists());
+    // room again: the next start settles it
+    b.updater().started().await;
+    assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
+    assert_eq!(b.hub_commit(), Some(commit_of(5)));
     assert!(!b.root.join("deploy-journal.json").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_release_already_found_not_well_is_never_taken_at_a_later_start() {
     // the updater went down while it was putting hub-v5 back; hub-v6 would answer as well by now
-    let b = cut_off("rejected", true).await;
+    let b = cut_off("rejected", true, true).await;
     std::fs::write(
         b.root.join("deploy-journal.json"),
         br#"{"tag":"hub-v6","old":"hub-v5","old_previous":null,"rejected":true}"#,
@@ -820,7 +922,7 @@ async fn a_release_already_found_not_well_is_never_taken_at_a_later_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cut_off_deploy_is_settled_before_the_next_one_begins() {
-    let b = cut_off("cutnext", false).await;
+    let b = cut_off("cutnext", false, false).await;
     b.publish(make(7).release());
     // no start of the updater in between: the call itself finds the note
     let outcome = deploy(&b.updater(), 7).await;
@@ -993,6 +1095,69 @@ async fn a_new_updater_takes_over_and_one_that_does_not_come_up_is_put_back() {
     assert_eq!(status["updater"]["on_trial"], false);
     // the key and the floor were never part of it
     assert_eq!(status["high_water"], 9);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_manifest_that_says_more_than_this_updater_knows_is_taken() {
+    let b = bench("unknown").await;
+    let mut release = make(5);
+    release.extra.insert(
+        "built_by".into(),
+        serde_json::json!({ "runner": "x", "seconds": 3 }),
+    );
+    release.extra.insert(
+        "inputs".into(),
+        serde_json::json!({ "hub": "a".repeat(64), "web": "b".repeat(64) }),
+    );
+    b.publish(release.release_without_unit());
+    let outcome = deploy(&b.updater(), 5).await;
+    assert_eq!(outcome.result, "deployed", "{}", outcome.message);
+    assert_eq!(b.hub_commit(), Some(commit_of(5)));
+}
+
+/// `changes` alone decides whether a program is started anew: by the inputs both manifests name, else by the bytes.
+#[tokio::test(flavor = "multi_thread")]
+async fn whether_the_updater_is_replaced_is_decided_by_its_inputs_when_both_releases_name_them() {
+    let b = bench("inputs").await;
+    let with = |version: u64, bytes: &[u8], inputs: Option<&str>| {
+        let mut m = make(version);
+        m.updater = bytes.to_vec();
+        if let Some(i) = inputs {
+            m.extra.insert(
+                "inputs".into(),
+                serde_json::json!({ "hub": "0".repeat(64), "updater": i }),
+            );
+        }
+        m.release_without_unit()
+    };
+    let (one, two) = ("1".repeat(64), "2".repeat(64));
+    b.publish(with(5, b"updater A\n", Some(&one)));
+    assert!(deploy(&b.updater(), 5).await.ok);
+    // other bytes (a build that is not reproducible), the same inputs: the updater in place stays
+    b.publish(with(6, b"updater A built again\n", Some(&one)));
+    let updater = b.updater();
+    let outcome = deploy(&updater, 6).await;
+    assert!(outcome.ok, "{}", outcome.message);
+    assert_eq!(outcome.updater.next, None);
+    assert!(!updater.replaced());
+    assert_eq!(b.link("updater").as_deref(), Some("hub-v5"));
+    // a release without inputs: the bytes decide (they differ from hub-v5's)
+    b.publish(with(7, b"updater A\n", None));
+    let outcome = deploy(&updater, 7).await;
+    assert_eq!(
+        outcome.updater.next, None,
+        "the same bytes as the updater in place"
+    );
+    // other inputs, the same bytes: the updater is replaced
+    b.publish(with(8, b"updater A\n", Some(&two)));
+    let outcome = deploy(&updater, 8).await;
+    assert_eq!(
+        outcome.updater.next.as_deref(),
+        Some("hub-v8"),
+        "{}",
+        outcome.message
+    );
+    assert!(updater.replaced());
 }
 
 // ---- the endpoint ----

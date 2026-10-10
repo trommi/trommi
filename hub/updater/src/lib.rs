@@ -5,26 +5,31 @@
 //! puts it beside the running one, swaps, asks the new hub whether it is well, and puts the old one back when it is
 //! not. Nothing a caller sends is ever run, and nothing older than what was already accepted is taken.
 //!
-//! On disk, under the root (`/srv/trommi`):
+//! On disk, under the root (`/srv/trommi/deploy`), which belongs to the user the updater runs as:
 //!
 //! ```text
 //! releases/hub-v123/trommi-hub           the hub                 current  -> releases/hub-v123
-//! releases/hub-v123/trommi-hub.service   its systemd unit        previous -> releases/hub-v122
-//! releases/hub-v123/trommi-hub-updater   this program            updater  -> releases/hub-v123
-//! releases/hub-v123/manifest.json(.sig)  what was signed         updater-previous -> releases/hub-v122
-//! state.json                             the highest version ever accepted
+//! releases/hub-v123/trommi-hub-updater   this program            previous -> releases/hub-v122
+//! releases/hub-v123/manifest.json(.sig)  what was signed         updater  -> releases/hub-v123
+//! state.json                             the highest version     updater-previous -> releases/hub-v122
 //! deploy.lock                            one deploy at a time, across processes
 //! deploy-journal.json                    there while the hub is being swapped: what to go back to
 //! updater-trial, updater-reverted        a new updater on trial; one that did not come up (see `stage_updater`)
-//! backups/before-hub-v123-<time>/        the database and the hub's own keys, copied while the hub stood still
 //! ```
 //!
-//! The pinned public key and the configuration live outside the root (`/etc/trommi`) and never come from a release.
+//! The updater has no rights beyond that folder. It is not root: it cannot change a unit, and it starts and stops
+//! the hub only by asking a small helper for exactly that (`HubCtl`). The hub's unit is fixed on the server and
+//! runs `current/trommi-hub` as the hub's own user, so what a release can do is what the hub can do. The hub's
+//! data is not the updater's to read: the copy of the database before another release starts is made by the hub's
+//! unit (`hub/deploy/hub-prestart.sh`).
+//!
+//! The pinned public key and the configuration live in `/etc/trommi` (root's) and never come from a release.
 
 #![forbid(unsafe_code)]
 
 use std::io::Write;
 use std::net::SocketAddr;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -41,14 +46,11 @@ pub const SIGNATURE: &str = "manifest.json.sig";
 /// the names inside a release folder; the two programs are released with the machine's kind after their name
 pub const BINARY: &str = "trommi-hub";
 pub const UPDATER: &str = "trommi-hub-updater";
-pub const UNIT: &str = "trommi-hub.service";
 
 const RELEASE_CAP: u64 = 1 << 20;
 const MANIFEST_CAP: u64 = 64 << 10;
 const SIGNATURE_CAP: u64 = 1 << 10;
 const BINARY_CAP: u64 = 200 << 20;
-const UNIT_CAP: u64 = 64 << 10;
-const BACKUPS_KEPT: usize = 3;
 
 // ---------------------------------------------------------------------------------------------------------------
 // What is signed
@@ -61,7 +63,9 @@ pub struct Asset {
     pub size: u64,
 }
 
-/// The signed statement of a release. The signature covers the exact bytes of the file.
+/// The signed statement of a release. The signature covers the exact bytes of the file. Fields this updater does
+/// not know are ignored (they are signed all the same), so a later release may say more without an older updater
+/// refusing it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Manifest {
     pub product: String,
@@ -70,6 +74,61 @@ pub struct Manifest {
     pub tag: String,
     pub commit: String,
     pub assets: Vec<Asset>,
+    /// what each program was built from; releases without it are decided by the programs' bytes (see `changes`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Inputs>,
+}
+
+/// `"inputs": {"hub": "<sha256>", "updater": "<sha256>"}`: per program, a SHA-256 over everything its build reads
+/// (sources, lockfile, toolchain). Two releases with the same value hold the same program, whatever their bytes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Inputs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updater: Option<String>,
+}
+
+/// One of the two programs of a release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    Hub,
+    Updater,
+}
+
+/// THE decision whether going from the release `from` to `to` changes a program, so that it has to be started
+/// anew. When both manifests name the program's inputs, those decide; otherwise the SHA-256 the manifests give for
+/// the program's file on this machine's kind. Nothing known about `from` counts as a change.
+///
+/// Today the updater is replaced by it (`stage_updater`); the hub is still started anew with every release that is
+/// not the one running. With one complete release per shipped change, the hub's swap asks it as well.
+pub fn changes(part: Part, target: &str, from: Option<&Manifest>, to: &Manifest) -> bool {
+    let Some(from) = from else {
+        return true;
+    };
+    let inputs = |m: &Manifest| {
+        m.inputs.as_ref().and_then(|i| match part {
+            Part::Hub => i.hub.clone(),
+            Part::Updater => i.updater.clone(),
+        })
+    };
+    if let (Some(a), Some(b)) = (inputs(from), inputs(to)) {
+        return a != b;
+    }
+    let name = match part {
+        Part::Hub => format!("{BINARY}-{target}"),
+        Part::Updater => format!("{UPDATER}-{target}"),
+    };
+    let sha256 = |m: &Manifest| {
+        m.assets
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.sha256.clone())
+    };
+    match (sha256(from), sha256(to)) {
+        (Some(a), Some(b)) => a != b,
+        _ => true,
+    }
 }
 
 /// `hub-v123` → 123. One spelling only: no sign, no leading zero, at most twelve digits.
@@ -86,13 +145,12 @@ pub fn parse_tag(tag: &str) -> Option<u64> {
     }
 }
 
-/// The three files of a release this server takes: the asset's name, its name in the release folder, the most it
-/// may weigh, whether it is a program.
-pub fn wanted(target: &str) -> [(String, &'static str, u64, bool); 3] {
+/// The two files of a release this server takes: the asset's name, its name in the release folder, the most it
+/// may weigh, whether it is a program. Whatever else a release holds is left at GitHub.
+pub fn wanted(target: &str) -> [(String, &'static str, u64, bool); 2] {
     [
         (format!("{BINARY}-{target}"), BINARY, BINARY_CAP, true),
         (format!("{UPDATER}-{target}"), UPDATER, BINARY_CAP, true),
-        (UNIT.to_string(), UNIT, UNIT_CAP, false),
     ]
 }
 
@@ -189,8 +247,6 @@ pub struct Config {
     /// e.g. `x86_64-unknown-linux-musl`
     pub target: String,
     pub root: PathBuf,
-    /// the hub's data directory: its database and own keys are copied before a swap
-    pub data: PathBuf,
     pub health_url: String,
     /// how long a freshly started hub has to become well
     pub health_wait: Duration,
@@ -199,12 +255,10 @@ pub struct Config {
     pub lock_wait: Duration,
 }
 
-/// What the updater asks of the machine. On the server: systemd.
+/// Starting and stopping the hub: all the updater may ask of the machine.
 pub trait Service: Send + Sync {
     fn stop(&self) -> Result<(), String>;
     fn start(&self) -> Result<(), String>;
-    /// the hub's unit file is part of a release: after a swap the service manager reads it again
-    fn reload(&self) -> Result<(), String>;
 }
 
 /// Runs a command and waits no longer than `limit` for it.
@@ -245,40 +299,45 @@ pub fn run(program: &str, args: &[&str], limit: Duration) -> Result<Vec<u8>, Str
     }
 }
 
-pub struct Systemd {
-    pub unit: String,
+/// The server's helper for the hub's unit (`hub/deploy/hub-ctl.sh` behind `trommi-hub-ctl.socket`): a socket only
+/// the updater's user may open, which takes one word, `start` or `stop`, does that to the hub's unit as root, and
+/// answers `ok` or `failed: …`. It takes nothing else, so this is everything the updater can have root do.
+pub struct HubCtl {
+    pub socket: PathBuf,
 }
 
-impl Service for Systemd {
-    fn stop(&self) -> Result<(), String> {
-        let stopped = run("systemctl", &["stop", &self.unit], Duration::from_secs(120));
-        match stopped {
-            Ok(_) => Ok(()),
-            // before the very first release there is no unit yet: what does not run counts as stopped
-            Err(e) => {
-                let active = run(
-                    "systemctl",
-                    &["is-active", "--quiet", &self.unit],
-                    Duration::from_secs(30),
-                );
-                if active.is_ok() {
-                    Err(e)
-                } else {
-                    Ok(())
-                }
-            }
+impl HubCtl {
+    fn ask(&self, verb: &str) -> Result<(), String> {
+        use std::io::Read;
+        let fail = |e: std::io::Error| format!("hub helper ({verb}): {e}");
+        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket).map_err(fail)?;
+        // systemd gives a unit 90 s to start and the hub 30 s to stop; the helper answers within that
+        stream
+            .set_read_timeout(Some(Duration::from_secs(150)))
+            .map_err(fail)?;
+        stream
+            .write_all(format!("{verb}\n").as_bytes())
+            .map_err(fail)?;
+        stream.shutdown(std::net::Shutdown::Write).map_err(fail)?;
+        let mut answer = String::new();
+        stream
+            .take(4096)
+            .read_to_string(&mut answer)
+            .map_err(fail)?;
+        match answer.trim() {
+            "ok" => Ok(()),
+            "" => Err(format!("hub helper ({verb}): no answer")),
+            other => Err(format!("hub helper ({verb}): {other}")),
         }
     }
-    fn start(&self) -> Result<(), String> {
-        run(
-            "systemctl",
-            &["start", &self.unit],
-            Duration::from_secs(120),
-        )
-        .map(|_| ())
+}
+
+impl Service for HubCtl {
+    fn stop(&self) -> Result<(), String> {
+        self.ask("stop")
     }
-    fn reload(&self) -> Result<(), String> {
-        run("systemctl", &["daemon-reload"], Duration::from_secs(60)).map(|_| ())
+    fn start(&self) -> Result<(), String> {
+        self.ask("start")
     }
 }
 
@@ -329,8 +388,6 @@ pub struct Outcome {
     pub health: Option<Health>,
     /// after a rollback: whether the release put back is well
     pub rollback_health: Option<Health>,
-    /// where the copy of the database made before the swap lies
-    pub backup: Option<String>,
     pub updater: UpdaterState,
     pub message: String,
 }
@@ -347,7 +404,6 @@ impl Outcome {
             running: None,
             health: None,
             rollback_health: None,
-            backup: None,
             updater: UpdaterState::default(),
             message: message.into(),
         }
@@ -403,11 +459,28 @@ fn sync_dir(dir: &Path) -> std::io::Result<()> {
 /// Writes a small file so that it is either the old or the new one, also after a power cut.
 fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let part = path.with_extension("part");
-    let mut f = std::fs::File::create(&part)?;
+    let mut f = create_file(&part)?;
     f.write_all(bytes)?;
     f.sync_all()?;
     std::fs::rename(&part, path)?;
     sync_dir(path.parent().unwrap_or(Path::new(".")))
+}
+
+/// Whatever the caller's umask (a shell may hand down 0): nothing under the root is writable by anyone but its owner.
+fn create_file(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(path)
+}
+
+fn create_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(path)
 }
 
 fn remove_whole(path: &Path) -> std::io::Result<()> {
@@ -449,7 +522,7 @@ impl Updater {
             .timeout(Duration::from_secs(300))
             .build()
             .map_err(|e| format!("http client: {e}"))?;
-        std::fs::create_dir_all(cfg.root.join("releases"))
+        create_dir(&cfg.root.join("releases"))
             .map_err(|e| format!("{}: {e}", cfg.root.display()))?;
         let mut updater = Updater {
             cfg,
@@ -566,9 +639,8 @@ impl Updater {
         self.service(|s| s.stop()).await
     }
 
-    /// Reads the unit again (it may have changed with the release), then starts the hub.
     async fn start(&self) -> Result<(), String> {
-        self.service(|s| s.reload().and_then(|()| s.start())).await
+        self.service(|s| s.start()).await
     }
 
     /// One question to the hub: is it well, and which commit is it.
@@ -704,7 +776,7 @@ impl Updater {
                 .get(&url, "application/octet-stream")
                 .await
                 .map_err(|e| Failure::Fetch(format!("{name}: {e}")))?;
-            let mut file = std::fs::File::create(&to).map_err(local)?;
+            let mut file = create_file(&to).map_err(local)?;
             let mut size = 0u64;
             while let Some(chunk) = answer
                 .chunk()
@@ -770,7 +842,7 @@ impl Updater {
             .releases()
             .join(format!(".tmp-{tag}-{}-{unique}", std::process::id()));
         let result = async {
-            std::fs::create_dir_all(&tmp).map_err(|e| Failure::Local(format!("releases: {e}")))?;
+            create_dir(&tmp).map_err(|e| Failure::Local(format!("releases: {e}")))?;
             self.fetch(tag, &tmp).await?;
             let proved = self.proved(&tmp, tag).map_err(Failure::Verify)?;
             std::fs::rename(&tmp, &dir)
@@ -785,67 +857,7 @@ impl Updater {
         result
     }
 
-    // ---- backups and tidying ----
-
-    /// Copies the database and the hub's own keys while the hub stands still. Not the files people uploaded.
-    fn backup(&self, tag: &str) -> Result<Option<PathBuf>, String> {
-        let wanted = |name: &str| name.starts_with("hub.db") || name.ends_with(".key");
-        let entries = match std::fs::read_dir(&self.cfg.data) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(format!("backup: {e}")),
-        };
-        let names: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| wanted(n))
-            .collect();
-        if names.is_empty() {
-            return Ok(None);
-        }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let all = self.cfg.root.join("backups");
-        let dir = all.join(format!("before-{tag}-{now:012}"));
-        let run = || -> std::io::Result<()> {
-            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(&dir)?;
-            for name in &names {
-                let to = dir.join(name);
-                std::fs::copy(self.cfg.data.join(name), &to)?;
-                std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))?;
-                std::fs::File::open(&to)?.sync_all()?;
-            }
-            sync_dir(&dir)
-        };
-        if let Err(e) = run() {
-            // half a copy is worth nothing and takes room
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err(format!("backup: {e}"));
-        }
-        // the newest few stay; their names end in the time, so they sort by it
-        let mut kept: Vec<(String, PathBuf)> = std::fs::read_dir(&all)
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name().into_string().ok()?;
-                let time = name.rsplit('-').next()?.to_string();
-                name.starts_with("before-").then_some((time, e.path()))
-            })
-            .collect();
-        kept.sort();
-        let extra = kept.len().saturating_sub(BACKUPS_KEPT);
-        for (_, path) in kept.into_iter().take(extra) {
-            let _ = std::fs::remove_dir_all(path);
-        }
-        Ok(Some(dir))
-    }
+    // ---- tidying ----
 
     /// Removes what a fetch that was cut off left behind.
     fn tidy(&self) {
@@ -883,6 +895,7 @@ impl Updater {
     /// The lock other processes see (the command line on the server uses the same one).
     async fn file_lock(&self) -> Result<std::fs::File, String> {
         let file = std::fs::OpenOptions::new()
+            .mode(0o644)
             .create(true)
             .truncate(false)
             .write(true)
@@ -1015,10 +1028,9 @@ impl Updater {
             return fail(outcome, format!("nothing was changed: {e}"));
         }
 
-        // stand still, copy, swap, start
+        // stand still, swap, start (the hub's unit copies the database before another release starts)
         let swapped = async {
             self.stop().await?;
-            outcome.backup = self.backup(tag)?.map(|p| p.display().to_string());
             self.point("current", Some(tag))?;
             self.point("previous", old.as_deref())
         }
@@ -1090,18 +1102,17 @@ impl Updater {
         }
         match (back, &journal.old) {
             (Ok(()), None) => Health::failed("nothing ran before".into()),
-            // also when the link could not be put back: whatever `current` names is better than a hub that stands
             (Ok(()), Some(_)) => self.started_healthy(commit).await,
-            (Err(e), _) => {
-                let _ = self.start().await;
-                Health::failed(e)
-            }
+            // the link could not be put back (a full disk): `current` still names the release that was not taken,
+            // whose start the hub's unit may have refused once for want of a copy; it is not started a second time.
+            // The hub stands until the next start of the updater or the next deploy settles the note.
+            (Err(e), _) => Health::failed(format!("{e}; the hub is left stopped")),
         }
     }
 
     /// Settles a swap that was cut off (the updater or the machine went down in the middle): when the release the
-    /// note names is the one in place and it runs and is well, the deploy counts as done; otherwise the release
-    /// before is put back.
+    /// note names is the one in place and it runs and is well (it is not started for this), the deploy counts as
+    /// done; otherwise the release before is put back.
     /// False when the swap could not be settled (the note is still there): no new deploy begins on top of it.
     async fn settle(&self) -> bool {
         let path = self.cfg.root.join("deploy-journal.json");
@@ -1124,7 +1135,10 @@ impl Updater {
                 .is_ok();
         if in_place && !journal.rejected {
             if let Some(commit) = commit_of(&new) {
-                if self.started_healthy(Some(&commit)).await.ok && remove_whole(&path).is_ok() {
+                // only a hub that runs already (or is starting) is kept; it is never started here. A release whose
+                // first start the hub's unit refused (no copy of the database) would be let through at a second
+                // start, and that second start is for a deploy call to ask, not for a recovery.
+                if self.wait_healthy(Some(&commit)).await.ok && remove_whole(&path).is_ok() {
                     log("deploy-completed", json!({ "cut_off": journal.tag }));
                     return true;
                 }
@@ -1218,13 +1232,12 @@ impl Updater {
         if self.reverted().as_deref() == Some(tag) {
             return Ok(None);
         }
-        let new = file_sha256(&self.releases().join(tag).join(UPDATER))
-            .ok_or("the release's updater is unreadable")?;
-        let same = now
-            .as_ref()
-            .and_then(|n| file_sha256(&self.releases().join(n).join(UPDATER)))
-            .is_some_and(|old| old == new);
-        if same {
+        // both stored manifests are proved by their signature, and their files were proved against them
+        let new = self
+            .stored_manifest(tag)
+            .ok_or("the release's manifest does not verify")?;
+        let old = now.as_deref().and_then(|n| self.stored_manifest(n));
+        if !changes(Part::Updater, &self.cfg.target, old.as_ref(), &new) {
             return Ok(None);
         }
         let root = &self.cfg.root;
@@ -1278,8 +1291,8 @@ impl Updater {
         let Ok(_lock) = self.file_lock().await else {
             return false;
         };
-        self.settle().await;
-        if self.linked("current").is_some() {
+        // a swap that could not be settled leaves the hub stopped (see `put_back`)
+        if self.settle().await && self.linked("current").is_some() {
             if let Err(e) = self.start().await {
                 log("start", json!({ "error": e }));
             }

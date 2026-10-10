@@ -264,6 +264,10 @@ name = "deploy_updater"
 path = "deploy/updater.rs"
 
 [[test]]
+name = "deploy_rights"
+path = "deploy/rights.rs"
+
+[[test]]
 name = "deploy_hub_settings"
 path = "deploy/hub_settings.rs"
 
