@@ -367,8 +367,17 @@ public final class Room {
     let humans = Set(room.leaves.map(hex))
     state = (Int(room.epoch), humans.count)
     board.keyEpoch = Int(room.epoch)
+    // As the web's applyGroups: every leaf of a session group that is no human device is an agent (or helper) device,
+    // also one the room no longer enrols; the enrolled ones open helper sessions.
+    let enrolled = Set(list.flatMap { $0.session?.agents ?? [] }.map(hex))
+    var seats = [String: (agents: [String], opener: String?)]()
     var agents = [String]()
-    for g in list { for a in g.session?.agents ?? [] where !agents.contains(hex(a)) { agents.append(hex(a)) } }
+    for g in list {
+      guard let s = g.session else { continue }
+      let seat = Board.seats(leaves: g.leaves.map(hex), humans: humans, enrolled: enrolled, helper: s.parent != nil)
+      seats[hex(g.group)] = seat
+      for a in seat.agents where !agents.contains(a) { agents.append(a) }
+    }
     // A device that is no leaf any more stays in the list as removed, so that what it wrote keeps its name.
     var members = [(id: String, role: String, active: Bool, added: Int, removed: Int?)]()
     for id in humans.sorted() { members.append((id, "human", true, 0, nil)) }
@@ -379,7 +388,8 @@ public final class Room {
       guard let s = g.session else { continue }
       let sid = hex(s.session)
       sessionIdOfGroup[hex(g.group)] = sid
-      board.applySession(sessionId: sid, agentIds: s.agents.map(hex), epoch: Int(g.epoch), parentSessionId: s.parent.map(hex), archived: g.archived, change: &change)
+      let seat = seats[hex(g.group)] ?? (agents: s.agents.map(hex), opener: nil)
+      board.applySession(sessionId: sid, agentIds: seat.agents, epoch: Int(g.epoch), parentSessionId: s.parent.map(hex), archived: g.archived, opener: seat.opener, change: &change)
     }
     change.room = true
   }

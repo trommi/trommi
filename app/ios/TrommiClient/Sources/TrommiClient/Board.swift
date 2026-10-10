@@ -560,20 +560,54 @@ public final class Board {
     sessions[id] = s
     return s
   }
+  /**
+   * The name a device gave itself (its register `device/<id>`): `device_name`, else the last part of its folder.
+   * Read from the member, else from the register itself (a device that is no member here, e.g. an agent that left).
+   */
+  public func deviceNameOf(_ id: String?) -> String {
+    guard let id = id else { return "" }
+    let m = members[id], reg = deviceRegisters[id]
+    if let n = m?.deviceName, !n.isEmpty { return n }
+    if let n = reg?["device_name"].string, !n.isEmpty { return n }
+    let folder = m?.folder ?? reg?["folder"].string ?? ""
+    return folder.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? ""
+  }
+  /**
+   * Who sits in a session group, as the web's applyGroups: every leaf that is no human device is an agent (or helper)
+   * device; a helper session's opener is the enrolled one; the speaker (first) is a helper device in a helper
+   * session, else the enrolled agent device.
+   */
+  public static func seats(leaves: [String], humans: Set<String>, enrolled: Set<String>, helper: Bool) -> (agents: [String], opener: String?) {
+    let others = leaves.filter { !humans.contains($0) }
+    let opener = helper ? others.first { enrolled.contains($0) } : nil
+    let speaker = helper ? (others.first { $0 != opener } ?? others.first) : (others.first { enrolled.contains($0) } ?? others.first)
+    guard let sp = speaker else { return ([], opener) }
+    return ([sp] + others.filter { $0 != sp }, opener)
+  }
+  /** Copies the speaking device's facts onto its session; a helper session without a device of its own shows its opener's (as the web). */
   private func syncSessionAgent(_ s: Session) {
-    guard let a = s.agentDeviceId, let m = members[a] else { return }
-    s.agentSessionId = m.agentSessionId ?? String(m.deviceId.prefix(16)); s.deviceName = m.deviceName; s.isActive = m.isActive
-    s.isOnline = m.isOnline; s.offlineSince = m.offlineSince; s.link = m.link
+    let a = s.agentDeviceId ?? s.everAgentIds.last
+    let opener = s.creatorDeviceId.flatMap { $0 != a ? members[$0] : nil }
+    let name = deviceNameOf(a)
+    s.deviceName = name.isEmpty ? deviceNameOf(opener?.deviceId) : name
+    guard let a = a, let m = members[a] else { return }
+    s.agentSessionId = m.agentSessionId ?? String(m.deviceId.prefix(16)); s.isActive = m.isActive
+    s.isOnline = m.isOnline || opener?.isOnline == true
+    s.offlineSince = s.isOnline ? nil : m.offlineSince ?? opener?.offlineSince
+    s.link = (m.isOnline || opener?.isOnline != true ? m.link : nil) ?? opener?.link
   }
   private func touchAgent(_ id: String, _ change: inout Change) {
-    for s in sessions.values where s.agentDeviceIds.contains(id) || s.agentDeviceId == id { syncSessionAgent(s); change.sessions.insert(s.sessionId) }
+    for s in sessions.values where s.agentDeviceIds.contains(id) || s.agentDeviceId == id || s.creatorDeviceId == id || (s.agentDeviceId == nil && s.everAgentIds.last == id) {
+      syncSessionAgent(s); change.sessions.insert(s.sessionId)
+    }
   }
   /**
    * One session as its group says it (the core verified the group): its agent devices now, the group's epoch, and
    * for a helper session the main session it hangs under.
    */
-  public func applySession(sessionId: String, agentIds: [String], epoch: Int, parentSessionId: String?, archived: Bool, change: inout Change) {
+  public func applySession(sessionId: String, agentIds: [String], epoch: Int, parentSessionId: String?, archived: Bool, opener: String? = nil, change: inout Change) {
     let s = sessionOf(sessionId)
+    if let o = opener { s.creatorDeviceId = o }
     s.epochAgentIds[epoch] = agentIds
     s.agentDeviceIds = agentIds
     for a in agentIds where !s.everAgentIds.contains(a) { s.everAgentIds.append(a) }
@@ -1055,8 +1089,9 @@ public final class Board {
         if let m = members[rec.senderDeviceId] {
           m.deviceName = value["device_name"].string ?? ""; m.platform = value["platform"].string; m.folder = value["folder"].string; m.host = value["host"].string
           change.members = true
-          if m.deviceRole == "agent" { touchAgent(m.deviceId, &change) }
         }
+        // (also for a device that is no member here: a session it spoke in still shows its name)
+        if members[rec.senderDeviceId]?.deviceRole != "human" { touchAgent(rec.senderDeviceId, &change) }
         change.registers.insert(key)
       } else if rec.senderRole == "human" && Board.isHumanKey(key) {
         if myRole == "agent" { continue }
