@@ -106,7 +106,7 @@ export async function getDecrypted(core: Core, hub: Hub, file: FileRef): Promise
 // ---- Share links (11.5) ---------------------------------------------------------------------------------------------
 
 const B64_16 = '[A-Za-z0-9_-]{22}', B64_32 = '[A-Za-z0-9_-]{43}'
-const SHARE = new RegExp(`/a/(${B64_16})#(${B64_32})\\.(${B64_32})\\.(${B64_32})$`)
+const SHARE = new RegExp(`/(?:artifact|a)/(${B64_16})#(${B64_32})\\.(${B64_32})\\.(${B64_32})$`)
 /** A Share link's parts by its form alone, for a page that has not loaded the core yet (the core checks it for
  *  real in `openShared`). Throws `bad-format`. `share_secret` and `file_key` are secrets. */
 export function parseShareLink(link: unknown): { share_id: string; share_secret: string; file_key: string; sha256: string } {

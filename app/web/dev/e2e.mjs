@@ -274,7 +274,7 @@ try {
 
   // ---- a file from the session's composer reaches the agent whole (encrypted, uploaded, decrypted there) ----
   const sid = await A.js("return trommi.model().agents[0]?.id")
-  await A.js(`trommi.router.visit('/s/${sid}')`)
+  await A.js(`trommi.router.visit('/chat/${sid}')`)
   await A.until("document.querySelector('form.composer input[type=file]')", 'composer')
   await A.js(`const f = document.querySelector('form.composer'); const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(4096).fill(7)], 'notiz.bin', { type: 'application/octet-stream' })); f.querySelector('input[type=file]').files = dt.files; f.querySelector('textarea').value = 'Mit Datei'; f.requestSubmit(f.querySelector('button[type=submit]'))`)
   const tf = Date.now(); let fileCmd = null
@@ -310,7 +310,7 @@ try {
   await A.until("!document.querySelector('#corner-note-box .corner-note-body').hidden", 'the note unfolds')
   await A.js(`window.__bubbled = false; new MutationObserver(() => { if ([...document.querySelectorAll('.msg-user .bubble')].some(b => b.textContent.includes('${noteText}'))) window.__bubbled = true }).observe(document.documentElement, { childList: true, subtree: true }); document.querySelector('#corner-note-box .corner-note-send').click()`)
   const crownId = await A.js("return trommi.model().agents.find(a => a.starred)?.id")
-  await A.js(`trommi.router.visit('/s/${crownId ?? sid}')`)
+  await A.js(`trommi.router.visit('/chat/${crownId ?? sid}')`)
   const tn = Date.now(); let noteCmd = null
   while (!noteCmd && Date.now() - tn < 15000) { noteCmd = commands.find(c => c.command === 'message' && c.content?.text === noteText); await sleep(50) }
   check(/^[0-9a-f]{32}$/.test(noteCmd?.content?.note?.object_id ?? '') && Number.isSafeInteger(noteCmd?.content?.note?.written_at), 'a sent note reaches the agent with note { object_id, written_at }')
@@ -532,8 +532,8 @@ try {
   await agent.close(cardId, 'Erledigt mit B')
   await agent.close(cardId, 'Erledigt mit B')
   await A.until(`trommi.client.model.cards.get('${cardId}')?.versions.length >= 3`, 'both closing versions on A', 15000)
-  await A.js(`trommi.router.visit('/card/${nr}')`); await A.js(`trommi.router.visit('/s/${sid}')`)
-  await A.until(`location.pathname === '/s/${sid}' && document.querySelector('.ask a[href$="/card/${nr}"]')`, 'session page after the close')
+  await A.js(`trommi.router.visit('/card/${nr}')`); await A.js(`trommi.router.visit('/chat/${sid}')`)
+  await A.until(`location.pathname === '/chat/${sid}' && document.querySelector('.ask a[href$="/card/${nr}"]')`, 'session page after the close')
   const said = await A.js(`const mine = [...document.querySelectorAll('.event')].filter(e => e.getAttribute('href')?.endsWith('/card/${nr}') && e.offsetParent); return { done: mine.filter(e => e.querySelector('.event-kind')?.textContent === 'Done').length, revised: mine.filter(e => e.classList.contains('event-revised')).length }`)
   check(said.done === 1 && said.revised === 0, `a closed question shows "Done" once and no "Question revised" (${said.done} done, ${said.revised} revised)`)
   await A.js(`trommi.router.visit('/card/${nr}')`)

@@ -1,8 +1,9 @@
 // Links: universal links of app.trommi.com (Associated Domains `applinks:app.trommi.com`; the web app serves
 // /.well-known/apple-app-site-association) and the path a notification carries open the same place in the app:
-//   /card/<Nr. or id>            the card            /s/<session>/card/<ref>   the card, from its session
-//   /s/<session>                 the conversation    /s/<session>/…            the conversation
+//   /card/<Nr. or id>            the card            /chat/<session>/card/<ref>   the card, from its session
+//   /chat/<session>              the conversation    /chat/<session>/…            the conversation
 //   /settings, /settings/<page>  Settings (sessions, devices, account, theme)
+// /s/<session>… is the same as /chat/<session>… (the address of before: links of then still open).
 // Anything else opens the app on its Desk. A long press on such a link offers "Open in Safari", as for any universal
 // link. A link that arrives before the board has the card (a cold start: the cache is still loading, or the push came
 // before the catch-up) waits up to 20 seconds for it.
@@ -55,7 +56,7 @@ extension BoardModel {
     case "card":
       guard segs.count > 1, let id = card(segs[1]) else { return segs.count < 2 }
       tab = .desk; deskPath = [.card(id)]
-    case "s":
+    case "chat", "s":
       guard segs.count > 1 else { return true }
       if segs.count > 3, segs[2] == "card" {
         guard let id = card(segs[3]) else { return false }

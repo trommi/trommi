@@ -618,7 +618,7 @@ impl FileRef {
     }
 }
 
-/// A Share link (11.5): `<app>/a/<share_id>#<secret>.<file_key>.<sha256>`, where `<app>` is the app's origin in
+/// A Share link (11.5): `<app>/artifact/<share_id>#<secret>.<file_key>.<sha256>`, where `<app>` is the app's origin in
 /// the canonical spelling of a hub address. What stands behind the `#` never reaches a server: the browser keeps
 /// it, presents `secret` to the hub in a header, and decrypts with the key.
 #[derive(Debug, PartialEq, Eq)]
@@ -650,11 +650,14 @@ impl ShareLink {
         })
     }
 
-    /// The link `text` is. `bad-format` for anything but the exact form: a canonical origin, `/a/`, the share id,
-    /// `#`, and the three parts, each canonical base64url of its length.
+    /// The link `text` is. `bad-format` for anything but the exact form: a canonical origin, `/artifact/` (or `/a/`,
+    /// the form of before), the share id, `#`, and the three parts, each canonical base64url of its length.
     pub fn parse(text: &str) -> Result<Self, Error> {
         let (address, fragment) = text.split_once('#').ok_or(Error::BadFormat)?;
-        let (app, share_id) = address.rsplit_once("/a/").ok_or(Error::BadFormat)?;
+        let (app, share_id) = address
+            .rsplit_once("/artifact/")
+            .or_else(|| address.rsplit_once("/a/"))
+            .ok_or(Error::BadFormat)?;
         if !is_canonical_origin(app) {
             return Err(Error::BadFormat);
         }
@@ -683,7 +686,7 @@ impl ShareLink {
         // Room for the whole link, so that no shorter copy of it is left behind while it grows.
         let mut text = Zeroizing::new(String::with_capacity(self.app.len() + 160));
         text.push_str(&self.app);
-        text.push_str("/a/");
+        text.push_str("/artifact/");
         text.push_str(&self.share_id.to_base64url());
         text.push('#');
         text.push_str(&Zeroizing::new(ids::base64url_encode(self.secret.expose())));
