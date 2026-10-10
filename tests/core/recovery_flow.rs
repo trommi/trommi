@@ -2225,4 +2225,13 @@ fn the_one_call_room_check_places_the_commits_of_a_session_it_cannot_name() {
         .map(|slice| placed_commits(slice, |slice| device.code_check_slice(slice)))
         .collect();
     assert_eq!(handed.err(), Some(Error::BadGroup));
+    // A Commit above a slice's size, of such a session, is `too-large` in both.
+    let mut huge = fetched.clone();
+    huge.sessions[1].founding = b"no GroupInfo".to_vec();
+    let last = huge.placed().last().unwrap().1;
+    huge.sessions[1].commits = vec![(last + 1, vec![0; recovery::MAX_SLICE_LEN + 1], None)];
+    assert_eq!(
+        huge.served(|served| check_room(&keys, served)).err(),
+        Some(Error::TooLarge)
+    );
 }

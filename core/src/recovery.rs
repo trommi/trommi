@@ -1839,19 +1839,20 @@ impl RoomCheck {
         // 5.1.1, 8.1: a row's `mac` says who wrote it, not that the founding it names obeys the rules.
         let first = observer.history().ok_or(Error::Internal("room observer"))?;
         rules::check_room_founding(first.newest()).map_err(|_| Error::BadGroup)?;
+        // The groups are named before anything is kept of them.
+        let mut named = BTreeSet::new();
+        for founding in served.sessions {
+            if let Ok(observer) = Observer::follow_founding(founding) {
+                if !named.insert(observer.group()) {
+                    return Err(Error::BadFormat);
+                }
+            }
+        }
         let walks: Vec<Walk> = served
             .sessions
             .iter()
             .map(|founding| Walk::begin(founding, &served.room))
             .collect();
-        let mut named = BTreeSet::new();
-        if walks
-            .iter()
-            .filter_map(|walk| walk.group)
-            .any(|group| !named.insert(group))
-        {
-            return Err(Error::BadFormat);
-        }
         Ok(Self {
             room: served.room,
             anchor,
@@ -2077,6 +2078,10 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
         let (slice, later) = rest
             .split_at_checked(count)
             .ok_or(Error::Internal("a slice of a history"))?;
+        // As [`RoomCheck::slice`] judges a slice: a Commit above the slice's size is `too-large`.
+        if !fits_a_slice(slice.iter().map(|(_, commit)| commit.commit.len())) {
+            return Err(Error::TooLarge);
+        }
         check.take(slice.iter().copied())?;
         rest = later;
     }

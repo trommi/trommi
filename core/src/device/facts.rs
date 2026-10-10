@@ -1006,7 +1006,7 @@ impl<S: Storage> Device<S> {
         if held.is_some_and(|held| held.again.is_none() || held.epoch >= epoch) {
             return Ok(());
         }
-        self.end_chain(batch, group, cut, epoch)?;
+        self.end_chain(batch, group, cut, epoch, epoch)?;
         // This device's own chain ends there too: whatever it signed beyond the Cut is void, and if its key
         // is added again, its next envelope is the one after the Cut (3.7).
         if cut.device == self.id {
@@ -1052,15 +1052,39 @@ impl<S: Storage> Device<S> {
         Ok(since)
     }
 
+    /// Moves the first removal held for `device` in `group` back to `first`, if it lies earlier: a walk of
+    /// the past found an earlier removal of a key whose later one this device processed itself (9.2).
+    pub(super) fn removed_first(
+        &mut self,
+        batch: &mut Batch,
+        group: &GroupId,
+        device: &DeviceId,
+        first: u64,
+    ) -> Result<(), Error> {
+        if let Some(mut held) = self.removal(group, device)? {
+            if first < held.first {
+                held.first = first;
+                self.put_stored(
+                    batch,
+                    group_key(table::CHAIN, SUB_CUT, group, device.as_bytes()),
+                    codec::encode(&held)?,
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Writes the Cut of a removed device and does to its chain what the Cut says, whatever Cut was held
-    /// for it before.
+    /// for it before. `first` is the epoch its first removal began, if that lies before this one's.
     pub(super) fn end_chain(
         &mut self,
         batch: &mut Batch,
         group: &GroupId,
         cut: &Cut,
         epoch: u64,
+        first: u64,
     ) -> Result<(), Error> {
+        let first = first.min(epoch);
         let head = Head {
             seq: cut.seq,
             hash: cut.hash,
@@ -1077,7 +1101,7 @@ impl<S: Storage> Device<S> {
         let again = self.leaf_since(group, &cut.device, epoch)?;
         let first = self
             .removal(group, &cut.device)?
-            .map_or(epoch, |held| held.first.min(epoch));
+            .map_or(first, |held| held.first.min(first));
         self.put_stored(
             batch,
             group_key(table::CHAIN, SUB_CUT, group, cut.device.as_bytes()),
