@@ -28,7 +28,7 @@ declare const __TROMMI_CORE_WASM__: string
 declare const __TROMMI_CORE_WASM_SHA256__: string
 
 /** The calls of core-api.ts the binding does not have yet (a Record: a call missing here, or one too many, does not compile). */
-const MISSING_ON_DEVICE: Record<keyof ProvisionalDevice, true> = { servedChainCut: true }
+const MISSING_ON_DEVICE: Record<keyof ProvisionalDevice, true> = {}
 const MISSING_STATELESS: Record<keyof ProvisionalStateless, true> = { kitKeysFor: true, accountIdParse: true }
 
 /** What a call the binding lacks answers with. */

@@ -16,7 +16,7 @@
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
 import { NEEDS_NEWER, SAID, heardOf, linkOf, walkOf } from './app.mjs'
-import { Controller, fileTile, revokeTiles, EXPLAIN_TEXT, HAND_BACK_TEXT, isTyping, letterKeysOn, FINAL_TIP, LATER_TAG, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
+import { Controller, fileTile, revokeTiles, EXPLAIN_TEXT, HAND_BACK_TEXT, isTyping, letterKeysOn, FINAL_TIP, LATER_TAG, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb, sayError } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z', GROW = 'M14 5h5v5M19 5l-6 6M10 19H5v-5M5 19l6-6'
 // Drawn with the pen, for the round buttons above a card: an arrow to the left and one to the right, a cross, three
@@ -1719,7 +1719,7 @@ export function register(t) {
       if (!card) throw Object.assign(new Error('this question is not on the board any more'), { status: 404 })
       await WAYS[what](card, form, filesOf(form))
     } catch (err) {
-      const text = err.message || 'the board did not take it'
+      const text = sayError(err, 'the board did not take it')
       const m = model(), now = card && m.byCard.get(card.id)
       // (Sent from the card's own page, where no Desk row stands: what went wrong comes as a note.)
       const onCard = /^\/(?:s\/[^/]+\/)?card\/[\w-]+$/.test(new URL(String(req.headers.referer ?? '/'), location.origin).pathname)
