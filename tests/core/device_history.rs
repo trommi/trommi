@@ -1409,3 +1409,29 @@ fn a_refused_board_load_starts_no_chain_at_a_frontier_the_cut_contradicts() {
     }
     assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 2);
 }
+
+#[test]
+fn a_past_whose_places_contradict_the_devices_own_is_not_taken() {
+    let mut w = world(1);
+    let room = w.room;
+    let (mut new, store) = newcomer(&mut w);
+    // The device processes a room Commit itself: it knows where that room epoch began in the hub's order.
+    w.old.update(&room, true, now()).unwrap().unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    sync_all(&w.hub, &mut new);
+    let real = fetch_group(&w.hub, &room);
+    let before = store.entries();
+
+    // The group's own Commits under change numbers that ascend, and lie beyond that place.
+    let mut later = real.clone();
+    for (change, _, _) in &mut later.commits {
+        *change += 1_000_000;
+    }
+    assert_eq!(learn_from(&mut new, &room, &later), Err(Error::BadGroup));
+    assert!(store.entries() == before);
+    assert!(new.findings().unwrap().is_empty());
+
+    assert!(learn_from(&mut new, &room, &real).is_ok());
+    drop(new);
+    assert!(reopen(store.reopened()).is_ok());
+}
