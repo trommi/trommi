@@ -58,6 +58,8 @@ export interface Rooms {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+/** A joining device's sign-in while it is no leaf yet: asked again after these waits, then every LEAF_WAIT_EVERY_MS, LEAF_WAIT_MS in all. */
+const LEAF_WAITS_MS = [1000, 2000, 4000], LEAF_WAIT_EVERY_MS = 5000, LEAF_WAIT_MS = 5 * 60_000
 const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 const codeText = (numbers: readonly number[]): string => numbers.map(n => String(n).padStart(2, '0')).join('-')
 
@@ -159,6 +161,18 @@ export function roomsOn(env: RoomEnv): Rooms {
       if (Date.now() > until) throw new ClientError('invite-expired', 'nobody confirmed this device in time')
       await sleep(poll)
     }
+    // The sign-in of a device that is no leaf yet is refused `not-member` until the inviter's Commit is in. It is
+    // asked again after 1 s, 2 s and 4 s, then every 5 s, for five minutes in all (the hub's rule for this wait).
+    // A caller that names `poll_ms` or `timeout_ms` (tests) gets its own pace and end for this wait as for the others.
+    const paced = o.poll_ms !== undefined || o.timeout_ms !== undefined
+    let asked = 0, leafUntil = 0
+    const waitForLeaf = async (): Promise<void> => {
+      if (paced) return wait()
+      leafUntil ||= Date.now() + LEAF_WAIT_MS
+      if (cancelled) throw new ClientError('cancelled', 'joining was given up')
+      if (Date.now() > leafUntil) throw new ClientError('invite-expired', 'nobody confirmed this device in time')
+      await sleep(LEAF_WAITS_MS[asked++] ?? LEAF_WAIT_EVERY_MS)
+    }
     const client = (async (): Promise<Client> => {
       const core = await env.core()
       const link = core.inviteLinkParse(o.link)
@@ -182,7 +196,7 @@ export function roomsOn(env: RoomEnv): Rooms {
             if (!(e instanceof HubError) || (e.code !== 'not-member' && !e.transient)) throw e
             // "They don't match" burns the invite: the hub says so on the invite's own route
             try { await hub.getReveal(link.inviteId) } catch (burned) { if (burned instanceof HubError && burned.code === 'invite-burned') throw new ClientError('code-mismatch', 'the other device said the codes do not match') }
-            await wait()
+            await waitForLeaf()
           }
         }
         if (request.role === 'agent') {
@@ -239,6 +253,10 @@ export function roomsOn(env: RoomEnv): Rooms {
             more = page.more && page.items.length > 0
           }
         }
+        // In the hub's ONE order across the removed devices, not chain after chain: the core judges each envelope
+        // against what it was handed before, and a version one device wrote on another's needs that one first
+        // (handed over chain by chain, such a version was `forbidden` on the recovered device for good).
+        chains.sort((x, y) => x.change - y.change)
         const recovery = await hub.openRecovery()
         try {
           const done = await held.recover(code, served, chains, copies, Date.now())

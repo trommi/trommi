@@ -8,7 +8,7 @@
 // Files drawer (session.mjs looseFiles). Pages (ui.mjs pageItems): published pages, pages sent as files, a page behind a
 // picture; no foreign websites; one per file.
 import { CLIENT, core, hubUrl, shareControl, sharesLoaded } from './app.mjs'
-import { Controller, agoSpan, artifactItems, controller, html, mediaPreview, raw, sk, smallMark } from './ui.mjs'
+import { Controller, agoSpan, artifactItems, controller, html, mediaPreview, raw, sk, smallMark, sayError } from './ui.mjs'
 const NOUN = { image: ['picture', 'pictures'], video: ['video', 'videos'], html: ['page', 'pages'], file: ['file', 'files'] }
 const countOf = i => { const n = i.more ?? 1, [one, many] = NOUN[i.type] ?? NOUN.file; return `${n} ${n === 1 ? one : many}` }
 // (an id for a line: the key made short and safe)
@@ -138,6 +138,6 @@ export async function showShare() {
     }
   } catch (err) {
     // The hub answers a missing, expired, withdrawn share and a wrong secret alike (404).
-    say(err?.code === 'not-found' || err?.status === 404 ? 'This link has expired or was withdrawn.' : err?.code === 'decrypt-failed' ? 'This file does not match the link.' : `The file could not be opened: ${err.message}`, 'room-error')
+    say(err?.code === 'not-found' || err?.status === 404 ? 'This link has expired or was withdrawn.' : err?.code === 'decrypt-failed' ? 'This file does not match the link.' : `The file could not be opened: ${sayError(err)}`, 'room-error')
   }
 }
