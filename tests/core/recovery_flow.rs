@@ -4,7 +4,7 @@
 use trommi_core::crypto::{Secret, SigningKey, SystemEntropy};
 use trommi_core::device::{log_finding, CodeJoin, LogFinding, Processed, Received};
 use trommi_core::ids::{DeviceId, GroupId};
-use trommi_core::mls::profile::{CommitNote, Cut};
+use trommi_core::mls::profile::{CommitNote, Cut, MAX_COMMIT_REQUEST_LEN};
 use trommi_core::mls::rules::RoomState;
 use trommi_core::recovery::{
     self, check_room, KeyContext, MacState, RecoveryAuth, RecoveryJoin, RecoveryKeys, SealedKey,
@@ -1878,4 +1878,360 @@ fn a_session_whose_commits_are_served_out_of_the_hubs_order_is_not_joined() {
         assert_eq!(join(&mut new, served).err(), Some(Error::BadGroup));
     }
     assert!(join(&mut new, &honest).is_ok());
+}
+
+#[test]
+fn a_device_signs_in_with_the_code_in_slices() {
+    use trommi_tests::{fetch_group, placed_commits, served_commits};
+
+    let mut w = world(true);
+    w.write_epochs(3);
+    let keys = test_keys();
+    let fetched = fetch(&w.hub, &keys);
+    let placed = fetched.placed();
+    assert!(placed.len() > 12);
+    let start =
+        |device: &mut TestDevice| fetched.start(|served| device.code_check_start(&keys, served));
+    let hand = |device: &mut TestDevice, commits: &[trommi_tests::FetchedCommit]| {
+        placed_commits(commits, |slice| device.code_check_slice(slice))
+    };
+    let finish = |device: &mut TestDevice| {
+        fetched.end(|served| device.join_room_checked(&keys, served, now()))
+    };
+    let store = MemoryStorage::new();
+    let handle = store.handle();
+    let mut c = new_device_on(store);
+    let before = handle.entries();
+    let untouched = |device: &TestDevice| {
+        assert!(handle.entries() == before);
+        assert!(device.room().is_none() && device.outbox().is_empty());
+    };
+
+    // No check was started.
+    assert_eq!(hand(&mut c, &placed[..4]), Err(Error::NotFound));
+    assert_eq!(finish(&mut c).err(), Some(Error::NotFound));
+    // A finish without all slices: the GroupInfo offered as current is not the state reached.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..4]).unwrap();
+    assert_eq!(finish(&mut c).err(), Some(Error::WrongRecovery));
+    assert_eq!(hand(&mut c, &placed[4..8]), Err(Error::NotFound));
+    untouched(&c);
+    // A slice handed twice, and one out of turn.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..4]).unwrap();
+    assert_eq!(hand(&mut c, &placed[..4]), Err(Error::BadGroup));
+    assert_eq!(finish(&mut c).err(), Some(Error::NotFound));
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[4..8]).unwrap_err();
+    untouched(&c);
+    // A hub that changes the history between two slices: a room Commit is left out of the rest.
+    let is_room = |commit: &trommi_tests::FetchedCommit| commit.0 == w.room;
+    let dropped = (4..placed.len())
+        .find(|at| is_room(&placed[*at]) && placed[at + 1..].iter().any(is_room))
+        .unwrap();
+    let mut changed = placed.clone();
+    changed.remove(dropped);
+    start(&mut c).unwrap();
+    hand(&mut c, &changed[..4]).unwrap();
+    assert_eq!(hand(&mut c, &changed[4..]), Err(Error::BadGroup));
+    untouched(&c);
+    // A slice above the stated size is refused, and the check stands where it was.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..4]).unwrap();
+    let many = vec![placed[4].clone(); recovery::MAX_SLICE_COMMITS + 1];
+    assert_eq!(hand(&mut c, &many), Err(Error::TooLarge));
+    for slice in placed[4..].chunks(5) {
+        hand(&mut c, slice).unwrap();
+        untouched(&c);
+    }
+    // The write of the join fails: nothing is written, and the check is gone.
+    handle.fail_apply(1);
+    assert!(matches!(finish(&mut c), Err(Error::Storage(_))));
+    untouched(&c);
+    assert_eq!(finish(&mut c).err(), Some(Error::NotFound));
+    // A device that is opened again in the middle holds no check.
+    start(&mut c).unwrap();
+    hand(&mut c, &placed[..6]).unwrap();
+    drop(c);
+    let store = handle.reopened();
+    let handle = store.handle();
+    let mut c = reopen(store).unwrap();
+    assert_eq!(hand(&mut c, &placed[6..]), Err(Error::NotFound));
+
+    // From the start again, in slices: the join is the one the single call builds.
+    start(&mut c).unwrap();
+    for slice in placed.chunks(3) {
+        hand(&mut c, slice).unwrap();
+    }
+    let built = finish(&mut c).unwrap();
+    assert!(built.unverified.is_empty() && built.missing_link.is_none());
+    post_ok(&mut w.hub, &mut c);
+    assert!(c.is_human() && c.holds_recovery_mac());
+    // Each session, in slices too.
+    for group in w.hub.live_sessions() {
+        let served = fetch_group(&w.hub, &group);
+        assert_eq!(c.session_check_start(&served.founding), Ok(group));
+        // Out of turn first: the check is void, and is started again.
+        served_commits(&served.commits[1..], |slice| {
+            c.session_check_slice(&group, slice)
+        })
+        .unwrap_err();
+        assert_eq!(
+            c.join_session_checked(&keys, &group, &served.current, now()),
+            Err(Error::NotFound)
+        );
+        assert_eq!(c.session_check_start(&served.founding), Ok(group));
+        // A finish without all slices does not agree with the GroupInfo offered as current.
+        served_commits(&served.commits[..1], |slice| {
+            c.session_check_slice(&group, slice)
+        })
+        .unwrap();
+        assert_eq!(
+            c.join_session_checked(&keys, &group, &served.current, now()),
+            Err(Error::WrongRecovery)
+        );
+        assert_eq!(c.session_check_start(&served.founding), Ok(group));
+        for slice in served.commits.chunks(2) {
+            served_commits(slice, |slice| c.session_check_slice(&group, slice)).unwrap();
+        }
+        c.join_session_checked(&keys, &group, &served.current, now())
+            .unwrap();
+        post_ok(&mut w.hub, &mut c);
+    }
+    w.settle_all();
+    assert_eq!(c.groups().unwrap().len(), 3);
+    for group in w.groups() {
+        for (epoch, key) in keys_of(&w.hub, &w.a, &group) {
+            assert_eq!(c.content_key(&group, epoch).unwrap(), key);
+        }
+    }
+    drop(c);
+    assert!(reopen(handle.reopened()).is_ok());
+}
+
+#[test]
+fn a_recovery_checks_the_room_in_slices() {
+    use trommi_tests::placed_commits;
+
+    let mut w = world(true);
+    w.write_epochs(1);
+    let World { mut hub, a, b, .. } = w;
+    drop((a, b));
+    let keys = test_keys();
+    let mut device = new_device();
+    hub.open_recovery(&device.id()).unwrap();
+    let fetched = fetch(&hub, &keys);
+    let replacement = fetched
+        .served(|served| {
+            let checked = check_room(&keys, served)?;
+            keys.replace(
+                &mut SystemEntropy,
+                &fetched.room.group.room_id(),
+                checked.observer.history().unwrap(),
+            )
+        })
+        .unwrap();
+    fetched
+        .start(|served| device.code_check_start(&keys, served))
+        .unwrap();
+    for slice in fetched.placed().chunks(4) {
+        placed_commits(slice, |slice| device.code_check_slice(slice)).unwrap();
+    }
+    fetched
+        .end(|served| device.recover_checked(&keys, served, &replacement, &[], b"copies", now()))
+        .unwrap();
+    hub.account.clear();
+    post_ok(&mut hub, &mut device);
+    assert!(device.is_human() && !hub.recovery_runs());
+    assert_eq!(device.groups().unwrap().len(), 3);
+    // The check was used up.
+    assert_eq!(
+        fetched
+            .end(|served| device.join_room_checked(&keys, served, now()))
+            .err(),
+        Some(Error::NotFound)
+    );
+}
+
+#[test]
+fn a_check_ended_with_another_number_of_session_states_is_refused() {
+    use trommi_tests::placed_commits;
+
+    let mut w = world(true);
+    w.write_epochs(1);
+    let World { mut hub, a, b, .. } = w;
+    drop((a, b));
+    let keys = test_keys();
+    let mut device = new_device();
+    hub.open_recovery(&device.id()).unwrap();
+    let fetched = fetch(&hub, &keys);
+    assert_eq!(fetched.sessions.len(), 2);
+    let replacement = fetched
+        .served(|served| {
+            let checked = check_room(&keys, served)?;
+            keys.replace(
+                &mut SystemEntropy,
+                &fetched.room.group.room_id(),
+                checked.observer.history().unwrap(),
+            )
+        })
+        .unwrap();
+    let checked = |device: &mut TestDevice| {
+        fetched
+            .start(|served| device.code_check_start(&keys, served))
+            .unwrap();
+        for slice in fetched.placed().chunks(4) {
+            placed_commits(slice, |slice| device.code_check_slice(slice)).unwrap();
+        }
+    };
+    // The end names fewer sessions than the start, none, or one more: neither a recovery nor a sign-in is
+    // built on it.
+    let mut fewer = fetched.clone();
+    fewer.sessions.pop();
+    let mut none = fetched.clone();
+    none.sessions.clear();
+    let mut more = fetched.clone();
+    more.sessions.push(fetched.sessions[0].clone());
+    for end in [&fewer, &none, &more] {
+        checked(&mut device);
+        assert_eq!(
+            end.end(|served| device.recover_checked(
+                &keys,
+                served,
+                &replacement,
+                &[],
+                b"copies",
+                now()
+            ))
+            .err(),
+            Some(Error::BadFormat)
+        );
+        checked(&mut device);
+        assert_eq!(
+            end.end(|served| device.join_room_checked(&keys, served, now()))
+                .err(),
+            Some(Error::BadFormat)
+        );
+        assert!(device.room().is_none() && device.outbox().is_empty());
+    }
+    checked(&mut device);
+    fetched
+        .end(|served| device.recover_checked(&keys, served, &replacement, &[], b"copies", now()))
+        .unwrap();
+}
+
+#[test]
+fn a_walk_does_not_judge_which_live_main_session_an_agent_device_sat_in() {
+    use trommi_core::invite::Role;
+    use trommi_tests::try_invite;
+
+    // A hub that checks nothing takes the founding of a second live main session with the same agent
+    // device: whether a session was live at a place no Commit says, so no walk judges it (4.6); the hub did
+    // when it took the Commit.
+    let mut a = new_device();
+    let mut hub = Hub::new(false);
+    found_room_on(&mut hub, &mut a);
+    publish_some(&mut hub, &mut a, 4);
+    let agent = Forger::new();
+    try_invite(&mut a, &mut agent.invitee(), Role::Agent, None).unwrap();
+    post_ok(&mut hub, &mut a);
+    let room = a.room().unwrap();
+    let p = a
+        .found_session(&agent.id(), &[agent.key_package()], now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    // A human device that came later holds no main session, and founds one with the same agent device.
+    let mut b = new_device();
+    add_human(&mut hub, &mut a, &mut b);
+    publish_some(&mut hub, &mut b, 4);
+    let of_a = hub.claim(&[a.id()]).unwrap().remove(0);
+    let q = b
+        .found_session(&agent.id(), &[agent.key_package(), of_a], now())
+        .unwrap();
+    post_ok(&mut hub, &mut b);
+    let groups = [GroupId::session(room, p), GroupId::session(room, q)];
+
+    // A device signs in with the code: the room's walk and each session's take both sessions.
+    let keys = test_keys();
+    let mut new = new_device();
+    let joined = join_room(&hub, &mut new, &keys).unwrap();
+    assert!(joined.unverified.is_empty(), "{:?}", joined.unverified);
+    post_ok(&mut hub, &mut new);
+    for group in &groups {
+        join_session(&hub, &mut new, &keys, group).unwrap();
+        post_ok(&mut hub, &mut new);
+    }
+    assert_eq!(new.groups().unwrap().len(), 3);
+}
+
+#[test]
+fn the_start_of_a_room_check_keeps_no_more_than_the_limits_allow() {
+    let w = world(true);
+    let keys = test_keys();
+    let fetched = fetch(&w.hub, &keys);
+    let mut device = new_device();
+    let start = |device: &mut TestDevice, served: &Fetched| {
+        served.start(|served| device.code_check_start(&keys, served))
+    };
+    // A GroupInfo above the limit of a Commit's request, as the anchor or as a session's founding.
+    let huge = vec![0; MAX_COMMIT_REQUEST_LEN + 1];
+    let mut anchor = fetched.clone();
+    anchor.anchor = huge.clone();
+    let mut founding = fetched.clone();
+    founding.sessions[1].founding = huge;
+    for served in [&anchor, &founding] {
+        assert_eq!(start(&mut device, served), Err(Error::TooLarge));
+    }
+    // One session named twice.
+    let mut twice = fetched.clone();
+    twice.sessions.push(fetched.sessions[0].clone());
+    assert_eq!(start(&mut device, &twice), Err(Error::BadFormat));
+    assert_eq!(
+        twice.served(|served| check_room(&keys, served)).err(),
+        Some(Error::BadFormat)
+    );
+    // Neither left a check behind; the honest start holds one.
+    assert_eq!(
+        trommi_tests::placed_commits(&fetched.placed()[..1], |slice| device
+            .code_check_slice(slice)),
+        Err(Error::NotFound)
+    );
+    start(&mut device, &fetched).unwrap();
+}
+
+#[test]
+fn the_one_call_room_check_places_the_commits_of_a_session_it_cannot_name() {
+    use trommi_tests::placed_commits;
+
+    let w = world(true);
+    let keys = test_keys();
+    let fetched = fetch(&w.hub, &keys);
+    // A session whose founding names no group, with a Commit under a number a room Commit has.
+    let mut served = fetched.clone();
+    served.sessions[1].founding = b"no GroupInfo".to_vec();
+    served.sessions[1].commits[0].0 = fetched.room.commits[1].0;
+    assert_eq!(
+        served.served(|served| check_room(&keys, served)).err(),
+        Some(Error::BadGroup)
+    );
+    // The same entries handed to the check in slices.
+    let mut device = new_device();
+    served
+        .start(|start| device.code_check_start(&keys, start))
+        .unwrap();
+    let handed: Result<Vec<()>, Error> = served
+        .placed()
+        .chunks(4)
+        .map(|slice| placed_commits(slice, |slice| device.code_check_slice(slice)))
+        .collect();
+    assert_eq!(handed.err(), Some(Error::BadGroup));
+    // A Commit above a slice's size, of such a session, is `too-large` in both.
+    let mut huge = fetched.clone();
+    huge.sessions[1].founding = b"no GroupInfo".to_vec();
+    let last = huge.placed().last().unwrap().1;
+    huge.sessions[1].commits = vec![(last + 1, vec![0; recovery::MAX_SLICE_LEN + 1], None)];
+    assert_eq!(
+        huge.served(|served| check_room(&keys, served)).err(),
+        Some(Error::TooLarge)
+    );
 }

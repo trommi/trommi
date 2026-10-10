@@ -92,6 +92,21 @@ class Hub {
     }
   }
 
+  /** The same room in three parts, for a check in steps: everything but the Commits, the Commits of the room group
+   *  and of every session ascending by change number with their groups, and the end. */
+  servedInSteps(core, room, code) {
+    const whole = this.servedRoom(core, room, code)
+    const groups = [room, ...[...this.sessions.keys()].map(unhex)]
+    const placed = [whole.group, ...whole.sessions]
+      .flatMap((served, at) => served.commits.map(commit => ({ group: groups[at], commit })))
+      .sort((a, b) => a.commit.change - b.commit.change)
+    return {
+      start: { room, founding: whole.group.founding, anchor: whole.anchor, rows: whole.rows, sessions: whole.sessions.map(session => session.founding) },
+      placed,
+      end: { current: whole.group.current, sessions: whole.sessions.map(session => session.current), rows: whole.rows, links: whole.links },
+    }
+  }
+
   /** Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did. */
   sync(world, device, room, batched = false) { return this.feed(device, room, batched) }
 
@@ -332,6 +347,15 @@ export async function runScenario(scenario, world) {
       check(merged !== null && typeof merged === 'object', 'the board did not reduce to a snapshot file')
       const cut = await reader.call('cutOf', roomGroup, writerId)
       check(cut.seq === second.seq && same(cut.hash, second.envelopeHash), 'the Cut is not the last accepted envelope')
+      // The same snapshot loads again at any time: at once, and after more items were added (it was 'replay' once).
+      const again = await reader.call('boardLoad', board, [{ sender: writerId, seq: second.seq, hash: second.envelopeHash }])
+      check(again.frontier[0].seq === second.seq && again.fresh.length === 1, 'the same snapshot did not load again')
+      const third = await writer.call('seal', item, null, [], Date.now())
+      await hub.post(writer)
+      const later = await hub.sync(world, reader, room)
+      check(later.envelopes.length === 1 && later.envelopes[0].outcome === 'applied', 'the added item was not applied')
+      const grown = await reader.call('boardLoad', board, [{ sender: writerId, seq: second.seq, hash: second.envelopeHash }, { sender: writerId, seq: third.seq, hash: third.envelopeHash }])
+      check(grown.frontier[0].seq === third.seq && grown.fresh.length === 2, 'the same snapshot did not load again after items were added')
     },
     async found_session(step) {
       const founder = device(step.by)
@@ -399,12 +423,30 @@ export async function runScenario(scenario, world) {
       await device(step.by).call('cleanSession', group(step.group), cuts, null, Date.now())
     },
     async join_with_code(step) {
-      const joined = await device(step.device).call('joinRoomWithCode', code, hub.servedRoom(core, room, code), Date.now())
+      let joined
+      if (step.slices) {
+        // In steps, two Commits a slice. An end that names another number of sessions is bad-format and ends the check.
+        const { start, placed, end } = hub.servedInSteps(core, room, code)
+        const checked = async () => {
+          await device(step.device).call('codeCheckStart', code, start)
+          for (let at = 0; at < placed.length; at += 2) await device(step.device).call('codeCheckSlice', placed.slice(at, at + 2))
+        }
+        await checked()
+        check(await refusal(() => device(step.device).call('joinRoomChecked', code, { ...end, sessions: [...end.sessions, end.current] }, Date.now())) === 'bad-format', 'an end with another number of sessions was taken')
+        check(await refusal(() => device(step.device).call('joinRoomChecked', code, end, Date.now())) === 'not-found', 'the check outlived its finish')
+        await checked()
+        joined = await device(step.device).call('joinRoomChecked', code, end, Date.now())
+      } else joined = await device(step.device).call('joinRoomWithCode', code, hub.servedRoom(core, room, code), Date.now())
       check(joined.outbox.length === 1 && joined.unverified.length === 0 && joined.missingLink === null, 'the room did not verify whole')
     },
     async join_session_with_code(step) {
       const { founding, current } = hub.sessions.get(hex(group(step.group)))
-      await device(step.device).call('joinSessionWithCode', code, hub.served(group(step.group), founding, current), Date.now())
+      const served = hub.served(group(step.group), founding, current)
+      if (!step.slices) return void await device(step.device).call('joinSessionWithCode', code, served, Date.now())
+      const id = await device(step.device).call('sessionCheckStart', founding)
+      check(same(id, group(step.group)), 'the session check names another group')
+      for (let at = 0; at < served.commits.length; at += 2) await device(step.device).call('sessionCheckSlice', id, served.commits.slice(at, at + 2))
+      await device(step.device).call('joinSessionChecked', code, id, current, Date.now())
     },
     async earlier_key(step) {
       const held = await Promise.all([step.device, step.like].map(name => device(name).call('holdsKey', group(step.group), step.epoch)))
@@ -419,13 +461,24 @@ export async function runScenario(scenario, world) {
     async recover(step) {
       const served = hub.servedRoom(core, room, code)
       check(served.sessions.length > 0, 'the room is served without its sessions')
-      const plan = await device(step.device).call('prepareRecovery', code, served)
+      const steps = hub.servedInSteps(core, room, code)
+      let plan
+      if (step.slices) {
+        // The plan on a check of its own, then the device's check, each in slices of two Commits.
+        await device(step.device).call('recoveryPlanStart', code, steps.start)
+        for (let at = 0; at < steps.placed.length; at += 2) await device(step.device).call('recoveryPlanSlice', steps.placed.slice(at, at + 2))
+        plan = await device(step.device).call('recoveryPlanFinish', code, steps.end)
+        await device(step.device).call('codeCheckStart', code, steps.start)
+        for (let at = 0; at < steps.placed.length; at += 2) await device(step.device).call('codeCheckSlice', steps.placed.slice(at, at + 2))
+      } else plan = await device(step.device).call('prepareRecovery', code, served)
       // The chains of the devices to go, as the hub's chain route serves them: every envelope of theirs, in order.
       const gone = plan.removals.flatMap(({ devices }) => devices)
       check(gone.length > 0 && plan.newCode.length === 32, 'the recovery removes nobody')
       const chains = hub.log.filter(entry => entry.kind === 'envelope' && gone.some(id => same(id, entry.from))).map(entry => ({ bytes: entry.bytes, change: entry.change, voidCode: null })).reverse()   // in any order: the device sorts them
       check(chains.length > 0, 'the devices to go wrote nothing')
-      const built = await device(step.device).call('recover', code, served, chains, bytes('the account\'s sealed copies'), Date.now())
+      const built = step.slices
+        ? await device(step.device).call('recoverChecked', code, steps.end, chains, bytes('the account\'s sealed copies'), Date.now())
+        : await device(step.device).call('recover', code, served, chains, bytes('the account\'s sealed copies'), Date.now())
       check(built.unverified.length === 0 && built.outbox.length >= 2, 'the recovery was not built whole')
       code = plan.newCode
     },
@@ -477,7 +530,16 @@ export async function runScenario(scenario, world) {
         // Before: its knowledge begins after the founding, and the past is not held; a group it is a leaf of says the same.
         const before = await device(step.device).call('groupPast', id)
         check(before !== null && before.fromEpoch >= 1 && before.learned === false, `the past of ${name} is not shown as missing: ${JSON.stringify(before)}`)
-        const learned = await device(step.device).call('learnHistory', id, founding, hub.served(id, founding, founding).commits)
+        const { commits } = hub.served(id, founding, founding)
+        let learned
+        if (step.slices) {
+          // In steps, two Commits a slice: the walk counts only when it is finished.
+          let progress = await device(step.device).call('learnStart', id, founding)
+          check(progress.epoch === 0 && progress.upto === before.fromEpoch, `the walk of ${name} does not begin at the founding`)
+          for (let at = 0; at < commits.length; at += 2) progress = await device(step.device).call('learnSlice', id, commits.slice(at, at + 2))
+          check(progress.epoch === progress.upto && (await device(step.device).call('groupPast', id)).learned === false, `the walk of ${name} counted before its finish`)
+          learned = await device(step.device).call('learnFinish', id)
+        } else learned = await device(step.device).call('learnHistory', id, founding, commits)
         check(learned.epochs >= 1, `nothing of ${name} was learned`)
         const after = await device(step.device).call('groupPast', id)
         check(after?.learned === true && after.fromEpoch === before.fromEpoch, `the past of ${name} is not shown as learned`)
