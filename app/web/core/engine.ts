@@ -991,7 +991,15 @@ export class Engine {
       if (this.is_human && !g.pending) await this.do(d => d.update(g.group, false, this.now())).catch(() => {})
       await this.do(async d => {
         const value = await d.headsDue(g.group, this.now())
-        if (value) await d.seal({ kind: 'register', group: g.group, name: 'heads', value }, null, [], this.now())
+        if (!value) return
+        // `heads` is itself an envelope of this device's chain, so its own head has always moved since the last
+        // one: written only when another sender's head changed (9.0.7), or every start would add an envelope
+        const heads = JSON.parse(new TextDecoder().decode(value)) as Record<string, unknown>
+        delete heads[this.core.base64urlEncode(this.device_id)]
+        const others = canonical(heads), key = `heads/${hex(g.group)}`
+        if ((await this.opts.meta.get(key).catch(() => null)) === others) return
+        await d.seal({ kind: 'register', group: g.group, name: 'heads', value }, null, [], this.now())
+        await this.opts.meta.set(key, others).catch(() => {})
       }).catch(() => {})
     }
     this.later(this.timing.upkeep_every, () => this.keepSoon(0))
