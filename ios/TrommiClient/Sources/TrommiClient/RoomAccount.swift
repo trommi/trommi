@@ -1,6 +1,6 @@
 // RoomAccount.swift: how this device comes into a room: founding one, joining by link (the six emoji), or signing in
 // with the recovery code (which the account keeps sealed under the password, the Emergency Kit words or a passkey:
-// Account.swift), or, when every device is lost, the whole recovery with it. spec/v2.md 5.1.1, 12.1, 8.4 and 8.7.
+// Account.swift), or, when every device is lost, the whole recovery with it. spec/v1.md 5.1.1, 12.1, 8.4 and 8.7.
 import Foundation
 
 extension Room {
@@ -27,7 +27,7 @@ extension Room {
   }
 
   /**
-   * Join with an invite link a signed-in device made (for a human device), spec/v2.md 12.1. The steps are the
+   * Join with an invite link a signed-in device made (for a human device), spec/v1.md 12.1. The steps are the
    * core's: it checks the Offer and makes the Request (`joinRequest`), checks the Reveal (`joinReveal`: only then
    * is a code shown), and takes the one Welcome that answers its Request (`joinInvited`: the Offer's room,
    * committed by the inviter). `onEvent` gets the check code to show as emoji; the human compares it with the other

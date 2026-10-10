@@ -385,7 +385,7 @@ struct ForgotView: View {
       }
       .buttonStyle(ObGo()).disabled(model.signing)
       Button("Back to log in") { model.go(.email) }.buttonStyle(ObLink()).frame(maxWidth: .infinity)
-      // (spec/v2.md 8.7: every device is lost. An account without an email gets a new passkey for it, where passkeys are on.)
+      // (spec/v1.md 8.7: every device is lost. An account without an email gets a new passkey for it, where passkeys are on.)
       if !byId || model.passkeysOn {
         Button("All my devices are lost") { if checked(byId: byId) != nil { lostAll = true } }
           .buttonStyle(ObLink()).frame(maxWidth: .infinity).disabled(model.signing)

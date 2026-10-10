@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn codes_are_those_of_section_16() {
-        let spec = include_str!("../../spec/v2.md");
+        let spec = include_str!("../../spec/v1.md");
         let section = spec
             .split("\n## 16. ")
             .nth(1)

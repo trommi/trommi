@@ -1,9 +1,9 @@
 # The v2 hub: routes and tables
 
-Short and normative for a hub and its clients; the rules a hub enforces are in [`v2.md`](v2.md) (sections 5, 8, 9,
-12, 14). Every route is under `/v2/`. Bodies are JSON, at most 1.5 MiB (v2.md section 16); byte strings are base64url; an MLS message, a GroupInfo, a
-KeyPackage, an envelope and every struct of v2.md travel as their TLS-encoded bytes in one string. A refusal is
-`{ "error": code, "message": text }` with the status of v2.md section 16. Every route but the first block needs
+Short and normative for a hub and its clients; the rules a hub enforces are in [`v1.md`](v1.md) (sections 5, 8, 9,
+12, 14). Every route is under `/v2/`. Bodies are JSON, at most 1.5 MiB (v1.md section 16); byte strings are base64url; an MLS message, a GroupInfo, a
+KeyPackage, an envelope and every struct of v1.md travel as their TLS-encoded bytes in one string. A refusal is
+`{ "error": code, "message": text }` with the status of v1.md section 16. Every route but the first block needs
 `authorization: Bearer <token>`; `Trommi-Client: <kind>/<major>.<minor>.<patch>` is sent always (`client-too-old`).
 An id in a path is base64url; a 16-byte id may also be written as 32 hex digits (as timelines are). Where this file
 leaves a body or a rule open, "Decided for the first hub" at the end says what the hub does.
@@ -85,17 +85,17 @@ written. Catch-up is "everything above N".
   transaction from signed header fields, and can be dropped and rebuilt. One write route, one truth table; the app's
   names are on what is read.
 - Retention: `group_log` messages 30 days; Commits and the founding GroupInfo of a group while it is live and as long as any envelope of
-  it is kept (the room group: for ever); `envelopes.body` per v2.md 9.4; `welcomes` until joined; relay-only messages never.
+  it is kept (the room group: for ever); `envelopes.body` per v1.md 9.4; `welcomes` until joined; relay-only messages never.
 - Who may read: a human device everything of its room; an agent or helper device the Commits and GroupInfo of the
   room group and, for a helper session, of its main session's group (public state only, no messages), and the log,
-  envelopes, files and registers of the groups it is a leaf of (a file: while it is a leaf, v2.md 11.3; a file no
+  envelopes, files and registers of the groups it is a leaf of (a file: while it is a leaf, v1.md 11.3; a file no
   envelope names yet: its uploader only); the recovery key what 8.4 to 8.7 need: the list of
   groups, every GroupInfo and Commit, the sealed keys and links, and envelopes in pruned form.
 - A recovery (8.7) is a transaction of its own: each posted part advances a copy of the public state of the groups
   it touches, later parts are checked against that copy, every other reader sees the state from before. `finish`
   checks that the room group and every live session group were joined and cleaned, then publishes all parts under
   consecutive change numbers; repeated, by the recovery key's token or after publication by the new device's own,
-  it gives the same answer. While a recovery is open the room takes no other write (v2.md 8.7). At expiry or `DELETE` the copy is dropped.
+  it gives the same answer. While a recovery is open the room takes no other write (v1.md 8.7). At expiry or `DELETE` the copy is dropped.
 - The log route gives a join from outside together with its `RecoveryAuth`. The chain route marks envelopes beyond
   a Cut `cut`. Nothing in a log is ever withdrawn.
 - A repeated post of the same bytes gets the first answer again. Every read route serves a void record with its
@@ -201,7 +201,7 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
     user_handle? }`. The hub finds the account by the credential id; a `user_handle`, if sent, must be the
     account's. The answer carries that passkey's `sealed_copy`, which is sealed under a key from the PRF
     output, the room id and the credential id (v1 §16): no e-mail is in it.
-  - *The Emergency Kit's salt* (v2.md 8.8.2) follows from the account alone: with an e-mail the form of v1 §16,
+  - *The Emergency Kit's salt* (v1.md 8.8.2) follows from the account alone: with an e-mail the form of v1 §16,
     byte for byte; without one `salt = SHA-256("trommi/v2/account-salt/id" 0x00 ‖ account id)`, the id as its 16
     raw bytes. The hub cannot check a kit; `kit_form` (`email` or `id`) in the account's answers says which the
     account's kit has. So the form never changes silently: giving the account an e-mail brings the kit made anew
@@ -246,7 +246,7 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 
 ## Decided for the first hub
 
-Where v2.md or this file left room, the hub does the following. None of it changes a byte that is signed or
+Where v1.md or this file left room, the hub does the following. None of it changes a byte that is signed or
 encrypted.
 
 **Delivery service**
@@ -280,7 +280,7 @@ encrypted.
     it is uploaded again or its device is removed (its reference is kept for good). A KeyPackage is handed out
     no longer than its own lifetime says. A claim
     names a device once. A helper device claims none. Leaves and KeyPackages carry exactly the capabilities of
-    v2.md section 3; a GroupInfo is at most 384 KiB (206 kB at 1000 human devices) and its tree at most 2 047
+    v1.md section 3; a GroupInfo is at most 384 KiB (206 kB at 1000 human devices) and its tree at most 2 047
     nodes (`bad-commit`).
 13. A repeated post of the same bytes gets the first answer for: a founding, a Commit, an application message, an
     envelope, a SealedKey, a file, an Offer, a Reveal, a share. A claim of KeyPackages is not repeatable.
@@ -335,7 +335,7 @@ encrypted.
     Founding a room is open to anyone, ten an hour per address (owner, 9 October 2026). A hub can be set
     otherwise: `HUB_FOUND_TOKEN` (unset by default) must then come as `x-found-token`; `HUB_FOUNDING=closed`
     founds none.
-25. A Share link expires within 180 days (owner, 9 October 2026; v2.md 11.5 and section 16 follow on the core's
+25. A Share link expires within 180 days (owner, 9 October 2026; v1.md 11.5 and section 16 follow on the core's
     branch). A room has at most 1 000 Share links, a device ten push registrations.
 26. A Web Push carries a `Topic` (one waiting notification per room). The ticket of 15.2 is the hub's own
     `room ‖ device ‖ change ‖ expiry ‖ HMAC`; only the hub reads it. One device's envelopes cause at most ten
@@ -361,7 +361,7 @@ encrypted.
     reached the room's newest change.
 33. Numbers of the wire (`uint64`: epochs, sequence numbers, times) above 2^63 − 1 are refused (`bad-format`);
     cursors in a query are decimal numbers of at most 18 digits.
-34. The update cadence of v2.md 5.2.9 is the clients'; the hub neither asks for an own-leaf update nor refuses
+34. The update cadence of v1.md 5.2.9 is the clients'; the hub neither asks for an own-leaf update nor refuses
     one for coming early (it counts among a device's expensive requests, point 30).
 35. Stroke pieces: 20 within any second per device. A stream whose token ran out is cut at that moment, also
     one that had ended before with a reader that did not read (not a connection whose stream was read to its
@@ -376,7 +376,7 @@ encrypted.
     sent, so an end stays due until the activity's token is registered. A token Apple refuses is forgotten; a
     token registered anew is sent the counts in a round after it is stored. "Lost" is never told after the `online` of a
     stream the agent opened first.
-28. Every code the hub answers is one of v2.md section 16, with its status there (`account-changed` 409, `bad-email`
+28. Every code the hub answers is one of v1.md section 16, with its status there (`account-changed` 409, `bad-email`
     and `bad-passkey` 400 and `range` 416 among them); the hub has none of its own.
 39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`. New recovery keys are refused if the room held either of them before, as
     either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
@@ -401,7 +401,7 @@ encrypted.
     `POST /v2/account/passkey/challenge` is bounded like every tokenless route (600 a minute per address, then
     `rate-limited`); the hub holds at most 10 000 open challenges of 32 bytes for two minutes each, the oldest
     going first.
-42. **A removed device can verify its removal** (owner, 10 October 2026; v2.md 13.5, 14.4). Its access ends at
+42. **A removed device can verify its removal** (owner, 10 October 2026; v1.md 13.5, 14.4). Its access ends at
     once, as before: every route answers it `not-member`. One read stays, for thirty days from the Commit that
     removed it: `GET /v2/groups/{group}/removal?after=<n>` → `{ items, more, removed_at }` gives the Commits of
     that group (log entries as on the log route, `kind: "commit"` only) after `after`, up to and including the
@@ -422,7 +422,7 @@ encrypted.
     Desk's `groups` go.
 44. **One stream per device** (10 October 2026). Opening `GET /v2/stream` ends the device's older streams at once
     (their connections are cut, their places freed): a browser that never closes the old stream of a page
-    reloaded under a service worker would otherwise reach the limit of v2.md section 16 and get `too-many`. A
+    reloaded under a service worker would otherwise reach the limit of v1.md section 16 and get `too-many`. A
     device runs one stream (the web app in its leader tab). An agent device's processes overlap while one
     restarts (13.7): its stream carries `Trommi-Lease`; only the lease holder's stream replaces the others, a
     process that no longer holds the lease is answered `lease-lost` and ends nothing, and a stream opened without
@@ -432,7 +432,7 @@ encrypted.
 
 - **The room group's GroupInfos.** The hub keeps the GroupInfo of every epoch of the room group (a device that
   comes with the code walks the room from its anchor, 8.4 to 8.7). At 1000 human devices each is about 206 kB, and
-  the own-leaf updates alone (v2.md 5.2.9: every human device weekly) make some 52 000 room Commits a year: about
+  the own-leaf updates alone (v1.md 5.2.9: every human device weekly) make some 52 000 room Commits a year: about
   10 GB a room and year. Proposed: keep the room group's GroupInfo only at the epochs a SealedKey row or a
   RecoveryLink names as an anchor, plus epoch 0 and the current one, and let the device rebuild the others from the
   Commits of the log (which are kept for ever and are small), as session groups already do.

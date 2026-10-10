@@ -1,4 +1,4 @@
-//! Stored content (spec/v2.md section 9): the one write route for envelopes, the hub's checks 1 to 8 on headers,
+//! Stored content (spec/v1.md section 9): the one write route for envelopes, the hub's checks 1 to 8 on headers,
 //! the object state rule, the indexes with the app's names, and the reads built on them. The hub never opens a
 //! body: everything here works on the signed header, the chain numbers and hashes.
 

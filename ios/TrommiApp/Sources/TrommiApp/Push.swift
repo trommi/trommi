@@ -1,4 +1,4 @@
-// Push.swift: notifications through APNs (spec/v2.md section 15). The app asks once, registers with Apple, and hands
+// Push.swift: notifications through APNs (spec/v1.md section 15). The app asks once, registers with Apple, and hands
 // its device token to the room's hub (POST /v2/push) together with the push key: 32 random bytes the core made,
 // under which the hub seals what a notification says ({ room_id, change, urgency, ticket }, the payload's `e`).
 // Apple sees only a fixed text. The Notification Service Extension (Sources/TrommiNotify) opens `e` on the phone and

@@ -1,6 +1,6 @@
 // types.ts: the shapes of the board model, as types only (nothing here exists at run time).
 // The model is core/README.md "The model": what the views render from. model.ts builds it from what the Rust core
-// accepted (core-api.ts); codec.ts turns the bodies of spec/v2.md section 9.1 into the fields named here. Names are
+// accepted (core-api.ts); codec.ts turns the bodies of spec/v1.md section 9.1 into the fields named here. Names are
 // snake_case, ids lowercase hex (the wire and the core speak base64url; ids.ts and codec.ts convert at the edge),
 // times in ms since the epoch, envelope numbers are the hub's change numbers.
 //

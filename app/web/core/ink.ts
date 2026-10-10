@@ -1,4 +1,4 @@
-// ink.ts: one stroke's points on the wire and how a stroke is shaped (spec/v2.md 10.6), without DOM.
+// ink.ts: one stroke's points on the wire and how a stroke is shaped (spec/v1.md 10.6), without DOM.
 // Modelled on PencilKit (PKStroke, PKStrokePath, PKStrokePoint), so the iOS app maps a stroke 1:1, and the web app
 // draws it the same way. spec/strokes.json holds sample strokes with their packed form.
 //

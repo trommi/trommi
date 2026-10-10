@@ -1,6 +1,6 @@
 // RoomPast.swift: what was in the room before this device came. A device that joined by link, or was added to a
 // session group by a Welcome, holds each group from the epoch it joined at; the core takes an envelope of an earlier
-// epoch only once it learned the group's past from its public history (`CoreDevice.learnHistory`, spec/v2.md 4.6).
+// epoch only once it learned the group's past from its public history (`CoreDevice.learnHistory`, spec/v1.md 4.6).
 //
 // What is left to do is kept in room.json (`RoomRecord.past`), so an interrupted run goes on at the next sync:
 //

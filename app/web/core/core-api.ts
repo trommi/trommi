@@ -1,4 +1,4 @@
-// core-api.ts: the Rust core (`trommi-core`, spec/v2.md) as the web app sees it. THE ONE FILE that names the WASM
+// core-api.ts: the Rust core (`trommi-core`, spec/v1.md) as the web app sees it. THE ONE FILE that names the WASM
 // binding's interface: every other module of the client layer imports the core's types from here, and only
 // core-wasm.ts touches the binding's module.
 //
@@ -6,7 +6,7 @@
 // conventions hold for everything here: bytes are a Uint8Array of their own; ids are bytes (a device 32, a room 32,
 // a session 16, a group 32 or 48, a hash 32; ids.ts turns them into the model's lowercase hex and back); counts and
 // times are whole numbers below 2^53; an absent value is null; every refusal is a TrommiError whose `code` is the
-// stable code of spec/v2.md section 16. A `Device` is asynchronous: each call runs after the ones before it and
+// stable code of spec/v1.md section 16. A `Device` is asynchronous: each call runs after the ones before it and
 // resolves only once what it wrote is stored, so a result in hand is always durable (spec 13.2).
 //
 // Part 2 is PROVISIONAL: what the web app needs and the binding does not have yet. Today it is EMPTY: stored

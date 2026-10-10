@@ -2,7 +2,7 @@
 // fixed order. It knows the core and the hub and nothing of the model or the views: client.ts listens to what it
 // reports and builds the model from that.
 //
-// What it does (spec/v2.md 5, 7, 9, 13.2 to 13.4; core/README.md "How a client uses it"):
+// What it does (spec/v1.md 5, 7, 9, 13.2 to 13.4; core/README.md "How a client uses it"):
 //   write, then send   an action seals into the core's outbox and returns; the PUMP posts the outbox, strictly in its
 //                      order, one entry in flight, and tells the core the hub's answer
 //   catch-up           pages of `GET /v2/changes` after the cursor, to the core in the hub's order: a page in batches

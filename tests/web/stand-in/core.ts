@@ -10,7 +10,7 @@
 // appended to the real bytes of a Commit and of a founding GroupInfo when the outbox is handed out ({ added,
 // removed, agents } and { group, epoch, leaves, session, recovery_signature_key }), and cut off again before the
 // binding sees bytes the hub served. The facts are what this device asked the binding for, not what the Commit
-// proves. `hubReaders` reads the trailer and, by their layout in spec/v2.md, the real HubAuth (12.3), Offer and
+// proves. `hubReaders` reads the trailer and, by their layout in spec/v1.md, the real HubAuth (12.3), Offer and
 // Reveal (12.1) and an envelope's header (9).
 //
 // The facts are kept in a SECOND store, given by the test: the binding's state is written first (the binding does
@@ -108,7 +108,7 @@ export function splitFacts(bytes: Uint8Array): { bytes: Uint8Array; facts: Recor
 }
 
 /**
- * Readers for the fake hub (`startFakeHub({ readers: hubReaders })`): the real HubAuth (spec/v2.md 12.3), and the
+ * Readers for the fake hub (`startFakeHub({ readers: hubReaders })`): the real HubAuth (spec/v1.md 12.3), and the
  * facts this stand-in appended to a Commit and to a founding GroupInfo. Envelopes, Offers and Reveals are the JSON
  * the fake hub reads by default.
  */
@@ -158,7 +158,7 @@ function varint(n: number): Uint8Array {
 const KINDS = ['', 'item', 'version', 'answer', 'request', 'verdict', 'register', 'takeBack']
 const TYPES = ['', 'card', 'note', 'request', 'artifact'], STATES = ['', 'open', 'answered', 'closed'], URGENCIES = ['low', 'normal', 'high', 'critical']
 /**
- * The readable header of a real envelope (spec/v2.md 9: `Envelope { form, Header, … }`), in the words the fake hub
+ * The readable header of a real envelope (spec/v1.md 9: `Envelope { form, Header, … }`), in the words the fake hub
  * files by. Nothing is verified: no signature, no chain.
  */
 function envelopeHeader(bytes: Uint8Array): Record<string, unknown> {
