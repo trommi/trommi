@@ -328,12 +328,15 @@ export interface InviteOpened {
   expiresAt: number
   offer: Uint8Array
   signature: Uint8Array
+  /** The MAC that binds the Offer to the link, 32 bytes: published with the Offer and its signature. */
+  mac: Uint8Array
 }
 
-/** An Offer as the hub takes and serves it. */
+/** An Offer as the hub takes and serves it, with the MAC it serves beside it. */
 export interface SignedOffer {
   offer: Uint8Array
   signature: Uint8Array
+  mac: Uint8Array
 }
 
 /** A Request as the hub takes and serves it. */
@@ -355,6 +358,16 @@ export interface InviteLinkParts {
   hub: string
   roomId: Uint8Array
   inviteId: Uint8Array
+  /** The link's deadline, ms by the inviter's clock: its fifth part. */
+  expiresAt: number
+}
+
+/** What a link names, as the new device reads it before it fetches anything. */
+export interface JoinLink {
+  hub: string
+  roomId: Uint8Array
+  inviteId: Uint8Array
+  expiresAt: number
 }
 
 export interface EmojiWord {
@@ -808,6 +821,14 @@ export class Device {
   inviteChecked(inviteId: Uint8Array, helpers: Uint8Array[]): Promise<void>
   /** A takeover without history: drops the invite's handover steps only. */
   inviteForget(inviteId: Uint8Array): Promise<void>
+  /**
+   * Reads a link before anything is fetched for it, its deadline held against `nowMs`: `room-exists`, `bad-format`,
+   * `newer-version`, `invite-expired` (more than two minutes past it), `bad-invite` (further ahead than any invite
+   * lives).
+   */
+  joinLink(link: string, nowMs: number): Promise<JoinLink>
+  /** Answers the Offer served for `link`, with the MAC served beside it: `bad-invite` for an Offer that is not the
+   *  link's (a missing, short or wrong MAC) and nothing is stored; `invite-expired` by the Offer's kind. */
   joinRequest(link: string, offer: SignedOffer, nowMs: number): Promise<JoinRequest>
   joinReveal(reveal: SignedReveal): Promise<CheckCode>
   joinObserve(groupInfo: Uint8Array): Promise<void>
@@ -941,7 +962,15 @@ export function boardReduce(snapshot: Uint8Array | null | undefined, snapshotFro
 /** The header of an envelope (full or pruned form), with the sender's signature verified and nothing else:
  *  membership and the place in the chain are a device's to check (`receiveEnvelope`). */
 export function envelopeHeader(envelope: Uint8Array): EnvelopeInfo
+/** The parts of a link, nothing held against a clock; `bad-format` for a link without its deadline. */
 export function inviteLinkParse(text: string): InviteLinkParts
+/** The parts of a link after its deadline was held against `nowMs`: `invite-expired` more than two minutes past it,
+ *  `bad-invite` further ahead than any invite lives. */
+export function inviteLinkCheck(text: string, nowMs: number): InviteLinkParts
+/** How long an invite for `role` may be answered: 10 minutes for a human device, 15 for an agent device. */
+export function inviteLifeMs(role: InviteRole): number
+/** How far the new device's clock may stand from the inviter's around a deadline, either way: 2 minutes. */
+export function inviteClockToleranceMs(): number
 export function checkEmoji(): EmojiWord[]
 /** The address if `text` spells it canonically; `bad-format` otherwise. Never normalised. */
 export function hubAddress(text: string): string
