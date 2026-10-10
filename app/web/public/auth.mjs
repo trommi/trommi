@@ -66,14 +66,15 @@ async function passkeyGet({ challenge = null, allow = [], mediation, signal } = 
  * asked for): one prompt. Its prf output comes with the creation; a store that only says "prf is on" there gives it in
  * one get() right after (a second prompt, the only way to have the bytes). There is no proof beyond that: should a
  * passkey ever give other bytes later, the Emergency Kit opens the account. A store without prf: { code: 'no-prf' },
- * the passkey is told to go, and nothing was sent anywhere.
+ * the passkey is told to go, and nothing was sent anywhere. `user_handle`: the account's id as its 16 bytes (the hub
+ * names it with the challenge); `name`: what a passkey list shows for it, the email or, without one, the account's ID.
  */
-async function passkeyMake({ challenge, user_handle, email, exclude = [] }) {
+async function passkeyMake({ challenge, user_handle, name, exclude = [] }) {
   const input = await (await account()).passkeyPrfInput()
   let cred
   try {
     cred = await navigator.credentials.create({ publicKey: {
-      challenge: unb64u(challenge), rp: { id: pkRpId(), name: 'Trommi' }, user: { id: user_handle, name: email, displayName: email },
+      challenge: unb64u(challenge), rp: { id: pkRpId(), name: 'Trommi' }, user: { id: user_handle, name, displayName: name },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -8 }],
       authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
       attestation: 'none', excludeCredentials: pkList(exclude), extensions: { prf: { eval: { first: input } } },
@@ -109,6 +110,8 @@ const sessionName = s => s.settings?.name || s.profile?.agent_name || s.agent_se
 
 // ---- inside a room: devices, pairing, settings (pages of the board, rendered like any other) ----
 export function register(t) {
+  // (an Emergency Kit's address opened on a device that is logged in: nothing to recover here; the fragment goes)
+  if (location.hash.startsWith('#k1.')) history.replaceState(null, '', location.pathname + location.search)
   const client = t.hub.client
   let k = null   // the core's helpers (roomLink); the demo room has none
   core().then(x => { k = x }).catch(() => {})
@@ -160,7 +163,7 @@ ${isHuman() ? html`<section class="room-section push-section" aria-labelledby="p
 <section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agents</h3>${raw(L.agents)}
 ${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><input type="hidden" name="role" value="agent"><label>Name of the session<input name="label" maxlength="40" placeholder="e.g. Website" autocomplete="off"></label>${has(client, 'createInvite') && m().sessions.size ? html`<label>Takes over<select name="session_id"><option value="">a new session</option>${sessionOptions()}</select></label>${historyAsk()}` : ''}<button type="submit" id="agent-invite">Invite an agent</button></form>` : ''}</section>
 ${raw(L.gone)}
-<p class="room-meta">A new device: <a href="/settings" data-nav>Invite a Device</a> in Settings, or open app.trommi.com on it and log in with email and password. A device names itself; rename this one above. Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.</p>`, 'The people and agents with keys to this account.')
+<p class="room-meta">A new device: <a href="/settings" data-nav>Invite a Device</a> in Settings, or open app.trommi.com on it and log in. A device names itself; rename this one above. Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.</p>`, 'The people and agents with keys to this account.')
     }
     t.get(/^\/settings\/devices$/, ({ req, res }) => page(req, res, 'Devices · Settings', devicesMain(), { stream: '&room=devices' }))
     t.post(/^\/devices\/remove$/, async ({ req, res, form }) => {
@@ -323,7 +326,7 @@ ${isHuman() ? html`<section class="set-group set-invites" aria-label="Invite">${
 <nav class="set-group" aria-label="Settings">
 ${setRow({ href: '/settings/sessions', icon: sk('heads'), word: 'Sessions', detail: `${bm.agents.filter(a => a.online).length} of ${bm.agents.length} connected`, id: 'settings-sessions' })}
 ${setRow({ href: '/settings/devices', icon: art('phone'), word: 'Devices', detail: people ? `${people} ${people === 1 ? 'device' : 'devices'}` : '', id: 'settings-devices' })}
-${isHuman() ? setRow({ href: '/settings/account', icon: sk('key'), word: 'Account', detail: m().room.account?.email ?? '', id: 'settings-account' }) : ''}
+${isHuman() ? setRow({ href: '/settings/account', icon: sk('key'), word: 'Account', detail: m().room.account ? m().room.account.email ?? 'Passkey' : '', id: 'settings-account' }) : ''}
 </nav>
 <nav class="set-group" aria-label="This device">
 ${setRow({ href: '/settings/theme', icon: sk('moon'), word: 'Theme', detail: SHOWN[themeMode()] ?? 'System', id: 'settings-theme' })}
@@ -362,9 +365,11 @@ ${setRow({ href: '/settings/proof', icon: sk('tick'), word: 'MLS proof', detail:
         : st === undefined ? html`<p class="room-wait">${room.account_error ? `Not reachable: ${room.account_error}` : 'Loading…'}</p>`
           : st === null ? html`<p class="room-lead">This account was made before email and password. Add a login, so a new device gets in with email and password. You need the recovery code shown when you started.</p>
 ${form('/settings/account', html`<label>Email<input type="email" name="email" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>${pwField()}<label>Recovery code<input name="recovery_code" required autocomplete="off" spellcheck="false" class="room-mono" placeholder="XXXX-XXXX-…"></label>`, 'Add login', 'account-add')}`
-            : html`<p class="room-lead">Logged in as <b id="account-email">${st.email}</b></p>
+            : html`<p class="room-lead">${st.email ? html`Logged in as <b id="account-email">${st.email}</b>` : html`Logged in with a passkey. <span id="account-email">No email.</span>`}</p>
+<p class="room-meta">Account ID <span class="room-mono" id="account-id">${st.account}</span></p>
+${st.email ? '' : html`<details class="room-more" id="email-add"><summary>Add an email</summary><p class="room-meta">A second name for your account. It cannot be changed later.</p>${form('/settings/email', html`<label>Email<input type="email" name="email" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>`, 'Add email', 'email-form')}</details>`}
 <h4 class="room-sub">Emergency Kit</h4>
-${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now.${first ? '' : ' The old kit no longer works.'}</p>${kitBox(st.email, kit, true)}`
+${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now.${first ? '' : ' The old kit no longer works.'}</p>${kitBox({ ...kit, account: kit.account ?? st.account }, kitLink(kit.account ?? st.account), true)}`
   : html`<p class="room-lead">${st.has_recovery ? 'Made.' : 'Not made yet.'} ${st.has_password === false ? 'It opens your account if you lose your passkey.' : 'With it you can set a new password if you forget yours.'}</p>
 <details class="room-more" id="kit-new"><summary>${st.has_recovery ? 'Make a new kit' : 'Make my Emergency Kit'}</summary>${form('/settings/kit', unlockField(st), 'Make the kit', 'kit-form')}</details>`}
 <h4 class="room-sub">Passkeys</h4>
@@ -377,7 +382,7 @@ ${canPasskey ? html`<details class="room-more" id="passkey-new"><summary>Add pas
 <h4 class="room-sub">Password</h4>
 ${st.has_password === false
   ? html`<p class="room-lead" id="password-none">None. Your passkey opens this account.</p>
-<details class="room-more" id="pw-add"><summary>Add a password</summary>${form('/settings/password/add', html`${pwField({ label: 'New password' })}<p class="room-meta">You confirm with your passkey.</p>`, 'Add password', 'pw-add-form')}</details>`
+${st.email ? html`<details class="room-more" id="pw-add"><summary>Add a password</summary>${form('/settings/password/add', html`${pwField({ label: 'New password' })}<p class="room-meta">You confirm with your passkey.</p>`, 'Add password', 'pw-add-form')}</details>` : html`<p class="room-meta" id="pw-needs-email">A password needs an email. Add one first.</p>`}`
   : html`<details class="room-more" id="pw-change"><summary>Change password</summary>${form('/settings/password', html`${pwField({ name: 'current', label: 'Current password', gen: false, autocomplete: 'current-password' })}${pwField({ label: 'New password' })}`, 'Change password', 'pw-form')}</details>`}
 <p class="room-meta">${st.has_password === false ? NO_RECOVERY_PASSKEY : NO_RECOVERY}</p>`
       return roomPage('Account', html`${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
@@ -386,7 +391,10 @@ ${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="a
 ${link ? html`<details class="room-section room-more" id="advanced"><summary>Advanced</summary><p class="room-lead">The address of this account, for the old recovery code (app.trommi.com/recover). On its own it opens nothing.</p>${copyBox(link, 'Address')}
 <p class="room-meta">${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p></details>` : ''}`, 'Your login, and what this device keeps.')
     }
-    const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', 'passkey-added': 'Passkey added.', 'passkey-removed': 'Passkey removed.', 'password-added': 'Password added.' }
+    // The address the kit's QR code holds (hub and account ID, no words): made once the page's helpers are loaded.
+    let kitLink = () => null
+    account().then(A => { kitLink = id => { try { return A.kitAddress(location.origin, m().room.hub_url, id) } catch { return null } } }).catch(() => {})
+    const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', 'email-added': 'Email added.', 'passkey-added': 'Passkey added.', 'passkey-removed': 'Passkey removed.', 'password-added': 'Password added.' }
     // (whether this browser can make a passkey: asked once, the page refreshes when it is known)
     let canPasskey = false
     passkeyOffer().then(o => { canPasskey = o.get; if (canPasskey && m().room.account) client._setRoom?.({ account: { ...m().room.account } }) })
@@ -408,7 +416,7 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     accountPost(/^\/settings\/account$/, async (f, A) => {
       const { kit } = await A.addAccount(client, { email: String(f.get('email')), password: String(f.get('password')), recovery_code: String(f.get('recovery_code')).trim() })
       client._setRoom({ account: await A.accountStatus(client), account_error: undefined })
-      return { kit: kit.words, said: 'Login added. Your Emergency Kit:', first: true }
+      return { kit, said: 'Login added. Your Emergency Kit:', first: true }
     }, 'added')
     accountPost(/^\/settings\/password$/, (f, A) => A.changePassword(client, { current: String(f.get('current')), next: String(f.get('password')) }), 'changed')
     // A new passkey: the way in is checked first (a wrong password leaves no stray passkey), then the passkey is made
@@ -416,7 +424,7 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     accountPost(/^\/settings\/passkeys$/, async (f, A) => {
       const st = await A.accountStatus(client), unlock = await unlockOf(f, st)
       await A.checkUnlock(client, unlock)
-      const passkey = await passkeyMake({ challenge: await A.passkeyChallengeFor(client), user_handle: unb64u(st.user_handle), email: st.email, exclude: (st.passkeys ?? []).map(p => unb64u(p.credential_id)) })
+      const passkey = await passkeyMake({ challenge: await A.passkeyChallengeFor(client), user_handle: unb64u(st.user_handle), name: st.email ?? st.account, exclude: (st.passkeys ?? []).map(p => unb64u(p.credential_id)) })
       try { await A.addPasskey(client, { unlock, passkey }) } catch (err) { if (cameToNothing(err)) passkeyForget(passkey.credential_id); throw err }
     }, 'passkey-added')
     accountPost(/^\/settings\/passkeys\/remove$/, async (f, A) => {
@@ -426,10 +434,14 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     }, 'passkey-removed')
     accountPost(/^\/settings\/password\/add$/, async (f, A) => A.setPassword(client, { unlock: { passkey: await passkeyUnlock(await A.accountStatus(client)) }, next: String(f.get('password')) }), 'password-added')
     accountPost(/^\/settings\/kit$/, async (f, A) => {
-      const { words } = await A.makeEmergencyKit(client, await unlockOf(f, await A.accountStatus(client)))
-      client._setRoom({ account: { ...m().room.account, has_recovery: true } })
-      return { kit: words }
+      const kit = await A.makeEmergencyKit(client, await unlockOf(f, await A.accountStatus(client)))
+      client._setRoom({ account: { ...m().room.account, has_recovery: true, kit_form: kit.form } })
+      return { kit }
     })
+    // An account without email gets one, once (a second name for it, and what a password needs).
+    accountPost(/^\/settings\/email$/, async (f, A) => {
+      try { await A.setEmail(client, { email: String(f.get('email')) }) } catch (err) { throw err.code === 'account-exists' ? Object.assign(err, { message: EMAIL_HELD, code: 'email-held' }) : err.code === 'forbidden' ? Object.assign(err, { message: 'This account has an email already.', code: 'email-set' }) : err }
+    }, 'email-added')
 
     // ---- /logout (the Trommi menu and Settings -> Account): asks once, then logOut() ----
     const logoutMain = (error = '') => {
@@ -509,19 +521,28 @@ async function generateInto(button) {
 }
 /** Said by "Create account" for an email that has one (in Settings the same refusal is about this account's login). */
 const EMAIL_TAKEN = 'This email has an account already. Log in instead.'
+const EMAIL_HELD = 'This email has an account already.'
+/** Said where an account without email cannot be made: this version's core lacks the kit's keys for it (core-missing). */
+const NEEDS_EMAIL_YET = 'An account without an email is not possible in this version yet. Enter your email.'
+/** Said where an account ID meets a password: a password's keys are derived from the email. */
+const ID_NO_PASSWORD = 'A password logs in with your email. With an account ID, use your passkey or your Emergency Kit.'
+const NOT_A_NAME = 'That is not an email address or an account ID.'
 const NO_RECOVERY = 'If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.'
 const NO_RECOVERY_PASSKEY = 'If you lose your passkeys and your Emergency Kit, nobody (not even Trommi) can recover your data.'
-/** The Emergency Kit as a text file. */
-const kitText = (email, words) => `Trommi Emergency Kit
+/** What an Emergency Kit opens with, in words: the email it was made under, or the account's ID. */
+const kitOpensWith = kit => (kit.form === 'id' || !kit.email ? 'account ID' : 'email')
+/** Said once on the kit of an account without email: there is no address to reach the person at. */
+const NO_REACH = 'If you lose your passkey and this kit, your account is lost, and nobody can reach you about it.'
+/** The Emergency Kit as a text file. `link`: the address its QR code holds (hub and account ID; never the words). */
+const kitText = (kit, link) => `Trommi Emergency Kit
 
-Email: ${email}
-Recovery words: ${words}
+${kit.account ? `Account ID: ${kit.account}\n` : ''}${kit.email ? `Email: ${kit.email}\n` : ''}Recovery words: ${kit.words}
 
-Forgot your password? Open https://app.trommi.com, choose "Log in", then "Forgot password?".
-Enter your email and these 12 words, then choose a new password.
-
-Keep this kit private and offline: with these words and your email, anyone can get into your account.
-${NO_RECOVERY}
+Lost your way in? Open https://app.trommi.com, choose "Log in", then "Forgot?".
+Enter your ${kitOpensWith(kit)} and these 12 words, then choose a new ${kit.email ? 'password or passkey' : 'passkey'}.
+${link ? `Or open ${link} (it fills in the account ID; it holds no words).\n` : ''}
+Keep this kit private and offline: with these words and your ${kitOpensWith(kit)}, anyone can get into your account.
+${kit.email ? (kit.has_password === false ? NO_RECOVERY_PASSKEY : NO_RECOVERY) : NO_REACH}
 
 Made ${new Date().toISOString().slice(0, 10)}
 `
@@ -533,12 +554,16 @@ function downloadKit(text) {
   document.body.append(a); a.click(); a.remove()
   setTimeout(() => URL.revokeObjectURL(a.href), 10000)
 }
-const kitBox = (email, words, stim = false) => html`<div class="room-kit" id="kit"><p class="room-kit-title">${raw(BELL)} Trommi Emergency Kit</p><p class="room-meta">Email: <b>${email}</b></p>
-<ol class="room-kit-words" id="kit-words">${words.split(' ').map(w => html`<li>${w}</li>`)}</ol>
-<p class="room-meta">Forgot your password? app.trommi.com → Log in → "Forgot password?" → your email and these 12 words.</p></div>
-<div class="room-actions room-kit-actions"${stim ? raw(' data-controller="room"') : ''}><button type="button" id="kit-download"${stim ? raw(' data-action="room#download"') : ''} data-room-text-param="${kitText(email, words)}">Download</button><button type="button" id="kit-print"${stim ? raw(' data-action="room#print"') : ''}>Print</button></div>`
+/** The account's ID with the code that opens the recovery screen with it filled in: on every kit, next to the words. */
+const kitIdentity = (kit, link) => (kit.account ? html`<div class="set-pair kit-id">${link ? html`<div class="set-qr is-real">${raw(qrSvg(link, 'QR code: opens the recovery screen with this account ID'))}</div>` : ''}<div class="set-text"><b>Account ID</b><small class="room-mono" id="kit-account">${kit.account}</small>${link ? html`<small>The code opens the recovery screen with this ID filled in. It holds no words.</small>` : ''}</div></div>` : '')
+const kitBox = (kit, link, stim = false) => html`<div class="room-kit" id="kit"><p class="room-kit-title">${raw(BELL)} Trommi Emergency Kit</p>${kit.email ? html`<p class="room-meta">Email: <b>${kit.email}</b></p>` : ''}
+<ol class="room-kit-words" id="kit-words">${kit.words.split(' ').map(w => html`<li>${w}</li>`)}</ol>
+${kitIdentity(kit, link)}
+<p class="room-meta">Lost your way in? app.trommi.com → Log in → "Forgot?" → your ${kitOpensWith(kit)} and these 12 words.</p></div>
+<div class="room-actions room-kit-actions"${stim ? raw(' data-controller="room"') : ''}><button type="button" id="kit-download"${stim ? raw(' data-action="room#download"') : ''} data-room-text-param="${kitText(kit, link)}">Download</button><button type="button" id="kit-print"${stim ? raw(' data-action="room#print"') : ''}>Print</button></div>`
 const accountError = err => ({
   'wrong-login': 'Wrong email or password.', 'wrong-recovery': 'Wrong email or words.', 'bad-recovery-words': 'Check the twelve words.',
+  'bad-account': NOT_A_NAME, 'needs-email': 'This account has no email, so it has no password. Use a passkey.',
   'rate-limited': 'Too many tries. Wait a few minutes.', 'too-many': 'Too many. Try again later.', 'weak-password': 'At least 12 characters.', 'bad-email': 'That is not an email address.',
   offline: 'Can\'t reach Trommi. Check your connection.', 'room-exists': 'This browser is logged in already.', 'bad-recovery-code': 'This code does not fit this account.',
   'account-exists': 'This account has a login already.', 'account-changed': 'Changed on another device. Try again.', 'core-missing': 'This version cannot do that yet.',
@@ -568,7 +593,10 @@ ${inner}
 <footer class="ob-foot">${foot}${DEMO_LINK}</footer></main>`
 /** The one line a form says when it failed: its place is kept, so nothing jumps. */
 const obError = (error = '') => html`<p class="ob-error" role="alert" id="ob-error">${error}</p>`
-const obEmail = (value = '', passkeys = false) => html`<label class="ob-field"><span class="ob-label">Email</span><input type="email" name="email" value="${value}" autocomplete="${passkeys ? 'username webauthn' : 'username'}" autocapitalize="off" spellcheck="false" inputmode="email"></label>`
+/** The email field of "Create account". `optional`: beside a passkey nothing rests on it, and the field says so. */
+const obEmail = (value = '', optional = false) => html`<div class="ob-field"><span class="ob-label"><label for="ob-email">Email</label>${optional ? html`<span class="ob-hint" id="ob-email-optional">optional</span>` : ''}</span><input type="email" id="ob-email" name="email" value="${value}" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="email"${optional ? raw(' aria-describedby="ob-email-optional"') : ''}></div>`
+/** The one field that names an account where it is logged in to or recovered: its email, or the account ID printed on its Emergency Kit. */
+const obAccount = (value = '', passkeys = false) => html`<label class="ob-field"><span class="ob-label">Email or account ID</span><input type="text" name="account" value="${value}" autocomplete="${passkeys ? 'username webauthn' : 'username'}" autocapitalize="off" spellcheck="false" inputmode="email"></label>`
 const PW_RULE = 'At least 12 characters'
 /** A password: Show/Hide in the field; a new one with the live rule and "Generate": five words, put into the field and
  *  shown in full on a slip under it, with Copy (the slip goes when the field is typed in). */
@@ -579,26 +607,28 @@ ${fresh ? html`<span class="ob-made" hidden><code></code><button type="button" c
 const obSubmit = word => html`<button type="submit" class="ob-go" data-word="${word}">${word}</button>`
 const KIT_EMPTY = 'orbit lantern maple quiet saddle copper violin harbor ember thistle canyon pepper'
 /** The kit as a sheet of paper. Hidden, it holds no word at all: twelve drawn strokes; the words are put in when shown. */
-const kitSheet = (email, words) => html`<div class="kit-sheet${words ? ' is-shown' : ''}" id="kit"><p class="kit-head">${BELL}<b>Trommi Emergency Kit</b></p><p class="kit-mail">${email}</p>
+const kitSheet = (kit, words, link) => html`<div class="kit-sheet${words ? ' is-shown' : ''}" id="kit"><p class="kit-head">${BELL}<b>Trommi Emergency Kit</b></p><p class="kit-mail">${kit.email ?? ''}</p>
 <ol class="kit-words" id="kit-words"${words ? '' : raw(' aria-hidden="true"')}>${(words || KIT_EMPTY).split(' ').map((w, i) => (words ? html`<li>${w}</li>` : html`<li><i style="--w:${3 + KIT_EMPTY.split(' ')[i].length}"></i></li>`))}</ol>
-<p class="kit-how">Forgot your password? app.trommi.com → Log in → Forgot password → your email and these 12 words.</p></div>`
+${kitIdentity(kit, link)}
+<p class="kit-how">Lost your way in? app.trommi.com → Log in → Forgot? → your ${kitOpensWith(kit)} and these 12 words.</p></div>`
 
 /**
  * The Emergency Kit's page, in `root`. With words: the sheet (hidden until "Show"), Download, Print, and "Open Trommi"
  * once it was downloaded, printed or shown. Without (the tab was closed before that): the password makes a new kit.
- * The words live in this closure only: never in an attribute, in storage or in a log.
+ * The words live in this closure only: never in an attribute, in storage or in a log. `kit`: whose it is (email or
+ * none, the account's ID, which of the two it opens with); `linkOf(id)`: the address its QR code holds.
  */
-function kitPage(root, { email = '', words = null, error = '', demo = false, shown = false, make = null, open = null, logout = null, ways = { password: true, passkey: false } }) {
+function kitPage(root, { kit = { email: null, account: null, form: 'email' }, words = null, linkOf = () => null, error = '', demo = false, shown = false, make = null, open = null, logout = null, ways = { password: true, passkey: false } }) {
   let saved = false
   const paint = () => {
     root.innerHTML = String(obShell('Your Emergency Kit', words ? html`
-<div class="kit-stage"><div class="kit-cover" id="kit-cover">${kitSheet(email, shown ? words : null)}</div>
+<div class="kit-stage"><div class="kit-cover" id="kit-cover">${kitSheet(kit, shown ? words : null, kit.account ? linkOf(kit.account) : null)}</div>
 <button type="button" class="ob-chip kit-show" id="kit-show" aria-pressed="${shown ? 'true' : 'false'}">${shown ? 'Hide' : 'Show'}</button></div>
 <div class="ob-row"><button type="button" class="ob-second" id="kit-download">Download</button><button type="button" class="ob-second" id="kit-print">Print</button></div>
-<p class="ob-warn">Without it or your ${ways.password ? 'password' : 'passkey'}, nobody can recover your account. Not even Trommi.</p>
+<p class="ob-warn" id="kit-warn">${kit.email ? `Without it or your ${ways.password ? 'password' : 'passkey'}, nobody can recover your account. Not even Trommi.` : NO_REACH}</p>
 ${obError(error)}<button type="button" class="ob-go" id="kit-done"${saved ? '' : raw(' disabled')}>Open Trommi</button>
 <p class="ob-hint ob-center" id="kit-first"${saved ? raw(' hidden') : ''}>Download, print or show it first.</p>`
-      : html`<form id="kit-form" class="ob-form" novalidate>${ways.password ? html`<input type="text" name="email" value="${email}" autocomplete="username" hidden>${obPassword()}` : ''}
+      : html`<form id="kit-form" class="ob-form" novalidate>${ways.password ? html`<input type="text" name="email" value="${kit.email ?? ''}" autocomplete="username" hidden>${obPassword()}` : ''}
 ${obError(error)}${obSubmit(ways.password ? 'Make kit' : 'Use passkey')}</form>${ways.password && ways.passkey ? html`<p class="ob-or"><span>or</span></p><button type="button" class="ob-second ob-wide" id="kit-passkey">${art('key')}Use passkey</button>` : ''}`,
     { lead: words ? (ways.password ? 'Twelve words that set a new password if you forget yours.' : 'Twelve words that open your account if you lose your passkey.') : ways.password ? 'Enter your password to make it.' : 'Unlock with your passkey to make it.', cls: 'ob-kit', home: false, foot: logout ? html`<button type="button" class="ob-link" id="kit-logout">Log out</button>` : '' }))
   }
@@ -611,7 +641,7 @@ ${obError(error)}${obSubmit(ways.password ? 'Make kit' : 'Use passkey')}</form>$
     const making = async way => {
       if (!make) return
       const b = q('.ob-go'); b.disabled = true; b.textContent = way.passkey ? 'Waiting for passkey…' : 'Making…'; q('#ob-error').textContent = ''
-      try { const kit = await make(way); words = kit.words; email = kit.email || email; error = ''; paint(); wire(); q('#kit-show')?.focus({ preventScroll: true }) }
+      try { const made = await make(way); words = made.words; kit = { ...kit, ...made, account: made.account ?? kit.account, words: undefined }; error = ''; paint(); wire(); q('#kit-show')?.focus({ preventScroll: true }) }
       catch (err) { console.warn('kit:', err?.code ?? '', err?.message ?? err); b.disabled = false; b.textContent = b.dataset.word; q('#ob-error').textContent = err?.code === 'wrong-login' ? (way.passkey ? 'This passkey does not open your account.' : 'Wrong password.') : accountError(err); q('#ob-pw')?.focus() }
     }
     q('#kit-passkey')?.addEventListener('click', () => making({ passkey: true }))
@@ -624,7 +654,7 @@ ${obError(error)}${obSubmit(ways.password ? 'Make kit' : 'Use passkey')}</form>$
     })
     q('#kit-cover')?.addEventListener('click', flip)
     q('#kit-show')?.addEventListener('click', flip)
-    q('#kit-download')?.addEventListener('click', () => { if (!demo) downloadKit(kitText(email, words)); keep() })
+    q('#kit-download')?.addEventListener('click', () => { if (!demo) downloadKit(kitText({ ...kit, words, has_password: ways.password }, kit.account ? linkOf(kit.account) : null)); keep() })
     q('#kit-print')?.addEventListener('click', () => {
       // the printed sheet carries the words: shown for the print, hidden again after it if they were hidden
       const was = shown
@@ -672,20 +702,28 @@ export function kitGate(client, { fresh = false } = {}) {
   const off = (() => { const un = client.on?.('change', watch); return typeof un === 'function' ? un : () => client.off?.('change', watch) })()
   const kit = freshKit; freshKit = null
   // st: the account as the hub has it (which ways in it has); null when it could not be read: the password's form then
-  const paint = st => { if (gate !== box) return; kitPage(root, {
-    email: kit?.email ?? st?.email ?? client.model.room.account?.email ?? '', words: kit?.words ?? null,
+  const paint = (st, A = null) => { if (gate !== box) return; kitPage(root, {
+    kit: { email: (kit ?? st)?.email ?? client.model.room.account?.email ?? null, account: kit?.account ?? st?.account ?? client.model.room.account?.account ?? null, form: kit?.form ?? st?.kit_form ?? 'email' }, words: kit?.words ?? null,
+    linkOf: id => { try { return A?.kitAddress(location.origin, client.model.room.hub_url, id) ?? null } catch { return null } },
     ways: { password: (st ?? kit)?.has_password !== false, passkey: Boolean(st?.passkeys?.length) },
     make: async way => { const A = await account(); return A.makeEmergencyKit(client, way.passkey ? { passkey: await passkeyUnlock(st ?? await A.accountStatus(client)) } : { password: way.password }) },
     open: async () => { await client.setRegisters({ kit: null }); try { localStorage.removeItem(KIT_MARK) } catch {} close() },
     logout: () => logOut(client),
   }) }
-  // With the words in hand the page is there at once; without them it first asks which ways in the account has.
-  if (kit?.words) paint(null)
-  else Promise.race([account().then(A => A.accountStatus(client)), new Promise(ok => setTimeout(ok, 4000, null))]).then(paint, () => paint(null))
+  // With the words and the account's ID in hand the page is there as soon as its helpers are; else it first asks
+  // the hub for the account (which ways in it has, its ID), and does not wait long for it.
+  const asked = account().then(A => (kit?.words && kit.account ? [null, A] : Promise.race([A.accountStatus(client).catch(() => null), new Promise(ok => setTimeout(ok, 4000, null))]).then(st => [st, A])))
+  asked.then(([st, A]) => paint(st, A), () => paint(null))
 }
 
 // ---- before a room: a screen of its own, before the board exists ----
 export async function roomScreen({ start, hub, openError = null, demo = '' }) {
+  // A link in the address leaves the address bar before anything else happens, whatever screen comes next: a join
+  // link's secret (/join#v2.…), and an Emergency Kit's address (#k1.…: a hub and an account ID, nothing secret).
+  const joinLink = location.pathname === '/join' && location.hash.length > 1 ? location.href : ''
+  const kitHash = !joinLink && location.hash.startsWith('#k1.') ? location.hash : ''
+  if (joinLink) history.replaceState(null, '', '/join')
+  else if (kitHash) history.replaceState(null, '', location.pathname + location.search)
   document.title = 'Trommi'
   const root = document.createElement('div')
   root.id = 'room-screen'
@@ -737,10 +775,20 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   // the tap to be recent). One use, two minutes at the hub: taken once, and only while it is young.
   const pkChallenge = async () => (await account()).passkeyChallenge({ hub_url: hub, client: CLIENT })
   let warmed = null
-  const warmChallenge = () => { const w = { at: Date.now(), text: null }; warmed = w; pkChallenge().then(c => { w.text = c; w.at = Date.now() }, err => { console.warn('passkey challenge:', err?.message ?? err); if (warmed === w) warmed = null }) }
-  const takeChallenge = async () => { const w = warmed; warmed = null; return w?.text && Date.now() - w.at < 90_000 ? w.text : pkChallenge() }
+  // (what comes back: { challenge, account, user_handle }; the last two name the id an account made on it will have)
+  const warmChallenge = () => { const w = { at: Date.now(), got: null }; warmed = w; pkChallenge().then(c => { w.got = c; w.at = Date.now() }, err => { console.warn('passkey challenge:', err?.message ?? err); if (warmed === w) warmed = null }) }
+  const takeChallenge = async () => { const w = warmed; warmed = null; return w?.got && Date.now() - w.at < 90_000 ? w.got : pkChallenge() }
   const idle = form => { const b = form?.querySelector('button[type="submit"]'); if (b) { b.disabled = false; b.classList.remove('is-busy'); b.textContent = b.dataset.word } }
   const weak = form => { const hint = form.querySelector('.ob-hint'), pw = form.elements.password; hint.textContent = PW_RULE; hint.classList.add('is-bad'); pw.setAttribute('aria-invalid', 'true'); if (!(demo && framed)) pw.focus() }
+  /** The one field "Email or account ID" of a form, told apart by its form: { A, named: { kind: 'email', email } |
+   *  { kind: 'id', account }, text }; null (and the word said) when it is neither. */
+  const nameOf = async form => {
+    const A = await account(), field = form.elements.account
+    let named
+    try { named = A.accountName(field.value) } catch { say(field.value.trim() ? NOT_A_NAME : 'Enter your email or account ID.', field); return null }
+    lastEmail = field.value.trim()
+    return { A, named, text: named.kind === 'email' ? named.email : named.account }
+  }
   /** A form's email and password, checked with a human word each; null (and the word said) when one is missing. */
   const fields = async (form, { fresh = false } = {}) => {
     const A = await account(), email = form.elements.email, pw = form.elements.password
@@ -751,6 +799,8 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
     return { A, email: lastEmail, password: pw.value }
   }
   const c = await core().catch(() => ({}))
+  // (the page's own light helpers: the one field's form, the kit's address; no core, no worker)
+  const pageHelpers = await account().catch(() => null)
   // (the demo's stills show what a device with passkeys shows)
   const offer = demo ? { create: !demo.endsWith('-nopasskey'), get: !demo.endsWith('-nopasskey'), conditional: false } : await passkeyOffer().catch(() => ({ create: false, get: false, conditional: false }))
   let lastEmail = ''
@@ -763,13 +813,14 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   const loggedOut = demo === 'logged-out' ? '1' : new URLSearchParams(location.search).get('logged_out')
   const wayLogin = new URLSearchParams(location.search).get('way') === 'login'
   if (loggedOut) history.replaceState(null, '', '/')
-  // A join link in the address: its secret leaves the address bar at once, whatever screen comes next.
-  const joinLink = location.pathname === '/join' && location.hash.length > 1 ? location.href : ''
-  if (joinLink) history.replaceState(null, '', '/join')
   // This browser holds an account that did not open: never the start page (Log in would refuse: "signed in already").
   if (demo) return demoFlow(demo)
   if (openError) return brokenFlow(openError)
   if (joinLink) return joinFlow(joinLink)
+  // An Emergency Kit's code was scanned: the way back with the kit, its account ID filled in, at the hub it names.
+  // (A fragment that is no kit address is dropped without a word: the start page comes.)
+  const kitLink = kitHash ? pageHelpers?.parseKitAddress(kitHash) ?? null : null
+  if (kitLink) return forgotFlow({ way: offer.get ? 'passkey' : 'password', kit: kitLink })
   if (location.pathname === '/recover') recoverFlow()
   else if (wayLogin) loginFlow()
   else welcome()
@@ -812,22 +863,27 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
     kitGate(window.trommi?.client, { fresh: true })   // (app.mjs opened it already, unless this browser keeps no mark)
     if (!gate) root.remove()
   }
-  const emailOf = async form => {
+  /** The email of "Create with passkey", which may be left empty: { A, email: string | null }; null (and the word said) for a text that is no address. */
+  const optionalEmail = async form => {
     const A = await account(), email = form.elements.email
-    try { A.normaliseEmail(email.value) } catch { say(email.value.trim() ? 'That is not an email address.' : 'Enter your email.', email); return null }
+    if (!email.value.trim()) return { A, email: null }
+    try { A.normaliseEmail(email.value) } catch { say('That is not an email address.', email); return null }
     lastEmail = email.value.trim()
     return { A, email: lastEmail }
   }
+  /** What the email field of "Create account" starts with: what was typed before, if it is an address. */
+  const typedEmail = () => (lastEmail.includes('@') ? lastEmail : '')
 
   // Passkey first: where the device has its own passkeys, the one button is "Create with passkey" and the password is
   // the quiet way; where it has none (a passkey on a phone or a key may still do), the password's form comes first and
   // the passkey is the quiet way; a browser without WebAuthn: only the password's form, and one line that says so. A passkey that cannot unlock (no prf): the password's form, the email kept.
+  // With a passkey the email is optional (the field says so): one tap makes the account, named by its ID alone.
   function createFlow({ way = offer.create ? 'passkey' : 'password', note = '' } = {}) {
     const passkey = way === 'passkey'
-    show(obShell('Create account', html`<form id="create-form" class="ob-form" novalidate>${note ? html`<p class="ob-said" role="status" id="passkey-note">${note}</p>` : ''}${obEmail(lastEmail)}${passkey ? '' : obPassword({ fresh: true })}
+    show(obShell('Create account', html`<form id="create-form" class="ob-form" novalidate>${note ? html`<p class="ob-said" role="status" id="passkey-note">${note}</p>` : ''}${obEmail(typedEmail(), passkey)}${passkey ? '' : obPassword({ fresh: true })}
 ${obError()}${obSubmit(passkey ? 'Create with passkey' : 'Create account')}</form>
 ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link" id="way-swap">${passkey ? 'Use a password instead' : 'Use a passkey instead'}</button></p>` : NO_PASSKEYS}
-<p class="ob-alt">Have an account? <button type="button" class="ob-link" id="alt-login">Log in</button></p>`, passkey ? { lead: 'No password to remember.' } : {}), note ? '#ob-pw' : undefined)
+<p class="ob-alt">Have an account? <button type="button" class="ob-link" id="alt-login">Log in</button></p>`, passkey ? { lead: 'No password to remember.' } : {}), note ? '#ob-pw' : passkey ? 'button.ob-go' : undefined)
     if (passkey && !demo) warmChallenge()
     on('#alt-login', 'click', () => loginFlow())
     on('#way-swap', 'click', () => { lastEmail = root.querySelector('#create-form').elements.email.value.trim(); createFlow({ way: passkey ? 'password' : 'passkey' }) })
@@ -855,16 +911,17 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
   // The passkey is made on this page before anything is stored: only a passkey that gave its 32 bytes reaches the hub,
   // with the account, in one request.
   async function createWithPasskey(form) {
-    const f = await emailOf(form)
+    const f = await optionalEmail(form)
     if (!f) return
     busy(form, 'Waiting for passkey…')
     let made = null
     try {
-      const user_handle = crypto.getRandomValues(new Uint8Array(32))
-      made = await passkeyMake({ challenge: await takeChallenge(), user_handle, email: f.A.normaliseEmail(f.email) })
+      // the hub names, with the challenge, the id the account will have: the passkey carries it as its user handle
+      const named = await takeChallenge()
+      made = await passkeyMake({ challenge: named.challenge, user_handle: unb64u(named.user_handle), name: f.email ? f.A.normaliseEmail(f.email) : named.account })
       busy(form, 'Creating…')
       write(KIT_MARK, '1')
-      const { client, kit } = await f.A.createAccountWithPasskey({ hub_url: hub, email: f.email, passkey: { ...made, user_handle }, device_name, found_token: foundCode(), client: CLIENT })
+      const { client, kit } = await f.A.createAccountWithPasskey({ hub_url: hub, email: f.email, account: named.account, passkey: made, device_name, found_token: foundCode(), client: CLIENT })
       made = null   // (it is the account's way in from here on)
       freshKit = { ...kit, has_password: false }
       await opened(client)
@@ -874,12 +931,14 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
       if (made && cameToNothing(err)) passkeyForget(made.credential_id)   // made, and no account came of it
       if (err.code === 'room-exists') return roomExists()
       if (err.code === 'no-prf') return createFlow({ way: 'password', note: NO_PRF })
-      idle(form); say(err.code === 'passkey-cancelled' ? 'No passkey made.' : err.code === 'account-exists' ? EMAIL_TAKEN : accountError(err))
+      idle(form); say(err.code === 'passkey-cancelled' ? 'No passkey made.' : err.code === 'account-exists' ? EMAIL_TAKEN : err.code === 'core-missing' && !f.email ? NEEDS_EMAIL_YET : accountError(err), err.code === 'core-missing' && !f.email ? form.elements.email : null)
     }
   }
 
-  // A passkey is offered three ways: in the email field's own list before anything is typed (conditional UI), by the
-  // button (any passkey of this site, also one on a phone or a key; no email needed), and the password stays below.
+  // A passkey is offered three ways: in the field's own list before anything is typed (conditional UI), by the
+  // button (any passkey of this site, also one on a phone or a key; nothing to fill in), and the password stays below
+  // with ONE field for the account: its email, or its account ID (told apart by their form; a password logs in
+  // under the email its keys are derived from, so an ID there is answered with that one sentence).
   function loginFlow(error = '', at = 'form') {
     // Passkey first: where the browser has passkeys, the one filled button is "Log in with passkey"; email and
     // password stay on the screen under "or", their button the quiet one. Without passkeys: the password's form alone.
@@ -887,7 +946,7 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
     show(obShell('Log in', html`${pk ? html`<button type="button" class="ob-go ob-key" id="way-passkey">${art('key')}<span>Log in with passkey</span></button>
 ${error && at === 'passkey' ? html`<p class="ob-error ob-key-error" role="alert" id="passkey-error">${error}</p>` : ''}
 <p class="ob-or"><span>or</span></p>` : ''}
-<form id="login-form" class="ob-form" novalidate>${obEmail(lastEmail, pk)}${obPassword({ side: html`<button type="button" class="ob-link" id="way-forgot">Forgot?</button>` })}
+<form id="login-form" class="ob-form" novalidate>${obAccount(lastEmail, pk)}${obPassword({ side: html`<button type="button" class="ob-link" id="way-forgot">Forgot?</button>` })}
 ${obError(at === 'form' ? error : '')}${pk ? html`<button type="submit" class="ob-second ob-wide" data-word="Log in with password">Log in with password</button>` : obSubmit('Log in')}</form>
 ${pk ? '' : html`<p class="ob-or"><span>or</span></p>`}
 <div class="ob-stack ob-ways"><button type="button" class="ob-second ob-wide" id="way-pair">${art('phone')}Scan a code</button></div>
@@ -899,7 +958,7 @@ ${pk ? '' : NO_PASSKEYS}
     // One challenge for this screen: the email field's offer and the button ask with the same one (the offer ends
     // before the button's prompt; whichever answers spends it, and the screen is drawn again after a miss).
     let c0 = null, issued = 0
-    const challenge = async () => { if (!c0 || Date.now() - issued > 90_000) { c0 = await pkChallenge(); issued = Date.now() } return c0 }
+    const challenge = async () => { if (!c0 || Date.now() - issued > 90_000) { c0 = (await pkChallenge()).challenge; issued = Date.now() } return c0 }
     /** From an assertion (still on its way) to the board. `standing`: it came from the email field's offer. */
     const withPasskey = async (pending, standing = false) => {
       try {
@@ -944,55 +1003,63 @@ ${pk ? '' : NO_PASSKEYS}
     })
     on('#login-form', 'submit', async e => {
       e.preventDefault()
-      const form = e.target, f = await fields(form)
+      const form = e.target, f = await nameOf(form), pw = form.elements.password
       if (!f) return
+      if (f.named.kind === 'id') return say(ID_NO_PASSWORD, form.elements.account)
+      if (!pw.value) return say('Enter your password.', pw)
       busy(form, 'Logging in…')
       try {
-        const { client } = await f.A.loginWithPassword({ hub_url: hub, email: f.email, password: f.password, device_name, client: CLIENT })
+        const { client } = await f.A.loginWithPassword({ hub_url: hub, account: f.text, password: pw.value, device_name, client: CLIENT })
         await done(client)
       } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); idle(form); say(accountError(err), form.elements.password) }
     })
     if (pk && !demo) standingOffer()
   }
 
-  // The Emergency Kit: email + twelve words, and what opens the account from now on: a new password (the old one
-  // stops working), or, the quiet way where the device can, a new passkey (made once the words opened the account).
-  function forgotFlow({ way = 'password' } = {}) {
-    const passkey = way === 'passkey'
-    show(obShell(passkey ? 'New passkey' : 'New password', html`<form id="forgot-form" class="ob-form" novalidate>${obEmail(lastEmail)}
+  // The Emergency Kit: the one field (email or account ID) + twelve words, and what opens the account from now on: a
+  // new password (the old one stops working), or, the quiet way where the device can, a new passkey (made once the
+  // words opened the account). `kit`: the kit's own code was scanned ({ hub_url, account }): its account ID is filled
+  // in, and the account is looked for at the hub the code names; that hub is said before anything is typed when it is
+  // not this app's own (whoever made the link chose it).
+  function forgotFlow({ way = 'password', kit = null } = {}) {
+    const passkey = way === 'passkey', at = kit?.hub_url ?? hub
+    let other = ''
+    try { other = at !== (demo ? 'https://hub.trommi.com' : hub) ? new URL(at).host : '' } catch {}
+    show(obShell(passkey ? 'New passkey' : 'New password', html`<form id="forgot-form" class="ob-form" novalidate>${other ? html`<p class="ob-said" role="status" id="kit-hub">This code leads to an account at <b>${other}</b>. Go on only if that is where your account is.</p>` : ''}${obAccount(kit?.account ?? lastEmail)}
 <label class="ob-field"><span class="ob-label">Twelve words</span><textarea name="words" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></label>
 ${passkey ? '' : obPassword({ label: 'New password', fresh: true })}
 ${obError()}${obSubmit(passkey ? 'Continue' : 'Set password')}</form>
 ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link" id="way-swap">${passkey ? 'Set a password instead' : 'Use a passkey instead'}</button></p>` : ''}
-<p class="ob-alt"><button type="button" class="ob-link" id="alt-login">Back to log in</button> · <a href="/recover" id="way-recover">Older recovery code</a></p>`, { lead: 'With the words of your Emergency Kit.' }))
+<p class="ob-alt"><button type="button" class="ob-link" id="alt-login">Back to log in</button> · <a href="/recover" id="way-recover">Older recovery code</a></p>`, { lead: 'With the words of your Emergency Kit.' }), kit ? 'textarea' : undefined)
     on('#alt-login', 'click', () => loginFlow())
     on('#way-recover', 'click', e => { e.preventDefault(); recoverFlow() })
-    on('#way-swap', 'click', () => { const f = root.querySelector('#forgot-form').elements, words = f.words.value; lastEmail = f.email.value.trim(); forgotFlow({ way: passkey ? 'password' : 'passkey' }); root.querySelector('#forgot-form').elements.words.value = words })
+    on('#way-swap', 'click', () => { const f = root.querySelector('#forgot-form').elements, words = f.words.value, typed = f.account.value; forgotFlow({ way: passkey ? 'password' : 'passkey', kit }); const g = root.querySelector('#forgot-form').elements; g.words.value = words; g.account.value = typed })
+    /** What a miss says: the words open the kit only under the name it was made with, which its sheet shows. */
+    const missed = (err, named) => (err.code === 'wrong-recovery' && named.kind === 'id' ? 'Wrong account ID or words. A kit that shows an email opens with that email.' : accountError(err))
     on('#forgot-form', 'submit', async e => {
       e.preventDefault()
       const form = e.target, words = form.elements.words
-      const f0 = await account()
-      try { f0.normaliseEmail(form.elements.email.value) } catch { return say(form.elements.email.value.trim() ? 'That is not an email address.' : 'Enter your email.', form.elements.email) }
-      try { f0.parseRecoveryWords(words.value) } catch { return say('Check the twelve words.', words) }
+      const f = await nameOf(form)
+      if (!f) return
+      try { f.A.parseRecoveryWords(words.value) } catch { return say('Check the twelve words.', words) }
       if (passkey) {
-        const f = await emailOf(form)
         busy(form, 'Opening…')
         try {
-          const { client } = await f.A.recoverWithKit({ hub_url: hub, email: f.email, words: words.value, device_name, client: CLIENT })
+          const { client } = await f.A.recoverWithKit({ hub_url: at, account: f.text, words: words.value, device_name, client: CLIENT })
           newWayFlow(client, words.value)
-        } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); idle(form); say(accountError(err)) }
+        } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); idle(form); say(missed(err, f.named)) }
         return
       }
-      const f = await fields(form, { fresh: true })
-      if (!f) return
+      const pw = form.elements.password
+      if (f.A.passwordProblem(pw.value)) return weak(form)
       busy(form, 'Setting…')
       try {
         // (the old kit opens nothing after this: the new one is shown next, as after "Create account")
         write(KIT_MARK, '1')
-        const { client, kit } = await f.A.resetPassword({ hub_url: hub, email: f.email, words: words.value, new_password: f.password, device_name, client: CLIENT })
-        freshKit = { ...kit, has_password: true }
+        const { client, kit: fresh } = await f.A.resetPassword({ hub_url: at, account: f.text, words: words.value, new_password: pw.value, device_name, client: CLIENT })
+        freshKit = { ...fresh, has_password: true }
         await opened(client)
-      } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); try { localStorage.removeItem(KIT_MARK) } catch {} idle(form); say(accountError(err)) }
+      } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); try { localStorage.removeItem(KIT_MARK) } catch {} idle(form); say(missed(err, f.named)) }
     })
   }
   // The words opened the account and this device is in. Now the way in for next time: a new passkey, or a password.
@@ -1012,7 +1079,7 @@ ${obError()}${passkey ? html`<button type="submit" class="ob-go" id="newway-pass
         if (passkey) {
           busy(form, 'Waiting for passkey…')
           const st = await A.accountStatus(client)
-          made = await passkeyMake({ challenge: await A.passkeyChallengeFor(client), user_handle: unb64u(st.user_handle), email: st.email, exclude: (st.passkeys ?? []).map(p => unb64u(p.credential_id)) })
+          made = await passkeyMake({ challenge: await A.passkeyChallengeFor(client), user_handle: unb64u(st.user_handle), name: st.email ?? st.account, exclude: (st.passkeys ?? []).map(p => unb64u(p.credential_id)) })
           busy(form, 'Saving…')
           write(KIT_MARK, '1')
           const { kit } = await A.addPasskey(client, { unlock: { words }, passkey: made })
@@ -1133,7 +1200,9 @@ ${obError()}${obSubmit('Next')}</form></details>
     lastEmail = 'ada@example.org'
     const words = KIT_EMPTY
     const type = (sel, value) => { const f = root.querySelector(sel); if (f) { f.value = value; f.dispatchEvent(new Event('input', { bubbles: true })) } }
-    const kit = o => kitPage(root, { email: lastEmail, demo: true, logout: null, ...o })
+    const DEMO_ID = '0f8fad5b-d9cb-469f-a165-70867728950e', DEMO_HUB = 'https://hub.trommi.com'
+    const linkOf = id => { try { return pageHelpers.kitAddress('https://app.trommi.com', DEMO_HUB, id) } catch { return null } }
+    const kit = ({ email = lastEmail, ...o }) => kitPage(root, { kit: { email, account: DEMO_ID, form: email ? 'email' : 'id' }, linkOf, demo: true, logout: null, ...o })
     const flows = {
       welcome: () => welcome(), 'logged-out': () => welcome(),
       create: () => createFlow(), 'create-nopasskey': () => createFlow(),
@@ -1148,7 +1217,11 @@ ${obError()}${obSubmit('Next')}</form></details>
       'create-offline': () => { createFlow({ way: 'password' }); type('#ob-pw', 'a long enough password'); say(accountError({ code: 'offline' })) },
       'create-limit': () => { createFlow({ way: 'password' }); type('#ob-pw', 'a long enough password'); say(accountError({ code: 'too-many' })) },
       kit: () => kit({ words }), 'kit-shown': () => kit({ words, shown: true }), 'kit-again': () => kit({ logout: () => {} }), 'kit-wrong': () => kit({ error: 'Wrong password.', logout: () => {} }),
-      'kit-passkey': () => kit({ words, ways: { password: false, passkey: true } }), 'kit-again-passkey': () => kit({ logout: () => {}, ways: { password: false, passkey: true } }), 'kit-again-both': () => kit({ logout: () => {}, ways: { password: true, passkey: true } }),
+      'kit-passkey': () => kit({ words, ways: { password: false, passkey: true } }), 'kit-noemail': () => kit({ words, shown: true, email: null, ways: { password: false, passkey: true } }),
+      'create-noemail-yet': () => { lastEmail = ''; createFlow(); say(NEEDS_EMAIL_YET) },
+      'login-id': () => { lastEmail = DEMO_ID; loginFlow(ID_NO_PASSWORD) },
+      'forgot-kit': () => forgotFlow({ way: 'passkey', kit: { hub_url: DEMO_HUB, account: DEMO_ID } }), 'forgot-kit-hub': () => forgotFlow({ way: 'passkey', kit: { hub_url: 'https://hub.example.org', account: DEMO_ID } }),
+      'forgot-wrong-id': () => { forgotFlow({ way: 'passkey', kit: { hub_url: DEMO_HUB, account: DEMO_ID } }); type('textarea', words); say('Wrong account ID or words. A kit that shows an email opens with that email.') }, 'kit-again-passkey': () => kit({ logout: () => {}, ways: { password: false, passkey: true } }), 'kit-again-both': () => kit({ logout: () => {}, ways: { password: true, passkey: true } }),
       'login-nopasskey': () => loginFlow(), 'login-passkey-waiting': () => { loginFlow(); keyBusy('Waiting for passkey…') }, 'login-passkey-busy': () => { loginFlow(); keyBusy('Logging in…') },
       'login-passkey-error': () => loginFlow('This passkey opens no account here.', 'passkey'), 'login-passkey-noprf': () => loginFlow(NO_PRF_HERE, 'passkey'),
       'forgot-passkey': () => forgotFlow({ way: 'passkey' }), 'new-passkey': () => newWayFlow(null, ''), 'new-passkey-fallback': () => newWayFlow(null, '', { way: 'password', note: NO_PRF }),

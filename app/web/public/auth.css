@@ -389,6 +389,8 @@ dialog.ob-gate #room-screen { position: static; }
 .kit-words li { counter-increment: kit; display: flex; align-items: center; gap: 8px; min-width: 0; height: 26px; white-space: nowrap; }
 .kit-words li::before { content: counter(kit); flex: none; width: 1.4em; color: var(--faint); font-size: 12px; text-align: right; }
 .kit-words li i { display: block; width: calc(var(--w) * .58em); max-width: calc(100% - 2em); height: 9px; border-radius: 5px; background: color-mix(in srgb, var(--fg) 30%, transparent); filter: blur(3.5px); }
+/* (the account's ID and its code under the words: the Settings pair, set off from the words) */
+.kit-sheet .kit-id, .room-kit .kit-id { margin-top: 16px; }
 .kit-how { display: none; }
 .ob-chip { padding: 0 12px; height: 32px; border: 0; border-radius: 9px; background: var(--fg); color: var(--bg); font: 700 13px/1 var(--font); cursor: pointer; }
 .kit-show { position: absolute; top: 14px; right: 14px; min-width: 60px; }
