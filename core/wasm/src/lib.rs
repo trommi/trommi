@@ -223,6 +223,7 @@ methods!(RawDevice {
     invite_recommit(invite_id, now_ms);
     invite_steps();
     invite_handover(invite_id);
+    invite_checked(invite_id, helpers);
     invite_forget(invite_id);
     join_request(link, offer, now_ms);
     join_reveal(reveal);

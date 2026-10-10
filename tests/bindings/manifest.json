@@ -1366,6 +1366,19 @@
         ],
         "returns": "list<number>"
       },
+      "inviteChecked": {
+        "arguments": [
+          {
+            "name": "inviteId",
+            "type": "bytes"
+          },
+          {
+            "name": "helpers",
+            "type": "list<bytes>"
+          }
+        ],
+        "returns": "void"
+      },
       "inviteForget": {
         "arguments": [
           {
@@ -1721,7 +1734,8 @@
       "group": "optional<bytes>",
       "device": "optional<bytes>",
       "keyPackage": "optional<bytes>",
-      "cuts": "list<Cut>"
+      "cuts": "list<Cut>",
+      "session": "optional<bytes>"
     },
     "JoinRequest": {
       "inviteId": "bytes",
@@ -2076,7 +2090,8 @@
       "handover": "handover",
       "addToSession": "addToSession",
       "foundSession": "foundSession",
-      "takeOver": "takeOver"
+      "takeOver": "takeOver",
+      "checkHelpers": "checkHelpers"
     },
     "OutboxKind": {
       "roomFounding": "roomFounding",

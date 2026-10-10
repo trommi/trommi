@@ -241,8 +241,9 @@ impl CoreDevice {
         self.read(|device| Ok(device.outbox().into_iter().map(Into::into).collect()))
     }
 
-    /// The hub accepted the outbox entry `id`: the entry goes and its consequence is applied in the same
-    /// write. `change` is the change number the hub gave it, where it gives one.
+    /// The hub accepted the outbox entry `id`: the entry goes. `change` is the change number the hub gave it,
+    /// where it gives one. An accepted Commit is not merged here: it is merged when
+    /// [`CoreDevice::process_log_entry`] reaches it in the log, at its place among the entries of every group.
     pub fn outbox_accepted(&self, id: u64, change: Option<u64>) -> Result<(), CoreError> {
         self.write(|device| Ok(device.outbox_accepted(id, Accepted { change })?))
     }
@@ -477,7 +478,8 @@ impl CoreDevice {
     }
 
     /// Processes one entry of the hub's ordered log: the group state after it, the content key of a new epoch
-    /// and the cursor are written together. Entries are handed in the hub's order across groups. A refusal
+    /// and the cursor are written together. Entries are handed strictly in the order of their change numbers
+    /// across groups, this device's own accepted Commits among them: that is where they are merged. A refusal
     /// changes nothing; [`crate::log_finding`] says what its code means for the caller.
     ///
     /// `now_ms` is this device's clock: when it processed the Commit that ended an epoch decides how long an
@@ -531,7 +533,8 @@ impl CoreDevice {
     }
 
     /// Sends the points of a stroke still being drawn: room group, human devices, relayed and not stored.
-    /// Returns the outbox entry's id.
+    /// Returns the outbox entry's id. `epoch-full` when the epoch took its share of pieces: an update of the
+    /// room group is due first ([`CoreDevice::update`], forced).
     pub fn send_stroke_piece(&self, board: Vec<u8>, piece: Vec<u8>) -> Result<u64, CoreError> {
         self.write(|device| Ok(device.send_stroke_piece(&board_id(&board)?, &piece)?))
     }
@@ -1102,10 +1105,11 @@ impl CoreDevice {
         self.write(|device| Ok(device.invite_recommit(&InviteId::from_slice(&invite_id)?, now_ms)?))
     }
 
-    /// What is to do next for every device this one committed by link, until all of it is done. A step that
-    /// was taken is not named again.
+    /// What is left to do for every device this one committed by link. The steps are read from the state of
+    /// the groups, so they are the same after a restart, and a step that was taken is not named again. An
+    /// invite with nothing left is finished: its record goes in this call and it is listed no more.
     pub fn invite_steps(&self) -> Result<Vec<InviteStep>, CoreError> {
-        self.read(|device| {
+        self.write(|device| {
             Ok(device
                 .invite_steps()?
                 .into_iter()
@@ -1114,12 +1118,32 @@ impl CoreDevice {
         })
     }
 
-    /// Sends the key handover that a step of the kind `handover` names. Returns the outbox entries' ids.
+    /// Sends the key handover of the invite's first step of the kind `handover`. Returns the outbox entries'
+    /// ids. `busy` when no handover is to be sent now.
     pub fn invite_handover(&self, invite_id: Vec<u8>) -> Result<Vec<u64>, CoreError> {
         self.write(|device| Ok(device.invite_handover(&InviteId::from_slice(&invite_id)?)?))
     }
 
-    /// Drops what was left to do for an invite: a takeover without history sends no handover.
+    /// Answers a step of the kind `checkHelpers`: `helpers` are the groups of the live helper sessions the hub
+    /// lists under the session that was taken over. `group-behind` when this device does not hold one of them
+    /// (its Welcome is still to be taken); `busy` when another step is left. Otherwise the next
+    /// [`CoreDevice::invite_steps`] finishes the invite.
+    pub fn invite_checked(
+        &self,
+        invite_id: Vec<u8>,
+        helpers: Vec<Vec<u8>>,
+    ) -> Result<(), CoreError> {
+        self.write(|device| {
+            let helpers = helpers
+                .iter()
+                .map(|group| group_id(group))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(device.invite_checked(&InviteId::from_slice(&invite_id)?, &helpers)?)
+        })
+    }
+
+    /// A takeover without history: no handover is sent for this invite, now or in a helper session taken over
+    /// later. Only the handover steps go; a takeover that is still to do stays listed.
     pub fn invite_forget(&self, invite_id: Vec<u8>) -> Result<(), CoreError> {
         self.write(|device| Ok(device.invite_forget(&InviteId::from_slice(&invite_id)?)?))
     }
@@ -1171,8 +1195,10 @@ impl CoreDevice {
     }
 
     /// Signs the hub's sign-in challenge (32 bytes) with this device's key, for the room it belongs to at the
-    /// hub `hub`, which must be the hub's canonical address. `no-room` for a device without a room. The result
-    /// is posted as it is; the token the hub answers with is the host's.
+    /// hub `hub`, which must be the hub's canonical address. A device that is joining by link signs for the
+    /// room of its invite once it checked the Reveal ([`CoreDevice::join_reveal`]), and only at the invite's
+    /// hub (`bad-invite` for another). `no-room` for a device without a room and without such an invite. The
+    /// result is posted as it is; the token the hub answers with is the host's.
     pub fn hub_sign_in(&self, hub: String, challenge: Vec<u8>) -> Result<SignedHubAuth, CoreError> {
         let challenge: [u8; CHALLENGE_LEN] = challenge
             .as_slice()
