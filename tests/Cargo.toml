@@ -314,3 +314,7 @@ path = "connector/dead_hub.rs"
 [[test]]
 name = "hub_removal"
 path = "hub/removal.rs"
+
+[[test]]
+name = "connector_install"
+path = "connector/install.rs"

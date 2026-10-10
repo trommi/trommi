@@ -95,7 +95,7 @@ the id of an earlier build run, to deliver that build once more.
 | Part | Build makes | Deploy workflow | What it changes |
 | --- | --- | --- | --- |
 | Web app | `web-release`: the files the worker serves, the worker, its settings, `manifest.json`, `checksums.txt` | `deploy_web.yml` | the Cloudflare worker `trommi-app` at https://app.trommi.com |
-| Connector | `connector-release`: four binaries, the plugin's archive, `manifest.json` | `deploy_connector.yml` | a GitHub release `connector-v<N>`, signed |
+| Connector | `connector-release`: four binaries, `manifest.json` | `deploy_connector.yml` | a GitHub release `connector-v<N>`, signed |
 | iOS app | `ios-release`: the Rust core for iOS and its Swift bindings | `deploy_ios.yml` | a TestFlight build in the group "Intern" |
 | Hub | `hub-release`: the hub and its updater as static programs, the hub's systemd unit, `manifest.json` | `deploy_hub.yml` | a GitHub release `hub-v<N>`, signed; then the server takes it (below) |
 

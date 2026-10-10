@@ -4,8 +4,8 @@
 # Interface (build.yml calls it; see the head of build.yml):
 #   version   the release number of the build run; the release is connector-v<version>
 #   commit    the commit that was built
-#   artifact  the artifact of that run: the four binaries (trommi-connector-<target>), the plugin's archive
-#             (trommi-<12 hex>.zip) and manifest.json (release/manifest.sh, product trommi-connector), not yet signed
+#   artifact  the artifact of that run: the four binaries (trommi-connector-<target>) and manifest.json
+#             (release/manifest.sh, product trommi-connector), not yet signed
 # By hand (Actions -> deploy_connector -> Run workflow): `run_id`, the id of a build run whose connector-release is
 # signed and published after all (its artifact is kept for 30 days). A release that is published is never replaced.
 #
@@ -223,7 +223,6 @@ jobs:
         with:
           subject-path: |
             publish/trommi-connector-*
-            publish/trommi-*.zip
             publish/manifest.json
       # A published release is never replaced: a second run of the same build leaves what is published.
       - name: Publish
@@ -241,7 +240,7 @@ jobs:
               [ "$tagged" = "$COMMIT" ] || { echo "::error::the tag $TAG is there already and names $tagged, not $COMMIT"; exit 1; }
             fi
             gh release create "$TAG" --target "$COMMIT" --latest=false --title "Connector $TAG" \
-              --notes "The Trommi connector for Linux and macOS and the plugin's archive, built from $COMMIT. Signed: manifest.json and manifest.json.sig (see release/sign.sh)." \
+              --notes "The Trommi connector for Linux and macOS, built from $COMMIT. Signed: manifest.json and manifest.json.sig (see release/sign.sh). Install: install.sh of this repository." \
               publish/* 2> "$RUNNER_TEMP/create.err" && code=0 || code=$?
             cat "$RUNNER_TEMP/create.err" >&2
             if [ "$code" != 0 ]; then

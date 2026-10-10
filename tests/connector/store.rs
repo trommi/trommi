@@ -224,12 +224,12 @@ fn the_log_is_folded_into_a_snapshot_and_a_crash_in_between_loses_nothing() {
 #[test]
 fn a_snapshot_that_is_not_one_is_damage() {
     let dir = TempDir::new("store");
-    drop(Journal::open(dir.path()).expect("opens"));
     for bytes in [
         &b"junk"[..],
         &[0u8; 64][..],
         b"TROMMI-STATE-03\n and more than forty-eight bytes of something else",
     ] {
+        std::fs::create_dir_all(dir.path()).expect("the state's folder");
         std::fs::write(dir.path().join("state.snap"), bytes).expect("written");
         assert!(matches!(
             Journal::open(dir.path()),
@@ -278,4 +278,38 @@ fn a_wiped_state_is_gone() {
     );
     let journal = reopen(&dir, journal);
     assert!(journal.is_empty());
+}
+
+/// A state that holds nothing leaves nothing behind: a journal that was only opened, and one that was wiped,
+/// take their directory with them when the last handle goes. One that holds a record stays.
+#[test]
+fn an_empty_or_wiped_state_leaves_no_directory() {
+    let dir = TempDir::new("store");
+    let state = dir.path().join("slot.state");
+    // only looked at
+    let journal = Journal::open(&state).expect("opens");
+    let second = journal.clone();
+    drop(journal);
+    assert!(state.is_dir(), "another handle still holds it");
+    drop(second);
+    assert!(
+        !state.exists(),
+        "an unwritten state is gone with its last handle"
+    );
+    // written: it stays
+    let journal = Journal::open(&state).expect("opens");
+    fill(&journal, 2);
+    drop(journal);
+    assert!(state.join("state.log").is_file());
+    // wiped: gone, lock file and all
+    let journal = Journal::open(&state).expect("opens again");
+    assert!(!journal.is_empty());
+    journal.wipe().expect("wiped");
+    drop(journal);
+    assert!(!state.exists(), "a wiped state leaves no directory");
+    // a file of someone else in the directory is never removed, and so the directory stays
+    let journal = Journal::open(&state).expect("opens");
+    std::fs::write(state.join("note"), b"not the journal's").expect("written");
+    drop(journal);
+    assert!(state.join("note").is_file());
 }

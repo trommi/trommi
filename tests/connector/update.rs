@@ -1,7 +1,10 @@
 //! The check a connector release must pass (connector/src/update.rs), with a throwaway key: one signed manifest
 //! for all files of a release, in the form of `release/manifest.sh` and `release/sign.sh`.
 use ed25519_dalek::{Signer, SigningKey};
-use trommi_connector::update::{check, verify_file, Expect, Release, RELEASE_KEY};
+use trommi_connector::update::{
+    check, install, installed_version, tag_number, tags_in_feed, verify_file, Expect, Release,
+    RELEASE_KEY,
+};
 
 const TARGET: &str = "x86_64-unknown-linux-musl";
 
@@ -276,4 +279,138 @@ fn a_signature_made_by_openssl_as_the_release_script_makes_it_is_taken() {
     };
     assert_eq!(check(&expect, &manifest, &signature, &case.binary), Ok(9));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// One tag series for the whole repository (`v<N>`, product `trommi`) is taken as well as the connector's own.
+#[test]
+fn a_release_of_the_whole_repository_is_taken_by_its_own_tag() {
+    let case = Case::new();
+    let files: &[(&str, &[u8])] = &[
+        ("trommi-connector-x86_64-unknown-linux-musl", &case.binary),
+        ("trommi-hub-x86_64-unknown-linux-musl", b"the hub"),
+    ];
+    let signed = |manifest: Vec<u8>| {
+        let signature = case.sign(&manifest);
+        case.check(&manifest, &signature, 0)
+    };
+    assert_eq!(
+        signed(manifest("trommi", "trommi/trommi", 31, "v31", files)),
+        Ok(31)
+    );
+    assert_eq!(
+        signed(manifest("trommi", "trommi/trommi", 31, "v32", files)),
+        Err("the manifest's tag is not its version's")
+    );
+    assert_eq!(
+        signed(manifest("trommi", "trommi/trommi", 31, "hub-v31", files)),
+        Err("the manifest's tag is not its version's")
+    );
+}
+
+#[test]
+fn a_checked_release_is_put_in_place_and_a_refused_one_changes_nothing() {
+    let dir = std::env::temp_dir().join(format!(
+        "trommi-install-{}",
+        trommi_connector::util::random_hex(4)
+    ));
+    let mut case = Case::new();
+    let public = case.key.verifying_key().to_bytes();
+    let expect = Expect {
+        key: &public,
+        target: TARGET,
+        running: 0,
+    };
+    assert_eq!(installed_version(&public, &dir), 0, "nothing is there yet");
+    let manifest = case.good(7);
+    let signature = case.sign(&manifest);
+    assert_eq!(
+        install(&expect, &dir, &manifest, &signature, &case.binary),
+        Ok(7)
+    );
+    let read = |name: &str| std::fs::read(dir.join(name)).expect(name);
+    assert_eq!(read("trommi-connector"), case.binary);
+    assert_eq!(read("manifest.json"), manifest);
+    assert_eq!(read("manifest.json.sig"), signature);
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(dir.join("trommi-connector"))
+        .expect("the program")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755);
+    assert_eq!(installed_version(&public, &dir), 7);
+    assert_eq!(
+        installed_version(&RELEASE_KEY, &dir),
+        0,
+        "a manifest another key signed counts for nothing"
+    );
+
+    // An older release is refused against what is installed, whatever the process itself was built as.
+    let older = case.good(6);
+    assert_eq!(
+        install(&expect, &dir, &older, &case.sign(&older), &case.binary),
+        Err("the release is older than the connector that runs".to_string())
+    );
+    // A newer manifest with a binary that is not the one it names: refused, and the installed one stays.
+    let newer = case.good(8);
+    let newer_signature = case.sign(&newer);
+    assert!(install(&expect, &dir, &newer, &newer_signature, b"something else").is_err());
+    assert_eq!(read("trommi-connector"), case.binary);
+    assert_eq!(
+        read("manifest.json"),
+        manifest,
+        "the installed manifest stays"
+    );
+    // The same release with its own binary is taken.
+    case.binary = b"the next connector".to_vec();
+    let next = case.good(8);
+    let next_signature = case.sign(&next);
+    assert_eq!(
+        install(&expect, &dir, &next, &next_signature, &case.binary),
+        Ok(8)
+    );
+    assert_eq!(read("trommi-connector"), case.binary);
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .expect("the folder")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".new."))
+        .collect();
+    assert!(left.is_empty(), "nothing half written is left: {left:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The release tags are read from GitHub's feed of releases, highest number first, whatever the series is
+/// called; what is not a release tag of this repository is left out.
+#[test]
+fn the_release_tags_are_read_from_githubs_feed_newest_first() {
+    let entry = |href: &str| {
+        format!("<entry><link rel=\"alternate\" type=\"text/html\" href=\"{href}\"/></entry>")
+    };
+    let ours = |tag: &str| {
+        entry(&format!(
+            "https://github.com/trommi/trommi/releases/tag/{tag}"
+        ))
+    };
+    let feed = [
+        ours("hub-v40"),
+        ours("connector-v19"),
+        ours("connector-v9"),
+        ours("v21"),
+        ours("v021"),
+        ours("nightly"),
+        ours("Connector-v99"),
+        ours("-v98"),
+        ours("connector-v19"),
+        entry("https://github.com/someone/else/releases/tag/connector-v97"),
+    ]
+    .concat();
+    assert_eq!(
+        tags_in_feed(&feed),
+        ["hub-v40", "v21", "connector-v19", "connector-v9"]
+    );
+    assert!(tags_in_feed("<html>rate limited</html>").is_empty());
+    assert_eq!(tag_number("connector-v22"), Some(22));
+    assert_eq!(tag_number("v7"), Some(7));
+    assert_eq!(tag_number("v0"), None);
+    assert_eq!(tag_number("connector-v"), None);
 }

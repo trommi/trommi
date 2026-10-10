@@ -20,6 +20,7 @@ pub mod mirror;
 pub mod model;
 pub mod prompt;
 pub mod server;
+pub mod setup;
 pub mod slots;
 pub mod slotstore;
 pub mod store;

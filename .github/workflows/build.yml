@@ -95,7 +95,7 @@ jobs:
           # the core itself: its sources (core/ is in `shared`), its tests, the test library, the vectors
           part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$|THIRD-PARTY\.md$|\.github/scripts/third_party\.mjs$'
           part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
-          part connector 'connector/|release/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
+          part connector 'connector/|release/|install\.sh$|\.claude-plugin/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
           part ios 'ios/|tests/ios/|\.github/scripts/ios_(testflight\.sh|archive\.sh|entitlements\.py)$|\.github/workflows/deploy_ios\.yml$'
           part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$|\.github/workflows/deploy_hub\.yml$'
 
@@ -287,8 +287,9 @@ jobs:
           # TROMMI_HUB_SERVES_REMOVAL: this repository's hub has the removal route, so a removed connector must verify
           # its removal there (without it the test accepts a connector that only keeps its state)
           TROMMI_HUB_SERVES_REMOVAL=1 TROMMI_HUB_BIN="$PWD/target/debug/trommi-hub" cargo test --locked -p trommi-tests $tests
-      # The four binaries and the plugin's archive, as connector/build-plugin.mjs makes them; then the manifest
-      # that names them. A target that did not build is an error here, not a smaller release.
+      # The four binaries, as connector/build-plugin.mjs makes them; then the manifest that names them. (The plugin
+      # for Claude Code is no release file: it is the folder connector/plugin, which names the installed connector.)
+      # A target that did not build is an error here, not a smaller release.
       - name: Build the release
         run: |
           set -eu
@@ -296,15 +297,13 @@ jobs:
           TROMMI_RELEASE_VERSION="$VERSION" node connector/build-plugin.mjs "$RUNNER_TEMP/dist"
           mkdir out
           for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
-            hash=$(cut -d' ' -f1 "$RUNNER_TEMP/dist/connector/trommi-connector-$target.sha256") || { echo "::error::no build for $target"; exit 1; }
-            cp "$RUNNER_TEMP/dist/connector/$hash/trommi-connector-$target" "out/trommi-connector-$target"
+            [ -f "$RUNNER_TEMP/dist/trommi-connector-$target" ] || { echo "::error::no build for $target"; exit 1; }
+            cp "$RUNNER_TEMP/dist/trommi-connector-$target" "out/trommi-connector-$target"
             file "out/trommi-connector-$target"
           done
           for f in out/trommi-connector-*-linux-musl; do
             file "$f" | grep -Eq 'static(ally|-pie) linked' || { echo "::error::$f is not a static binary"; exit 1; }
           done
-          cp "$RUNNER_TEMP"/dist/plugins/trommi-*.zip out/
-          [ "$(find out -name 'trommi-*.zip' | wc -l)" = 1 ] || { echo "::error::not exactly one plugin archive"; exit 1; }
           release/manifest.sh trommi-connector "$VERSION" "$GITHUB_SHA" out/* > "$RUNNER_TEMP/manifest.json"
           mv "$RUNNER_TEMP/manifest.json" out/manifest.json
           release/sign.sh files out/manifest.json
