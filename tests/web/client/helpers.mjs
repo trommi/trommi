@@ -164,8 +164,8 @@ export async function addAgent(t, inviter, more = {}, label = 'agent') {
   return agent
 }
 /** A room with its founder `a` started; `second`: a human device `b`; `agent`: an agent stand-in with its session. */
-export async function scene(t, { second = false, agent = false, timing = {} } = {}) {
-  const fake = await hub(t), R = await rooms({ timing })
+export async function scene(t, { second = false, agent = false, timing = {}, hubOpts = {} } = {}) {
+  const fake = await hub(t, hubOpts), R = await rooms({ timing })
   const name = storage('a')
   const { client: a, recovery_code } = await R.foundRoom({ storage: name, hub_url: fake.url, device_name: 'a' })
   t.after(() => a.stop().catch(() => {}))
