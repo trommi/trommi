@@ -460,6 +460,38 @@ fn a_device_that_joins_by_link_reads_everything_from_number_one() {
     }
     assert_same_view(&w, &w.old, &new, &room);
 
+    // Handed again, an envelope the chain holds says what it is, and nothing changes: a register names
+    // itself and says whether its value is the current one of its name now. A client that rebuilds what
+    // it shows from reading back alone learns every name and which value counts.
+    let mut current = Vec::new();
+    for stored in served_of(&w.hub, &room) {
+        let got = new
+            .receive_envelope(&stored.bytes, stored.change, false, None, now())
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+        let is_register = matches!(got.header.subject, envelope::Subject::Register(_));
+        assert_eq!(got.register.is_some(), is_register);
+        assert!(!got.replayed);
+        if let Some(register) = got.register.filter(|register| register.current) {
+            current.push((register.name, register.of, stored.hash));
+        }
+    }
+    let desks: Vec<_> = current.iter().filter(|(name, _, _)| name == DESK).collect();
+    assert_eq!(desks.len(), 1);
+    let newest_desk = served_of(&w.hub, &room)
+        .into_iter()
+        .rfind(|stored| {
+            matches!(stored.header.subject, envelope::Subject::Register(_))
+                && stored.header.sender == w.old.id()
+        })
+        .unwrap();
+    assert_eq!(desks[0].2, newest_desk.hash);
+    let mut names: Vec<_> = current.iter().map(|(name, of, _)| (name, of)).collect();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), current.len());
+    assert_same_view(&w, &w.old, &new, &room);
+
     // The sessions: a session's past needs the room's, a helper session's its main session's.
     for group in [main, side] {
         add_to_session(&mut w.hub, &mut w.old, &mut new, &group);

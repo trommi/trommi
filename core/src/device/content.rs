@@ -301,7 +301,8 @@ pub struct ReceivedEnvelope {
     /// The object after this envelope, by the replay of headers (9.2.1); none for items and registers, and
     /// for an envelope that changed no object.
     pub object_after: Option<(ObjectId, Object)>,
-    /// For a register whose value was taken: its name and whether it is now the current one.
+    /// For a register whose value was taken, now or before (an envelope the chain holds, handed again out
+    /// of order): its name and whether it is the current one now.
     pub register: Option<RegisterChange>,
     /// For an envelope that came through its chain and had been shown as provisional before.
     pub provisional: Option<Confirmation>,
@@ -1564,6 +1565,15 @@ impl<S: Storage> Device<S> {
         if record.status == Status::Taken && record.code.is_none() {
             received.outcome = EnvelopeOutcome::Applied;
             received.body = Some(body);
+            // A register value the chain holds is named again, with whether it is the current one now:
+            // read from what is stored, which this reading does not change.
+            if matches!(received.header.subject, Subject::Register(_)) && !record.extra.is_empty() {
+                let (name, of, current) = self
+                    .registers(&group)?
+                    .standing(&received.header, &record.extra)
+                    .map_err(|_| damaged("a register's record"))?;
+                received.register = Some(RegisterChange { name, of, current });
+            }
             if let Some(fields) = received.header.subject.object() {
                 received.object_after = self
                     .object_states(&group)?
