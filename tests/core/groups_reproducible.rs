@@ -14,11 +14,12 @@
 use std::collections::BTreeSet;
 use trommi_core::crypto::{sha256, SeededEntropy};
 use trommi_core::device::{Accepted, Device, WelcomeExpectation};
-use trommi_core::ids::{GroupId, Hash32};
+use trommi_core::ids::{GroupId, Hash32, SessionId};
+use trommi_core::invite::Role;
 use trommi_core::mls::profile::Cut;
 use trommi_core::store::OutboxKind;
 use trommi_tests::hub::Hub;
-use trommi_tests::{process, test_keys, MemoryStorage, TestDevice};
+use trommi_tests::{process, test_keys, try_invite_at, MemoryStorage, TestDevice};
 
 /// The clock of every run: fixed, and inside the lifetime OpenMLS checks against the system's for ten years.
 const NOW: u64 = 1_790_000_000_000;
@@ -78,11 +79,30 @@ fn join(hub: &Hub, device: &mut TestDevice, by: &TestDevice) {
     }
 }
 
+/// `a` invites the human device `newcomer`, the person confirms, and the newcomer joins from its Welcome.
 fn add(hub: &mut Hub, a: &mut TestDevice, newcomer: &mut TestDevice, trace: &mut Trace) {
-    let package = newcomer.key_package(NOW).unwrap();
-    a.add_human_device(&newcomer.id(), &package, NOW).unwrap();
+    try_invite_at(a, newcomer, Role::Human, None, NOW).unwrap();
     post(hub, a, trace);
     join(hub, newcomer, a);
+}
+
+/// `a` invites the agent device `agent`, to take `session` over if one is named, and the person confirms. The
+/// agent follows the room group from the state the Offer names and sees its inviter enrol it.
+fn enrol(
+    hub: &mut Hub,
+    a: &mut TestDevice,
+    agent: &mut TestDevice,
+    session: Option<&SessionId>,
+    trace: &mut Trace,
+) {
+    let invited = try_invite_at(a, agent, Role::Agent, session, NOW).unwrap();
+    post(hub, a, trace);
+    let room_group = GroupId::room(a.room().unwrap());
+    agent
+        .join_observe(hub.group_info_at(&room_group, invited.room_epoch).unwrap())
+        .unwrap();
+    follow(hub, agent);
+    assert!(agent.room_history().unwrap().newest().is_agent(&agent.id()));
 }
 
 /// A room played through: founding, an Add with its Welcome, an update, a single Remove, a change of
@@ -105,11 +125,7 @@ fn play(two_removes: bool) -> Trace {
     follow(&hub, &mut b);
 
     // The agent device, its session, and the takeover by another.
-    a.change_agents(&[agent.id()], &[], NOW).unwrap();
-    post(&mut hub, &mut a, &mut trace);
-    agent
-        .observe_room(hub.group_info(&room_group).unwrap(), None)
-        .unwrap();
+    enrol(&mut hub, &mut a, &mut agent, None, &mut trace);
     follow(&hub, &mut b);
     let packages = [b.key_package(NOW).unwrap(), agent.key_package(NOW).unwrap()];
     let session = a.found_session(&agent.id(), &packages, NOW).unwrap();
@@ -117,10 +133,7 @@ fn play(two_removes: bool) -> Trace {
     post(&mut hub, &mut a, &mut trace);
     join(&hub, &mut b, &a);
     join(&hub, &mut agent, &a);
-    a.change_agents(&[next.id()], &[agent.id()], NOW).unwrap();
-    post(&mut hub, &mut a, &mut trace);
-    next.observe_room(hub.group_info(&room_group).unwrap(), None)
-        .unwrap();
+    enrol(&mut hub, &mut a, &mut next, Some(&session), &mut trace);
     let package = next.key_package(NOW).unwrap();
     a.clean_session(
         &group,
@@ -158,7 +171,7 @@ fn digest(trace: &Trace) -> String {
 }
 
 /// The digest of [`play`] without the two Removes: the same in every process.
-const PLAYED: &str = "39f9f042cc0a7e1067f85f281d4231a6c2e7e263bc8e7b0cf4f8b439a9fe5a09";
+const PLAYED: &str = "5c8d118e7af074db22c688da4889827edf122589bd6c6a755acc53452affced8";
 
 #[test]
 fn the_same_seeds_give_the_same_bytes_twice_in_one_process() {

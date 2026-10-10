@@ -1316,7 +1316,7 @@ fn a_recovery_cleans_a_session_that_an_interrupted_removal_left_stale() {
     w.a.remove_human_devices(&[Cut::none(w.b.id())], now())
         .unwrap();
     post_ok(&mut w.hub, &mut w.a);
-    w.a.change_agents(&[], &[w.agent.id()], now()).unwrap();
+    w.a.remove_agents(&[w.agent.id()], now()).unwrap();
     post_ok(&mut w.hub, &mut w.a);
     assert_eq!(w.hub.stale_leaves(&w.main).unwrap().len(), 2);
     assert!(!w.hub.stale_leaves(&w.side).unwrap().is_empty());

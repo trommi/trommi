@@ -3182,21 +3182,9 @@ impl<S: Storage> Device<S> {
         Ok(GroupId::room(room))
     }
 
-    /// Adds a human device to the room group without an invite. Only under the cargo feature `vectors`, for
-    /// the scenario tests and the generator of the vectors, whose subject is not the invite; in a shipped
-    /// build a human device is added by [`Device::invite_confirm`] alone (12.1.4).
-    #[cfg(feature = "vectors")]
-    pub fn add_human_device(
-        &mut self,
-        device: &DeviceId,
-        key_package: &[u8],
-        now_ms: u64,
-    ) -> Result<u64, Error> {
-        self.transact(|this, batch| this.add_human(batch, device, key_package, now_ms))
-    }
-
     /// Commits the Add of the human device `device` to the room group with its KeyPackage (5.1.2, 12.1.5),
-    /// which must verify and be that device's (4.5).
+    /// which must verify and be that device's (4.5). The one caller is the Commit of a confirmed invite
+    /// (12.1.4).
     fn add_human(
         &mut self,
         batch: &mut Batch,
@@ -3259,20 +3247,8 @@ impl<S: Storage> Device<S> {
         self.transact(|this, batch| this.set_agents(batch, &[], remove, now_ms))
     }
 
-    /// Changes the room's enrolled agent devices without an invite. Only under the cargo feature `vectors`,
-    /// like [`Device::add_human_device`].
-    #[cfg(feature = "vectors")]
-    pub fn change_agents(
-        &mut self,
-        enrol: &[DeviceId],
-        remove: &[DeviceId],
-        now_ms: u64,
-    ) -> Result<u64, Error> {
-        self.transact(|this, batch| this.set_agents(batch, enrol, remove, now_ms))
-    }
-
     /// Commits a change of the room's enrolled agent devices (5.1.2): `enrol` are added to `agents`, `remove`
-    /// taken out.
+    /// taken out. A device is enrolled by the Commit of a confirmed invite alone (12.1.4).
     fn set_agents(
         &mut self,
         batch: &mut Batch,
