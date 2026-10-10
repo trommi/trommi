@@ -70,7 +70,12 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
       let signer = hex(Bytes(auth[(auth.count - 64)..<(auth.count - 32)]))
       return (200, ["token": signer, "expires_at": nowMs() + 600_000, "role": removed[signer] == nil ? "human" : "removed"])
     case ("GET", 3, "rooms") where path[2] == "groups":
-      return (200, hub.infos.keys.sorted { hex($0) < hex($1) }.map { ["group_id": b64u($0), "kind": $0.count == 32 ? "room" : "main", "live": true] as JSON })
+      let all = hub.infos.keys.sorted { hex($0) < hex($1) }.map { ["group_id": b64u($0), "kind": $0.count == 32 ? "room" : "main", "live": true] as JSON }
+      guard query["limit"] != nil else { return (200, all) }
+      // (paged: one group a page, the next page after the answer's `after`)
+      let from = Int(query["after"] ?? "0") ?? 0
+      let page = Array(all.dropFirst(from).prefix(1))
+      return (200, ["items": page, "more": from + page.count < all.count, "after": String(from + page.count)] as JSON)
     case ("POST", 3, "rooms") where path[2] == "recovery": return (200, ["recovery_id": b64u(Bytes(repeating: 7, count: 16)), "expires_at": nowMs() + 600_000])
     case ("POST", 3, "rooms") where path[2] == "recovery-code":
       let commit = body["commit"] as? JSON ?? [:]
@@ -156,7 +161,10 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
       let page = items.filter { $0.change > after }.sorted { $0.change < $1.change }.prefix(limit)
       let upTo = page.last?.change ?? hub.change
       return (200, ["items": page.map(\.item), "change": upTo, "more": upTo < hub.change])
-    case ("GET", 1, "welcomes"): return (200, hub.welcomes.map { ["welcome": b64u($0)] as JSON })
+    case ("GET", 1, "welcomes"):
+      // (numbered from 1; one a page after `after`)
+      let numbered = hub.welcomes.enumerated().map { ["id": $0.offset + 1, "welcome": b64u($0.element)] as JSON }
+      return (200, Array(numbered.filter { number($0["id"]) > after }.prefix(1)))
     case ("PUT", 1, "key-packages"): return (200, ["unused": 100])
     case ("PUT", 1, "sealed-keys"):
       _ = hub.take(kind: 9, group: [], epoch: 0, parts: [bytes("sealed_key")])
