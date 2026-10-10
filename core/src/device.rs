@@ -1374,6 +1374,9 @@ impl<S: Storage> Device<S> {
             {
                 return Err(contradicts("a room epoch's place"));
             }
+            if !history::ascending(&memory.room_places) {
+                return Err(contradicts("a room epoch's place"));
+            }
         } else if !memory.room_places.is_empty() {
             return Err(contradicts("a room epoch's place"));
         }
@@ -1756,8 +1759,24 @@ impl<S: Storage> Device<S> {
         batch.put(followed_key(group), value);
     }
 
-    /// Records that the room Commit at `change` led to the room epoch `epoch`.
+    /// Records that the room Commit at `change` led to the room epoch `epoch`. The places ascend with the
+    /// epochs (5.4.1): a place held for an earlier epoch that does not lie before this one, or for a later
+    /// epoch that does not lie behind it, was a hub's word that the hub's order contradicts, and goes; the
+    /// room epoch at such a place is then unknown (`room-behind`), never a wrong one.
     fn put_room_place(&mut self, batch: &mut Batch, epoch: u64, change: u64) {
+        let contradicted: Vec<u64> = self
+            .memory
+            .room_places
+            .iter()
+            .filter(|(held, place)| {
+                (**held < epoch && **place >= change) || (**held > epoch && **place <= change)
+            })
+            .map(|(held, _)| *held)
+            .collect();
+        for held in contradicted {
+            self.memory.room_places.remove(&held);
+            batch.delete(room_place_key(held));
+        }
         self.memory.room_places.insert(epoch, change);
         batch.put(room_place_key(epoch), change.to_be_bytes().to_vec());
     }
