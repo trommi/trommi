@@ -387,7 +387,7 @@ struct AccountPage: View {
       } else if let st = status {
         SettingsGroup(header: "Email") {
           // (a hub that does not confirm addresses: the address alone, nothing to confirm)
-          SettingsRow(title: st.email, detail: !st.confirmsEmail ? nil : st.emailVerifiedAt != nil ? "Confirmed" : "Not Confirmed") { Sketch("letter") }
+          SettingsRow(title: st.email.isEmpty ? "No Email" : st.email, detail: !st.confirmsEmail ? nil : st.emailVerifiedAt != nil ? "Confirmed" : "Not Confirmed") { Sketch("letter") }
           if st.confirmsEmail && st.emailVerifiedAt == nil {
             RowRule()
             VStack(alignment: .leading, spacing: 10) {
@@ -405,10 +405,10 @@ struct AccountPage: View {
             VStack(alignment: .leading, spacing: 10) {
               Text("Save or print it. It is shown only now; the old kit no longer works.").font(Face.text(14)).foregroundStyle(Ink.muted)
               // (the same sheet and the same file as the kit's page: KitScreen.swift)
-              KitSheet(email: st.email, words: k)
+              KitSheet(email: st.email, words: k, accountId: st.accountId, qr: model.kitQR(st.accountId))
               HStack(spacing: 12) {
-                ShareLink(item: KitFile(text: emergencyKitText(email: st.email, words: k)), preview: SharePreview(KIT_FILE_NAME)) { Text("Save") }.buttonStyle(QuietWay())
-                Button("Print") { printKit(email: st.email, words: k) }.buttonStyle(QuietWay())
+                ShareLink(item: KitFile(text: emergencyKitText(EmergencyKit(words: k, email: st.email, accountId: st.accountId))), preview: SharePreview(KIT_FILE_NAME)) { Text("Save") }.buttonStyle(QuietWay())
+                Button("Print") { printKit(EmergencyKit(words: k, email: st.email, accountId: st.accountId), qr: model.kitQR(st.accountId)) }.buttonStyle(QuietWay())
               }
             }.padding(16)
           } else {
@@ -480,6 +480,8 @@ struct AccountPage: View {
       catch {
         let code = (error as? TrommiError)?.code ?? (error as? HubError)?.code ?? ""
         if passkey && code != "wrong-login" { self.error = model.accountError(error); return }
+        // (a wait the hub names is said as it is)
+        if code == "rate-limited", let wait = retryWait(of: error) { self.error = "Too many tries. Please wait \(waitText(seconds: wait))."; return }
         self.error = ["wrong-login": "That password is not right.", "weak-password": "The password needs at least 12 characters.", "wrong-code": "Wrong or expired code.",
                       "account-changed": "Changed on another device meanwhile. Please try again.", "rate-limited": "Too many tries. Please wait a few minutes."][code] ?? model.describe(error)
       }
@@ -592,21 +594,24 @@ struct EmojiGrid: View {
 /** A QR code, drawn crisp (CoreImage, error correction M as the web's). */
 struct QRCode: View {
   let text: String
+  /** What VoiceOver calls it: the code to pair a device, or (the Emergency Kit's sheet) the one with the account id. */
+  var label = "QR code to pair"
   var body: some View {
     #if canImport(UIKit)
-    if let img = make() { Image(uiImage: img).interpolation(.none).resizable().scaledToFit().accessibilityLabel("QR code to pair") }
+    if let img = qrImage(text) { Image(uiImage: img).interpolation(.none).resizable().scaledToFit().accessibilityLabel(label) }
     #endif
   }
-  #if canImport(UIKit)
-  private func make() -> UIImage? {
-    let f = CIFilter.qrCodeGenerator()
-    f.message = Data(text.utf8)
-    f.correctionLevel = "M"
-    guard let out = f.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)), let cg = CIContext().createCGImage(out, from: out.extent) else { return nil }
-    return UIImage(cgImage: cg)
-  }
-  #endif
 }
+#if canImport(UIKit)
+/** A QR code as a picture: for `QRCode`, and for the printed Emergency Kit (KitScreen.swift). */
+func qrImage(_ text: String) -> UIImage? {
+  let f = CIFilter.qrCodeGenerator()
+  f.message = Data(text.utf8)
+  f.correctionLevel = "M"
+  guard let out = f.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)), let cg = CIContext().createCGImage(out, from: out.extent) else { return nil }
+  return UIImage(cgImage: cg)
+}
+#endif
 
 /** The clipboard: kraft board, a sheet of paper, the metal clamp on top. */
 struct Clipboard: View {
