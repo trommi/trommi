@@ -730,3 +730,33 @@ async fn without_channel_and_monitor_board_events_wait_for_the_inbox_tool() {
     // was taken for deaf by mistake still hears it)
     mcp.close().await;
 }
+
+/// A link past its deadline is refused by the connector itself, at once and with a plain reason, before a slot
+/// is made or the hub is asked.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_expired_link_is_refused_before_anything_is_asked() {
+    let hub = HubProc::start().await;
+    let mut human = Human::found(&hub.url).await;
+    let seat = Seat::new(&hub.url);
+    // an agent invite lives 15 minutes, and two more are tolerated
+    let link = human.expired_link(20 * 60 * 1000).await;
+    // (the connector is built before the clock starts)
+    common::process::connector_binary();
+    let started = std::time::Instant::now();
+    let (joined, log) = seat.join(&link).await;
+    assert!(!joined, "{log}");
+    assert!(log.contains("expired"), "{log}");
+    assert_eq!(log.matches("make a new").count(), 1, "{log}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "refused without waiting: {log}"
+    );
+    let keys = seat.home.path().join("keys");
+    let left: Vec<_> = std::fs::read_dir(&keys)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    assert!(left.is_empty(), "nothing was written: {left:?}");
+}

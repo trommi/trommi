@@ -80,6 +80,12 @@ choice! {
         AccountExists = "account-exists",
         /// The account's last way in cannot be removed.
         LastWayIn = "last-way-in",
+        /// The password or the kit was changed under a revision of the account that is not the current one.
+        AccountChanged = "account-changed",
+        /// The `Range` of a download cannot be served.
+        Range = "range",
+        /// A passkey registration or assertion sent to the hub does not verify.
+        BadPasskey = "bad-passkey",
         /// Something is larger than its limit.
         TooLarge = "too-large",
         /// The room's storage is full.
@@ -110,7 +116,7 @@ choice! {
         HashMismatch = "hash-mismatch",
         /// The envelope lies beyond a Cut.
         Cut = "cut",
-        /// The account's e-mail address is not one.
+        /// The account's e-mail address is not one, or not in its canonical form.
         BadEmail = "bad-email",
         /// The password is too short.
         WeakPassword = "weak-password",
@@ -245,7 +251,6 @@ pub(crate) fn is_core_code(code: ErrorCode) -> bool {
         ErrorCode::Storage
             | ErrorCode::Entropy
             | ErrorCode::Busy
-            | ErrorCode::BadEmail
             | ErrorCode::WeakPassword
             | ErrorCode::BadKdf
             | ErrorCode::BadRecoveryWords

@@ -96,7 +96,8 @@ pub use content::{
 pub use facts::Finding;
 pub use history::{GroupPast, Learned};
 pub use invite::{
-    InviteAccepted, InviteConfirmed, InviteOpened, InviteStep, JoinRequest, MAX_OPEN_INVITES,
+    InviteAccepted, InviteConfirmed, InviteOpened, InviteStep, JoinLink, JoinRequest,
+    MAX_OPEN_INVITES,
 };
 
 const SUB_OWN_HISTORY: u8 = 0;
