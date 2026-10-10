@@ -1193,13 +1193,13 @@ mod live_tests {
     fn events_reach_only_their_audience() {
         let live = Live::default();
         let (h, mut hrx) = live
-            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, None)
+            .open(auth(1, Who::Human), true, 8, 1 << 20, u64::MAX, None)
             .unwrap();
         let (a, mut arx) = live
-            .open(auth(2, Who::Agent), 8, 1 << 20, u64::MAX, None)
+            .open(auth(2, Who::Agent), true, 8, 1 << 20, u64::MAX, None)
             .unwrap();
         let (r, mut rrx) = live
-            .open(auth(3, Who::Recovery), 8, 1 << 20, u64::MAX, None)
+            .open(auth(3, Who::Recovery), true, 8, 1 << 20, u64::MAX, None)
             .unwrap();
         for s in [&h, &a, &r] {
             s.go_live(0);
@@ -1234,6 +1234,7 @@ mod live_tests {
         let (s, mut rx) = live
             .open(
                 auth(1, Who::Human),
+                true,
                 8,
                 1 << 20,
                 u64::MAX,
@@ -1261,6 +1262,7 @@ mod live_tests {
         let (s, rx) = live
             .open(
                 auth(2, Who::Human),
+                true,
                 8,
                 1 << 20,
                 u64::MAX,
@@ -1285,7 +1287,7 @@ mod live_tests {
     fn what_arrives_during_the_catch_up_follows_it_once() {
         let live = Live::default();
         let (s, mut rx) = live
-            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, None)
+            .open(auth(1, Who::Human), true, 8, 1 << 20, u64::MAX, None)
             .unwrap();
         live.publish(&event(Some(7), true, vec![], None), &json!({ "n": 7 }));
         live.publish(&event(Some(9), true, vec![], None), &json!({ "n": 9 }));
@@ -1304,13 +1306,13 @@ mod live_tests {
         let mut keep = vec![];
         for _ in 0..3 {
             keep.push(
-                live.open(auth(1, Who::Human), 2, 64, u64::MAX, None)
+                live.open(auth(1, Who::Human), true, 2, 64, u64::MAX, None)
                     .unwrap(),
             );
         }
         // each new one ended those before it, so the limit of two is never reached; another device's stay
         let other = live
-            .open(auth(2, Who::Human), 2, 64, u64::MAX, None)
+            .open(auth(2, Who::Human), true, 2, 64, u64::MAX, None)
             .unwrap();
         assert!(keep[0].0.is_closed() && keep[1].0.is_closed() && !keep[2].0.is_closed());
         assert!(!other.0.is_closed());
