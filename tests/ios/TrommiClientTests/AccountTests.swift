@@ -183,7 +183,7 @@ final class AccountHub: URLProtocol, @unchecked Sendable {
         guard account != nil else { return refuse(404, "not-found") }
         return (200, ["email": email, "account": id, "kit_form": email is String ? "email" : "id", "revision": revision, "has_password": password != nil, "kdf": password?["kdf"] ?? NSNull(),
                       "password_copy": password?["sealed_copy"] ?? NSNull(), "kit_copy": kit?["sealed_copy"] ?? NSNull(), "user_handle": b64u(handle),
-                      "passkeys": passkeys.keys.sorted().map { ["credential_id": $0] }, "rooms": [room]])
+                      "passkeys": passkeys.keys.sorted().map { ["credential_id": $0, "sealed_copy": passkeys[$0] ?? ""] }, "rooms": [room]])
       case ("POST", "/v2/account/login"):
         return names(body) && body["auth_key"] as? String == password?["auth_key"] as? String ? login(password?["sealed_copy"]) : refuse(401, "wrong-login")
       case ("POST", "/v2/account/recover"):
@@ -738,5 +738,39 @@ final class AccountTests: XCTestCase {
     XCTAssertTrue(p.allSatisfy(AccountTools.list.contains))
     XCTAssertEqual(try normaliseEmail(" Ada@Example.org "), "ada@example.org")
     XCTAssertThrowsError(try parseRecoveryWords("amber birch"))
+  }
+  /// Passkeys switch on by themselves once the web app's association file names this app under `webcredentials`.
+  func testPasskeysAreOnWhenTheDomainNamesTheApp() {
+    let bundle = "com.trommi.app"
+    let named = utf8(#"{"applinks":{"details":[]},"webcredentials":{"apps":["ABCDE12345.com.trommi.app"]}}"#)
+    XCTAssertTrue(associationAllowsPasskeys(named, bundleId: bundle))
+    XCTAssertFalse(associationAllowsPasskeys(utf8(#"{"applinks":{"details":[]}}"#), bundleId: bundle), "today's file: links only")
+    XCTAssertFalse(associationAllowsPasskeys(utf8(#"{"webcredentials":{"apps":["ABCDE12345.com.trommi.app.share"]}}"#), bundleId: bundle))
+    XCTAssertFalse(associationAllowsPasskeys(utf8(#"{"webcredentials":{"apps":[".com.trommi.app"]}}"#), bundleId: bundle), "no team id")
+    XCTAssertFalse(associationAllowsPasskeys(utf8("<html>"), bundleId: bundle))
+    XCTAssertFalse(associationAllowsPasskeys(named, bundleId: ""))
+  }
+  /// An account with a passkey and no password: its passkey opens the code here for a new kit and for one more
+  /// passkey; another passkey's output opens nothing and nothing is sent.
+  func testAnAccountWithoutAPasswordUsesItsPasskeyForTheKitAndAnotherPasskey() async throws {
+    let made = try await createdWithPasskey()
+    let room = made.room
+    let wrong = await failure { _ = try await room.makeEmergencyKit(way: .passkey(credentialId: self.credential, prf: Bytes(repeating: 7, count: 32))) }
+    XCTAssertNotNil(wrong)
+    XCTAssertFalse(hub.paths("PUT").contains("/v2/account/kit"))
+    let unknown = await failure { _ = try await room.makeEmergencyKit(way: .passkey(credentialId: [9, 9], prf: self.prf)) }
+    XCTAssertEqual(code(of: try XCTUnwrap(unknown)), "wrong-login")
+
+    let kit = try await room.makeEmergencyKit(way: .passkey(credentialId: credential, prf: prf))
+    XCTAssertEqual(kit.email, "")
+    XCTAssertNotEqual(kit.words, made.kit.words)
+    let put = try XCTUnwrap(hub.body("PUT", "/v2/account/kit"))
+    XCTAssertEqual(try tools.openCode(try unb64u(put["sealed_copy"] as! String), room: room.roomId, way: .kit(wrapKey: try tools.kitKeysFor(.id(hub.id), words: kit.words).wrapKey)), tools.codes.last)
+
+    let second: Bytes = [4, 4, 4, 4]
+    try await room.addPasskey(way: .passkey(credentialId: credential, prf: prf)) { _ in PasskeyMade(credentialId: second, attestationObject: second, clientDataJSON: [5], prf: Bytes(repeating: 6, count: 32)) }
+    let added = try XCTUnwrap(hub.body("POST", "/v2/account/passkeys"))
+    XCTAssertEqual(try tools.openCode(try unb64u(added["sealed_copy"] as! String), room: room.roomId, way: .passkey(prf: Bytes(repeating: 6, count: 32), credentialId: second)), tools.codes.last)
+    room.close()
   }
 }
