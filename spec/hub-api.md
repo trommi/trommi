@@ -46,7 +46,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v2/changes?after=&limit=` | → `{ items, change, more }` | catch-up: everything the asker may see with a change number above `after` |
 | `GET /v2/stream?after=` | server-sent events: `envelope`, `log`, `relay`, `welcome`, `request`, `presence`, `file_evicted`, `ping` | live; resumes by change number (`after`, or `Last-Event-ID`) |
 | **Files, shares, push, presence** | | |
-| `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; `quota-exceeded` |
+| `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; at most 67 125 269 stored bytes, which is 64 MiB of plaintext (`too-large`); `quota-exceeded` |
 | `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
 | `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | Offer + signature; Reveal + signature | human devices |
 | `POST /v2/push` · `GET` · `DELETE` | `{ web_push: { endpoint, keys: { p256dh, auth } } \| apns: { token, key, environment, topic }, level }`; `GET` → `{ subscriptions, vapid_public_key, apns }` | 15; human devices |
@@ -107,12 +107,13 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 
 | Route | Body → answer | Notes |
 | --- | --- | --- |
-| `POST /v2/account` | `{ email, user_handle?, kit: { auth_key, sealed_copy }, password?: { auth_key, sealed_copy, kdf }, passkey?: { attestation_object, client_data_json, sealed_copy, transports? } }` → the account | a human device of the room, or inside `POST /v2/rooms`; at least one way in; `user_handle` (v1 §16.7) comes with a passkey; `bad-email`, `account-exists`, `bad-passkey` |
-| `GET /v2/account` | → `{ email, revision, has_password, kdf, password_copy, kit_copy, user_handle, passkeys: [ { credential_id, sealed_copy, … } ], rooms }` | a human device; no hash leaves the hub |
-| `PUT /v2/account/password` · `PUT /v2/account/kit` | `{ auth_key, sealed_copy, kdf?, revision }` → `{ revision }` | `account-changed` when `revision` is not the current one |
-| `POST /v2/account/passkeys/challenge` · `POST /v2/account/passkeys` · `DELETE /v2/account/passkeys/{credential_id}` | a passkey body as above | a human device; the challenge is for that account; `last-way-in` |
-| `POST /v2/account/login` | `{ email, auth_key }` → `{ rooms: [ { room_id, sealed_copy, challenge } ], kdf }` | no token; `wrong-login` for an unknown e-mail and a wrong key alike, at one cost; `challenge` is a sign-in challenge of that room (12.3) |
-| `POST /v2/account/recover` | `{ email, auth_key }` (the kit's) → the same with the kit's copy | `wrong-recovery` |
+| `POST /v2/account` | `{ email?, kit: { auth_key, sealed_copy }, password?: { auth_key, sealed_copy, kdf }, passkey?: { attestation_object, client_data_json, sealed_copy, transports? } }` → the account | a human device of the room, or inside `POST /v2/rooms`; at least one way in; `email` comes with a password and is optional beside a passkey; the id: see below; `bad-email`, `account-exists`, `bad-passkey` |
+| `GET /v2/account` | → `{ email (or null), account, kit_form, revision, has_password, kdf, password_copy, kit_copy, user_handle, passkeys: [ { credential_id, sealed_copy, … } ], rooms }` | a human device; no hash leaves the hub |
+| `PUT /v2/account/password` · `PUT /v2/account/kit` | `{ auth_key, sealed_copy, kdf?, revision }` → `{ revision }` | `account-changed` when `revision` is not the current one; a password on an account without e-mail: `bad-email` |
+| `PUT /v2/account/email` | `{ email, kit: { auth_key, sealed_copy }, revision }` → `{ revision }` | a human device; only for an account that has none (`forbidden` otherwise); the kit made anew under the e-mail (`incomplete` without); `bad-email`, `account-exists` |
+| `POST /v2/account/passkeys/challenge` · `POST /v2/account/passkeys` · `DELETE /v2/account/passkeys/{credential_id}` | → `{ challenge, account, user_handle, email, kit_form }` · a passkey body as above | a human device (the challenge also the recovery key, before `finish`); the challenge is for that account; `last-way-in` |
+| `POST /v2/account/login` | `{ account, auth_key }` → `{ rooms: [ { room_id, sealed_copy, challenge } ], kdf, account, email }` | no token; `wrong-login` for an unknown e-mail and a wrong key alike, at one cost; `challenge` is a sign-in challenge of that room (12.3) |
+| `POST /v2/account/recover` | `{ account, auth_key }` (the kit's) → the same with the kit's copy | `wrong-recovery` |
 | `POST /v2/account/passkey/challenge` · `POST /v2/account/passkey/login` | → `{ challenge }` · `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` → as login | every failure is `wrong-login` |
 
 - The hub keeps a slow hash (Argon2id) of each login key, never the key. There is no account session: a login
@@ -122,8 +123,10 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   other way in is removed in the same transaction. The way in used just now: `password: { sealed_copy }` (the
   login hash stays) or `passkey: { credential_id, sealed_copy }`. Or one set anew (after a recovery with the
   Emergency Kit words or the bare code): `password: { auth_key, sealed_copy, kdf }`, or `passkey` as in
-  `POST /v2/account` (a registration; its challenge is the account's or one of `POST /v2/account/passkey/challenge`,
-  which needs no token). A room without an account sends `null`.
+  `POST /v2/account` (a registration on a challenge of `POST /v2/account/passkeys/challenge`, which a human
+  device or, before `finish`, the recovery key asks for: it answers `{ challenge, account, user_handle, email, kit_form }`: the
+  id the new passkey carries as its user handle, and what the new kit is salted with, 8.8.2; a recovery
+  that brings no passkey asks all the same, for the kit). A room without an account sends `null`.
 - Sign-up is instant: there is no e-mail confirmation and the hub sends no mail (owner, 9 October 2026). Signing
   up with an e-mail that has an account is `account-exists`.
 - **Failed logins slow down whoever guesses wrong and lock nobody** (owner, 9 October 2026). The source is the
@@ -137,8 +140,10 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   - *Per account:* 100 checks in an hour (the hour begins with the first of them). Past that, sources stand in
     line: turns are given out two seconds apart in the order sources came, each told by `retry-after`. A turn is
     its source's alone and good for one check, from its time until five seconds after; nobody else can take it,
-    and nobody waits for anybody; a request that came in that time keeps the turn while it waits for the hub's
-    pool. Who comes later asks for a new turn. The line is ten minutes long; a source
+    and nobody waits for anybody; a request that reached the hub in that time has the turn, however long it
+    then waits for the hub's pool (ten seconds at most). Who comes later is told to come again in a few seconds
+    (eleven at most, while a request of its own that came in time may still be waiting) and is then given a
+    new turn. The line is ten minutes long; a source
     that finds it full is told to ask again in a minute. That is at most 2 010 checks per account in any hour,
     however many sources there are (1 800 turns of that hour, the few given out before it that are still good,
     and the 100 twice where two of its hours meet), beside the
@@ -158,15 +163,80 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
     at one second: the thirteen and four hold while its record does; the account's 2 010 an hour hold all the
     same); a record that still waits is never
     forgotten, and if all do, a wrong credential is told to ask again in a minute, from a known source as from
-    any other, also when it asks again (a right one from a known source gets in; the records of the sources
+    any other, also when it asks again and after its own back-off (a right one from a known source gets in; the records of the sources
     accounts know, at most 16 each, come on top of the 500 000). A full table of hours forgets the oldest hour, with
     its line, whoever's it is: the 2 010 an hour hold while fewer than 200 000 e-mails are tried within the
     hour. A record is deleted a day after its wait ran out.
   - Not covered, and left so: someone guessing from the owner's own address (the same NAT) slows that address
     down for the owner too, the right password included, while its back-off runs. A source that finds the line
     full has no place in it: against a crowd that keeps the line full, a new device has no promise of a turn. And a guesser at an address the account knows can find that out
-    with some effort: after about six wrong guesses in line its back-off is longer than its turn is away, and
-    it is told the back-off.
+    with some effort: its early checks are failures like any, so once its back-off is longer than its turn is away it is told the
+    back-off (after about six wrong guesses in line, or after two when it let its turn run out), and once a full table has room
+    again its back-off shows the checks made meanwhile.
+- **The account id, and accounts without an e-mail** (owner, 10 October 2026).
+  - *Every account has an id:* a UUID (version 4) the hub mints at sign-up, never changed, unique. It is not a
+    secret: it is printed on every Emergency Kit. `GET /v2/account`, the sign-up answer and every login answer
+    give it as `account`, in the canonical form (lower case, with dashes); its 16 bytes are the WebAuthn user
+    handle of the account's passkeys (`user_handle`, base64url). Typed, it is taken without regard to case,
+    spaces and dashes; what is left must be 32 hex digits.
+  - *One field names an account:* `account` in `POST /v2/account/login` and `POST /v2/account/recover` is an
+    e-mail address (it contains `@`) or the account id; `email` is read as the same field. Both names lead to
+    the same account, with the same answers: an id nobody has, an address nobody has and a text that is neither
+    are `wrong-login` / `wrong-recovery` at the cost of the slow hash, like a wrong key. (There is no "forgot
+    password" route: the way back is the kit, `recover`.)
+  - *An e-mail is optional beside a passkey.* A password needs one (its keys are derived from it, v1 §16;
+    `bad-email` without). The base case of a passkey account is "no e-mail"; an e-mail on it is a contact and a
+    second name, and nothing rests on it. A lost passkey together with a lost recovery code and kit is then a
+    lost account.
+  - *Sign-up with a passkey:* `POST /v2/account/passkey/challenge` (no token, no name) answers `{ challenge,
+    account, user_handle }`: with the challenge the id the account will have, because the device needs it
+    before the account exists (as the passkey's `user.id`, and for the kit). The device asks the authenticator
+    for a discoverable credential (`residentKey: required`) and the PRF extension; the hub cannot see either
+    and checks what it can: attestation, challenge, origin. `POST /v2/account` (or `account` inside
+    `POST /v2/rooms`) then carries `kit`, `passkey` and optionally `email`; the account gets the id of that
+    challenge. Without a passkey the hub mints the id when the account is made.
+  - *Log-in with a passkey, without a name:* a challenge, an assertion with empty `allowCredentials`, then
+    `POST /v2/account/passkey/login` `{ credential_id, authenticator_data, client_data_json, signature,
+    user_handle? }`. The hub finds the account by the credential id; a `user_handle`, if sent, must be the
+    account's. The answer carries that passkey's `sealed_copy`, which is sealed under a key from the PRF
+    output, the room id and the credential id (v1 §16): no e-mail is in it.
+  - *The Emergency Kit's salt* (v2.md 8.8.2) follows from the account alone: with an e-mail the form of v1 §16,
+    byte for byte; without one `salt = SHA-256("trommi/v2/account-salt/id" 0x00 ‖ account id)`, the id as its 16
+    raw bytes. The hub cannot check a kit; `kit_form` (`email` or `id`) in the account's answers says which the
+    account's kit has. So the form never changes silently: giving the account an e-mail brings the kit made anew
+    under that e-mail in the same request (below). The sheet prints the id always; an `id` kit is opened with
+    the id, an `email` kit with the address (the id then only names the account).
+  - *The kit sheet* carries the twelve words, the account id in its canonical form, and a QR code. The QR holds
+    an app address that opens the recovery screen with hub and id filled in:
+    `https://<app>/#k1.<hub address, base64url of its UTF-8>.<account id, 32 hex digits>` — in the fragment, so
+    that it reaches no server — and never the words.
+  - *With only the recovery code* (8.4) no account is named: the device signs in to the room with the recovery
+    key, by room id and hub address. When it then replaces the code (8.6, 8.7), the hub finds the account by
+    the room; `account` in that request is a new kit and one way in, as for every account.
+  - *Later changes:* `PUT /v2/account/email` gives an account without e-mail one, once, together with its kit made
+    anew under that e-mail (the person types the words once more, or gets new ones, and prints the sheet again); an address another
+    account holds is `account-exists`, as at sign-up (only a human device of a room can ask, within its limit
+    of expensive requests). After that `PUT /v2/account/password` adds a password. Changing or removing an
+    e-mail is not offered: a password's keys and the kit's are derived from it. The last way in
+    (the one passkey of an account without password) is not removed (`last-way-in`); the kit is the way back.
+  - *Throttle:* guessing under an id is bounded exactly like guessing under an e-mail: per source and name the
+    back-off, per name the hour and the line, password and kit apart. An account with both names has those
+    bounds under each (twice the guesses at most; the keys guessed at are a slow-hashed password key and twelve
+    random words). A passkey log-in is a signature, not a guess: it has the per-address limit only.
+  - *Sign-ups per source:* an account is made only with a room or by a human device of a room that has none,
+    one per room: sign-ups are bounded by foundings (10 rooms per address and hour,
+    `HUB_LIMIT_FOUND_PER_IP_HOUR`; `HUB_FOUND_TOKEN` where a hub asks for its word). Leaving the e-mail out
+    makes a sign-up no cheaper.
+  - *What stays impossible:* the hub cannot reach the person; nobody resets anything.
+- **A device that was just invited** has no standing until the inviter's Commit made it a leaf (12.3.2): signing
+  in before that is `not-member`. Every client does the same: after the Reveal it asks for a token, and on
+  `not-member` again after 1 s, 2 s, 4 s, then every 5 s, for five minutes in all (the inviter's time to
+  confirm); after that it tells the person that the invitation was not completed.
+- **Signing out:** `DELETE /v2/token` ends the token it is sent with, at once, and cuts the device's open
+  streams (what waited on them is not sent).
+  Other tokens of the device stay. (Tokens last
+  ten minutes anyway; a device that is to be shut out for good is removed from the room.)
+- *Not built, waiting for the owner:* deleting an account or a room.
 - A successful login is answered only if the account still is as the check found it (its revision); a password,
   kit or passkey replaced meanwhile makes the login start over (`overloaded`).
 - Other limits: 30 logins per address in ten minutes (answers that only tell a wait count too); 20 passkeys per
@@ -191,8 +261,10 @@ encrypted.
    leave it not stale, and only a human device repairs one.
 4. A key has one role in a room for ever (human, agent or helper device). A recovery key is never a key that has
    or had a role, and no device comes in under the room's recovery signature key.
-5. A key that left a group is added to it again only if nothing it wrote lies beyond its Cut (3.7: the device
-   whose Welcome failed); its chain goes on where it was cut.
+5. A key that left a session group is added to it again only if nothing it wrote lies beyond its Cut (3.7: the
+   device whose Welcome failed, removed and added in one Commit); its chain goes on where it was cut, with
+   envelopes of the epoch that added it or a later one (an older epoch's: `not-member`). Into the room group a
+   removed key never returns (4.2).
 6. One room Commit holds at most one Add. New recovery keys are taken only on `…/recovery-code` or in a recovery;
    on `…/commits` they are `incomplete`.
 7. An archived group answers every write with `gone` (410); an envelope for it takes no chain number. Archiving
@@ -301,7 +373,26 @@ encrypted.
     token registered anew is sent the counts in a round after it is stored. "Lost" is never told after the `online` of a
     stream the agent opened first.
 28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
-39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`; the hub also takes them
-    beside the other members. New recovery keys are refused if the room held either of them before, as
+39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`. New recovery keys are refused if the room held either of them before, as
     either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
+40. **The admin page** is not part of the API and not on the public port: a second listener on 127.0.0.1:8791
+    (`HUB_ADMIN_HOST`, `HUB_ADMIN_PORT`), started only if `HUB_ADMIN_PASSWORD_HASH` is set (Argon2id, PHC text;
+    `trommi-hub admin-hash` makes one from a password on standard input). It takes `GET /` and nothing else,
+    under HTTP Basic (any user name, that password): no cookie, no form, nothing to change. One read-only page:
+    the version and health, the rooms with the counts the hub keeps (devices by role, sessions, changes,
+    envelopes, file bytes against the quota, push registrations, the account's e-mail), and every table with
+    its number of rows, what the hub reads in it and what lies in it sealed. After a wrong password the page
+    takes no other for 1 s, 2 s … up to a minute; a checked credential is taken for twelve hours without the
+    slow hash (kept in memory; that is the time between two checks of the password, not a sign-out: the
+    browser keeps the credential until it is closed). A password is 12 to 1 024 bytes, a credential header at
+    most 2 048. The page is put together by one request at a time and kept five seconds (who asks meanwhile and finds none
+    that fresh is told to try again); the
+    listener holds 16 connections, each for a minute at most.
+41. A device keeps at most 100 single-use KeyPackages: one upload holds at most 100, and what then exceeds 100
+    stored drops the device's oldest (a device that
+    signs in again uploads a fresh set). A refusal that names a wait (`rate-limited`, `overloaded`) names it in
+    the `retry-after` header and as `retry_after` in the body; `too-many` is a quota and names none.
+    `POST /v2/account/passkey/challenge` is bounded like every tokenless route (600 a minute per address, then
+    `rate-limited`); the hub holds at most 10 000 open challenges of 32 bytes for two minutes each, the oldest
+    going first.

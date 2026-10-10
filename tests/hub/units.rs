@@ -1374,11 +1374,13 @@ mod push_tests {
         };
         let r = web_push_request(&vapid, &sub, &[], &[3; 32], 42, 2, 1_700_000_000_000).unwrap();
         assert_eq!(r.url, sub.endpoint);
-        let plain: Value =
-            serde_json::from_slice(&browser_open(&secret, &sub.auth, &r.body)).unwrap();
+        // 15.2: one spelling, the fields in this order
         assert_eq!(
-            plain,
-            json!({ "room_id": b64(&[3; 32]), "change": 42, "urgency": 2 })
+            String::from_utf8(browser_open(&secret, &sub.auth, &r.body)).unwrap(),
+            format!(
+                "{{\"room_id\":\"{}\",\"change\":42,\"urgency\":2}}",
+                b64(&[3; 32])
+            )
         );
         let header = |name: &str| r.headers.iter().find(|(k, _)| k == name).unwrap().1.clone();
         assert_eq!(
@@ -1482,13 +1484,23 @@ mod push_tests {
         let payload: Value = serde_json::from_slice(&r.body).unwrap();
         assert_eq!(payload["aps"]["alert"]["body"], "Urgent: a new question.");
         assert_eq!(payload["aps"]["mutable-content"], 1);
-        let opened: Value = serde_json::from_slice(
-            &open_on_phone(&reg.key, &unb64(payload["e"].as_str().unwrap()).unwrap()).unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            opened,
-            json!({ "room_id": b64(&[3; 32]), "change": 77, "urgency": 3, "ticket": "TICKET" })
+            String::from_utf8(
+                open_on_phone(&reg.key, &unb64(payload["e"].as_str().unwrap()).unwrap()).unwrap()
+            )
+            .unwrap(),
+            format!(
+                "{{\"room_id\":\"{}\",\"change\":77,\"urgency\":3,\"ticket\":\"TICKET\"}}",
+                b64(&[3; 32])
+            )
+        );
+        // without an envelope to fetch the ticket is empty, not absent
+        assert_eq!(
+            payload_text(&[3; 32], 5, 2, Some("")),
+            format!(
+                "{{\"room_id\":\"{}\",\"change\":5,\"urgency\":2,\"ticket\":\"\"}}",
+                b64(&[3; 32])
+            )
         );
         assert!(open_on_phone(&[6; 32], &unb64(payload["e"].as_str().unwrap()).unwrap()).is_none());
         let header = |name: &str| r.headers.iter().find(|(k, _)| k == name).unwrap().1.clone();
@@ -1791,7 +1803,7 @@ mod throttle_tests {
     impl T {
         fn admit(&self, account: &[u8], source: &[u8], known: bool, now: u64) -> Verdict {
             self.db
-                .write(|c| admit(c, account, source, known, now))
+                .write(|c| admit(c, account, source, known, now, now))
                 .map_err(|e: Refused| e.message)
                 .unwrap()
         }
@@ -2062,18 +2074,27 @@ mod throttle_tests {
         assert_eq!(t.guess(ACCOUNT, b"a", false, t0 + 6999), Ok(()));
         // c comes a second after the time it was told (the answer says whole seconds): checked
         assert_eq!(t.guess(ACCOUNT, b"c", false, t0 + 7000), Ok(()));
-        // one who comes after its turn ran out has none: it is given a new one, at the end of the line
+        // one who comes after its turn ran out has none: it is told to come again once the old one is cleared
+        // away (eleven seconds past its end), and is then given a new one
         assert_eq!(t.guess(ACCOUNT, b"d", false, t0 + 7000), Err(1));
         assert_eq!(t.guess(ACCOUNT, b"e", false, t0 + 7000), Err(3));
-        assert_eq!(t.guess(ACCOUNT, b"f", false, t0 + 7000), Err(5));
         assert_eq!(
             t.guess(ACCOUNT, b"d", false, t0 + 13_001),
-            Err(1),
-            "behind f, whose turn is at 12"
+            Err(11),
+            "its turn was good till 13"
         );
-        assert_eq!(t.guess(ACCOUNT, b"d", false, t0 + 14_001), Ok(()));
+        assert_eq!(
+            t.guess(ACCOUNT, b"e", false, t0 + 13_001),
+            Ok(()),
+            "e, at 10, is in time"
+        );
+        assert_eq!(
+            t.guess(ACCOUNT, b"d", false, t0 + 24_002),
+            Ok(()),
+            "a new turn, and nobody before it"
+        );
         // the line is ten minutes long: who finds it full is told to ask again, and holds no place
-        let t1 = t0 + 20_000;
+        let t1 = t0 + 30_000;
         let mut placed = 0;
         for n in 0..400u32 {
             match t.guess(
@@ -2102,26 +2123,51 @@ mod throttle_tests {
             }
         }
         assert_eq!(checked, 300);
-        // one whose request came in time and then waited for the pool keeps its turn meanwhile
+        // A turn is kept by coming in time: a request that reached the hub within the turn's five seconds and
+        // then waited for the hub's pool is checked. One that came later has no turn; and a request the pool
+        // sent away leaves nothing behind that another could build on.
         let end = t1 + 700_000;
-        assert_eq!(t.guess(ACCOUNT, b"before", false, end), Ok(()));
-        assert_eq!(t.guess(ACCOUNT, b"slow", false, end), Err(2));
-        let arrive = |source: &[u8], at: u64| {
-            t.db.read(|c| turn_due(c, ACCOUNT, source, at))
+        let admit_at = |source: &[u8], now: u64, arrived: u64| {
+            t.db.write(|c| admit(c, ACCOUNT, source, false, now, arrived))
                 .map_err(|e: Refused| e.message)
                 .unwrap()
-                && t.db
-                    .write(|c| arrived(c, ACCOUNT, source, at, 10_000))
-                    .map_err(|e: Refused| e.message)
-                    .is_ok()
         };
-        assert!(!arrive(b"slow", end + 1500), "not before its turn");
-        assert!(arrive(b"slow", end + 3000));
-        assert_eq!(
-            t.guess(ACCOUNT, b"slow", false, end + 12_500),
-            Ok(()),
-            "nine and a half seconds in the queue"
+        assert_eq!(t.guess(ACCOUNT, b"before", false, end), Ok(()));
+        assert_eq!(t.guess(ACCOUNT, b"slow", false, end), Err(2));
+        assert_eq!(t.guess(ACCOUNT, b"late", false, end), Err(4));
+        // meanwhile others come and go: nobody clears away a turn whose request may still be waiting
+        assert_eq!(t.guess(ACCOUNT, b"other", false, end + 11_000), Ok(()));
+        assert!(
+            matches!(
+                admit_at(b"slow", end + 12_500, end + 3000),
+                Verdict::Check { .. }
+            ),
+            "came at 3, checked at 12.5"
         );
+        // Who came after its turn ran out has none, and is told to come again shortly: its old turn stays until
+        // no request that came in time can still be waiting, so that a late request takes nothing from one of
+        // its own source that came in time. Then it is given a new one.
+        assert_eq!(
+            admit_at(b"late", end + 12_500, end + 9001),
+            Verdict::Line {
+                wait: 8,
+                early: None
+            },
+            "the turn of second 4 was good till 9 and is kept till 20"
+        );
+        assert!(
+            matches!(
+                admit_at(b"late", end + 12_600, end + 8999),
+                Verdict::Check { .. }
+            ),
+            "its request that came in time is still checked"
+        );
+        // a time of arrival that cannot be (longer ago than any request waits) counts for nothing
+        assert_eq!(t.guess(ACCOUNT, b"liar", false, end + 12_500), Err(1));
+        assert!(matches!(
+            admit_at(b"liar", end + 28_000, end + 15_000),
+            Verdict::Line { early: None, .. }
+        ));
     }
 
     #[test]
@@ -2326,7 +2372,17 @@ mod throttle_tests {
                 .unwrap(),
             None
         );
-        assert_eq!(t.right(ACCOUNT, b"home", true, now + 1000), Ok(()));
+        // … and after it has waited it out: still no room, still the full table's answer, though it is checked
+        assert_eq!(t.guess(ACCOUNT, b"home", true, now + 1100), Err(60));
+        assert_eq!(t.checks.get(), 2);
+        assert_eq!(
+            t.admit(ACCOUNT, b"one more", false, now + 1100),
+            Verdict::Line {
+                wait: 60,
+                early: None
+            }
+        );
+        assert_eq!(t.right(ACCOUNT, b"home", true, now + 3200), Ok(()));
         // another account is not touched
         assert_eq!(
             t.guess(b"password:b@example.org", b"one more", false, now),

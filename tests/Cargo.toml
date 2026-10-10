@@ -224,6 +224,10 @@ name = "hub_busy"
 path = "hub/busy.rs"
 
 [[test]]
+name = "hub_admin"
+path = "hub/admin.rs"
+
+[[test]]
 name = "connector_e2e"
 path = "connector/e2e.rs"
 

@@ -121,6 +121,33 @@ impl Sessions {
     }
 
     /// As `authorise`, with the time the token runs out.
+    /// Whether a token is still one (it may have been signed out since it was checked).
+    pub fn holds(&self, bearer: Option<&str>, now: u64) -> bool {
+        bearer
+            .and_then(|h| h.split_once(' '))
+            .filter(|(_, token)| token.len() <= 200)
+            .is_some_and(|(_, token)| {
+                self.lock()
+                    .tokens
+                    .get(&key_of(token))
+                    .is_some_and(|t| t.expires_at > now)
+            })
+    }
+
+    /// Signing out: the token is no token any more. `false`: it was none.
+    pub fn revoke(&self, bearer: Option<&str>) -> bool {
+        let token = bearer
+            .and_then(|h| h.split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+            .map(|(_, token)| token);
+        match token {
+            Some(token) if token.len() <= 200 => {
+                self.lock().tokens.remove(&key_of(token)).is_some()
+            }
+            _ => false,
+        }
+    }
+
     pub fn authorise_until(
         &self,
         c: &Connection,
@@ -128,8 +155,11 @@ impl Sessions {
         now: u64,
     ) -> Res<(Auth, u64)> {
         let unauthorised = || refuse("unauthorised", "sign in");
+        // (the scheme's name in any case, RFC 9110)
         let token = bearer
-            .and_then(|h| h.strip_prefix("Bearer "))
+            .and_then(|h| h.split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+            .map(|(_, token)| token)
             .ok_or_else(unauthorised)?;
         if token.len() < 16
             || token.len() > 200

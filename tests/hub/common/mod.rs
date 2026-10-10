@@ -127,6 +127,23 @@ impl TestHub {
         }
     }
 
+    /// Starts the admin page's listener as `main` does, on 127.0.0.1 and a free port; returns the port.
+    pub fn admin(&self) -> u16 {
+        let runtime = self.runtime.as_ref().unwrap();
+        let listener = runtime.block_on(async {
+            tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap()
+        });
+        let port = listener.local_addr().unwrap().port();
+        runtime.spawn(trommi_hub::server::serve_admin(
+            self.app.clone(),
+            listener,
+            self.stop.clone(),
+        ));
+        port
+    }
+
     /// Stops the hub and keeps its data directory, to start another on it.
     pub fn stop_keep(mut self) -> PathBuf {
         self.stop.notify_one();
@@ -919,7 +936,7 @@ impl Dev {
 
     // -- the hub
 
-    fn headers(&self) -> Vec<(&'static str, String)> {
+    pub fn headers(&self) -> Vec<(&'static str, String)> {
         let mut h = vec![];
         if let Some(t) = &self.token {
             h.push(("authorization", format!("Bearer {t}")));
@@ -1055,6 +1072,26 @@ impl Dev {
             &json!({ "single_use": packages, "last_resort": b64(&self.key_package(true)) }),
         )
     }
+}
+
+/// The body of `POST …/recovery-code` from a flat one: the Commit's fields go under `commit`.
+pub fn code_body(flat: &Value) -> Value {
+    let mut out = flat.clone();
+    let mut commit = json!({});
+    for field in [
+        "epoch",
+        "commit",
+        "group_info",
+        "welcome",
+        "sealed_key",
+        "recovery_auth",
+    ] {
+        if let Some(v) = out.as_object_mut().and_then(|o| o.remove(field)) {
+            commit[field] = v;
+        }
+    }
+    out["commit"] = commit;
+    out
 }
 
 pub fn commit_json(out: &Out, sealed_key: &[u8], recovery_auth: Option<&[u8]>) -> Value {

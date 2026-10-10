@@ -445,7 +445,10 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("POST", ["account", "recover"]) => login(app, rq, true),
         ("POST", ["account", "passkey", "challenge"]) => {
             open_limit()?;
-            Ok(json!({ "challenge": b64(&app.accounts.challenge(None, t)) }))
+            // with it the id an account gets that is made with a passkey registered on this challenge
+            let challenge = app.accounts.challenge(None, t);
+            let id = accounts::id_of_challenge(&challenge);
+            Ok(json!({ "challenge": b64(&challenge), "account": accounts::id_text(&id), "user_handle": b64(&id) }))
         }
         ("POST", ["account", "passkey", "login"]) => {
             limited(app.limits.logins.check(rq.ip.as_bytes(), t, true))?;
@@ -502,6 +505,13 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let room = id::<32>(room)?;
             // a challenge is handed out for any room id: whether a room exists is not told here
             Ok(json!({ "challenge": b64(&app.sessions.challenge(&room, t)) }))
+        }
+        // signing out: the token ends at once, and the device's streams with it
+        ("DELETE", ["token"]) => {
+            let auth = read_auth()?;
+            app.sessions.revoke(rq.bearer.as_deref());
+            app.live.cut_where(&auth.room, |a| a.device == auth.device);
+            Ok(json!({}))
         }
         ("POST", ["rooms", room, "tokens"]) => {
             open_limit()?;
@@ -575,12 +585,32 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                 _ => accounts::put_kit(x.c, &auth.room, &rq.body, x.now, &pre),
             })
         }
-        ("POST", ["account", "passkeys", "challenge"]) => app.read(|x| {
-            let auth = rq.auth(app, x.c)?;
+        ("PUT", ["account", "email"]) => {
+            let auth = read_auth()?;
             auth.human()?;
+            heavy_limit(&auth)?;
+            let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["kit"]]))?;
+            app.write_as(&auth, rq.lease, |x, _| accounts::put_email(x.c, &auth.room, &rq.body, x.now, &pre))
+        }
+        ("POST", ["account", "passkeys", "challenge"]) => app.read(|x| {
+            // a human device, or the recovery key before it finishes (8.7: a passkey made anew): with the
+            // challenge the account's id, which that passkey must carry as its user handle
+            let auth = rq.auth(app, x.c)?;
+            if !matches!(auth.who, Who::Human | Who::Recovery) {
+                return Err(refuse("forbidden", "a human device or the recovery key"));
+            }
             let account = accounts::account_of(x.c, &auth.room)?;
             let revision = accounts::revision_of(x.c, account)?;
-            Ok(json!({ "challenge": b64(&app.accounts.challenge(Some((account, revision)), x.now)) }))
+            let handle = accounts::handle_of(x.c, account)?;
+            // (with it what a new kit needs to be made in the account's form: 8.8.2)
+            let email: Option<String> = x.c.query_row("SELECT email FROM accounts WHERE account_id = ?1", [account], |r| r.get(0))?;
+            Ok(json!({
+                "challenge": b64(&app.accounts.challenge(Some((account, revision)), x.now)),
+                "account": accounts::id_text(&handle),
+                "user_handle": b64(&handle),
+                "kit_form": if email.is_some() { "email" } else { "id" },
+                "email": email,
+            }))
         }),
         ("POST", ["account", "passkeys"]) => human_write(app, rq, |x, auth| app.accounts.add_passkey(x.c, &auth.room, &rq.body, x.now)),
         ("DELETE", ["account", "passkeys", credential]) => {
@@ -767,8 +797,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             app.write_recovery(Default::default(), None, &auth, |x, _| delivery::recovery_drop(x, &auth, &recovery))
         }
         ("POST", ["rooms", room, "recovery-code"]) => {
-            // the Commit's fields under `commit`; beside the other members is taken too
-            let body = commit_body(if rq.body["commit"].is_object() { &rq.body["commit"] } else { &rq.body })?;
+            let body = commit_body(&rq.body["commit"])?;
             let link = crate::wire::RecoveryLink::parse(&rq.bytes("recovery_link")?)?;
             let auth = read_auth()?;
             own_room(&auth, room)?;
@@ -973,18 +1002,18 @@ impl Drop for Checking<'_> {
 /// Failures slow their source down and lock nobody (`throttle.rs`).
 fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     use crate::throttle::{self, Verdict};
-    limited(app.limits.logins.check(rq.ip.as_bytes(), now(), true))?;
+    // when the request came: a turn in line is kept by coming in time
+    let arrived = now();
+    limited(app.limits.logins.check(rq.ip.as_bytes(), arrived, true))?;
     // the password and the Emergency Kit are throttled apart
-    let account_key = format!(
-        "{}:{}",
-        if kit { "kit" } else { "password" },
-        accounts::normalise_email(rq.body["email"].as_str().unwrap_or("")).unwrap_or_default()
-    );
+    // (an account is named by its e-mail; a kit also by the account's id, and that is then its key here)
+    let named = accounts::name_of(&rq.body).key();
+    let account_key = format!("{}:{named}", if kit { "kit" } else { "password" });
     let account_key = account_key.as_bytes();
     // the source as the account knows it: a keyed hash of the address
     let source = crate::push::source_hash(&app.ticket_key, &rq.ip);
     let throttled = app.cfg.login_throttle;
-    let (row, known, due) = app.read(|x| {
+    let (row, known) = app.read(|x| {
         // a source waiting out its own failures is told so before anything is spent on it
         if throttled {
             if let Some(wait) = throttle::own_wait(x.c, account_key, &source, x.now)? {
@@ -993,15 +1022,8 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         }
         let row = app.accounts.login_row(x.c, &rq.body, kit)?;
         let known = accounts::knows_source(x.c, row.account(), &source)?;
-        let due = throttled && throttle::turn_due(x.c, account_key, &source, x.now)?;
-        Ok((row, known, due))
+        Ok((row, known))
     })?;
-    // who comes back at its turn keeps it while the request waits for the pool
-    if due {
-        app.db.write(|c| {
-            throttle::arrived(c, account_key, &source, now(), crate::memo::GATE_WAIT_MS)
-        })?;
-    }
     let revision = row.revision();
     // The slow hash is made on the pool with no database connection held. The attempt is admitted there, at the
     // moment its check starts: time spent waiting for the pool lets nobody check faster than the throttle says.
@@ -1021,7 +1043,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         };
         match app
             .db
-            .write(|c| throttle::admit(c, account_key, &source, known, now()))?
+            .write(|c| throttle::admit(c, account_key, &source, known, now(), arrived))?
         {
             Verdict::Own(wait) => Ok(Checked::Wait(wait)),
             Verdict::Line { wait, early: None } => {
@@ -1087,16 +1109,19 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
 /// The rooms of an account (one for now), each with the sealed copy and a sign-in challenge for the recovery key.
 fn login_answer(app: &Arc<App>, c: &rusqlite::Connection, account: i64, copy: &[u8]) -> Res<Value> {
     let t = now();
-    let kdf: Option<String> = c.query_row(
-        "SELECT kdf FROM accounts WHERE account_id = ?1",
+    let (kdf, email, handle): (Option<String>, Option<String>, Vec<u8>) = c.query_row(
+        "SELECT kdf, email, user_handle FROM accounts WHERE account_id = ?1",
         [account],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     let rooms: Vec<Value> = accounts::rooms_of(c, account)?
         .iter()
         .map(|room| json!({ "room_id": b64(room), "sealed_copy": b64(copy), "challenge": b64(&app.sessions.challenge(room, t)) }))
         .collect();
-    Ok(json!({ "rooms": rooms, "kdf": kdf.and_then(|k| serde_json::from_str::<Value>(&k).ok()) }))
+    // (who signed in is told which account it is: its id, and its e-mail if it has one)
+    Ok(
+        json!({ "rooms": rooms, "kdf": kdf.and_then(|k| serde_json::from_str::<Value>(&k).ok()), "account": accounts::id_text(&handle), "email": email }),
+    )
 }
 
 fn push_register(app: &Arc<App>, x: &delivery::Ctx, auth: &Auth, v: &Value) -> Res<Value> {
@@ -1279,6 +1304,7 @@ async fn stream(
     last_event_id: Option<&str>,
 ) -> Res<Answer> {
     let (a, bearer) = (app.clone(), bearer.map(str::to_string));
+    let token = bearer.clone();
     let (auth, until) =
         blocking(move || a.read(|x| a.sessions.authorise_until(x.c, bearer.as_deref(), x.now)))
             .await?;
@@ -1314,6 +1340,13 @@ async fn stream(
         app.live.close(&auth.room, registered.id);
         return Err(refuse("not-member", "this device is no longer in the room"));
     }
+    // or signed out meanwhile: a sign-out removes the token first and cuts the registered streams after, so
+    // either it found this stream or this check finds the token gone
+    if !app.sessions.holds(token.as_deref(), now()) {
+        registered.end();
+        app.live.close(&auth.room, registered.id);
+        return Err(refuse("unauthorised", "sign in"));
+    }
     // at the moment its token runs out the stream is over, whether anything is sent then or not
     let deadline = s.clone();
     let left = until.saturating_sub(now());
@@ -1335,6 +1368,7 @@ async fn stream(
     s.send_now(bytes::Bytes::from_static(b": trommi hub\n\n"));
     let catch_up = app.clone();
     let queued = s.queued.clone();
+    let gone = s.gone.clone();
     tokio::task::spawn_blocking(move || {
         let Some(mut cursor) = after else {
             // no cursor: live from here on
@@ -1376,7 +1410,7 @@ async fn stream(
         .header("content-type", "text/event-stream; charset=utf-8")
         .header("cache-control", "no-cache, no-transform")
         .header("x-accel-buffering", "no")
-        .body(Body::events(rx, queued, until).guard(guard))
+        .body(Body::events(rx, queued, until, gone).guard(guard))
         .expect("a valid response"))
 }
 
