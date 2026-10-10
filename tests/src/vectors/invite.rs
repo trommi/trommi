@@ -65,10 +65,17 @@ fn one(role: Role, session_id: SessionId, entropy: &mut dyn Entropy) -> Result<V
     };
     let mut inviter = Inviter::open(&inviter_key, terms, OPENED_AT, entropy)?;
     let link = text(inviter.link().to_text().expose())?;
-    let secret = link.rsplit('.').next().ok_or(Error::Internal("a link"))?;
+    // The secret is the part before the deadline, the last part.
+    let secret = link.rsplit('.').nth(1).ok_or(Error::Internal("a link"))?;
     let secret = Secret::<32>::from_slice(&ids::base64url_decode(secret)?)?;
-    let mac_key: Secret<32> =
-        crypto::expand_with_label(&secret, "trommi invite mac", room_id.as_bytes())?;
+    let context = [
+        room_id.as_bytes().as_slice(),
+        &inviter.offer().expires_at.to_be_bytes(),
+    ]
+    .concat();
+    let mac_key: Secret<32> = crypto::expand_with_label(&secret, "trommi invite mac", &context)?;
+    let offer_mac_key: Secret<32> =
+        crypto::expand_with_label(&secret, "trommi invite offer", &context)?;
     let signed_offer = inviter.signed_offer().clone();
     hub_check_offer(&signed_offer)?;
 
@@ -175,6 +182,8 @@ fn one(role: Role, session_id: SessionId, entropy: &mut dyn Entropy) -> Result<V
         "expires_at": offer.expires_at,
         "offer": hex(&signed_offer.offer),
         "offer_signature": hex(&signed_offer.signature),
+        "offer_mac_key": hex(offer_mac_key.expose()),
+        "offer_mac": hex(&signed_offer.mac),
         "offer_hash": hex(crypto::ref_hash("Trommi Invite Offer", &signed_offer.offer)?.as_bytes()),
         "requested_at": requested_at,
         "request": hex(&request.request),
@@ -202,7 +211,7 @@ pub fn generate() -> Result<Value, Error> {
         one(Role::Agent, takeover, &mut entropy)?,
     ];
     Ok(json!({
-        "about": "Joining by link (spec/v2.md section 12.1), played once for each role. Each invite: the link with its secret and what follows from it (invite_id, mac_key), the inviter's nonce and its commitment, the Offer, the Request with its MAC, the Reveal, each as its encoding (hex) with its signature and hash, and the check code as six numbers, emoji and words. The KeyPackage is one the new device made at opened_at; OpenMLS holds a KeyPackage's lifetime against the clock, so the steps that verify it (taking a Request) pass only until key_package_not_after. room_state stands for the hash of the room group's GroupContext and is random here. inviter_stored and joiner_stored are the two sides' stored state after the Reveal, from which everything behind it is computed again without the KeyPackage being verified. confirmations: what the function that commits answers (12.1.4) when it is given a code and a request hash at now, from the stored inviter, or from it after \"they don't match\": 'confirmed' or the code.",
+        "about": "Joining by link (spec/v2.md section 12.1), played once for each role. Each invite: the link with its secret and its deadline (expires_at, the last part) and what follows from both (invite_id, mac_key, offer_mac_key; the context of each derivation is room_id followed by expires_at as 8 bytes big-endian), the inviter's nonce and its commitment, the Offer with its signature and its MAC (offer_mac: HMAC-SHA-256 under offer_mac_key over the Offer followed by its signature), the Request with its MAC, the Reveal, each as its encoding (hex) with its signature and hash, and the check code as six numbers, emoji and words. The KeyPackage is one the new device made at opened_at; OpenMLS holds a KeyPackage's lifetime against the clock, so the steps that verify it (taking a Request) pass only until key_package_not_after. room_state stands for the hash of the room group's GroupContext and is random here. inviter_stored and joiner_stored are the two sides' stored state after the Reveal, from which everything behind it is computed again without the KeyPackage being verified. confirmations: what the function that commits answers (12.1.4) when it is given a code and a request hash at now, from the stored inviter, or from it after \"they don't match\": 'confirmed' or the code.",
         "app": APP,
         "hub": HUB,
         "invites": invites,
