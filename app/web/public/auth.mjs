@@ -367,7 +367,7 @@ ${setRow({ href: '/settings/proof', icon: sk('tick'), word: 'MLS proof', detail:
 ${form('/settings/account', html`<label>Email<input type="email" name="email" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>${pwField()}<label>Recovery code<input name="recovery_code" required autocomplete="off" spellcheck="false" class="room-mono" placeholder="XXXX-XXXX-…"></label>`, 'Add login', 'account-add')}`
             : html`<p class="room-lead">${st.email ? html`Logged in as <b id="account-email">${st.email}</b>` : html`Logged in with a passkey. <span id="account-email">No email.</span>`}</p>
 <p class="room-meta">Account ID <span class="room-mono" id="account-id">${st.account}</span></p>
-${st.email ? '' : html`<details class="room-more" id="email-add"><summary>Add an email</summary><p class="room-meta">A second name for your account. It cannot be changed later.</p>${form('/settings/email', html`<label>Email<input type="email" name="email" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>`, 'Add email', 'email-form')}</details>`}
+${st.email ? '' : html`<details class="room-more" id="email-add"><summary>Add an email</summary><p class="room-meta">A second name for your account. It cannot be changed later. Your Emergency Kit keeps its twelve words and opens with the email from then on: type them once more.</p>${form('/settings/email', html`<label>Email<input type="email" name="email" required autocomplete="username" autocapitalize="off" spellcheck="false"></label><label>Twelve words<textarea name="words" rows="3" required autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></label>`, 'Add email', 'email-form')}</details>`}
 <h4 class="room-sub">Emergency Kit</h4>
 ${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now.${first ? '' : ' The old kit no longer works.'}</p>${kitBox({ ...kit, account: kit.account ?? st.account }, kitLink(kit.account ?? st.account), true)}`
   : html`<p class="room-lead">${st.has_recovery ? 'Made.' : 'Not made yet.'} ${st.has_password === false ? 'It opens your account if you lose your passkey.' : 'With it you can set a new password if you forget yours.'}</p>
@@ -394,7 +394,7 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     // The address the kit's QR code holds (hub and account ID, no words): made once the page's helpers are loaded.
     let kitLink = () => null
     account().then(A => { kitLink = id => { try { return A.kitAddress(location.origin, m().room.hub_url, id) } catch { return null } } }).catch(() => {})
-    const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', 'email-added': 'Email added.', 'passkey-added': 'Passkey added.', 'passkey-removed': 'Passkey removed.', 'password-added': 'Password added.' }
+    const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', 'passkey-added': 'Passkey added.', 'passkey-removed': 'Passkey removed.', 'password-added': 'Password added.' }
     // (whether this browser can make a passkey: asked once, the page refreshes when it is known)
     let canPasskey = false
     passkeyOffer().then(o => { canPasskey = o.get; if (canPasskey && m().room.account) client._setRoom?.({ account: { ...m().room.account } }) })
@@ -438,10 +438,15 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
       client._setRoom({ account: { ...m().room.account, has_recovery: true, kit_form: kit.form } })
       return { kit }
     })
-    // An account without email gets one, once (a second name for it, and what a password needs).
+    // An account without email gets one, once (a second name for it, and what a password needs). Its kit is sealed
+    // anew under the email in the same request, with the same words: its sheet is shown again, to print once more.
     accountPost(/^\/settings\/email$/, async (f, A) => {
-      try { await A.setEmail(client, { email: String(f.get('email')) }) } catch (err) { throw err.code === 'account-exists' ? Object.assign(err, { message: EMAIL_HELD, code: 'email-held' }) : err.code === 'forbidden' ? Object.assign(err, { message: 'This account has an email already.', code: 'email-set' }) : err }
-    }, 'email-added')
+      try {
+        const kit = await A.setEmail(client, { email: String(f.get('email')), words: String(f.get('words')) })
+        client._setRoom({ account: await A.accountStatus(client), account_error: undefined })
+        return { kit, said: 'Email added. Your Emergency Kit opens with your email now:', first: true }
+      } catch (err) { throw err.code === 'account-exists' ? Object.assign(err, { message: EMAIL_HELD, code: 'email-held' }) : err.code === 'forbidden' || err.code === 'email-set' ? Object.assign(err, { message: 'This account has an email already.', code: 'email-set' }) : err.code === 'wrong-recovery' ? Object.assign(err, { message: 'Those are not the words of your Emergency Kit.', code: 'kit-words' }) : err }
+    })
 
     // ---- /logout (the Trommi menu and Settings -> Account): asks once, then logOut() ----
     const logoutMain = (error = '') => {
@@ -525,7 +530,7 @@ const EMAIL_HELD = 'This email has an account already.'
 /** Said where an account without email cannot be made: this version's core lacks the kit's keys for it (core-missing). */
 const NEEDS_EMAIL_YET = 'An account without an email is not possible in this version yet. Enter your email.'
 /** Said where an account ID meets a password: a password's keys are derived from the email. */
-const ID_NO_PASSWORD = 'A password logs in with your email. With an account ID, use your passkey or your Emergency Kit.'
+const ID_NO_PASSWORD = 'Enter your email to log in with a password.'
 const NOT_A_NAME = 'That is not an email address or an account ID.'
 const NO_RECOVERY = 'If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.'
 const NO_RECOVERY_PASSKEY = 'If you lose your passkeys and your Emergency Kit, nobody (not even Trommi) can recover your data.'

@@ -13,7 +13,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { startFakeHub } from '../stand-in/hub.mjs'
 import { Hub } from '../../../app/web/core/hub.ts'
-import { account as A, core, no_core, provisional, stage, resetStage, b64u, hex, unb64u, unhex, bytes, passkeyFor, assertionOf, unlockWith, refused, thrown, told } from './setup.mjs'
+import { account as A, core, no_core, stage, resetStage, b64u, hex, unb64u, unhex, bytes, passkeyFor, assertionOf, unlockWith, refused, thrown, told } from './setup.mjs'
 
 const skip = no_core ?? false
 const CLIENT = 'app/2.0.0'
@@ -104,7 +104,7 @@ test('create account (password): one founding with the account in it; the kit an
   const body = s.posts('/v2/rooms')[0].body.account
   assert.deepEqual(Object.keys(body).sort(), ['email', 'kit', 'password'])
   assert.equal(body.email, s.email)
-  assert.deepEqual([Object.keys(body.kit).sort(), body.kit.form], [['auth_key', 'form', 'sealed_copy'], 'email'])
+  assert.deepEqual(Object.keys(body.kit).sort(), ['auth_key', 'sealed_copy'], 'a kit\'s form is not sent')
   assert.deepEqual(Object.keys(body.password).sort(), ['auth_key', 'kdf', 'sealed_copy'])
   assert.deepEqual(body.password.kdf, { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 })
 
@@ -158,7 +158,7 @@ test('create account (passkey, with an e-mail): the registration and the kit; th
   assert.deepEqual(Object.keys(body).sort(), ['email', 'kit', 'passkey'], 'no user handle is sent: the hub names the id')
   assert.deepEqual(Object.keys(body.passkey).sort(), ['attestation_object', 'client_data_json', 'sealed_copy', 'transports'])
   assert.deepEqual(body.passkey.transports, ['internal', 'hybrid'])
-  assert.deepEqual([kit.email, kit.form, body.kit.form, kit.account], [s.email, 'email', 'email', accountAt(s).account])
+  assert.deepEqual([kit.email, kit.form, accountAt(s).kit_form, kit.account], [s.email, 'email', 'email', accountAt(s).account])
   assert.equal(s.posts('/v2/account', 'GET').length, 0, 'the id was in hand before the account existed')
   const wrap = core.passkeyWrapKey(passkey.prf, room, passkey.credential_id)
   assert.equal(hex(core.openRecoveryCode(wrap, room, 'passkey', passkey.credential_id, unb64u(body.passkey.sealed_copy))), code)
@@ -313,7 +313,7 @@ test('forgot password (kit words + new password): the ONE request of 8.7 with a 
   const writes = s.fake.requests.filter(r => r.method !== 'GET' && /account\/password|recovery-code|recovery\/[^/]+\/finish/.test(r.path)).map(r => r.path.replace(/rooms\/[^/]+/, 'rooms/x').replace(/recovery\/[^/]+\//, 'recovery/y/'))
   assert.deepEqual(writes, ['/v2/rooms/x/recovery/y/finish'])
   const sent = s.fake.requests.find(r => /\/finish$/.test(r.path)).body.account
-  assert.deepEqual([Object.keys(sent).sort(), Object.keys(sent.kit).sort(), Object.keys(sent.password).sort()], [['kit', 'password'], ['auth_key', 'form', 'sealed_copy'], ['auth_key', 'kdf', 'sealed_copy']])
+  assert.deepEqual([Object.keys(sent).sort(), Object.keys(sent.kit).sort(), Object.keys(sent.password).sort()], [['kit', 'password'], ['auth_key', 'sealed_copy'], ['auth_key', 'kdf', 'sealed_copy']])
   assert.notEqual(kit.words, old_kit.words)
   assert.equal(kit.email, s.email)
 
@@ -741,9 +741,7 @@ test('replace the recovery code from Settings (8.6): the way in given again keep
 })
 
 // ---------------------------------------------------------------------------------------------------------------------
-// An account without an e-mail. Its kit is made under the account's id, which takes `kitKeysFor` and `accountIdParse`:
-// here they are the TEST DOUBLE of core-node.mjs (held to the core's vectors in vectors.test.mjs), unless the binding
-// has them. What follows shows account.ts's steps, not that the app's core derives those keys.
+// An account without an e-mail. Its kit is made under the account's id (the core's `kitKeysFor`).
 
 /** An account made with a passkey and no e-mail: { client, kit, passkey, named, code, room }. */
 async function withoutEmail(s) {
@@ -757,7 +755,7 @@ async function withoutEmail(s) {
 }
 /** The code the kit's copy holds for an account named by its id, through the hub's recover route. */
 async function opensById(s, account, words) {
-  const keys = core.kitKeysFor({ kind: 'id', id: core.accountIdParse(account) }, words), room = (await s.outside().recover(account, keys.authKey)).rooms[0]
+  const keys = core.kitKeysFor({ id: core.accountIdParse(account) }, words), room = (await s.outside().recover(account, keys.authKey)).rooms[0]
   return hex(core.openRecoveryCode(keys.wrapKey, room.room_id, 'kit', null, room.sealed_copy))
 }
 
@@ -765,7 +763,7 @@ test('create account with a passkey and NO e-mail: no e-mail is sent, the kit is
   const s = await scene(t)
   const { client, kit, passkey, named, code } = await withoutEmail(s)
   const body = s.posts('/v2/rooms')[0].body.account
-  assert.deepEqual([Object.keys(body).sort(), body.kit.form], [['kit', 'passkey'], 'id'])
+  assert.deepEqual([Object.keys(body).sort(), Object.keys(body.kit).sort()], [['kit', 'passkey'], ['auth_key', 'sealed_copy']])
   assert.deepEqual(kit, { words: kit.words, email: null, account: named.account, form: 'id' })
   const st = await A.accountStatus(client)
   assert.deepEqual([st.email, st.account, st.kit_form, st.has_password, st.user_handle, st.passkeys.length], [null, named.account, 'id', false, b64u(named.user_handle), 1])
@@ -780,36 +778,6 @@ test('create account with a passkey and NO e-mail: no e-mail is sent, the kit is
     assert.deepEqual([made.kit.email, made.kit.form, Object.keys(again.posts('/v2/rooms')[0].body.account).sort()], [null, 'id', ['kit', 'passkey']])
   }
 })
-
-test('without the two core calls (the binding of today) an account without e-mail is core-missing before anything is founded; with an e-mail all is as ever', { skip: skip || (provisional?.real ? 'the binding has kitKeysFor and accountIdParse' : false) }, async t => {
-  const s = await scene(t)
-  provisional.missing = true
-  t.after(() => { provisional.missing = false })
-  const named = await challenge(s), passkey = passkeyFor(named.challenge)
-  const before = s.fake.requests.length
-  const e = await refused(A.createAccountWithPasskey({ ...s.device(), account: named.account, passkey: { ...passkey, prf: passkey.prf.slice() } }), 'core-missing')
-  assert.match(e.message, /^core-missing: /)
-  assert.deepEqual([stage.calls, s.fake.requests.length], [[], before], 'no room, no request')
-  await refused(A.recoverWithKit({ ...s.device('new'), account: named.account, words: secretText(core.generateKitWords()) }), 'core-missing')
-  assert.equal(s.fake.requests.length, before)
-  // an e-mail account needs neither: sign-up, login, the kit's way back, a new kit, with the real core alone
-  const { client, kit, code } = await withPassword(s)
-  assert.equal(kit.form, 'email')
-  await A.loginWithPassword({ ...s.device('phone'), account: s.email, password: PASSWORD })
-  await A.recoverWithKit({ ...s.device('tablet'), account: s.email, words: kit.words })
-  const next = await A.makeEmergencyKit(client, { words: kit.words })
-  secretText(next.words)
-  assert.equal(await opensWith(s, { words: next.words }), code)
-  const p = await withPasskeyOn(s.device('laptop'), await challenge(s), `second-${s.email}`)
-  assert.equal(p.kit.form, 'email')
-})
-/** A passkey account with an e-mail, on a device of its own. */
-async function withPasskeyOn(device, named, email) {
-  const passkey = passkeyFor(named.challenge)
-  const made = await A.createAccountWithPasskey({ ...device, email, account: named.account, passkey })
-  secretText(made.kit.words)
-  return made
-}
 
 test('the kit of an account without e-mail: the id as typed opens it, the device signs in, a new passkey and a new kit follow', { skip }, async t => {
   const s = await scene(t)
@@ -828,38 +796,40 @@ test('the kit of an account without e-mail: the id as typed opens it, the device
   secretText(added.kit.words)
   const new_code = s.last('replaceRecoveryCode').new_code
   secretBytes(unhex(new_code))
-  assert.deepEqual([added.kit.form, added.kit.email, added.kit.account, s.last('replaceRecoveryCode').account.kit.form], ['id', null, named.account, 'id'])
+  assert.deepEqual([added.kit.form, added.kit.email, added.kit.account, [...s.fake.state.accounts.values()].find(a => a.account === named.account).kit_form], ['id', null, named.account, 'id'])
   assert.equal(await opensWith(s, { passkey }), new_code)
   assert.equal(await opensById(s, named.account, added.kit.words), new_code)
   await refused(opensById(s, named.account, kit.words), 'wrong-recovery')
   await refused(opensWith(s, { passkey: lost }), 'wrong-login')
 })
 
-test('an e-mail added later: once; the kit keeps its form, a password becomes possible, a new kit is made under the e-mail', { skip }, async t => {
+test('an e-mail added later: once, with the SAME words sealed anew under the e-mail in one request; then a password is possible', { skip }, async t => {
   const s = await scene(t)
   const { client, kit, passkey, named, code } = await withoutEmail(s)
   await refused(A.setPassword(client, { unlock: unlockWith(passkey), next: PASSWORD }), 'needs-email')
-  await refused(A.setEmail(client, { email: 'no address' }), 'bad-email')
-  assert.equal(await A.setEmail(client, { email: ` ${s.email.toUpperCase()} ` }), undefined)
-  assert.deepEqual(s.posts('/v2/account/email', 'PUT').at(-1).body, { email: s.email, revision: 1 })
-  const e = await refused(A.setEmail(client, { email: `other-${s.email}` }), 'forbidden')
-  assert.equal(e.status, 403)
+  await refused(A.setEmail(client, { email: 'no address', words: kit.words }), 'bad-email')
+  await refused(A.setEmail(client, { email: s.email, words: secretText(core.generateKitWords()) }), 'wrong-recovery')
+  assert.equal(s.posts('/v2/account/email', 'PUT').length, 0, 'words that are not the kit\'s set nothing')
+  const again = await A.setEmail(client, { email: ` ${s.email.toUpperCase()} `, words: kit.words.toUpperCase().replaceAll(' ', '\n') })
+  assert.deepEqual(again, { words: kit.words, email: s.email, account: named.account, form: 'email' }, 'the same words; the sheet opens with the e-mail from now on')
+  const put = s.posts('/v2/account/email', 'PUT').at(-1).body
+  assert.deepEqual([Object.keys(put).sort(), put.email, put.revision, Object.keys(put.kit).sort()], [['email', 'kit', 'revision'], s.email, 1, ['auth_key', 'sealed_copy']])
   const st = await A.accountStatus(client)
-  assert.deepEqual([st.email, st.kit_form, st.account], [s.email, 'id', named.account])
-  // the kit made under the id still opens, on the device (by kit_form) and from outside under the id; not under the e-mail
+  assert.deepEqual([st.email, st.kit_form, st.account], [s.email, 'email', named.account])
+  // the same words now open under the e-mail, on the device and from outside; under the id they open nothing
   await A.checkUnlock(client, { words: kit.words })
-  assert.equal(await opensById(s, named.account, kit.words), code)
-  await refused(opensWith(s, { words: kit.words }), 'wrong-recovery')
-  await refused(A.recoverWithKit({ ...s.device('x'), account: s.email, words: kit.words }), 'wrong-recovery')
+  assert.equal(await opensWith(s, { words: kit.words }), code)
+  await refused(opensById(s, named.account, kit.words), 'wrong-recovery')
+  await A.recoverWithKit({ ...s.device('x'), account: s.email, words: kit.words })
+  const e = await refused(A.setEmail(client, { email: `other-${s.email}`, words: kit.words }), 'email-set')
+  assert.equal(s.posts('/v2/account/email', 'PUT').length, 1)
+  void e
   assert.deepEqual(await A.setPassword(client, { unlock: unlockWith(passkey), next: PASSWORD }), { kit: null })
   assert.equal(await opensWith(s, { password: PASSWORD }), code)
-  const next = await A.makeEmergencyKit(client, { password: PASSWORD })
-  secretText(next.words)
-  assert.deepEqual([next.form, next.email, next.account, (await A.accountStatus(client)).kit_form], ['email', s.email, named.account, 'email'])
-  assert.equal(await opensWith(s, { words: next.words }), code)
   // a second account cannot take that address
   const second = await withoutEmail({ ...s, device: () => s.device('second') })
-  await refused(A.setEmail(second.client, { email: s.email }), 'account-exists')
+  await refused(A.setEmail(second.client, { email: s.email, words: second.kit.words }), 'account-exists')
+  assert.equal((await A.accountStatus(second.client)).email, null)
 })
 
 test('an e-mail account\'s kit opens with its e-mail, not with its id (the sheet says which): the id typed is wrong-recovery', { skip }, async t => {

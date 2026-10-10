@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as core from '../../core/wasm/pkg/trommi-core.js'
 import { runScenario } from './scenario.mjs'
+import { accountVectors } from './vectors.mjs'
 import { FailingStore, MemoryStore } from './stores.mjs'
 
 const here = path => fileURLToPath(new URL(path, import.meta.url))
@@ -116,4 +117,5 @@ check(Object.getPrototypeOf(core.versions()) === null, 'a record has a prototype
   await again.close()
   check(await refusal(() => core.Device.create(new MemoryStore('failing'))) === 'storage', 'a device was created over a stored one')
 }
+console.log(`account vectors: ${accountVectors(core, JSON.parse(fs.readFileSync(here('../../spec/vectors/account.json'), 'utf8')))} cases`)
 console.log('edge: passed')

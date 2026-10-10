@@ -183,11 +183,11 @@ export interface CommitParts {
 /** The key derivation record: the hub stores and returns exactly the pinned one, as a JSON object. */
 export type Kdf = Record<string, string | number>
 export interface PasskeyRegistration { attestation_object: Uint8Array; client_data_json: Uint8Array; sealed_copy: Uint8Array; transports?: string[] }
-/** Which salt an Emergency Kit's keys were derived with: the account's e-mail, or its id (the only form for an
- *  account without e-mail). The hub cannot check it; it keeps it and returns it as `kit_form`. */
+/** Which salt an Emergency Kit's keys have (v2.md 8.8.2). It follows from the account alone: its e-mail where it
+ *  has one, else its id. The hub cannot check a kit; `kit_form` in its answers says which the account's kit has. */
 export type KitForm = 'email' | 'id'
-/** A kit's part of a body. `form` is always said: unsaid, the hub would take `email` wherever the account has one. */
-export interface KitPart { auth_key: Uint8Array; sealed_copy: Uint8Array; form: KitForm }
+/** A kit's part of a body: its login key and the code sealed under its wrap key. */
+export interface KitPart { auth_key: Uint8Array; sealed_copy: Uint8Array }
 /** `POST /v2/account`, and `account` of `POST /v2/rooms`: the Emergency Kit and at least one way in. An e-mail
  *  comes with a password and is optional beside a passkey. The account's id is the hub's: with a passkey the one
  *  it named with the registration's challenge (`passkeyChallenge`). */
@@ -224,6 +224,8 @@ export interface LoginAnswer { rooms: { room_id: Uint8Array; sealed_copy: Uint8A
 /** A passkey challenge with the id of the account the passkey is for: the one an account made on this challenge
  *  will have (no token), or this room's account's. `user_handle` is the id's 16 bytes, the passkey's `user.id`. */
 export interface PasskeyChallenge { challenge: Uint8Array; account: string; user_handle: Uint8Array }
+/** The challenge of this room's account, with what a new kit of it is salted with (a recovery asks for it for that). */
+export interface AccountPasskeyChallenge extends PasskeyChallenge { email: string | null; kit_form: KitForm }
 
 export interface PushRegistration {
   web_push?: { endpoint: string; keys: { p256dh: Uint8Array; auth: Uint8Array } }
@@ -466,11 +468,7 @@ function ownName(name: unknown): string {
 function passkeyBody(p: PasskeyRegistration): Record<string, unknown> {
   return { attestation_object: enc(p.attestation_object), client_data_json: enc(p.client_data_json), sealed_copy: enc(p.sealed_copy), ...(p.transports ? { transports: p.transports } : {}) }
 }
-const kitBody = (k: KitPart): Record<string, unknown> => ({ auth_key: enc(k.auth_key), sealed_copy: enc(k.sealed_copy), form: ownForm(k.form) })
-function ownForm(form: unknown): KitForm {
-  if (form !== 'email' && form !== 'id') wrong('a kit says its form: email or id')
-  return form
-}
+const kitBody = (k: KitPart): Record<string, unknown> => ({ auth_key: enc(k.auth_key), sealed_copy: enc(k.sealed_copy) })
 function accountBody(a: NewAccount): Record<string, unknown> {
   return {
     ...(a.email != null ? { email: a.email } : {}),
@@ -511,8 +509,8 @@ function accountCopiesOf(account: Uint8Array): AccountCopies | null {
   }
   let parsed: unknown
   try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(account)) } catch { wrong('the account\'s copies: not what accountCopiesBytes writes') }
-  const o = members(parsed, 'kit', 'password', 'passkey'), kit = members(o.kit, 'auth_key', 'sealed_copy', 'form')
-  const copies: AccountCopies = { kit: { auth_key: part(kit.auth_key, 'kit.auth_key', 32), sealed_copy: part(kit.sealed_copy, 'kit.sealed_copy', 61), form: ownForm(kit.form) } }
+  const o = members(parsed, 'kit', 'password', 'passkey'), kit = members(o.kit, 'auth_key', 'sealed_copy')
+  const copies: AccountCopies = { kit: { auth_key: part(kit.auth_key, 'kit.auth_key', 32), sealed_copy: part(kit.sealed_copy, 'kit.sealed_copy', 61) } }
   const has = (v: unknown, name: string): boolean => typeof v === 'object' && v !== null && Object.hasOwn(v, name)
   if (o.password !== undefined && o.passkey !== undefined) wrong('the account\'s copies: one way in')
   if (has(o.password, 'auth_key')) {
@@ -1535,16 +1533,17 @@ export class Hub {
     const json = { ...kitBody(k), revision: ownInt(k.revision, 'revision') }
     return { revision: int(obj(await this.send('PUT', '/v2/account/kit', json), 'a revision').revision, 'revision') }
   }
-  /** `PUT /v2/account/email`: gives an account without e-mail one, once (`forbidden` when it has one);
-   *  `bad-email`, `account-exists`, `account-changed`. */
-  async putEmail(e: { email: string; revision: number }): Promise<{ revision: number }> {
+  /** `PUT /v2/account/email`: gives an account without e-mail one, once (`forbidden` when it has one), together
+   *  with its kit made anew under that e-mail (`incomplete` without); `bad-email`, `account-exists`, `account-changed`. */
+  async putEmail(e: { email: string; kit: KitPart; revision: number }): Promise<{ revision: number }> {
     if (typeof e.email !== 'string' || e.email.length > 254) wrong('an e-mail address')
-    return { revision: int(obj(await this.send('PUT', '/v2/account/email', { email: e.email, revision: ownInt(e.revision, 'revision') }), 'a revision').revision, 'revision') }
+    return { revision: int(obj(await this.send('PUT', '/v2/account/email', { email: e.email, kit: kitBody(e.kit), revision: ownInt(e.revision, 'revision') }), 'a revision').revision, 'revision') }
   }
   /** `POST /v2/account/passkeys/challenge`: a challenge for adding a passkey to this room's account, with the
-   *  account's id, which that passkey carries as its user handle. */
-  async accountPasskeyChallenge(): Promise<PasskeyChallenge> {
-    return passkeyChallengeAnswer(await this.send('POST', '/v2/account/passkeys/challenge', {}))
+   *  account's id, which that passkey carries as its user handle, and what a new kit of the account is salted with. */
+  async accountPasskeyChallenge(): Promise<AccountPasskeyChallenge> {
+    const o = await this.send('POST', '/v2/account/passkeys/challenge', {}), more = obj(o, 'a challenge answer')
+    return { ...passkeyChallengeAnswer(o), email: maybe(more.email, e => text(e, 'email', 254)), kit_form: oneOf(more.kit_form, 'kit_form', 'email', 'id') }
   }
   /** `POST /v2/account/passkeys`. */
   async addPasskey(passkey: PasskeyRegistration): Promise<{ credential_id: Uint8Array; created_at: number }> {

@@ -4,8 +4,7 @@
 // build names) and room.ts (the engine, which needs a browser's store, and whose joining with the code the core's
 // binding does not have yet). A resolve hook puts core-node.mjs (the REAL binding, loaded from core/wasm/pkg) and
 // room-fake.mjs (a fake of exactly room.ts's contract) in their places, for account.ts and nothing else. hub.ts,
-// ids.ts, account-name.ts, passwords.ts and passkey.ts are the app's own files, unchanged. core-node.mjs also holds a
-// test double for the two calls the binding lacks (`kitKeysFor`, `accountIdParse`): read its header.
+// ids.ts, account-name.ts, passwords.ts and passkey.ts are the app's own files, unchanged.
 import { registerHooks } from 'node:module'
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -28,7 +27,7 @@ registerHooks({
 export const no_core = existsSync(new URL('../../../core/wasm/pkg/trommi_core_wasm_bg.wasm', import.meta.url)) ? null : 'the core\'s WASM binding is not built (core/wasm/build.sh)'
 if (no_core) console.warn(`\nSKIPPED: the account's tests need the real core: ${no_core}.\n`)
 
-export const { loadCore, provisional } = no_core ? { loadCore: null, provisional: null } : await import('./core-node.mjs')
+export const { loadCore } = no_core ? { loadCore: null } : await import('./core-node.mjs')
 export const core = no_core ? null : await loadCore()
 export const account = no_core ? null : await import('../../../app/web/core/account.ts')
 export const { stage, resetStage } = await import('./room-fake.mjs')

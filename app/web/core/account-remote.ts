@@ -57,7 +57,7 @@ export const checkUnlock = (client: RemoteClient, args: Unlock) => onClient<void
 export const passkeyChallengeFor = (client: RemoteClient) => onClient<string>('passkeyChallengeFor', client)
 export const addPasskey = (client: RemoteClient, args: { unlock: Unlock; passkey: PasskeyRegistration }) => onClient<{ credential_id: string; kit: Kit | null }>('addPasskey', client, args)
 export const removePasskey = (client: RemoteClient, credential_id: string) => onClient<void>('removePasskey', client, credential_id)
-export const setEmail = (client: RemoteClient, args: { email: string }) => onClient<void>('setEmail', client, args)
+export const setEmail = (client: RemoteClient, args: { email: string; words: string }) => onClient<Kit>('setEmail', client, args)
 export const replaceRecoveryCode = (client: RemoteClient, args: Unlock) => onClient<Kit>('replaceRecoveryCode', client, args)
 
 /** Join with an invite link (room.ts joinRoom's shape), in a new core worker. */

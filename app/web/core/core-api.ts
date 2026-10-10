@@ -27,7 +27,7 @@ export type {
   InviteConfirmed, InviteStepKind, InviteStep, JoinRequest,
   Urgency, ObjectType, ObjectState, DraftKind, Draft, Sealed, EnvelopeKind, TimelineKind, TimelineRef, ObjectHeader,
   EnvelopeHeader, BindKind, Bind, ObjectView, RegisterChange, EnvelopeOutcome, ReceivedEnvelope, ChainHead, WriterHead,
-  Standing, HeadStanding, ServedItem, BoardLoaded, Gate, CommandKind, AnswerKind, CommandDecision, Finding, BoardItem,
+  AccountName, Standing, HeadStanding, ServedItem, BoardLoaded, Gate, CommandKind, AnswerKind, CommandDecision, Finding, BoardItem,
 } from '../../../core/wasm/js/trommi-core.js'
 
 /** Everything of the binding's module that has no state: versions, the self test, the account, files, share links,
@@ -41,27 +41,13 @@ export type Stateless = Omit<typeof Binding, 'init' | 'Device' | 'TrommiError' |
 /** The calls on a device that the binding does not have yet: none. */
 export interface ProvisionalDevice {}
 
-/** What names an account where its Emergency Kit's keys are derived, and with it which salt they have (core
- *  `account::AccountName`): the e-mail of an account that has one, else the account's id, 16 bytes. */
-export type AccountName = { kind: 'email'; email: string } | { kind: 'id'; id: Uint8Array }
-
-/** Module-level calls the binding does not have yet (core/src/account.rs has them: `kit_keys_for`, `AccountId::parse`). */
-export interface ProvisionalStateless {
-  /** The two keys of the Emergency Kit's words for the account `name` names. For an e-mail it is `kitKeys`; for an
-   *  id the salt is the id's (spec/hub-api.md "The Emergency Kit's salt"). `bad-email`, `bad-recovery-words`. */
-  kitKeysFor(name: AccountName, words: string): Binding.AccountKeys
-  /** An account id from its one text (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, lower case): its 16 bytes.
-   *  Anything else, another spelling of an id included, is `bad-format`. */
-  accountIdParse(text: string): Uint8Array
-}
-
 // ---------------------------------------------------------------------------------------------------------------------
 // What the client layer holds
 
 export type Device = Binding.Device & ProvisionalDevice
 
 /** The loaded core: core-wasm.ts makes it from the binding; the tests' stand-in implements it whole. */
-export interface Core extends Stateless, ProvisionalStateless {
+export interface Core extends Stateless {
   /** A new device in an empty store: a fresh signature key, no room yet. */
   createDevice(store: Binding.Store): Promise<Device>
   /** The device a store holds. */
