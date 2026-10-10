@@ -1268,7 +1268,7 @@ pub fn write_snapshot(
     heads: &[FrontierHead],
     files: &[[u8; 16]],
 ) -> Value {
-    let path = format!("/v2/boards/{}/frontier", hex(board));
+    let path = format!("/v1/boards/{}/frontier", hex(board));
     dev.post(hub, &path, &frontier_body(heads, files, None))
         .ok();
     dev.send(hub, room, &register(snapshot_register, "snapshot"))

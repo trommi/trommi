@@ -416,7 +416,7 @@ fn lifetimes_and_retention() {
     );
     let deleted = w
         .ada
-        .get(hub, &format!("/v2/notes/{}", hex(&deleted_note)))
+        .get(hub, &format!("/v1/notes/{}", hex(&deleted_note)))
         .ok();
     assert_eq!(deleted["items"].as_array().unwrap().len(), 2);
     assert!(deleted["items"]
@@ -628,7 +628,7 @@ fn lifetimes_and_retention() {
         0
     );
     let y1_body = |dev: &Dev| {
-        dev.get(hub, &format!("/v2/boards/{}?after_change=0", hex(&board)))
+        dev.get(hub, &format!("/v1/boards/{}?after_change=0", hex(&board)))
             .ok()["items"]
             .as_array()
             .unwrap()
@@ -646,7 +646,7 @@ fn lifetimes_and_retention() {
     again(&mut [&mut w.ada, &mut bea]);
     bea.post(
         hub,
-        &format!("/v2/boards/{}/frontier", hex(&board)),
+        &format!("/v1/boards/{}/frontier", hex(&board)),
         &frontier_body(&[(&ada_id, x1)], &[], Some(bea_value)),
     )
     .ok();

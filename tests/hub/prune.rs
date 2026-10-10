@@ -14,7 +14,7 @@ fn bodies(hub: &TestHub, dev: &Dev) -> Vec<([u8; 32], bool)> {
     let mut after = 0;
     loop {
         let page = dev
-            .get(hub, &format!("/v2/changes?after={after}&limit=1000"))
+            .get(hub, &format!("/v1/changes?after={after}&limit=1000"))
             .ok();
         for item in page["items"].as_array().unwrap() {
             if item["kind"] == "envelope" {
@@ -44,7 +44,7 @@ fn chain_links(hub: &TestHub, dev: &Dev, group: &[u8], sender: &[u8; 32]) {
         .get(
             hub,
             &format!(
-                "/v2/groups/{}/chains/{}?after=0&limit=1000",
+                "/v1/groups/{}/chains/{}?after=0&limit=1000",
                 b64(group),
                 b64(sender)
             ),
@@ -62,7 +62,7 @@ fn upload(hub: &TestHub, dev: &Dev, file: &[u8; 16]) {
     dev.raw(
         hub,
         "PUT",
-        &format!("/v2/files/{}", b64(file)),
+        &format!("/v1/files/{}", b64(file)),
         &[],
         b"snapshot bytes",
     )
@@ -70,7 +70,7 @@ fn upload(hub: &TestHub, dev: &Dev, file: &[u8; 16]) {
 }
 
 fn fetch(hub: &TestHub, dev: &Dev, file: &[u8; 16]) -> Reply {
-    dev.raw(hub, "GET", &format!("/v2/files/{}", b64(file)), &[], &[])
+    dev.raw(hub, "GET", &format!("/v1/files/{}", b64(file)), &[], &[])
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn a_register_value_prunes_the_same_writers_earlier_values_and_their_files() {
     assert!(!has_body(&all, &second) && has_body(&all, &third));
     fetch(hub, &bea, &f2).ok();
     // the Desk serves the newest value in full, and the chain still links
-    let desk = bea.get(hub, "/v2/desk").ok();
+    let desk = bea.get(hub, "/v1/desk").ok();
     assert!(desk["registers"].as_array().unwrap().iter().any(|e| {
         let e = Envelope::parse(&unb64(e["envelope"].as_str().unwrap()).unwrap()).unwrap();
         e.hash() == third && e.body.is_some()
@@ -173,7 +173,7 @@ fn a_note_version_prunes_the_same_writers_earlier_versions_of_that_note() {
     assert!(has_body(&all, &o1), "another Note is untouched");
     // the Note's state replays from headers: it is open, its current version ada's newest
     let n = bea
-        .get(hub, &format!("/v2/notes/{}", trommi_hub::util::hex(&note)))
+        .get(hub, &format!("/v1/notes/{}", trommi_hub::util::hex(&note)))
         .ok();
     assert_eq!(n["items"].as_array().unwrap().len(), 3);
     assert_eq!(n["state"], 1);
@@ -187,7 +187,7 @@ fn frontier_post(heads: &[Head], files: &[[u8; 16]]) -> Value {
 }
 
 fn board_path(board: &[u8; 16]) -> String {
-    format!("/v2/boards/{}/frontier", trommi_hub::util::hex(board))
+    format!("/v1/boards/{}/frontier", trommi_hub::util::hex(board))
 }
 
 /// Removes `dev` from the room group with a Cut at `cut` (its last envelope the remover accepted).
@@ -227,7 +227,7 @@ fn a_board_is_pruned_behind_the_smallest_frontier_of_the_human_devices() {
     w.catch_up(&mut bea, &room);
     let hub = &w.hub;
     agent.lease = agent
-        .post(hub, "/v2/link", &serde_json::json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 }))
+        .post(hub, "/v1/link", &serde_json::json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 }))
         .ok()["generation"]
         .as_u64();
     let board: [u8; 16] = random();
@@ -332,7 +332,7 @@ fn a_board_is_pruned_behind_the_smallest_frontier_of_the_human_devices() {
         .get(
             hub,
             &format!(
-                "/v2/boards/{}?after_change=0",
+                "/v1/boards/{}?after_change=0",
                 trommi_hub::util::hex(&board)
             ),
         )
