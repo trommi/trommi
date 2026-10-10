@@ -65,13 +65,28 @@ fn counts_per_device() {
             .ok()["unused"],
         100
     );
-    w.ada
-        .put(
-            hub,
-            "/v2/key-packages",
-            &json!({ "single_use": [b64(&w.ada.key_package(false))] }),
-        )
-        .refused(429, "too-many");
+    // one more: the oldest goes, a hundred stay (a device that signs in again brings a fresh set)
+    assert_eq!(
+        w.ada
+            .put(
+                hub,
+                "/v2/key-packages",
+                &json!({ "single_use": [b64(&w.ada.key_package(false))] })
+            )
+            .ok()["unused"],
+        100
+    );
+    // a refusal that names a wait names it in the header and in the body
+    let slowed = TestHub::start_with(&[("HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE", "1")]);
+    slowed
+        .post("/v2/account/passkey/challenge", &json!({}))
+        .ok();
+    let told = slowed.post("/v2/account/passkey/challenge", &json!({}));
+    told.refused(429, "rate-limited");
+    assert_eq!(
+        told.header("retry-after").map(str::to_string),
+        told.json()["retry_after"].as_u64().map(|s| s.to_string())
+    );
     // a device has ten push registrations
     boundary(
         "push registrations per device",
@@ -634,8 +649,10 @@ fn the_defaults_at_their_exact_values() {
     post(&exact).ok();
     post(&over).refused(413, "too-large");
 
-    // 16: a file of exactly 64 MiB is taken, one byte more is not
-    let big = vec![0x5au8; (64 << 20) + 1];
+    // 11.1, 16: a file has at most 64 MiB of plaintext: stored (its head and one tag per chunk), 67 125 269
+    // bytes. Exactly that is taken, one byte more is not.
+    const STORED: usize = 67_125_269;
+    let big = vec![0x5au8; STORED + 1];
     w.ada
         .raw(
             &w.hub,
@@ -652,10 +669,10 @@ fn the_defaults_at_their_exact_values() {
                 "PUT",
                 &format!("/v2/files/{}", b64(&random::<16>())),
                 &[],
-                &big[..64 << 20]
+                &big[..STORED]
             )
             .ok()["size"],
-        64 << 20
+        STORED
     );
 }
 
