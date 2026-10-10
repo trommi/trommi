@@ -577,7 +577,9 @@ public final class Room {
   enum Outcome {
     case processed(Processed)
     /** `heads`: for a `heads` register of another device, how its heads compare with this device's chains. */
-    case envelope(ReceivedEnvelope, heads: [(sender: DeviceId, standing: HeadStanding)])
+    /** `winner`: for a register write the core did not make current, the core's current value of its name (nil
+     *  inside: none, or deleted); nil for anything else. */
+    case envelope(ReceivedEnvelope, heads: [(sender: DeviceId, standing: HeadStanding)], winner: Bytes?? = nil)
     case refused(change: UInt64, code: String)
     /** The run ends before this item; the cursor stays in front of it. */
     case stopped(code: String)
@@ -637,7 +639,9 @@ public final class Room {
             if e.outcome == .applied, e.register?.name == "heads", e.header.sender != device.id {
               heads = (try? device.compareHeads(group: e.header.group, writer: e.header.sender)) ?? []
             }
-            out.append(.envelope(e, heads: heads))
+            var winner: Bytes?? = nil
+            if e.outcome == .applied, let r = e.register, !r.current, r.of == nil { winner = .some(try? device.register(group: e.header.group, name: r.name)) }
+            out.append(.envelope(e, heads: heads, winner: winner))
           }
         } catch {
           // A local failure is not the item's fault: stop here, nothing after it is processed out of order.
@@ -685,9 +689,9 @@ public final class Room {
           if case .log(_, let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
         case .skipped: break
         }
-      case .envelope(let e, let heads):
+      case .envelope(let e, let heads, let winner):
         try await freshGroups()
-        apply(e, report: &report, &change)
+        apply(e, report: &report, &change, winner: winner)
         for h in heads { applyHead(h.standing, of: h.sender, group: e.header.group, saidBy: e.header.sender, &change) }
       case .refused(let c, let code):
         report.refused += 1
@@ -753,7 +757,7 @@ public final class Room {
   }
 
   /** One received envelope into the board. */
-  func apply(_ e: ReceivedEnvelope, report: inout SyncReport, _ change: inout Change) {
+  func apply(_ e: ReceivedEnvelope, report: inout SyncReport, _ change: inout Change, winner: Bytes?? = nil) {
     let n = e.change, sender = hex(e.header.sender)
     report.envelopes += 1
     if let f = e.finding { board.pushAlert(&change, code: f, message: "the hub set an item of another device aside for a reason this device cannot check", envelopeNumber: Int(n), sender: sender) }
@@ -785,6 +789,17 @@ public final class Room {
     // `heads` is the devices' own bookkeeping (9.0.7), compared in the core: nothing of it is on the board.
     if e.header.kind == .register, e.register?.name == "heads" { return }
     guard var rec = Records.record(e, senderRole: roleOf(e.header.sender)) else { report.voids += 1; return }
+    // A register write: which value is in force is the core's word (9.3.2, `RegisterChange.current`), not the
+    // board's. Made current: it is shown as it is. Not made current: the board shows the core's current value of
+    // that name instead (an own echo that lost goes with it).
+    if e.header.kind == .register, let r = e.register {
+      rec.winner = true
+      if !r.current {
+        guard r.of == nil, let w = winner, let values = rec.content?["values"].object, values.count == 1, let key = values.keys.first else { return }
+        let current: JV = w.flatMap { JV.parse($0) }.map { Records.renameFiles($0, toWire: false, depth: 0) } ?? .null
+        rec.content = rec.content?.with("values", .obj([key: current]))
+      }
+    }
     // A lamport far above every one seen is not counted (9.3.2: the core counts it as 0; so does the board).
     if rec.causal.lamport > 0, !lamportAccepted(rec.causal.lamport, lamport) {
       board.pushAlert(&change, code: "lamport-inflated", message: "a write claims a lamport far above every one seen: counted as 0", envelopeNumber: Int(n), sender: rec.senderDeviceId)
