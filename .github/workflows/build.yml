@@ -1,13 +1,20 @@
-# On every commit on main and on every pull request: find which parts changed, test and build those, and (on main
-# only) hand each built part to its deploy workflow.
+# On every commit on main and on every pull request: find which parts changed, test and build those. On main only:
+# when what a part is built from changed since the newest release, make one release v<N> of every part
+# (release.yml) and deliver each part whose inputs changed (web, hub, iOS; the connector is delivered by the release
+# itself: installers and `trommi-connector update` take the newest).
 #
-# A part counts as changed when its own folder changed, or core/, or what pins the build (Cargo.toml, Cargo.lock,
-# rust-toolchain.toml). A run started by hand counts every part as changed.
+# Which jobs run: a part's tests and build run when its own folder changed, or core/, or what pins the build
+# (Cargo.toml, Cargo.lock, rust-toolchain.toml), compared with the commit before (on a pull request: with its base).
+# Whether there is a release: .github/scripts/inputs.sh hashes, per part, what its build reads (the paths of the
+# commit, by git); the release is made when one hash differs from the newest release's manifest. Then every part
+# with release files (web, connector, hub) is built, so each release is complete. A run started by hand counts every
+# part as changed for its jobs.
 #
 # How a part is wired in (the same three steps for web, connector, ios and hub):
 #   1. `changes`: one more `part <name> '<its own paths>'` line and one more output.
 #   2. a job named after the part: tests, builds, uploads ONE artifact named `<part>-release`.
-#   3. a job `deploy_<part>` that calls `.github/workflows/deploy_<part>.yml` with
+#   3. its paths in .github/scripts/inputs.sh, its files in release.yml, and (when it is delivered somewhere) a job
+#      `deploy_<part>` after `release` that calls `.github/workflows/deploy_<part>.yml` with
 #        version:  the release number of this run (see `changes`): a whole number that only grows, the same for
 #                  every part built by one run
 #        commit:   the commit that was built
@@ -15,9 +22,9 @@
 #      and `secrets: inherit`. The deploy workflow alone uses the part's environment (`web`, `hub`, `connector`,
 #      `ios`), which holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID.
 #
-# Releases that are signed (hub, connector) use one form: release/manifest.sh writes manifest.json, release/sign.sh
-# signs and checks it, the public key is release/public-key.pem. The artifact of such a part holds the files and
-# their manifest.json, not yet signed; the deploy workflow signs.
+# The release is signed: release/manifest.sh writes manifest.json, release/sign.sh signs and checks it, the public
+# key is release/public-key.pem. The artifact of a part holds its files (hub and connector: with a manifest of their
+# own, checked when the release is put together); release.yml signs and publishes.
 name: build
 
 on:
@@ -54,11 +61,54 @@ jobs:
       ios: ${{ steps.find.outputs.ios }}
       hub: ${{ steps.find.outputs.hub }}
       version: ${{ steps.find.outputs.version }}
+      release: ${{ steps.inputs.outputs.release }}
+      parts: ${{ steps.inputs.outputs.parts }}
+      changed_web: ${{ steps.inputs.outputs.web }}
+      changed_ios: ${{ steps.inputs.outputs.ios }}
+      changed_hub: ${{ steps.inputs.outputs.hub }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Main only: what each part is built from, against the manifest of the newest release v<N> (its signature
+      # checked first). A part whose hash differs changed; one changed part makes a release.
+      - name: What changed since the newest release
+        id: inputs
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sh .github/scripts/inputs.sh > "$RUNNER_TEMP/inputs"
+          cat "$RUNNER_TEMP/inputs"
+          newest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1)
+          old=$RUNNER_TEMP/newest
+          mkdir "$old"
+          if [ -n "$newest" ]; then
+            gh release download "v$newest" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --pattern manifest.json.sig --dir "$old"
+            sh release/sign.sh verify "$old/manifest.json"
+            jq -e --arg r "$GITHUB_REPOSITORY" --arg t "v$newest" '.product == "trommi" and .repository == $r and .tag == $t' "$old/manifest.json" > /dev/null \
+              || { echo "::error::the manifest of v$newest is not that release of this repository"; exit 1; }
+            echo "compared with v$newest"
+          else
+            echo '{}' > "$old/manifest.json"
+            echo "no release v<N> yet: every part counts as changed"
+          fi
+          any=false
+          : > "$RUNNER_TEMP/parts"
+          while read -r part sum; do
+            before=$(jq -r --arg p "$part" '.inputs[$p] // ""' "$old/manifest.json")
+            if [ "$sum" = "$before" ]; then changed=false; else changed=true; any=true; fi
+            echo "$part $sum $changed" >> "$RUNNER_TEMP/parts"
+            echo "$part=$changed" >> "$GITHUB_OUTPUT"
+            echo "- $part: $([ "$changed" = true ] && echo changed || echo unchanged) since ${newest:+v$newest}${newest:-nothing}" >> "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/inputs"
+          # hub or its updater: one delivery to the server
+          if grep -Eq '^(hub|updater) [0-9a-f]+ true$' "$RUNNER_TEMP/parts"; then echo "hub=true" >> "$GITHUB_OUTPUT"; else echo "hub=false" >> "$GITHUB_OUTPUT"; fi
+          echo "release=$any" >> "$GITHUB_OUTPUT"
+          { echo "parts<<PARTS_END"; cat "$RUNNER_TEMP/parts"; echo "PARTS_END"; } >> "$GITHUB_OUTPUT"
+          echo "- release: $any" >> "$GITHUB_STEP_SUMMARY"
       - name: Find the changed parts
         id: find
         env:
@@ -66,6 +116,8 @@ jobs:
           BEFORE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           RUN_NUMBER: ${{ github.run_number }}
+          RELEASE: ${{ steps.inputs.outputs.release }}
+          CHANGED_IOS: ${{ steps.inputs.outputs.ios }}
         run: |
           set -eu
           echo "version=$((RUN_NUMBER + RELEASE_BASE))" >> "$GITHUB_OUTPUT"
@@ -85,8 +137,10 @@ jobs:
             echo "nothing to compare with: every part counts as changed"
           fi
           shared='core/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|\.github/workflows/build\.yml$'
+          # a release holds the files of web, connector and hub: all three are built for it; iOS when its inputs changed
           part() {
             if [ "$all" = 1 ] || grep -Eq "^($2|$shared)" "$RUNNER_TEMP/files"; then value=true; else value=false; fi
+            case $1 in web|connector|hub) [ "${RELEASE:-}" = true ] && value=true ;; ios) [ "${CHANGED_IOS:-}" = true ] && value=true ;; esac
             echo "$1=$value" >> "$GITHUB_OUTPUT"
             echo "$1: $value"
             echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
@@ -95,7 +149,7 @@ jobs:
           # the core itself: its sources (core/ is in `shared`), its tests, the test library, the vectors
           part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$|THIRD-PARTY\.md$|\.github/scripts/third_party\.mjs$'
           part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
-          part connector 'connector/|release/|install\.sh$|\.claude-plugin/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
+          part connector 'connector/|release/|install\.sh$|\.claude-plugin/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/release\.yml$'
           part ios 'ios/|tests/ios/|\.github/scripts/ios_(testflight\.sh|archive\.sh|entitlements\.py)$|\.github/workflows/deploy_ios\.yml$'
           part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$|\.github/workflows/deploy_hub\.yml$'
 
@@ -213,8 +267,8 @@ jobs:
 
   deploy_web:
     name: Web app
-    needs: [changes, web]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.web == 'true'
+    needs: [changes, web, release]
+    if: ${{ !cancelled() && needs.release.outputs.published == 'true' && needs.changes.outputs.changed_web == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -317,22 +371,6 @@ jobs:
           path: out/
           if-no-files-found: error
           retention-days: 30
-
-  deploy_connector:
-    name: Connector
-    needs: [changes, connector]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.connector == 'true'
-    permissions:
-      contents: write
-      actions: read
-      id-token: write
-      attestations: write
-    uses: ./.github/workflows/deploy_connector.yml
-    with:
-      version: ${{ needs.changes.outputs.version }}
-      commit: ${{ github.sha }}
-      artifact: connector-release
-    secrets: inherit
 
   ios:
     name: iOS (test and build the core)
@@ -443,8 +481,8 @@ jobs:
 
   deploy_ios:
     name: iOS
-    needs: [changes, ios]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.ios == 'true'
+    needs: [changes, ios, release]
+    if: ${{ !cancelled() && needs.release.outputs.published == 'true' && needs.changes.outputs.changed_ios == 'true' && needs.ios.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -540,16 +578,39 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  deploy_hub:
-    name: Hub
-    needs: [changes, hub]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.hub == 'true'
+  # The one release of this run: every part's files and one signed manifest (release.yml). Only on main, only when
+  # the inputs of a part changed since the newest release, and only when every part that ran passed.
+  release:
+    name: Release
+    needs: [changes, core, web, connector, ios, ios_client, hub]
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      && needs.changes.outputs.release == 'true'
+      && needs.web.result == 'success' && needs.connector.result == 'success' && needs.hub.result == 'success'
+      && contains(fromJSON('["success","skipped"]'), needs.core.result)
+      && contains(fromJSON('["success","skipped"]'), needs.ios.result)
+      && contains(fromJSON('["success","skipped"]'), needs.ios_client.result) }}
     permissions:
       contents: write
+      actions: read
       id-token: write
-    uses: ./.github/workflows/deploy_hub.yml
+      attestations: write
+    uses: ./.github/workflows/release.yml
     with:
       version: ${{ needs.changes.outputs.version }}
       commit: ${{ github.sha }}
-      artifact: hub-release
+      parts: ${{ needs.changes.outputs.parts }}
+    secrets: inherit
+
+  # The server fetches the release itself; it restarts the hub only when the hub's inputs differ from those of the
+  # release it runs (hub/updater).
+  deploy_hub:
+    name: Hub
+    needs: [changes, release]
+    if: ${{ !cancelled() && needs.release.outputs.published == 'true' && needs.changes.outputs.changed_hub == 'true' }}
+    permissions:
+      id-token: write
+    uses: ./.github/workflows/deploy_hub.yml
+    with:
+      tag: v${{ needs.changes.outputs.version }}
     secrets: inherit

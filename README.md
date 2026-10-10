@@ -87,24 +87,34 @@ trails after thirty days. The table per stored thing is in `spec/v2.md`, section
 
 ## Delivery
 
-Every commit on `main` runs `.github/workflows/build.yml`. It finds which parts changed (a part's own folder, or
-`core/`, or what pins the build), tests and builds those, and hands each built part to its deploy workflow. A deploy
-workflow delivers the files the build made and tested; it builds nothing again. Each can also be started by hand with
-the id of an earlier build run, to deliver that build once more.
+Every commit on `main` runs `.github/workflows/build.yml`. It tests and builds the parts whose folders changed, and
+then decides whether there is a release: `.github/scripts/inputs.sh` hashes, per part (web, connector, ios, hub,
+updater), the files its build reads (as git lists them for the commit: mode, object, path; `build.yml` and `core/`
+count for every part, tests for none). When one hash differs from the newest release's manifest, the run makes **one
+release `v<N>`** (`release.yml`): every part's files, also the unchanged ones (built again from the same inputs, so
+every release is complete), and one signed `manifest.json` that names each file and says per part its `inputs` hash
+and whether it `changed`. When nothing changed, nothing is released. N is the build's run number (plus
+`RELEASE_BASE`): it only grows.
 
-| Part | Build makes | Deploy workflow | What it changes |
+Each part is then delivered only when it changed:
+
+| Part | Build makes | In the release | Delivered when it changed |
 | --- | --- | --- | --- |
-| Web app | `web-release`: the files the worker serves, the worker, its settings, `manifest.json`, `checksums.txt` | `deploy_web.yml` | the Cloudflare worker `trommi-app` at https://app.trommi.com |
-| Connector | `connector-release`: four binaries, `manifest.json` | `deploy_connector.yml` | a GitHub release `connector-v<N>`, signed |
-| iOS app | `ios-release`: the Rust core for iOS and its Swift bindings | `deploy_ios.yml` | a TestFlight build in the group "Intern" |
-| Hub | `hub-release`: the hub and its updater as static programs, `manifest.json` | `deploy_hub.yml` | a GitHub release `hub-v<N>`, signed; then the server takes it (below) |
+| Web app | `web-release`: the files the worker serves, the worker, its settings, `manifest.json`, `checksums.txt` | `web.tar.gz` | `deploy_web.yml`: the Cloudflare worker `trommi-app` at https://app.trommi.com |
+| Connector | `connector-release`: four binaries | the four binaries | the release is the delivery: `install.sh` and `trommi-connector update` take the newest `v<N>`, and keep the installed program when its SHA-256 is the same |
+| iOS app | `ios-release`: the Rust core for iOS and its Swift bindings | nothing (inputs and changed only) | `deploy_ios.yml`: a TestFlight build in the group "Intern" |
+| Hub | `hub-release`: the hub and its updater as static programs | both programs | `deploy_hub.yml` (hub or updater changed): the server takes `v<N>` (below) and restarts the hub only when the hub's inputs changed |
+
+A release is published by one run at a time; a run whose release number is not above the newest published one
+publishes nothing. A delivery that failed is not repeated by the next run (that compares with the release before,
+not with what is live): start the deploy workflow by hand.
 
 Secrets: each part has a GitHub environment of its name (`web`, `connector`, `ios`, `hub`) that holds only the way
 into a 1Password Environment; every other secret is read from there by the one command that needs it (`op run`).
-Pull requests run the build jobs and reach no secret and no deploy workflow.
+Pull requests run the build jobs and reach no secret, no release and no deploy workflow.
 
-**Signed releases** (connector, hub) have one form. `release/manifest.sh` writes `manifest.json`: product,
-repository, version, tag, commit, and every file with its size and SHA-256. `release/sign.sh sign` signs the exact
+**The release is signed.** `release/manifest.sh` writes `manifest.json`: product (`trommi`), repository, version,
+tag, commit, per part `inputs` and `changed`, and every file with its size and SHA-256. `release/sign.sh sign` signs the exact
 bytes of the manifest with Ed25519 (`manifest.json.sig`, 64 raw bytes); the public key is `release/public-key.pem`.
 To check a release: `release/sign.sh verify manifest.json`, then that the manifest names the product, tag and
 version you asked for, then `release/sign.sh files manifest.json`.
@@ -133,15 +143,15 @@ From a commit to the running server, nobody logs in and no code is handed to the
 ```
 commit on main
 └── build.yml          finds the changed parts; for the hub: tests, builds two static programs (hub, updater)
-    └── deploy_hub.yml
-        ├── sign       signs the manifest of the build (Ed25519, key from the 1Password Environment)
-        ├── publish    GitHub release hub-v<N>: the two programs, manifest.json, manifest.json.sig
-        └── deliver    joins the tailnet as tag:trommi-ci and says to the server: "take hub-v<N>"
+    ├── release.yml    the release v<N> of every part, its manifest signed (Ed25519, key from the 1Password Environment)
+    └── deploy_hub.yml (the hub or its updater changed)
+        └── deliver    joins the tailnet as tag:trommi-ci and says to the server: "take v<N>"
                        │
 server (updater, as its own user without root, port 9443, tailnet address only)
-        ├── fetches hub-v<N> from GitHub itself
+        ├── fetches v<N> from GitHub itself
         ├── checks the signature against the public key pinned on the server, then each file against the manifest
         ├── refuses anything older than what it once accepted
+        ├── the same hub inputs as the running release: notes v<N> as accepted, the hub keeps running
         ├── has the hub stopped, swaps, has it started (its unit copies the database and the hub's keys first),
         │   asks the hub whether it is well
         ├── not well: puts the release before back and starts it
@@ -154,12 +164,11 @@ version is the build's run number (plus `RELEASE_BASE` in `build.yml`): a whole 
 release is never replaced.
 
 The manifest may carry fields an updater does not know (they are signed all the same and ignored), so a later
-release can say more without an older updater refusing it. Proposed for one complete release per shipped change:
-`"inputs": {"hub": "<sha256>", "updater": "<sha256>"}`, per program a SHA-256 over everything its build reads.
-The updater already reads it: whether a program is started anew is decided in one place
-(`changes` in `hub/updater/src/lib.rs`), by the inputs when both releases name them, otherwise by the SHA-256 of
-the program in the two manifests. Today that decides whether the updater is replaced; the hub is still started
-anew with every release that is not the one running.
+release can say more without an older updater refusing it. Its `"inputs"` name, per part, a SHA-256 over what the
+build reads; whether a program is started anew is decided in one place (`changes` in `hub/updater/src/lib.rs`), by
+the inputs when both releases name them, otherwise by the SHA-256 of the program in the two manifests. That decides
+whether the updater is replaced and whether the hub is swapped. A hub that was not restarted keeps running the
+binary of the release it started from (the server's status names that release).
 
 **Why the deploy call needs no secret.** The call carries no code and no address, only the name of a release. What
 the server then runs must be signed with the release key, be the hub of this repository, and not be older than what
@@ -214,7 +223,7 @@ pre-start scripts are installed once and are the fixed point; a change to one of
 ```
 /srv/trommi/                     root's; nothing is written here after the installation
 /srv/trommi/deploy/              trommi-updater's:
-    releases/hub-v<N>/               the files of a release as they were proved
+    releases/v<N>/                   the files of a release as they were proved
     current, previous                links: the hub that runs, the one before
     updater, updater-previous        the same for the updater
     state.json                       the highest version ever accepted

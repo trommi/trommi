@@ -1,9 +1,10 @@
 //! The hub's updater: the one thing on the server that changes which hub runs.
 //!
-//! A caller only names a release (`hub-v123`). The updater fetches that release from GitHub itself, checks the
-//! signature of its manifest against the public key pinned on the server, checks the binary against the manifest,
+//! A caller only names a release (`v123`; the hub's own releases before were `hub-v123`). The updater fetches that
+//! release from GitHub itself, checks the signature of its manifest against the public key pinned on the server,
+//! checks the binary against the manifest, and, when the release's hub differs from the running one (`changes`),
 //! puts it beside the running one, swaps, asks the new hub whether it is well, and puts the old one back when it is
-//! not. Nothing a caller sends is ever run, and nothing older than what was already accepted is taken.
+//! not. A release with the same hub is noted as accepted and the hub keeps running. Nothing a caller sends is ever run, and nothing older than what was already accepted is taken.
 //!
 //! On disk, under the root (`/srv/trommi/deploy`), which belongs to the user the updater runs as:
 //!
@@ -40,7 +41,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-pub const PRODUCT: &str = "trommi-hub";
+/// The product a release names: `trommi`, the one release of every part (`v123`); releases before it were the
+/// hub's own (`trommi-hub`, `hub-v123`), and a server may still hold and fall back to one of those.
+pub const PRODUCTS: [&str; 2] = ["trommi", "trommi-hub"];
 pub const MANIFEST: &str = "manifest.json";
 pub const SIGNATURE: &str = "manifest.json.sig";
 /// the names inside a release folder; the two programs are released with the machine's kind after their name
@@ -100,8 +103,8 @@ pub enum Part {
 /// anew. When both manifests name the program's inputs, those decide; otherwise the SHA-256 the manifests give for
 /// the program's file on this machine's kind. Nothing known about `from` counts as a change.
 ///
-/// Today the updater is replaced by it (`stage_updater`); the hub is still started anew with every release that is
-/// not the one running. With one complete release per shipped change, the hub's swap asks it as well.
+/// The updater is replaced by it (`stage_updater`), and the hub is swapped and started anew only when it says so
+/// (`deploy_locked`): a release that holds the same hub as the one running leaves the hub running.
 pub fn changes(part: Part, target: &str, from: Option<&Manifest>, to: &Manifest) -> bool {
     let Some(from) = from else {
         return true;
@@ -131,9 +134,10 @@ pub fn changes(part: Part, target: &str, from: Option<&Manifest>, to: &Manifest)
     }
 }
 
-/// `hub-v123` → 123. One spelling only: no sign, no leading zero, at most twelve digits.
+/// `v123` (the release of every part) or `hub-v123` (the hub's own releases before it) → 123. One spelling only: no
+/// sign, no leading zero, at most twelve digits.
 pub fn parse_tag(tag: &str) -> Option<u64> {
-    let digits = tag.strip_prefix("hub-v")?;
+    let digits = tag.strip_prefix("hub-v").or_else(|| tag.strip_prefix('v'))?;
     let plain = !digits.is_empty()
         && digits.len() <= 12
         && digits.bytes().all(|b| b.is_ascii_digit())
@@ -212,7 +216,7 @@ pub fn verify_manifest(
         .map_err(|_| "the signature does not match the pinned key".to_string())?;
     let manifest: Manifest = serde_json::from_slice(bytes)
         .map_err(|e| format!("the manifest is signed but unreadable: {e}"))?;
-    if manifest.product != PRODUCT {
+    if !PRODUCTS.contains(&manifest.product.as_str()) {
         return Err(format!("signed for another product: {}", manifest.product));
     }
     if manifest.repository != repository {
@@ -919,7 +923,7 @@ impl Updater {
     pub async fn deploy(&self, tag: &str) -> Outcome {
         let Some(version) = parse_tag(tag) else {
             // not echoed: it is not a release name
-            return Outcome::new("bad-request", "", "the tag must look like hub-v123");
+            return Outcome::new("bad-request", "", "the tag must look like v123");
         };
         let Ok(_turn) = tokio::time::timeout(self.cfg.lock_wait, self.gate.lock()).await else {
             return Outcome::new("busy", tag, "another deploy is still running");
@@ -982,7 +986,7 @@ impl Updater {
             return Outcome::new(
                 "refused",
                 tag,
-                format!("older than hub-v{floor}, which this server already accepted"),
+                format!("older than release {floor}, which this server already accepted"),
             );
         }
 
@@ -1000,6 +1004,36 @@ impl Updater {
             outcome.message = message;
             outcome
         };
+
+        // The same hub as the one that runs (its inputs, or else its bytes, as `changes` decides): it is not
+        // stopped. The release is noted as accepted, so nothing older is taken; `current` stays where it is, and
+        // the release's updater is taken by `deploy` if that changed.
+        if let Some(running) = running.as_ref() {
+            if let Some(old) = running.manifest.as_ref() {
+                if !changes(Part::Hub, &self.cfg.target, Some(old), &manifest) {
+                    if version > state.high_water {
+                        let state = State {
+                            high_water: version,
+                        };
+                        if let Err(e) = write_whole(
+                            &self.cfg.root.join("state.json"),
+                            &serde_json::to_vec(&state).expect("a state"),
+                        ) {
+                            return fail(outcome, format!("nothing was changed: {e}"));
+                        }
+                    }
+                    outcome.ok = true;
+                    outcome.result = "unchanged";
+                    outcome.commit = Some(old.commit.clone());
+                    outcome.sha256 = file_sha256(&self.releases().join(&running.tag).join(BINARY));
+                    outcome.message = format!(
+                        "{tag} holds the same hub as {}: it keeps running, not restarted",
+                        running.tag
+                    );
+                    return outcome;
+                }
+            }
+        }
 
         // from here on nothing older is taken, also when this release turns out not to be well
         let old = running.as_ref().map(|r| r.tag.clone());
@@ -1487,7 +1521,7 @@ async fn handle(
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .and_then(|v| v["tag"].as_str().map(str::to_string));
     let Some(tag) = tag else {
-        let outcome = Outcome::new("bad-request", "", "the body must be {\"tag\":\"hub-v123\"}");
+        let outcome = Outcome::new("bad-request", "", "the body must be {\"tag\":\"v123\"}");
         return answer(400, &serde_json::to_value(&outcome).expect("an outcome"));
     };
     log("call", json!({ "peer": peer.to_string(), "tag": tag }));

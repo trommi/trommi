@@ -17,13 +17,16 @@ set -u
 deploy=${1:-/srv/trommi/deploy} data=${2:-/srv/trommi/data} backups=${3:-/srv/trommi/backups} run=${4:-/run/trommi-hub}
 umask 077
 release=$(basename "$(readlink "$deploy/current" 2>/dev/null)" 2>/dev/null)
+# v<N> (the release of every part) or hub-v<N> (the hub's own releases before it)
 number=${release#hub-v}
+number=${number#v}
 # not a release name: nothing to copy for (and nothing of that text is used any further)
 case "$number" in ''|*[!0-9]*) exit 0 ;; esac
-[ "hub-v$number" = "$release" ] || exit 0
+[ "hub-v$number" = "$release" ] || [ "v$number" = "$release" ] || exit 0
 last=$(cat "$backups/last-release" 2>/dev/null)
 [ "$last" = "$release" ] && exit 0
 last_number=${last#hub-v}
+last_number=${last_number#v}
 case "$last_number" in ''|*[!0-9]*) last_number=0 ;; esac
 
 # written whole and flushed, or not at all
