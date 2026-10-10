@@ -6,7 +6,8 @@
 //     RELEASES, which the connector's release upload fills: Cloudflare's build of this app has no Rust toolchain, so
 //     the binaries are built on a developer's machine and uploaded apart from the app;
 //   - /.well-known/apple-app-site-association (the iOS app's universal links: /card/…, /s/…, /settings… open in Trommi
-//     when it is installed) is public/apple-app-site-association.json, served as JSON;
+//     when it is installed; and `webcredentials`: the app may use this site's passkeys) is
+//     public/apple-app-site-association.json, served as JSON, no redirect;
 //   - /favicon.ico (asked for by what does not read the page's <link rel="icon">) goes to the PNG icon;
 //   - everything else is the static app. Its single-page fallback answers every unknown address with the app's page:
 //     right for a page (the app routes in the page), wrong for a file, so a file that does not exist is a 404.
