@@ -27,11 +27,12 @@ pub fn publish(
     auth: &Auth,
     offer_bytes: &[u8],
     signature: &[u8],
-    mac: &[u8],
+    mac: Option<&[u8]>,
 ) -> Res<Value> {
     auth.human()?;
     let offer = Offer::parse(offer_bytes)?;
-    if mac.len() != OFFER_MAC_LEN {
+    // optional until every client sends it; when sent, exactly 32 bytes
+    if mac.is_some_and(|m| m.len() != OFFER_MAC_LEN) {
         return Err(refuse("bad-format", "mac: the Offer's MAC, 32 bytes"));
     }
     if offer.room_id != auth.room || offer.inviter != auth.device {
@@ -66,8 +67,11 @@ pub fn publish(
         let (held_offer, held_signature, held_mac) = held;
         return if same(&held_offer, offer_bytes)
             && same(&held_signature, signature)
-            && held_mac.as_deref().is_some_and(|m| same(m, mac))
-        {
+            && match (held_mac.as_deref(), mac) {
+                (Some(held), Some(mac)) => same(held, mac),
+                (None, None) => true,
+                _ => false,
+            } {
             Ok(json!({ "invite_id": b64(&offer.invite_id) }))
         } else {
             Err(refuse("replay", "this invite id is used"))
