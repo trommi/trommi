@@ -248,9 +248,11 @@ extension Room {
    * to sign in is told by the list it shows.
    */
   public func leaveRoom() async throws {
-    _ = try? await flush(timeoutMs: 3000)
-    _ = try? await hub.request("DELETE", "/push")
-    await hub.signOut()
+    // Each step has a bound: a catch-up or a request that hangs never keeps the person from leaving (it took two
+    // minutes and more on a simulator, waiting for a sync in the queue).
+    await Room.waitAtMost(3) { _ = try? await self.flush(timeoutMs: 3000) }
+    await Room.waitAtMost(5) { _ = try? await self.hub.request("DELETE", "/push") }
+    await Room.waitAtMost(5) { await self.hub.signOut() }
     await shutdown()
     Store.lifecycle.withLock { store.wipe() }
   }

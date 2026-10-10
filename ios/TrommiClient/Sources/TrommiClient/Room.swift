@@ -258,11 +258,24 @@ public final class Room {
   /** `close`, after what is running (queued operations, a cache save) has ended. */
   public func shutdown() async {
     closed = true
-    _ = await queueTail?.value
-    await saveTail?.value
+    // (what waits on the hub ends now, not after its own timeouts: the queued work then fails with `closed`)
+    liveTask?.cancel()
+    hub.shutdown()
+    // (queued work gets five seconds to end; after that, what still runs can no longer reach the core: `closed`)
+    let queued = queueTail, saving = saveTail
+    await Room.waitAtMost(5) { _ = await queued?.value; await saving?.value }
     close()
   }
   public private(set) var closed = false
+  /** Runs `op` and returns when it ended or after `seconds`, whichever comes first; `op` is not waited for beyond. */
+  static func waitAtMost(_ seconds: Double, _ op: @escaping @MainActor () async -> Void) async {
+    final class Once: @unchecked Sendable { let lock = NSLock(); var done = false; func first() -> Bool { lock.withLock { defer { done = true }; return !done } } }
+    let once = Once()
+    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+      Task { @MainActor in await op(); if once.first() { c.resume() } }
+      Task { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)); if once.first() { c.resume() } }
+    }
+  }
   /** The device's own cursor as last seen: what the core has processed, which the board's cache may lag behind. */
   var coreCursor: UInt64 = 0
   var liveTask: Task<Void, Never>?
