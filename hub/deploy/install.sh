@@ -186,27 +186,24 @@ hub_well() {
 exec 9> /run/trommi-install.lock
 flock -n 9 || stop "another run of this script is at work on the server"
 
-# Undoes the conversion of an installation whose updater ran as root: everything back where $SAVE says it was, and
-# the old updater started. Every step is checked by itself (a function called in a condition does not stop at a
-# failing command on its own). Safe to run on a conversion that was cut off anywhere.
+# Undoes the conversion of an installation whose updater ran as root: the releases, links and state as they were
+# copied into $SAVE before anything was handed to the updater's user, the old units, and the old updater started.
+# Nothing that user could have written is taken back or run: its folder is set aside as it is. Every step is checked
+# by itself (a function called in a condition does not stop at a failing command on its own). Safe to run on a
+# conversion that was cut off anywhere.
 undo_conversion() {
   [ -d "$SAVE" ] || return 0
   systemctl disable --now trommi-hub-ctl.socket >/dev/null 2>&1 || true
   systemctl stop trommi-hub-updater.service trommi-hub.service 'trommi-hub-ctl@*.service' >/dev/null 2>&1 || true
   rm -f "${UNITS:?}/trommi-hub-ctl.socket" "${UNITS:?}/trommi-hub-ctl@.service" "${UNITS:?}/trommi-hub.service" || return 1
-  if [ -d "$DEPLOY" ]; then
-    for name in $MOVED; do
-      if [ -e "$DEPLOY/$name" ] || [ -L "$DEPLOY/$name" ]; then
-        mv -T "$DEPLOY/$name" "$ROOT/$name" || { echo "    $DEPLOY/$name could not be moved back" >&2; return 1; }
-      fi
-    done
-    for name in $MOVED; do
-      if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then chown -hR root:root "$ROOT/$name" || return 1; fi
-    done
-    # what else the new updater left there is kept beside it, not deleted
-    rmdir "$DEPLOY" 2>/dev/null || mv -T "$DEPLOY" "$ROOT/deploy-undone-$(date -u +%Y%m%d-%H%M%S)" || return 1
-  fi
-  # the links as they were (the release that was being installed has no unit file for the old way of running)
+  aside="$ROOT/conversion-undone-$(date -u +%Y%m%d-%H%M%S)"
+  mkdir -m 0700 "$aside" || return 1
+  if [ -e "$DEPLOY" ]; then mv -T "$DEPLOY" "$aside/deploy" || return 1; fi
+  for name in $MOVED; do
+    if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then mv -T "$ROOT/$name" "$aside/$name" || return 1; fi
+  done
+  cp -a "$SAVE/releases" "$ROOT/releases" || return 1
+  if [ -f "$SAVE/state.json" ]; then cp -a "$SAVE/state.json" "$ROOT/state.json" || return 1; fi
   while read -r name target; do
     ln -sfn "$target" "$ROOT/$name" || return 1
   done < "$SAVE/links"
@@ -220,6 +217,7 @@ undo_conversion() {
   systemctl restart trommi-hub-updater.service || { echo "    the old updater did not start: journalctl -u trommi-hub-updater -n 30" >&2; return 1; }
   hub_well 45 || { echo "    the old updater runs, but the hub does not answer on 127.0.0.1:8790: journalctl -u trommi-hub -n 30" >&2; return 1; }
   mv -T "$SAVE" "$ETC/before-noroot-undone-$(date -u +%Y%m%d-%H%M%S)" || return 1
+  echo "    what the new updater's user had in its folder is kept, unused, in $aside"
 }
 REMOTE
 }
@@ -235,7 +233,7 @@ step "Look at the server (nothing is changed yet)"
 [ "$(id -u)" = 0 ] || stop "this must run as root"
 [ "$(uname -m)" = x86_64 ] || stop "this server is $(uname -m); the release is built for x86_64"
 [ -d /run/systemd/system ] || stop "this server does not run systemd"
-for t in curl python3 sha256sum tailscale ss runuser useradd; do command -v "$t" >/dev/null || stop "$t is missing on the server"; done
+for t in curl python3 sha256sum tailscale ss runuser setsid flock useradd; do command -v "$t" >/dev/null || stop "$t is missing on the server"; done
 (cd "$STAGE" && sha256sum --quiet -c SHA256SUMS) || stop "the files did not arrive whole; run the script again"
 TSIP=$(tailscale ip -4 2>/dev/null | head -1)
 case "$TSIP" in 100.*) ;; *) stop "the server has no tailnet address (is tailscale up?)" ;; esac
@@ -275,12 +273,19 @@ print("" if w["Node"].get("Tags") else w["UserProfile"].get("LoginName", ""))' 2
 case "$OWNER" in *[!A-Za-z0-9@._+-]*) OWNER='' ;; esac
 
 # ---- from here on things change; a conversion that fails is undone ----
-CONVERTING=0
+CONVERTING=0 STOPPED=0
 on_exit() {
   code=$?
   trap - EXIT
   [ "$code" = 0 ] && exit 0
-  if [ "$CONVERTING" = 1 ]; then
+  if [ "$CONVERTING" != 1 ] && [ "$STOPPED" = 1 ]; then
+    printf '\n!!! A step failed. Starting the updater that was stopped for this run again (it starts the hub).\n' >&2
+    if systemctl start trommi-hub-updater.service; then
+      printf '!!! It runs. Fix what failed above and run install again.\n' >&2
+    else
+      printf '!!! It did NOT start: journalctl -u trommi-hub-updater -n 30\n' >&2
+    fi
+  elif [ "$CONVERTING" = 1 ]; then
     printf '\n!!! A step failed. Putting the installation back as it was (updater as root).\n' >&2
     if undo_conversion; then
       printf '!!! Back as before: the old updater and the hub run. Nothing was deleted. Fix what failed above and run install again.\n' >&2
@@ -305,22 +310,42 @@ as_updater tailscale whois --json "$TSIP:1" >/dev/null || stop "tailscaled does 
 ok "it answers"
 
 if [ "$STATE" = as-root ]; then
-  step "Note how the installation is today, in $SAVE (to put it back if a later step fails)"
-  install -d -m 0700 "$SAVE.part"
+  step "Stop the updater (a deploy that runs is finished first) and keep any other deploy out"
+  STOPPED=1
+  systemctl stop trommi-hub-updater.service
+  # the updater's own lock: a deploy started by hand on the server would hold it
+  exec 8>> "$ROOT/deploy.lock"
+  flock -n 8 || stop "a deploy started by hand is still running on the server"
+  if [ -e "$ROOT/deploy-journal.json" ] || [ -e "$ROOT/updater-trial" ]; then
+    stop "a deploy or a change of the updater was in the middle; run this again in a few minutes"
+  fi
+  ok "stopped; nothing else changes the installation now"
+
+  step "Copy what runs today into $SAVE, root's alone (the way back if a later step fails)"
+  rm -rf "${SAVE:?}.part"
+  install -d -m 0700 "$SAVE.part" "$SAVE.part/releases"
   install -m 0644 "$UNITS/trommi-hub-updater.service" "$SAVE.part/trommi-hub-updater.service"
   install -m 0644 "$ETC/updater.env" "$SAVE.part/updater.env"
   install -m 0755 /usr/local/bin/trommi-hub-updater "$SAVE.part/command"
+  if [ -f "$ROOT/state.json" ]; then cp -a "$ROOT/state.json" "$SAVE.part/state.json"; fi
   : > "$SAVE.part/links"
   for name in current previous updater updater-previous; do
-    if [ -L "$ROOT/$name" ]; then printf '%s %s\n' "$name" "$(readlink "$ROOT/$name")" >> "$SAVE.part/links"; fi
+    [ -L "$ROOT/$name" ] || continue
+    target=$(readlink "$ROOT/$name")
+    tag=${target#releases/}
+    case "$tag" in hub-v*[!0-9]*|hub-v|'') stop "the link $name names no release ($target); nothing was changed" ;; hub-v*) ;; *) stop "the link $name names no release ($target); nothing was changed" ;; esac
+    printf '%s %s\n' "$name" "$target" >> "$SAVE.part/links"
+    [ -d "$SAVE.part/releases/$tag" ] || cp -a "$ROOT/releases/$tag" "$SAVE.part/releases/$tag"
   done
-  grep -q '^current ' "$SAVE.part/links" && grep -q '^updater ' "$SAVE.part/links" || stop "the installation has no current hub or no updater link; nothing was changed"
+  [ -x "$SAVE.part/releases/$(sed -n 's|^updater releases/||p' "$SAVE.part/links")/trommi-hub-updater" ] \
+    || stop "the installation has no updater to go back to; nothing was changed"
+  [ -f "$SAVE.part/releases/$(sed -n 's|^current releases/||p' "$SAVE.part/links")/trommi-hub.service" ] \
+    || stop "the hub that runs has no unit file to go back to; nothing was changed"
   mv -T "$SAVE.part" "$SAVE"
   ok "$(tr '\n' ';' < "$SAVE/links")"
 
-  step "Stop the updater and the hub (the hub is down from here until the new updater starts it, about a minute)"
+  step "Stop the hub (it is down from here until the new updater starts it, about a minute)"
   CONVERTING=1
-  systemctl stop trommi-hub-updater.service
   systemctl stop trommi-hub.service
   ok "stopped"
 
@@ -329,17 +354,22 @@ if [ "$STATE" = as-root ]; then
   for name in $MOVED; do
     if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then mv -T "$ROOT/$name" "$DEPLOY/$name"; fi
   done
-  # the updater before this one expects to be root: it is no fallback any more (the note above still names it)
+  # the updater before this one expects to be root: it is no fallback any more (the copy above still has it)
   rm -f "${DEPLOY:?}/updater-previous"
   chown -hR trommi-updater:trommi-updater "$DEPLOY"
   # the updater as root wrote some of this for everyone to change (state.json): only its owner may
   chmod -R go-w "$DEPLOY"
   if [ -d "$ROOT/backups" ]; then chown -R trommi:trommi "$ROOT/backups"; fi
+  # the lock went along with its file: let go of it, the new updater takes it itself
+  exec 8>&-
   ok "moved"
 fi
 
 step "Folders: $ROOT (root), data and backups (trommi), deploy (trommi-updater)"
-systemctl stop trommi-hub-updater.service >/dev/null 2>&1 || true
+if systemctl is-active --quiet trommi-hub-updater.service; then
+  STOPPED=1
+  systemctl stop trommi-hub-updater.service
+fi
 install -d -m 0755 "$ROOT" "$ETC" "$LIB"
 install -d -m 0700 -o trommi -g trommi "$ROOT/data" "$ROOT/backups"
 install -d -m 0755 -o trommi-updater -g trommi-updater "$DEPLOY"
@@ -459,7 +489,8 @@ remote_command() {
   cat <<'COMMAND'
 #!/bin/sh
 # trommi-hub-updater status | deploy hub-v<N>: the updater with the settings its service has, as the updater's own
-# user. Never as root: what lies under /srv/trommi/deploy is the updater's, not root's to run.
+# user. Never as root: what lies under /srv/trommi/deploy is the updater's, not root's to run. It runs in a session
+# of its own, so it has no hold on the terminal of whoever calls this.
 set -a; . /etc/trommi/updater.env; set +a
 program=/srv/trommi/deploy/updater/trommi-hub-updater
 if [ "$(id -u)" != 0 ]; then
@@ -467,11 +498,13 @@ if [ "$(id -u)" != 0 ]; then
   exec "$program" "$@"
 fi
 cd /
-before=$(readlink /srv/trommi/deploy/updater 2>/dev/null)
-runuser -u trommi-updater -- "$program" "$@"
+setsid -w runuser -u trommi-updater -- "$program" "$@" < /dev/null
 code=$?
-# a deploy by hand that brought another updater: the serving one makes room for it
-[ "$before" = "$(readlink /srv/trommi/deploy/updater 2>/dev/null)" ] || systemctl try-restart --no-block trommi-hub-updater.service
+# 10: this deploy went well and put another updater in place; the serving one makes room for it
+if [ "$code" = 10 ]; then
+  systemctl try-restart --no-block trommi-hub-updater.service
+  code=0
+fi
 exit "$code"
 COMMAND
 }

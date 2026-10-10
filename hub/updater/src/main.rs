@@ -99,8 +99,13 @@ fn main() {
             ["deploy", tag] => {
                 let outcome = updater.deploy(tag).await;
                 println!("{:#}", serde_json::to_value(&outcome).expect("an outcome"));
-                // when this brought another updater, the command in /usr/local/bin has the serving one started anew
-                i32::from(!outcome.ok)
+                // 10 tells the command in /usr/local/bin that this deploy put another updater in place: it has
+                // the serving one started anew (this program cannot, and need not, do that itself)
+                match (outcome.ok, updater.replaced()) {
+                    (true, true) => 10,
+                    (true, false) => 0,
+                    (false, _) => 1,
+                }
             }
             _ => {
                 eprintln!("usage: trommi-hub-updater [serve | status | deploy hub-v<N>]");

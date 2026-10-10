@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs before every start of the hub (ExecStartPre of trommi-hub.service), as the hub's user:
+# Runs before every start of the hub (ExecCondition of trommi-hub.service), as the hub's user:
 #   hub-prestart.sh <deploy folder> <data folder> <backups folder> <runtime folder>
 #
 # When the release about to start is another one than the last one that was copied for, it copies the database
@@ -7,20 +7,27 @@
 # and the hub's own keys (*.key) into <backups>/before-<release>-<time>/ and keeps the three newest copies. Not the
 # files people uploaded.
 #
-# A copy that fails stops this start, so a new release is not started on data that could not be copied first (the
-# updater then puts the release before back, for which no copy is due). A second start of the same release goes
-# ahead without a copy and says so: a full disk must not keep the hub down for good. (The note of the failed try
-# lies in the runtime folder, which is memory and not the disk that may be full.)
+# When the copy fails:
+# - a NEWER release than the last one is not started on data that could not be copied first: this ends with 1, which
+#   tells systemd to skip the start (no retry by itself); the updater then puts the release before back.
+#   Asked a second time for the same release, it lets it start without a copy and says so: a full disk must not
+#   keep the hub down for good. (The note of the first try lies in the runtime folder, which is memory.)
+# - the release before coming back (a rollback), or the same one, always starts.
 set -u
 deploy=${1:-/srv/trommi/deploy} data=${2:-/srv/trommi/data} backups=${3:-/srv/trommi/backups} run=${4:-/run/trommi-hub}
 umask 077
 release=$(basename "$(readlink "$deploy/current" 2>/dev/null)" 2>/dev/null)
 number=${release#hub-v}
+# not a release name: nothing to copy for (and nothing of that text is used any further)
 case "$number" in ''|*[!0-9]*) exit 0 ;; esac
 [ "hub-v$number" = "$release" ] || exit 0
-[ "$(cat "$backups/last-release" 2>/dev/null)" = "$release" ] && exit 0
+last=$(cat "$backups/last-release" 2>/dev/null)
+[ "$last" = "$release" ] && exit 0
+last_number=${last#hub-v}
+case "$last_number" in ''|*[!0-9]*) last_number=0 ;; esac
 
-note() { printf '%s\n' "$2" > "$backups/$1.part" && mv -f "$backups/$1.part" "$backups/$1"; }
+# written whole and flushed, or not at all
+note() { printf '%s\n' "$2" > "$backups/$1.part" && sync "$backups/$1.part" && mv -f "$backups/$1.part" "$backups/$1" && sync "$backups"; }
 set -- "$data"/hub.db* "$data"/*.key
 found=''
 for f in "$@"; do [ -f "$f" ] && found=1; done
@@ -36,9 +43,15 @@ for f in "$@"; do
   [ -f "$f" ] || continue
   [ -n "$ok" ] && { cp "$f" "$dir.part/" || ok=''; }
 done
-[ -n "$ok" ] && { sync "$dir.part"/* 2>/dev/null; mv -T "$dir.part" "$dir" || ok=''; }
+[ -n "$ok" ] && { sync "$dir.part"/* "$dir.part" || ok=''; }
+[ -n "$ok" ] && { mv -T "$dir.part" "$dir" || ok=''; }
+[ -n "$ok" ] && { note last-release "$release" || ok=''; }
 if [ -z "$ok" ]; then
-  rm -rf "${dir:?}.part"
+  rm -rf "${dir:?}.part" "${dir:?}"
+  if [ "$number" -lt "$last_number" ]; then
+    echo "hub-prestart: no copy could be made before $release comes back; starting it all the same"
+    exit 0
+  fi
   if [ "$(cat "$run/copy-failed" 2>/dev/null)" = "$release" ]; then
     echo "hub-prestart: the copy before $release failed again; starting without it"
     exit 0
@@ -47,7 +60,6 @@ if [ -z "$ok" ]; then
   echo "hub-prestart: the database could not be copied before $release starts; not starting" >&2
   exit 1
 fi
-note last-release "$release" || true
 rm -f "${run:?}/copy-failed"
 echo "hub-prestart: copied to $dir"
 # the three newest stay; the names end in the time

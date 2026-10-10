@@ -17,10 +17,12 @@ User=trommi
 Group=trommi
 EnvironmentFile=/etc/trommi/hub.env
 EnvironmentFile=-/etc/trommi/hub-secrets.env
-# before another release starts for the first time: a copy of the database and the hub's keys (the hub stands still)
+# before another release starts for the first time: a copy of the database and the hub's keys (the hub stands
+# still). When a newer release would start on data that could not be copied, this says no: the start is skipped,
+# not failed, so systemd does not try again by itself.
 RuntimeDirectory=trommi-hub
 RuntimeDirectoryPreserve=yes
-ExecStartPre=/bin/sh /usr/local/lib/trommi/hub-prestart.sh /srv/trommi/deploy /srv/trommi/data /srv/trommi/backups /run/trommi-hub
+ExecCondition=/bin/sh /usr/local/lib/trommi/hub-prestart.sh /srv/trommi/deploy /srv/trommi/data /srv/trommi/backups /run/trommi-hub
 ExecStart=/usr/bin/env HUB_HOST=127.0.0.1 HUB_PORT=8790 HUB_DATA=/srv/trommi/data /srv/trommi/deploy/current/trommi-hub
 Restart=always
 RestartSec=2
