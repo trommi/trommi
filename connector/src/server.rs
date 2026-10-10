@@ -1184,7 +1184,7 @@ impl Conn {
     fn reload(&self) -> String {
         let disk = disk_version();
         if disk != self.loaded {
-            return format!("This update changes the connector's shell (stream, lease, crypto or transport), so a hot reload is not enough. {RESTART} Tell the human so.");
+            return format!("A new connector is in place; it runs once this session's connector is started again. {RESTART} Tell the human so.");
         }
         format!("The connector is current (version {}).", self.loaded)
     }
@@ -1463,11 +1463,7 @@ impl mcp::Server for Conn {
     fn initialize(&self, params: &Value) -> Value {
         let ins = prompt::instructions();
         let path = self_path().display().to_string();
-        let ins = if ins.contains("node <connector>") {
-            ins.replacen("node <connector>", &path, 1)
-        } else {
-            ins.replacen("<connector>", &path, 1)
-        };
+        let ins = ins.replacen("<connector>", &path, 1);
         let instructions = format!(
             "{}{}",
             if self.heard {

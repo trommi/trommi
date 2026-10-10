@@ -610,6 +610,30 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
         .items
         .iter()
         .any(|(_, _, payload)| payload["text"] == "from the second machine"));
+    // The hub only claimed the removal (it serves a removed device nothing to verify it by): the first
+    // machine stopped, and its state is still there.
+    fn states(dir: &std::path::Path) -> usize {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .map(|path| {
+                if path.extension().is_some_and(|ext| ext == "state") {
+                    usize::from(path.join("state.log").exists() || path.join("state.snap").exists())
+                } else if path.is_dir() {
+                    states(&path)
+                } else {
+                    0
+                }
+            })
+            .sum()
+    }
+    assert_eq!(
+        states(&first_seat.home.path().join("keys")),
+        1,
+        "a removal the hub only claims wipes nothing"
+    );
     first.close().await;
     second.close().await;
 }

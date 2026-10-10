@@ -772,6 +772,11 @@ impl Member {
                 if !me.client().is_some_and(|c| Arc::ptr_eq(&c, &c3)) {
                     break;
                 }
+                // A connector that halted meanwhile hands out nothing more; the command stays noted and is
+                // reported as uncertain when the session is connected again.
+                if me.phase() == "halted" {
+                    continue;
+                }
                 me.host().on_command(cmd.clone()).await;
                 if !cmd.envelope_hash.is_empty() {
                     if let Err(e) = c3.ledger_mark(&cmd.envelope_hash).await {

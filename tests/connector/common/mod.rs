@@ -822,6 +822,25 @@ impl Human {
         .await
     }
 
+    /// Every Commit of the room the hub serves a human device above `after`, as the items of `/v2/changes`.
+    pub async fn commits_after(&self, mut after: u64) -> Vec<Value> {
+        let mut out = Vec::new();
+        loop {
+            let answer = self
+                .hub
+                .get(&format!("/v2/changes?after={after}&limit=500"))
+                .await
+                .expect("changes");
+            let items = answer["items"].as_array().cloned().unwrap_or_default();
+            out.extend(items.into_iter().filter(|item| item["kind"] == "commit"));
+            let next = answer["change"].as_u64().unwrap_or(after);
+            if answer["more"] != json!(true) || next <= after {
+                return out;
+            }
+            after = next;
+        }
+    }
+
     /// Whether the object is a permission request the stand-in saw.
     pub fn has_request(&self, object: &str) -> bool {
         self.requests.contains(object)
