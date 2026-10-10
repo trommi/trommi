@@ -38,7 +38,7 @@ export const steps = SIZES.map(([size, opts]) => [`the deployed app ${size === '
     const violations = await page.violations()
     check(!violations.length && !seen.csp.length, 'no violation of the policy', [...violations, ...seen.csp])
     check(!seen.exceptions.length, 'no uncaught error', seen.exceptions)
-    const elsewhere = counted(seen.requests.filter(r => !r.url.startsWith(app)).map(r => `${r.method} ${new URL(r.url).origin}${new URL(r.url).pathname} → ${r.failed ?? r.status}`))
+    const elsewhere = counted(seen.requests.filter(r => !r.url.startsWith(app) && !/^(data|blob):/.test(r.url)).map(r => `${r.method} ${new URL(r.url).origin}${new URL(r.url).pathname} → ${r.failed ?? r.status}`))
     note(`requests to other places than the app: ${elsewhere.length ? elsewhere.join(' · ') : 'none'}`)
     for (const [kind, list] of [['console error', seen.errors], ['console warning', seen.warnings], ['failed request', seen.network]]) for (const line of counted(list)) note(`${kind}: ${line}`)
     ctx.report.remote[size].seen = { errors: counted(seen.errors), warnings: counted(seen.warnings), network: counted(seen.network), csp: seen.csp, exceptions: seen.exceptions, elsewhere }
