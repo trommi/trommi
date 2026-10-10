@@ -334,6 +334,17 @@ mod db_tests {
             .read(|c| c.query_row("SELECT last FROM welcome_ids", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(again, last);
+        // a counter an earlier build seeded too low (from the rows left) is raised on the next open
+        drop(db);
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute("UPDATE welcome_ids SET last = 1", [])
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let raised: i64 = db
+            .read(|c| c.query_row("SELECT last FROM welcome_ids", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(raised, last);
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
