@@ -123,8 +123,9 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   other way in is removed in the same transaction. The way in used just now: `password: { sealed_copy }` (the
   login hash stays) or `passkey: { credential_id, sealed_copy }`. Or one set anew (after a recovery with the
   Emergency Kit words or the bare code): `password: { auth_key, sealed_copy, kdf }`, or `passkey` as in
-  `POST /v2/account` (a registration; its challenge is the account's or one of `POST /v2/account/passkey/challenge`,
-  which needs no token). A room without an account sends `null`.
+  `POST /v2/account` (a registration on a challenge of `POST /v2/account/passkeys/challenge`, which a human
+  device or, before `finish`, the recovery key asks for: it answers `{ challenge, account, user_handle }`, the
+  id the new passkey carries as its user handle). A room without an account sends `null`.
 - Sign-up is instant: there is no e-mail confirmation and the hub sends no mail (owner, 9 October 2026). Signing
   up with an e-mail that has an account is `account-exists`.
 - **Failed logins slow down whoever guesses wrong and lock nobody** (owner, 9 October 2026). The source is the
@@ -229,7 +230,8 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
     `HUB_LIMIT_FOUND_PER_IP_HOUR`; `HUB_FOUND_TOKEN` where a hub asks for its word). Leaving the e-mail out
     makes a sign-up no cheaper.
   - *What stays impossible:* the hub cannot reach the person; nobody resets anything.
-- **Signing out:** `DELETE /v2/token` ends the token it is sent with, at once, and the device's open streams.
+- **Signing out:** `DELETE /v2/token` ends the token it is sent with, at once, and cuts the device's open
+  streams (what waited on them is not sent).
   Other tokens of the device stay. (Tokens last
   ten minutes anyway; a device that is to be shut out for good is removed from the room.)
 - *Not built, waiting for the owner:* deleting an account or a room.
