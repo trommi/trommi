@@ -740,20 +740,20 @@ export function kitGate(client, { fresh = false } = {}) {
   const kit = freshKit; freshKit = null
   if (!registered()) Promise.resolve(client.setRegisters({ kit: { pending: true } })).then(() => { try { localStorage.removeItem(KIT_MARK) } catch {} }, err => console.warn('kit register:', err?.message ?? err))
   const close = () => { off?.(); gate = null; box.close(); box.remove() }
-  // (saved on another device meanwhile: this one opens too)
-  // (only on the register's own word: while its first write is on the way the register may be missing for a moment)
-  // (and only after this gate saw the register say "pending": a device that catches up a history, as one does after
-  //  a recovery, meets the account's older value of the register before its own new one, and the kit it was just
-  //  shown must not close on that)
-  let seenPending = registered()
+  // A kit made on this page just now (sign-up, recovery) closes only by "Open Trommi": no other device saw it, and a
+  // device catching up meets the account's older values of the register first. A gate opened for a kit that is due
+  // (a reload, another device) closes as soon as the register no longer says so: saved on another device, or by
+  // this one before the reload (its write arriving after the page had read the older value from its cache). A
+  // register this device is still writing, or this browser's mark, keeps it open.
   const watch = () => {
-    // a kit made on this page just now (sign-up, recovery) was seen by no other device: only "Open Trommi" closes it
     if (kit?.words) return
     const r = client.model.human?.raw?.get('kit')
-    if (r?.value?.pending === true) { seenPending = true; return }
-    if (seenPending && r && !r.pending && read(KIT_MARK) !== '1') close()
+    if (r?.value?.pending === true || r?.pending || read(KIT_MARK) === '1') return
+    close()
   }
   const off = (() => { const un = client.on?.('change', watch); return typeof un === 'function' ? un : () => client.off?.('change', watch) })()
+  // (the register's newer value may have come before this gate listened: looked at once now, and again shortly)
+  setTimeout(watch, 0); setTimeout(watch, 1500)
   // st: the account as the hub has it (which ways in it has); null when it could not be read: the password's form then
   const paint = (st, A = null) => { if (gate !== box) return; kitPage(root, {
     kit: { email: (kit ?? st)?.email ?? client.model.room.account?.email ?? null, account: kit?.account ?? st?.account ?? client.model.room.account?.account ?? null, form: kit?.form ?? st?.kit_form ?? 'email' }, words: kit?.words ?? null,
