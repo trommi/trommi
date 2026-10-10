@@ -820,6 +820,19 @@
         ],
         "returns": "Processed"
       },
+      "feed": {
+        "arguments": [
+          {
+            "name": "items",
+            "type": "list<FeedItem>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "Fed"
+      },
       "sendHandover": {
         "arguments": [
           {
@@ -1701,6 +1714,20 @@
       "sender": "bytes",
       "seq": "number",
       "payload": "bytes"
+    },
+    "FeedItem": {
+      "entry": "optional<LogEntry>",
+      "envelope": "optional<ServedEnvelope>"
+    },
+    "FeedOutcome": {
+      "processed": "optional<Processed>",
+      "envelope": "optional<ReceivedEnvelope>"
+    },
+    "Fed": {
+      "outcomes": "list<FeedOutcome>",
+      "refusedAt": "optional<number>",
+      "code": "optional<ErrorCode>",
+      "message": "optional<text>"
     },
     "EnvelopeInfo": {
       "envelopeHash": "bytes",
