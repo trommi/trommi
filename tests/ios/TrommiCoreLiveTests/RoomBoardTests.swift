@@ -187,3 +187,21 @@ final class RoomBoardTests: XCTestCase {
     return out
   }
 }
+
+/// The demo's Scribble Boards (demo/data/fixture.json), merged by the real core without a room: every desk's board
+/// shows its made-up shapes.
+final class DemoBoardTests: XCTestCase {
+  func testTheDemosBoardsAreTheCoresMerge() throws {
+    Core.tools = LiveCore()
+    var repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while repo.path != "/", !FileManager.default.fileExists(atPath: repo.appendingPathComponent("demo/data/fixture.json").path) { repo = repo.deletingLastPathComponent() }
+    let board = try DemoFixture.board(try Data(contentsOf: repo.appendingPathComponent("demo/data/fixture.json")))
+    let boards = board.timelines.keys.filter { $0.hasPrefix("scribble:") }
+    XCTAssertFalse(boards.isEmpty)
+    for key in boards {
+      let st = try Room.demoCanvas(board, String(key.dropFirst("scribble:".count)))
+      XCTAssertFalse(st.shapes.isEmpty, "\(key) shows nothing")
+      for s in st.shapes.values where s.tool == "image" { XCTAssertNotNil(s.attachment?["url"].string, "a demo picture keeps its path") }
+    }
+  }
+}
