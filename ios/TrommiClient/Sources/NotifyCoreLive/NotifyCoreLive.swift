@@ -2,9 +2,11 @@
 // sealed part of one push and one envelope, with keys the app handed over; it holds no device and no group state.
 //
 //   real      version, openPush (the binding's `openApnsPush`)
-//   stubbed   openEnvelope: the binding (core/swift) has no call that decodes an envelope, verifies its signature and
-//             opens its body. Until it has, this throws and the extension shows the hub's fixed text, as for every
-//             other failure.
+//   stubbed   openEnvelope: the binding (core/swift) has no call that opens an envelope without a device. A content
+//             key never leaves the core (`holdsKey` says only whether the device has one), and an envelope is opened
+//             by the device that checks its sender's chain (`receiveEnvelope`), which writes the device's store: the
+//             extension cannot hold that store beside the app. So this throws, and the extension shows what the push
+//             itself carries (room, change, urgency: `openPush`) with the hub's fixed text.
 import Foundation
 import PushNotify
 import TrommiCoreRust
@@ -31,7 +33,7 @@ public final class NotifyCoreLive: NotifyCore {
     }
   }
 
-  // ---- stubbed: not in this build of the core binding -------------------------------------------------------
+  // ---- stubbed: the binding has no stateless way to open an envelope ----------------------------------------
 
   public func openEnvelope(_ bytes: [UInt8], key: (_ group: [UInt8], _ epoch: UInt64) -> [UInt8]?) throws -> NotifyEnvelope {
     throw NotifyCoreError(code: "not-built", message: "openEnvelope(_:key:): not in this build of the core binding")
