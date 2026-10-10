@@ -427,7 +427,7 @@ impl Human {
             .await
             .expect("the Reveal is published");
         // The human compares the six emoji and taps "They match".
-        let (code, request_hash) = (accepted.code.clone(), accepted.request_hash);
+        let (code, request_hash) = (accepted.code, accepted.request_hash);
         self.v(move |v| {
             v.device
                 .invite_confirm(&id, &code, &request_hash, true, now_ms())
