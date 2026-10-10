@@ -32,7 +32,8 @@ extension Room {
    * is a code shown), and takes the one Welcome that answers its Request (`joinInvited`: the Offer's room,
    * committed by the inviter). `onEvent` gets the check code to show as emoji; the human compares it with the other
    * device and confirms there. Between the Reveal and the inviter's Commit the hub answers this device's sign-in
-   * with `not-member`: asked again until the invite runs out.
+   * with `not-member`: asked again after 1 s, 2 s, 4 s, then every 5 s, for five minutes in all (spec/hub-api.md
+   * "A device that was just invited"); after that the invitation was not completed.
    */
   public static func join(link: String, base: URL = Store.defaultBase(), pollMs: UInt64 = 800, timeoutMs: UInt64 = 15 * 60_000, onEvent: (JoinEvent) -> Void) async throws -> Room {
     let tools = Core.tools
@@ -48,7 +49,7 @@ extension Room {
       try await hub.postInviteRequest(l.invite, request: join.request.request, mac: join.request.mac, signature: join.request.signature)
       onEvent(.requested)
       let until = nowMs() + timeoutMs
-      var shown = false
+      var shown = false, shownAt: UInt64 = 0, asked = 0
       while nowMs() < until {
         if !shown {
           do {
@@ -56,15 +57,21 @@ extension Room {
             if let reveal = (r["reveal"] as? String).flatMap({ try? unb64u($0) }), let rs = (r["signature"] as? String).flatMap({ try? unb64u($0) }) {
               // The core checks the Reveal against invite, Request and commitment before one emoji is shown.
               onEvent(.checkCode(checkCodeText(try made.device.joinReveal(SignedReveal(reveal: reveal, signature: rs)).numbers)))
-              shown = true
+              shown = true; shownAt = nowMs()
             }
           }
           catch let e as HubError where e.code == "invite-burned" { throw TrommiError("code-mismatch", "the other device said the emoji do not match: nobody was added") }
           catch let e as HubError where e.code == "invite-used" { throw TrommiError("invite-used", "this invite was answered for another device") }
           catch let e as HubError where e.code == "not-found" || e.isOffline { _ = e }
-        } else if let room = try await takeFirstWelcome(hub: hub, made: made, room: l.room, hubURL: l.hub) {
-          onEvent(.joined)
-          return room
+        } else {
+          if let room = try await takeFirstWelcome(hub: hub, made: made, room: l.room, hubURL: l.hub) {
+            onEvent(.joined)
+            return room
+          }
+          if nowMs() - shownAt >= 5 * 60_000 { throw TrommiError("invite-not-completed", "the invitation was not completed") }
+          try await Task.sleep(nanoseconds: UInt64(asked < 3 ? 1 << asked : 5) * 1_000_000_000)
+          asked += 1
+          continue
         }
         try await Task.sleep(nanoseconds: pollMs * 1_000_000)
       }
