@@ -398,6 +398,38 @@ impl Model {
         gone
     }
 
+    /// Holds a card against the object as the device holds it (9.2.1): its state, and whether the version the
+    /// model shows is the current one. A card the device does not hold is not one.
+    pub fn reconcile_card(&mut self, id: &str, object: Option<&trommi_core::objects::Object>) {
+        let Some(object) = object else {
+            if self.cards.remove(id).is_some() {
+                self.dirty.insert(format!("card/{id}"));
+                self.project();
+            }
+            return;
+        };
+        let Some(card) = self.cards.get_mut(id) else {
+            return;
+        };
+        let state = state_name(object.state);
+        let current = object.current.to_base64url();
+        if card.object_state != state || card.version_hash.as_deref() != Some(current.as_str()) {
+            if card.version_hash.as_deref() != Some(current.as_str()) {
+                // A version this connector could not read is the current one.
+                card.version_hash = Some(current);
+                card.payload = String::new();
+                card.content_unknown = true;
+            }
+            card.object_state = state.into();
+            if state == "open" {
+                card.answer = None;
+                card.closed_how = None;
+            }
+            self.dirty.insert(format!("card/{id}"));
+            self.project();
+        }
+    }
+
     /// The names of the records that changed since the last call.
     pub fn take_dirty(&mut self) -> BTreeSet<String> {
         std::mem::take(&mut self.dirty)
