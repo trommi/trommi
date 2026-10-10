@@ -21,7 +21,7 @@ import { cannot, counted, openProfile, sleep, watch } from './pw.mjs'
 
 export const ownServer = true
 
-async function startHub(publicUrl) {
+export async function startHub(publicUrl) {
   const probe = createServer()
   await new Promise(r => probe.listen(0, '127.0.0.1', r))
   const { port } = probe.address()

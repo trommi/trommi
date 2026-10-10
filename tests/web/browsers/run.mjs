@@ -8,6 +8,7 @@
 //                (--app <URL>, default https://app.trommi.com)
 //     app        app.mjs: the built app against a local hub's binary (TROMMI_HUB_BIN)
 //     --no-sw    the app's service worker blocked in every profile (to tell its effects apart; not the real mode)
+//     streams    streams.mjs: ten reloads with the service worker in control; the streams the hub holds open
 //     all        (default) engine, bindings, private, and app when TROMMI_HUB_BIN is set; not remote
 // Exit 0: every step passed · 1: a step failed · 2: it could not start (the message says what is missing).
 // Needs Playwright in a folder of its own (pw.mjs says how; TROMMI_PLAYWRIGHT, PLAYWRIGHT_BROWSERS_PATH) and the
@@ -23,7 +24,7 @@ const engine = arg('--browser')
 const flags = new Set(['--browser', '--app'])
 if (args.includes('--no-sw')) process.env.TROMMI_BROWSERS_NO_SW = '1'
 const mode = args.find((a, i) => !a.startsWith('--') && !flags.has(args[i - 1])) ?? 'all'
-const MODES = { engine: './engine.mjs', bindings: './bindings.mjs', private: './private.mjs', remote: './remote.mjs', app: './app.mjs' }
+const MODES = { engine: './engine.mjs', bindings: './bindings.mjs', private: './private.mjs', remote: './remote.mjs', app: './app.mjs', streams: './streams.mjs' }
 if (!ENGINES.includes(engine) || (mode !== 'all' && !MODES[mode])) {
   console.error(`usage: node tests/web/browsers/run.mjs --browser ${ENGINES.join('|')} [${Object.keys(MODES).join('|')}|all] [--app <URL>]`)
   process.exit(2)
