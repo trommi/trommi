@@ -22,11 +22,9 @@ final class NotifyCoreLiveTests: XCTestCase {
     XCTAssertThrowsError(try core.openPush(key: [1, 2, 3], sealed: garbage)) { XCTAssertEqual(($0 as? NotifyCoreError)?.code, "bad-format") }
   }
 
-  /// Opening an envelope is not in the binding yet: it refuses by name and returns nothing.
-  func testOpenEnvelopeSaysItIsAStub() {
-    XCTAssertThrowsError(try core.openEnvelope([1, 2, 3]) { _, _ in [UInt8](repeating: 0, count: 32) }) { error in
-      XCTAssertEqual((error as? NotifyCoreError)?.code, "not-built")
-      XCTAssertEqual((error as? NotifyCoreError)?.message, "openEnvelope(_:key:): not in this build of the core binding")
-    }
+  /// A sealed push that opens: not testable here yet. The binding seals no push (the hub does), and spec/vectors
+  /// carries none with its key.
+  func testOpenPushOpensASealedPush() throws {
+    throw XCTSkip("no sealed APNs push to open: the binding seals none and spec/vectors carries none")
   }
 }
