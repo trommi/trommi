@@ -774,7 +774,15 @@ pub fn check_session_commit(
 
     // 5.2.8: a leaf the room state does not allow makes the group stale, and so does a helper session's
     // missing opener. Only the Commit that removes every such leaf and adds that opener is taken, and a join
-    // by 8.4, which leaves the group as stale as it was for that one Commit.
+    // by 8.4, which leaves the group as stale as it was for that one Commit. The repair is that and nothing
+    // beside it: it removes exactly the leaves the room does not allow and adds no human device.
+    let stale_before = staleness(history, room, session, parent, &before.leaves);
+    if stale_before.is_stale() && !facts.external && !founding {
+        let removed: BTreeSet<DeviceId> = facts.removes.iter().copied().collect();
+        let unfit: BTreeSet<DeviceId> = stale_before.disallowed.iter().copied().collect();
+        let adds_human = facts.adds.iter().any(|added| room.is_human(added));
+        refuse(removed != unfit || adds_human, Error::StaleSession)?;
+    }
     let stale = staleness(history, room, session, parent, &leaves);
     if stale.is_stale() && !facts.external {
         let unfit = &stale.disallowed;

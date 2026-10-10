@@ -1044,3 +1044,51 @@ fn a_leaf_is_removed_and_its_key_added_again_in_a_session_group_only() {
     let returning = adding(facts(room, 3, H1, 3), &[H2]);
     assert_eq!(room_verdict(&later, &returning), Err(Error::BadCommit));
 }
+
+#[test]
+fn the_repair_of_a_stale_session_does_nothing_beside() {
+    let history = history();
+    let helper = session(MAIN, HELPER);
+    let group = helper.group_id();
+    let verdict = |before: &SessionBefore, facts: &CommitFacts| {
+        session_verdict(&history, &SESSIONS, before, facts)
+    };
+    // The helper session lacks its opener. The Add of the opener is the repair; with the Remove of a human
+    // device the room allows, or the Add of another human device, it is not.
+    let lacking = before(helper, &[H1, H2, SUB], 2);
+    let repair = adding(facts(group, 4, H1, 2), &[AGENT]);
+    assert_eq!(verdict(&lacking, &repair), Ok(()));
+    let and_a_removal = removing(repair.clone(), &[H2]);
+    assert_eq!(verdict(&lacking, &and_a_removal), Err(Error::StaleSession));
+    let and_a_helper_gone = removing(repair, &[SUB]);
+    assert_eq!(
+        verdict(&lacking, &and_a_helper_gone),
+        Err(Error::StaleSession)
+    );
+    let small = before(helper, &[H1, SUB], 2);
+    let and_a_human = adding(facts(group, 4, H1, 2), &[AGENT, H2]);
+    assert_eq!(verdict(&small, &and_a_human), Err(Error::StaleSession));
+
+    // A main session with a leaf the room no longer allows: the Remove of that leaf, with the agent device
+    // that takes over, and no other Remove with it.
+    let mut later = history.clone();
+    later.record(state(3, &[H1, H2], &[OTHER_AGENT])).unwrap();
+    let main = session(SessionId::ZERO, MAIN);
+    let stale = before(main, &[H1, H2, AGENT], 2);
+    let sessions = Sessions {
+        seat: Parent::NotAMainSession,
+        elsewhere: None,
+        helpers: 0,
+    };
+    let verdict = |facts: &CommitFacts| session_verdict(&later, &sessions, &stale, facts);
+    let takeover = adding(
+        removing(facts(main.group_id(), 4, H1, 3), &[AGENT]),
+        &[OTHER_AGENT],
+    );
+    assert_eq!(verdict(&takeover), Ok(()));
+    let and_more = adding(
+        removing(facts(main.group_id(), 4, H1, 3), &[H2, AGENT]),
+        &[OTHER_AGENT],
+    );
+    assert_eq!(verdict(&and_more), Err(Error::StaleSession));
+}
