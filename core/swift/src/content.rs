@@ -1065,6 +1065,32 @@ pub fn board_reduce(
     Ok(board.expose().to_vec())
 }
 
+record! {
+    /// An envelope's readable part, read without a device.
+    pub struct EnvelopeInfo {
+        /// Its hash, 32 bytes.
+        pub envelope_hash: Vec<u8>,
+        /// Its header.
+        pub header: EnvelopeHeader,
+        /// Whether its body was removed (the pruned form).
+        pub pruned: bool,
+    }
+}
+
+/// Reads the header of an envelope, in full or in pruned form, without a device: for sorting what the hub
+/// serves before it is handed to [`crate::CoreDevice::receive_envelope`]. The sender's signature is verified
+/// (`bad-signature`), which says that the device named as sender wrote it and nothing more: whether that device
+/// was a member, and where the envelope stands in its chain, only a device's own checks tell.
+#[cfg_attr(feature = "uniffi", uniffi::export)]
+pub fn envelope_header(envelope: Vec<u8>) -> Result<EnvelopeInfo, CoreError> {
+    let envelope = envelope::Envelope::decode(&envelope)?;
+    Ok(EnvelopeInfo {
+        envelope_hash: envelope.verify()?.as_bytes().to_vec(),
+        header: EnvelopeHeader::from(&envelope.header),
+        pruned: envelope.is_pruned(),
+    })
+}
+
 /// The Cut of a device as a record.
 pub(crate) fn cut(cut: &trommi_core::mls::profile::Cut) -> Cut {
     Cut::from(cut)

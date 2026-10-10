@@ -52,6 +52,28 @@
       ],
       "returns": "AccountKeys"
     },
+    "kitKeysFor": {
+      "arguments": [
+        {
+          "name": "name",
+          "type": "AccountName"
+        },
+        {
+          "name": "words",
+          "type": "text"
+        }
+      ],
+      "returns": "AccountKeys"
+    },
+    "accountIdParse": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "text"
+    },
     "passkeyWrapKey": {
       "arguments": [
         {
@@ -182,6 +204,15 @@
         }
       ],
       "returns": "bytes"
+    },
+    "envelopeHeader": {
+      "arguments": [
+        {
+          "name": "envelope",
+          "type": "bytes"
+        }
+      ],
+      "returns": "EnvelopeInfo"
     },
     "logFinding": {
       "arguments": [
@@ -1528,6 +1559,10 @@
       "authKey": "bytes",
       "wrapKey": "bytes"
     },
+    "AccountName": {
+      "email": "optional<text>",
+      "id": "optional<text>"
+    },
     "Draft": {
       "kind": "DraftKind",
       "session": "optional<bytes>",
@@ -1666,6 +1701,11 @@
       "sender": "bytes",
       "seq": "number",
       "payload": "bytes"
+    },
+    "EnvelopeInfo": {
+      "envelopeHash": "bytes",
+      "header": "EnvelopeHeader",
+      "pruned": "bool"
     },
     "FileRef": {
       "fileId": "bytes",
