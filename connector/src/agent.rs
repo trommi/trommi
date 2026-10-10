@@ -7,20 +7,13 @@ use crate::error::{Fault, Result};
 use crate::hub::{b64, unb64};
 use crate::model::{urgency_of, URGENCIES};
 use crate::util::{hex, now_ms, unhex};
-use crate::vault::{ContentDevice, Vault};
+use crate::vault::Vault;
 use serde_json::{json, Map, Value};
-use trommi_core::crypto::SystemEntropy;
-use trommi_core::envelope::{Draft, ObjectType, Urgency, SCHEMA_VERSION};
+use trommi_core::crypto::{SecretBytes, SystemEntropy};
+use trommi_core::device::Draft;
+use trommi_core::envelope::{ObjectType, Urgency, SCHEMA_VERSION};
 use trommi_core::files::{self, FileRef, ShareLink};
 use trommi_core::ids::{DeviceId, FileId, GroupId, Hash32, ObjectId, SessionId, TurnId};
-use trommi_core::mls::profile::Cut;
-
-/// A spec with everything its envelope needs: the final payload, and for a later version its predecessor.
-pub(crate) struct Resolved {
-    spec: Spec,
-    payload: Vec<u8>,
-    previous: Option<Hash32>,
-}
 
 fn object_id_of(hex_id: &str) -> Result<ObjectId> {
     unhex(hex_id)
@@ -34,39 +27,78 @@ fn session_id_of(hex_id: &str) -> Result<SessionId> {
         .ok_or_else(|| Fault::plain("not a session id"))
 }
 
-fn with_schema(payload: &str, more: &[(&str, Value)]) -> Result<Vec<u8>> {
+fn with_schema(payload: &str, more: &[(&str, Value)]) -> Result<SecretBytes> {
     let mut object: Map<String, Value> = serde_json::from_str(payload)?;
     object.insert("schema_version".into(), json!(SCHEMA_VERSION));
     for (key, value) in more {
         object.insert((*key).into(), value.clone());
     }
-    Ok(serde_json::to_vec(&object)?)
+    Ok(SecretBytes::new(serde_json::to_vec(&object)?))
 }
 
-/// Fills in what only the model knows: for a later version, the version it follows and its number.
-pub(crate) fn resolve(core: &Core, _session: &str, spec: &Spec) -> Result<Resolved> {
-    let (payload, previous) = match spec {
-        Spec::SessionChat { payload }
-        | Spec::CardChat { payload, .. }
-        | Spec::Request { payload, .. } => (with_schema(payload, &[])?, None),
-        Spec::Register { .. } => (Vec::new(), None),
-        Spec::First { payload, .. } => (
-            with_schema(
-                payload,
-                &[
-                    ("object_version", json!(1)),
-                    ("previous_version_hash", json!(Hash32::ZERO.to_base64url())),
-                ],
-            )?,
-            None,
-        ),
+/// The device's draft for what an envelope is to be: the payload with its schema version, and for a later
+/// version the version it follows and its number, which the model knows.
+pub(crate) fn draft(core: &Core, group: &GroupId, spec: &Spec) -> Result<Draft> {
+    let session = group
+        .session_id()
+        .ok_or_else(|| Fault::new("forbidden", "an agent writes into session groups only"))?;
+    let urgency = |byte: u8| Urgency::from_byte(byte).unwrap_or(Urgency::Normal);
+    let first = |payload: &str| {
+        with_schema(
+            payload,
+            &[
+                ("object_version", json!(1)),
+                ("previous_version_hash", json!(Hash32::ZERO.to_base64url())),
+            ],
+        )
+    };
+    Ok(match spec {
+        Spec::SessionChat { payload } => Draft::SessionChat {
+            session,
+            payload: with_schema(payload, &[])?,
+        },
+        Spec::CardChat { card, payload } => Draft::CardChat {
+            session,
+            card: object_id_of(card)?,
+            payload: with_schema(payload, &[])?,
+        },
+        Spec::Register { name, value } => Draft::Register {
+            group: *group,
+            name: name.clone(),
+            value: value
+                .as_ref()
+                .map(|value| SecretBytes::new(value.clone().into_bytes())),
+        },
+        Spec::First {
+            object_type,
+            urgency: level,
+            push,
+            payload,
+        } => {
+            if *object_type == ObjectType::Artifact.byte() {
+                Draft::ArtifactFirst {
+                    session,
+                    payload: first(payload)?,
+                }
+            } else {
+                Draft::CardFirst {
+                    session,
+                    urgency: urgency(*level),
+                    push: *push,
+                    payload: first(payload)?,
+                }
+            }
+        }
         Spec::Later {
             object,
             object_type,
+            closed,
+            urgency: level,
+            push,
             payload,
-            ..
         } => {
-            let current = if *object_type == ObjectType::Artifact.byte() {
+            let artifact = *object_type == ObjectType::Artifact.byte();
+            let current = if artifact {
                 core.model
                     .published
                     .get(object)
@@ -82,98 +114,43 @@ pub(crate) fn resolve(core: &Core, _session: &str, spec: &Spec) -> Result<Resolv
                     "{object} is not on the board yet: the hub has not confirmed it"
                 ))
             })?;
-            let previous = Hash32::from_base64url(&hash)?;
-            (
-                with_schema(
-                    payload,
-                    &[
-                        ("object_version", json!(version + 1)),
-                        ("previous_version_hash", json!(hash)),
-                    ],
-                )?,
-                Some(previous),
-            )
-        }
-    };
-    Ok(Resolved {
-        spec: spec.clone(),
-        payload,
-        previous,
-    })
-}
-
-/// The core's draft for a resolved spec.
-pub(crate) fn draft(
-    vault: &mut Vault,
-    group: &GroupId,
-    resolved: &Resolved,
-    _seat: Option<&str>,
-    files: &[String],
-) -> Result<Draft> {
-    let session = group
-        .session_id()
-        .ok_or_else(|| Fault::new("forbidden", "not a session group"))?;
-    let urgency = |byte: u8| Urgency::from_byte(byte).unwrap_or(Urgency::Normal);
-    let object_type = |byte: u8| ObjectType::from_byte(byte);
-    let draft = match &resolved.spec {
-        Spec::SessionChat { .. } => Draft::session_chat(session, DeviceId::ZERO, &resolved.payload),
-        Spec::CardChat { card, .. } => {
-            Draft::card_chat(object_id_of(card)?, DeviceId::ZERO, &resolved.payload)
-        }
-        Spec::Register { name, value } => vault.register_draft(group, name, value.as_deref())?,
-        Spec::First {
-            object_type: kind,
-            urgency: level,
-            push,
-            ..
-        } => {
-            let draft =
-                Draft::first_version(object_type(*kind)?, urgency(*level), &resolved.payload)?;
-            if *push {
-                draft.with_push()
-            } else {
-                draft
-            }
-        }
-        Spec::Later {
-            object,
-            object_type: kind,
-            closed,
-            urgency: level,
-            push,
-            ..
-        } => {
-            let previous = resolved
-                .previous
-                .ok_or_else(|| Fault::new("internal", "a later version without its predecessor"))?;
-            let draft = Draft::later_version(
-                object_id_of(object)?,
-                object_type(*kind)?,
-                *closed,
-                urgency(*level),
-                previous,
-                &resolved.payload,
+            let payload = with_schema(
+                payload,
+                &[
+                    ("object_version", json!(version + 1)),
+                    ("previous_version_hash", json!(hash)),
+                ],
             )?;
-            if *push {
-                draft.with_push()
+            let object_id = object_id_of(object)?;
+            if artifact {
+                Draft::ArtifactVersion {
+                    session,
+                    object_id,
+                    closed: *closed,
+                    payload,
+                }
             } else {
-                draft
+                Draft::CardVersion {
+                    session,
+                    object_id,
+                    closed: *closed,
+                    urgency: urgency(*level),
+                    push: *push,
+                    payload,
+                }
             }
         }
         Spec::Request {
             urgency: level,
             expires_at,
-            ..
-        } => Draft::request(urgency(*level), *expires_at, &resolved.payload).with_push(),
-    };
-    let ids: Vec<FileId> = files
-        .iter()
-        .filter_map(|id| FileId::from_base64url(id).ok())
-        .collect();
-    Ok(if ids.is_empty() {
-        draft
-    } else {
-        draft.with_files(ids)
+            payload,
+        } => Draft::PermissionRequest {
+            session,
+            urgency: urgency(*level),
+            expires_at: *expires_at,
+            push: true,
+            payload: with_schema(payload, &[])?,
+        },
     })
 }
 
@@ -451,9 +428,20 @@ impl Client {
         let lookup = name.clone();
         let held = self
             .vault
-            .call(move |v: &mut Vault| v.register_of(&group, &lookup, &me))
+            .call(move |v: &mut Vault| {
+                v.device
+                    .register_of(&group, &lookup, &me)
+                    .ok()
+                    .flatten()
+                    .map(|value| String::from_utf8_lossy(value.expose()).into_owned())
+            })
             .await?;
-        if held.as_deref() == Some(info.to_string().as_str()) {
+        // Compared as values: the stored text may order its fields otherwise.
+        let same = held
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .is_some_and(|value| value == *info);
+        if same {
             return Ok(());
         }
         let mut values = Map::new();
@@ -557,8 +545,8 @@ impl Client {
                     Ok((session, id))
                 })
                 .await??;
-            core.commit()?;
-            self.pump(&mut core).await?;
+            // The founding is merged where the log shows its first Commit.
+            self.post_and_follow(&mut core).await?;
             if let Some(fault) = Self::take_refusal(&mut core, outbox_id) {
                 return Err(fault);
             }
@@ -593,8 +581,7 @@ impl Client {
             .vault
             .call(move |v: &mut Vault| v.device.add_to_session(&group, &device, &key_package, now))
             .await??;
-        core.commit()?;
-        self.pump(&mut core).await?;
+        self.post_and_follow(&mut core).await?;
         match Self::take_refusal(&mut core, outbox_id) {
             Some(fault) => Err(fault),
             None => Ok(()),
@@ -615,32 +602,24 @@ impl Client {
         self.active(&core)?;
         let group = core.group_of(Some(session_id))?;
         let now = now_ms();
-        let (outbox_id, cut) = self
+        let outbox_id = self
             .vault
-            .call(move |v: &mut Vault| -> Result<(u64, Cut)> {
-                let head = v.head_of(&group, &old);
-                let cut = Cut {
-                    device: old,
-                    seq: head.seq,
-                    hash: head.hash,
-                };
-                let id = v
-                    .device
-                    .readmit_helper(&group, cut, &device, &key_package, now)?;
-                Ok((id, cut))
+            .call(move |v: &mut Vault| -> Result<u64> {
+                // The Cut is the old device's last envelope this device accepted (9.0.10).
+                let cut = v.device.cut_of(&group, &old)?;
+                Ok(v.device
+                    .readmit_helper(&group, cut, &device, &key_package, now)?)
             })
             .await??;
-        Self::remember_cuts(&core, outbox_id, &[cut]);
-        core.commit()?;
-        self.pump(&mut core).await?;
+        // The Commit is merged where the log shows it; the handover follows it.
+        self.post_and_follow(&mut core).await?;
         if let Some(fault) = Self::take_refusal(&mut core, outbox_id) {
             return Err(fault);
         }
         self.vault
             .call(move |v: &mut Vault| v.device.send_handover(&group, &device))
             .await??;
-        core.commit()?;
-        self.pump(&mut core).await
+        self.post_and_follow(&mut core).await
     }
 
     /// One step of the running turn's work trail (7.3): an MLS message in the session's group, numbered from 1
