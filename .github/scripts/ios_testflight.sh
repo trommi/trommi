@@ -11,7 +11,8 @@
 # arrive with its line breaks turned into spaces), APPLE_ASC_KEY_ID, APPLE_ASC_ISSUER_ID, APPLE_TEAM_ID.
 # From the workflow: RUNNER_TEMP, COMMIT (the commit that is built), XCODEGEN (the command), and optionally
 # ITS_NON_EXEMPT_ENCRYPTION (YES or NO, default YES), ITS_EXPORT_COMPLIANCE_CODE (the code of the app's export
-# compliance documentation in App Store Connect; with YES the export needs it once that documentation exists),
+# compliance documentation in App Store Connect; with YES the export needs it once that documentation exists; when
+# empty, the code of the APPROVED documentation is read from App Store Connect, `asc.py export-code`),
 # TESTFLIGHT_TESTER (an address kept in the group), NOTES.
 # Nothing here prints a value of the first four. The key lies in one file under RUNNER_TEMP, mode 600, removed when
 # the script ends (and once more by the workflow, whatever happened).
@@ -66,6 +67,11 @@ echo "building $BUNDLE_ID $version ($build) from $short"
 its=YES
 [ "${ITS_NON_EXEMPT_ENCRYPTION:-YES}" = NO ] && its=NO
 code=${ITS_EXPORT_COMPLIANCE_CODE:-}
+if [ -z "$code" ] && [ "$its" = YES ]; then
+  # Not set by the repository variable: the code of the app's APPROVED documentation, read from App Store Connect
+  # (read only; the step fails listing the declarations' states if none is approved).
+  code=$(asc export-code)
+fi
 if [ -n "$code" ]; then
   # written into the app's Info.plist of this checkout only; App Store Connect matches it against the documentation
   [ "$its" = YES ] || { echo "::error::ITS_EXPORT_COMPLIANCE_CODE is set but ITS_NON_EXEMPT_ENCRYPTION is NO"; exit 1; }
