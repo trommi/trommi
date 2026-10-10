@@ -68,6 +68,8 @@ class Hub {
       }
       await device.call('outboxAccepted', entry.id, change)
     }
+    // What the hub accepted comes back in its log: a device merges its own Commits there, at their place.
+    await this.feed(device, null)
   }
 
   /** A group as the hub serves it to a device that verifies it from its founding. */
@@ -88,7 +90,11 @@ class Hub {
   }
 
   /** Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did. */
-  async sync(world, device, room) {
+  sync(world, device, room) { return this.feed(device, room) }
+
+  /** The log after the device's cursor, strictly by change number; with `room`, also the Welcomes at their places. */
+  async feed(device, room) {
+    const world = this.world
     const done = []
     const envelopes = []
     const cursor = await device.call('cursor')
@@ -103,7 +109,7 @@ class Hub {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
         if (world.core.logFinding(error.code) !== 'duplicate') throw error
       }
-      for (const welcome of this.welcomes.filter(welcome => welcome.change === entry.change)) {
+      for (const welcome of room ? this.welcomes.filter(welcome => welcome.change === entry.change) : []) {
         // A Welcome for another device does not open here: that is no finding.
         await device.call('joinWelcome', welcome.bytes, room, null, Date.now()).catch(() => {})
       }
@@ -116,6 +122,7 @@ class Hub {
 export async function runScenario(scenario, world) {
   const { core } = world
   const hub = new Hub()
+  hub.world = world
   const devices = new Map()    // name -> handle
   const groups = new Map()     // name -> group id
   const remembered = new Map() // device name -> its outbox, as remembered
@@ -145,13 +152,18 @@ export async function runScenario(scenario, world) {
     /** One invite from its opening to its Commit in the inviter's outbox. Both sides must show the same six emoji. */
     async invite(step) {
       const [inviter, newcomer] = [device(step.by), device(step.device)]
-      const opened = await inviter.call('inviteOpen', step.role, null, 'https://app.example', 'https://hub.example', Date.now())
+      const taken = step.session ? group(step.session).subarray(32) : null
+      const opened = await inviter.call('inviteOpen', step.role, taken, 'https://app.example', 'https://hub.example', Date.now())
       check(same(core.inviteLinkParse(opened.link).inviteId, opened.inviteId) && core.hubAddress('https://hub.example') === 'https://hub.example', 'the link names another invite')
       const asked = await newcomer.call('joinRequest', opened.link, { offer: opened.offer, signature: opened.signature }, Date.now())
       check(asked.role === step.role && same(asked.inviter, await inviter.call('id')), 'the Request is for another invite')
       const accepted = await inviter.call('inviteAccept', opened.inviteId, { request: asked.request, mac: asked.mac, signature: asked.signature }, Date.now())
       const shown = await newcomer.call('joinReveal', { reveal: accepted.reveal, signature: accepted.signature })
       check(same(shown.numbers, accepted.code.numbers) && shown.emoji.length === 6 && shown.emoji.join() === accepted.code.emoji.join() && shown.words.join() === accepted.code.words.join(), 'the two sides show different codes')
+      // The newcomer signs in at the invite's hub before it is let in: for the Welcome, or the GroupInfo, it must fetch.
+      const signed = await newcomer.call('hubSignIn', 'https://hub.example', new Uint8Array(32).fill(4))
+      check(signed.signature.length === 64, 'a joining device cannot sign in')
+      check(await refusal(() => newcomer.call('hubSignIn', 'https://other.example', new Uint8Array(32).fill(4))) === 'bad-invite', 'a joining device signed in at another hub')
       // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
       if (step.role === 'agent') await newcomer.call('joinObserve', hub.roomInfos[asked.roomEpoch])
       const confirmed = await inviter.call('inviteConfirm', opened.inviteId, accepted.code.numbers, accepted.requestHash, true, Date.now())
@@ -365,6 +377,41 @@ export async function runScenario(scenario, world) {
       const built = await device(step.device).call('recover', code, served, cuts, bytes('the account\'s sealed copies'), Date.now())
       check(built.unverified.length === 0 && built.outbox.length >= 2, 'the recovery was not built whole')
       code = plan.newCode
+    },
+    /** A helper session under a main session: the helper device follows the room and the main session first. */
+    async found_helper(step) {
+      const [opener, helper] = [device(step.by), device(step.helper)]
+      await helper.call('observeRoom', hub.roomInfos.at(-1), null)
+      await helper.call('observeSession', hub.sessions.get(hex(group(step.parent))).current)
+      const keyPackages = []
+      for (const name of step.humans) keyPackages.push(await device(name).call('keyPackage', Date.now()))
+      keyPackages.push(await helper.call('keyPackage', Date.now()))
+      const session = await opener.call('foundHelper', group(step.parent).subarray(32), keyPackages, Date.now())
+      groups.set(step.name, core.sessionGroupId(room, session))
+      await hub.post(opener)
+    },
+    /** A session is handed to a new agent device by invite, and with it every helper session under it. */
+    async take_over(step) {
+      const [human, agent] = [device(step.by), device(step.device)]
+      await run.invite({ by: step.by, device: step.device, role: 'agent', session: step.session })
+      await hub.post(human)
+      const did = []
+      for (let round = 0; round < 16; round++) {
+        const steps = await human.call('inviteSteps')
+        if (steps.length === 0) break
+        const next = steps.find(next => next.kind !== 'wait') ?? steps[0]
+        did.push(next.kind === 'takeOver' && next.keyPackage === null ? 'takeOverHelper' : next.kind)
+        if (next.kind === 'takeOver') {
+          // The main session's step carries the KeyPackage of the confirmed Request; a helper session's asks for a fresh one.
+          const keyPackage = next.keyPackage ?? await agent.call('keyPackage', Date.now())
+          await human.call('cleanSession', next.group, next.cuts, { device: next.device, keyPackage }, Date.now())
+        } else if (next.kind === 'handover') await human.call('inviteHandover', next.inviteId)
+        else if (next.kind === 'checkHelpers') await human.call('inviteChecked', next.inviteId, step.helpers.map(group))
+        else if (next.kind === 'commit') await human.call('inviteRecommit', next.inviteId, Date.now())
+        await hub.post(human)
+      }
+      check((await human.call('inviteSteps')).length === 0, `the takeover did not finish: ${did.join(' ')}`)
+      for (const kind of ['takeOver', 'takeOverHelper', 'handover', 'checkHelpers']) check(did.includes(kind), `the takeover had no step ${kind}: ${did.join(' ')}`)
     },
     async holds_recovery_mac(step) { check(await device(step.device).call('holdsRecoveryMac'), 'the device does not hold the key of the code in force') },
     async no_key(step) {
