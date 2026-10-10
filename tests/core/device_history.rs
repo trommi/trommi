@@ -1172,9 +1172,6 @@ fn a_frontier_that_the_chain_does_not_lead_to_is_a_finding() {
 
 #[test]
 fn a_recovery_cuts_every_chain_where_it_verified_it() {
-    use trommi_core::device::ServedEnvelope;
-    use trommi_core::recovery::check_room;
-
     // Two human devices and a member whose key the test holds write in the room; then every device is
     // lost.
     let (mut a, mut b) = (new_device(), new_device());
@@ -1220,31 +1217,7 @@ fn a_recovery_cuts_every_chain_where_it_verified_it() {
     let keys = test_keys();
     let stored = trommi_tests::served_chains(&hub);
     let recover = |hub: &mut Hub, device: &mut TestDevice, served: &[(Vec<u8>, u64)]| {
-        hub.open_recovery(&device.id()).unwrap();
-        let fetched = trommi_tests::fetch(hub, &keys);
-        let replacement = fetched.served(|served| {
-            let checked = check_room(&keys, served)?;
-            keys.replace(
-                &mut SystemEntropy,
-                &room.room_id(),
-                checked.observer.history().unwrap(),
-            )
-        })?;
-        let chains: Vec<ServedEnvelope<'_>> = served
-            .iter()
-            .map(|(bytes, change)| ServedEnvelope {
-                bytes,
-                change: *change,
-                void_code: None,
-            })
-            .collect();
-        let built = fetched.served(|served| {
-            device.recover(&keys, served, &replacement, &chains, b"copies", now())
-        });
-        if built.is_err() {
-            hub.drop_recovery();
-        }
-        built.map(|_| ())
+        recover_with(hub, device, &keys, &room, served).map(|_| ())
     };
     let honest: Vec<(Vec<u8>, u64)> = stored
         .iter()
@@ -1271,8 +1244,11 @@ fn a_recovery_cuts_every_chain_where_it_verified_it() {
         Err(Error::Equivocation)
     );
     let mut swapped = honest.clone();
+    // The hub says the second came first. In which order the caller hands them in decides nothing.
     let (first, second) = (at(one.hash().unwrap()), at(two.hash().unwrap()));
-    swapped.swap(first, second);
+    let (earlier, later) = (swapped[first].1, swapped[second].1);
+    swapped[first].1 = later;
+    swapped[second].1 = earlier;
     assert_eq!(recover(&mut hub, &mut device, &swapped), Err(Error::Gap));
     assert!(device.outbox().is_empty() && device.room().is_none());
 
@@ -1742,8 +1718,7 @@ fn a_revoked_key_has_no_role_in_an_epoch_that_kept_its_leaf() {
 
 #[test]
 fn a_recovery_served_a_chain_cut_short_cuts_it_where_it_verified_it() {
-    use trommi_core::device::ServedEnvelope;
-    use trommi_core::recovery::{check_room, Replacement};
+    use trommi_core::recovery::Replacement;
 
     let (mut a, mut b) = (new_device(), new_device());
     let (mut hub, room) = found_room(&mut a);
@@ -1781,31 +1756,7 @@ fn a_recovery_served_a_chain_cut_short_cuts_it_where_it_verified_it() {
     let keys = test_keys();
     let stored = trommi_tests::served_chains(&hub);
     let recover = |hub: &mut Hub, device: &mut TestDevice, served: &[(Vec<u8>, u64)]| {
-        hub.open_recovery(&device.id()).unwrap();
-        let fetched = trommi_tests::fetch(hub, &keys);
-        let replacement = fetched.served(|served| {
-            let checked = check_room(&keys, served)?;
-            keys.replace(
-                &mut SystemEntropy,
-                &room.room_id(),
-                checked.observer.history().unwrap(),
-            )
-        })?;
-        let chains: Vec<ServedEnvelope<'_>> = served
-            .iter()
-            .map(|(bytes, change)| ServedEnvelope {
-                bytes,
-                change: *change,
-                void_code: None,
-            })
-            .collect();
-        let built = fetched.served(|served| {
-            device.recover(&keys, served, &replacement, &chains, b"copies", now())
-        });
-        if built.is_err() {
-            hub.drop_recovery();
-        }
-        built.map(|_| replacement)
+        recover_with(hub, device, &keys, &room, served)
     };
     let honest: Vec<(Vec<u8>, u64)> = stored
         .iter()
@@ -1876,4 +1827,103 @@ fn a_recovery_served_a_chain_cut_short_cuts_it_where_it_verified_it() {
         hub.post(&pen.id(), &trommi_tests::forge_content::posting(&next)),
         Err(Error::RemovedSender)
     );
+}
+
+/// The whole recovery of 8.7 by `device` with the code `keys`, against the room as the hub holds it and
+/// the chains `served`: envelopes in pruned form, each with its change number. Returns the new code's keys.
+fn recover_with(
+    hub: &mut Hub,
+    device: &mut TestDevice,
+    keys: &RecoveryKeys,
+    room: &GroupId,
+    served: &[(Vec<u8>, u64)],
+) -> Result<trommi_core::recovery::Replacement, Error> {
+    use trommi_core::device::ServedEnvelope;
+    use trommi_core::recovery::check_room;
+
+    hub.open_recovery(&device.id()).unwrap();
+    let fetched = trommi_tests::fetch(hub, keys);
+    let replacement = fetched.served(|served| {
+        let checked = check_room(keys, served)?;
+        keys.replace(
+            &mut SystemEntropy,
+            &room.room_id(),
+            checked.observer.history().unwrap(),
+        )
+    })?;
+    let chains: Vec<ServedEnvelope<'_>> = served
+        .iter()
+        .map(|(bytes, change)| ServedEnvelope {
+            bytes,
+            change: *change,
+            void_code: None,
+        })
+        .collect();
+    let built = fetched
+        .served(|served| device.recover(keys, served, &replacement, &chains, b"copies", now()));
+    if built.is_err() {
+        hub.drop_recovery();
+    }
+    built.map(|_| replacement)
+}
+
+#[test]
+fn a_recovery_reads_the_chains_in_the_hubs_order_however_they_are_handed_in() {
+    // One lost device wrote a Note, the other a version that builds on it.
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let first = write(&mut hub, &mut a, &note(1));
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let id = first.object_id.unwrap();
+    let version = Draft::NoteVersion {
+        object_id: id,
+        closed: false,
+        payload: json(&format!(
+            r#"{{"text":"n","lamport":2,"previous_version_hash":"{}"}}"#,
+            first.envelope_hash.to_base64url()
+        )),
+    };
+    let second = write(&mut hub, &mut b, &version);
+    sync_all(&hub, &mut a);
+    assert_eq!(
+        a.object(&room, &id).unwrap().unwrap().current,
+        second.envelope_hash
+    );
+    let (writer, follower) = (a.id(), b.id());
+    drop((a, b));
+
+    let keys = test_keys();
+    let stored = trommi_tests::served_chains(&hub);
+    let of = |sender: DeviceId| -> Vec<(Vec<u8>, u64)> {
+        stored
+            .iter()
+            .filter(|stored| stored.header.sender == sender)
+            .map(|stored| (stored.pruned(), stored.change))
+            .collect()
+    };
+    let mut device = new_device();
+    // Two different envelopes under one change number: the hub gives every envelope its own.
+    let mut twice = [of(writer), of(follower)].concat();
+    twice[1].1 = twice[0].1;
+    assert_eq!(
+        recover_with(&mut hub, &mut device, &keys, &room, &twice).err(),
+        Some(Error::BadFormat)
+    );
+    // Device after device, the follower's chain first, and one envelope handed twice.
+    let mut by_device = [of(follower), of(writer)].concat();
+    by_device.push(by_device[0].clone());
+    recover_with(&mut hub, &mut device, &keys, &room, &by_device).unwrap();
+    post_ok(&mut hub, &mut device);
+    // The version found the Note it builds on: both were read where the hub's order has them.
+    assert_eq!(
+        device.object(&room, &id).unwrap().unwrap().current,
+        second.envelope_hash
+    );
+    for sender in [writer, follower] {
+        assert_eq!(device.chain_head(&room, &sender).unwrap().seq, 1);
+    }
 }
