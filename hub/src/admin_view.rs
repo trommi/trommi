@@ -55,7 +55,7 @@ pub const TABLES: &[(&str, &str, &str, &str)] = &[
     ("Content index", "chats", "timeline, item count (index)", ""),
     ("Content index", "boards", "timeline, item count (index)", ""),
     ("Content index", "registers", "group, writer, register id (index)", ""),
-    ("Content index", "board_frontiers", "board, device, numbers per writer, kept file ids, time (10.9)", ""),
+    ("Content index", "board_frontiers", "board, device, declared or bound to a snapshot value, numbers per writer, kept file ids, time (10.9)", ""),
     ("Files and invites", "files", "file id, uploader, group, object, size, times", "the bytes, beside the database"),
     ("Files and invites", "shares", "share id, file, hash of the secret, expiry", ""),
     ("Files and invites", "invites", "the signed Offer with its MAC, expiry, use", ""),

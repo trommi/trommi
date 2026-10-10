@@ -1313,15 +1313,17 @@ export class Hub {
     return envelopePage(await this.get(`/v1/boards/${own(board, 'board', 16)}`, { after_change: after, limit }, CAP_LIST), limit, after, 1)
   }
   /**
-   * `POST /v1/boards/{board}/frontier` (10.9): after this device's snapshot register was taken, what the snapshot covers
-   * (`frontier`: per writer `[seq, hash]`, wire ids) and the files its shapes still name. The hub prunes the board's
-   * items behind the frontiers of every human device. Returns how many item bodies it pruned now.
+   * `POST /v1/boards/{board}/frontier` (10.9): what this device's snapshot covers (`frontier`: per writer `[seq, hash]`,
+   * wire ids) and the files its shapes still name. Without `snapshot` before the register is written (it holds
+   * pruning back); with it, `[seq, hash]` of the snapshot register value the hub took (the board is pruned behind
+   * the frontiers of every device). Returns how many item bodies the hub pruned now.
    */
-  async postBoardFrontier(board: Uint8Array, frontier: Record<string, [number, Uint8Array]>, files: Uint8Array[]): Promise<{ pruned: number }> {
-    const json = {
+  async postBoardFrontier(board: Uint8Array, frontier: Record<string, [number, Uint8Array]>, files: Uint8Array[], snapshot?: [number, Uint8Array]): Promise<{ pruned: number }> {
+    const json: Record<string, unknown> = {
       frontier: Object.fromEntries(Object.entries(frontier).map(([w, [seq, hash]]) => [own(unb64u(w), 'writer', 32), [ownInt(seq, 'seq'), own(hash, 'hash', 32)]])),
       files: files.map(f => own(f, 'file_id', 16)),
     }
+    if (snapshot) json['snapshot'] = [ownInt(snapshot[0], 'seq'), own(snapshot[1], 'hash', 32)]
     const o = obj(await this.send('POST', `/v1/boards/${own(board, 'board', 16)}/frontier`, json), 'a frontier answer')
     return { pruned: int(o.pruned, 'pruned') }
   }

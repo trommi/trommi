@@ -23,7 +23,7 @@
 // is dropped, and the model is built again from the device's groups, the hub's Desk and all of the room's changes.
 //
 // Nothing here logs. A file key, a share link's secret and a recovery code never go into an error's text.
-import { attachmentRef, encodeBodyBytes, encodePiece, encodeRegister, fileIdsOf, fileRefOf, UPDATE_MESSAGE } from './codec.ts'
+import { attachmentFromWire, attachmentRef, encodeBodyBytes, encodePiece, encodeRegister, fileIdsOf, fileRefOf, UPDATE_MESSAGE } from './codec.ts'
 import type { Fields } from './codec.ts'
 import type { Core, Device, Draft, FileRef, OutboxEntry, ReceivedEnvelope, Sealed } from './core-api.ts'
 import { Engine } from './engine.ts'
@@ -136,6 +136,26 @@ export interface ClientOptions {
 }
 /** An invite as this device keeps it beside what the model shows. */
 interface InviteKept { public: Invite; checked_at?: number; done?: boolean; code?: number[]; request_hash?: string; committed?: boolean }
+
+/** A board's id from its timeline id (`desk/<hex>`). */
+const boardOf = (timeline_id: string): Uint8Array => unhex(timeline_id.replace(/^desk\//, ''))
+/** A snapshot frontier in wire ids, or null when a head has no hash yet. */
+function frontierWire(frontier: Record<string, [number, string | null]>): Record<string, [number, Uint8Array]> | null {
+  const wire: Record<string, [number, Uint8Array]> = {}
+  for (const [writer, [seq, hash]] of Object.entries(frontier)) {
+    if (!hash) return null
+    wire[b64u(unhex(writer))] = [seq, unhex(hash)]
+  }
+  return wire
+}
+/** The files a snapshot's shapes (wire form: `attachment.file_id`, base64url) name: its pictures and posters. */
+function snapshotFiles(shapes: readonly Record<string, unknown>[]): Uint8Array[] {
+  const strokes = shapes.flatMap(s => {
+    if (!s || typeof s !== 'object' || !s['attachment']) return []
+    try { return [{ attachment: attachmentFromWire(s['attachment']) }] } catch { return [] }
+  })
+  return fileIdsOf('board_item', { strokes })
+}
 
 export class Client {
   model: Model
@@ -578,27 +598,36 @@ export class Client {
   }
 
   /**
+   * Before this device writes a board's snapshot register: tells the hub what the snapshot will cover and which
+   * files its shapes name (10.9), so that pruning is held back for it from now on. Returns false when the frontier
+   * cannot be declared (a head without its hash yet, the hub refused): then no snapshot is written.
+   * `frontier` in the model's ids (`{ <writer hex>: [seq, hash hex] }`), `shapes` the snapshot's (wire form).
+   */
+  async declareBoardFrontier(timeline_id: string, frontier: Record<string, [number, string | null]>, shapes: readonly Record<string, unknown>[]): Promise<boolean> {
+    this.needHuman()
+    const wire = frontierWire(frontier)
+    if (!wire) return false
+    await this.hub.postBoardFrontier(boardOf(timeline_id), wire, snapshotFiles(shapes))
+    return true
+  }
+
+  /**
    * After this device wrote a board's snapshot register (`sent`, from `setRegisters`): once the hub took that
-   * envelope, tells it what the snapshot covers and which files its shapes still name (10.9), so that it prunes the
-   * board's items behind every device's snapshot. `frontier` in the model's ids (`{ <writer hex>: [seq, hash hex] }`),
-   * `shapes` the snapshot's. Returns how many item bodies the hub pruned, or null when the register was refused or
-   * not sent within a minute (the next snapshot posts again).
+   * envelope, binds the declared frontier to it (10.9), and the hub prunes the board's items behind every device's
+   * snapshot. Returns how many item bodies the hub pruned, or null when the register was refused or not sent within
+   * a minute (the declaration keeps holding pruning back; the next snapshot binds again).
    */
   async postBoardFrontier(timeline_id: string, sent: Sent, frontier: Record<string, [number, string | null]>, shapes: readonly Record<string, unknown>[]): Promise<number | null> {
     this.needHuman()
-    const board = unhex(timeline_id.replace(/^desk\//, ''))
     const item = this.model.outbox.find(i => i.local_id === sent.local_id)
     for (const until = this.now() + 60_000; item && this.model.outbox.includes(item);) {
       if (this.now() > until) return null
       await new Promise(r => setTimeout(r, 250))
     }
     if (item?.outbox_state === 'failed') return null
-    const wire: Record<string, [number, Uint8Array]> = {}
-    for (const [writer, [seq, hash]] of Object.entries(frontier)) {
-      if (!hash) return null
-      wire[b64u(unhex(writer))] = [seq, unhex(hash)]
-    }
-    const { pruned } = await this.hub.postBoardFrontier(board, wire, fileIdsOf('board_item', { strokes: shapes as unknown[] }))
+    const wire = frontierWire(frontier)
+    if (!wire) return null
+    const { pruned } = await this.hub.postBoardFrontier(boardOf(timeline_id), wire, snapshotFiles(shapes), [sent.seq, unhex(sent.envelope_hash)])
     return pruned
   }
 

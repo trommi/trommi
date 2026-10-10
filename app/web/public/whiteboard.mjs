@@ -851,10 +851,12 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     if (Date.now() - lastOp < SNAP_IDLE_MS || flushing || queue.length || lives.size || client.model?.outbox?.length || connection() !== 'online') return snapSoon()
     try {
       const snap = st.snapshot(), applied = st.applied
+      // (10.9: the hub hears first what the snapshot will cover, so that it holds pruning back for it; not heard: no snapshot)
+      if (client.declareBoardFrontier && !(await client.declareBoardFrontier(timeline_id, snap.frontier, snap.shapes))) return snapSoon()
       const attachment = await client.uploadAttachment(await packSnapshot(snap), { file_name: 'canvas.json.gz', media_type: 'application/gzip' })
       const sent = await client.setRegisters({ [`scribble_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number, shapes: snap.shapes.length } })
       st.applied -= applied
-      // (10.9: once the hub took the register, it hears what the snapshot covers and prunes behind it)
+      // (10.9: once the hub took the register, the declared frontier is bound to it and the hub prunes behind it)
       if (sent && client.postBoardFrontier) client.postBoardFrontier(timeline_id, sent, snap.frontier, snap.shapes).catch(e => console.warn('canvas frontier', e))
     } catch (e) {
       // (the canvas state refuses: an item without its hash yet, or one that could not be read: no snapshot now)

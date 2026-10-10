@@ -1236,6 +1236,48 @@ pub fn register(register_id: &[u8; 16], value: &str) -> Item {
     }
 }
 
+/// A writer and its head (number, hash), as a board frontier names it.
+pub type FrontierHead<'a> = (&'a [u8; 32], (u64, [u8; 32]));
+
+/// A board frontier post (10.9): per writer `[seq, hash]`, the files kept, and the snapshot value it is bound to.
+pub fn frontier_body(
+    heads: &[FrontierHead],
+    files: &[[u8; 16]],
+    snapshot: Option<(u64, [u8; 32])>,
+) -> Value {
+    let mut f = serde_json::Map::new();
+    for (writer, (seq, hash)) in heads {
+        f.insert(b64(&writer[..]), json!([seq, b64(hash)]));
+    }
+    let mut body =
+        json!({ "frontier": f, "files": files.iter().map(|x| b64(x)).collect::<Vec<_>>() });
+    if let Some((seq, hash)) = snapshot {
+        body["snapshot"] = json!([seq, b64(&hash)]);
+    }
+    body
+}
+
+/// A snapshot of `board` as a device writes it (10.2, 10.9): the frontier declared, the register value
+/// `snapshot_register` written, the post bound to it. Returns the bound post's answer.
+pub fn write_snapshot(
+    hub: &TestHub,
+    dev: &mut Dev,
+    room: &[u8],
+    board: &[u8; 16],
+    snapshot_register: &[u8; 16],
+    heads: &[FrontierHead],
+    files: &[[u8; 16]],
+) -> Value {
+    let path = format!("/v2/boards/{}/frontier", hex(board));
+    dev.post(hub, &path, &frontier_body(heads, files, None))
+        .ok();
+    dev.send(hub, room, &register(snapshot_register, "snapshot"))
+        .ok();
+    let value = dev.chain(room);
+    dev.post(hub, &path, &frontier_body(heads, files, Some(value)))
+        .ok()
+}
+
 /// An object's envelope. `object_ref`: zeros for a first version.
 pub fn object(
     kind: u8,

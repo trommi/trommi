@@ -41,7 +41,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v1/desk` | → `{ cards, permission_requests, notes, artifacts, registers, groups, change }` | open objects' newest envelopes, every writer's newest value per register, in the asker's groups |
 | `GET /v1/chats/{timeline}/items?before=&limit=` | → envelopes, newest first | `timeline` = `session/<hex>` or `card/<hex>` |
 | `GET /v1/boards/{board}?after_change=` | → `{ items, more }` | the board's items after the given change (10.3) |
-| `POST /v1/boards/{board}/frontier` | `{ frontier: { <writer>: [seq, hash] }, files: [file_id] }` → `{ pruned }` | human devices, after writing `board_snapshot/<board>` (v1.md 10.9); the newest post per device and board counts; `pruned`: item bodies pruned now |
+| `POST /v1/boards/{board}/frontier` | `{ frontier: { <writer>: [seq, hash] }, files: [file_id], snapshot?: [seq, hash] }` → `{ pruned }` | human devices: without `snapshot` before writing `board_snapshot/<board>`, with it once the value is taken (v1.md 10.9); `pruned`: item bodies pruned now |
 | `GET /v1/cards/{object}?after=&limit=` (and `/notes/`, `/permission-requests/`, `/artifacts/`) | → `{ items, more, state, owner, … }`: every envelope of the object | pruned ones in pruned form |
 | `GET /v1/groups/{group}/chains/{sender}?after=&limit=` | → envelopes in pruned form, by `seq` | chain checks (9.0.5, 10.3) |
 | `GET /v1/changes?after=&limit=` | → `{ items, change, more }` | catch-up: everything the asker may see with a change number above `after` |
@@ -75,7 +75,7 @@ written. Catch-up is "everything above N".
 | `cards`, `notes`, `permission_requests`, `artifacts` | `object_id`, `group_id`, `state`, `urgency`, `answered_at`, `owner`, `first_change`, `head_change`, `closed_at` | | **the Desk**: partial index on `state = open` by (`urgency` desc, `first_change`). Derived from `envelopes`, rebuildable |
 | `chats`, `boards` | `timeline`, `group_id`, `item_count`, `last_change` | | derived |
 | `registers` | `group_id`, `writer`, `register_id`, `head_change` | | **all current values**: (`group_id`); derived |
-| `board_frontiers` | `room_id`, `board`, `device`, `frontier` (writer → `seq`, `hash`), `files`, `at` | | the newest post per human device and board (v1.md 10.9) |
+| `board_frontiers` | `room_id`, `board`, `device`, `bound`, `frontier` (writer → `seq`), `files`, `at`, `snapshot_seq`, `register_id`, `counts` | | per human device and board its declaration and its bound post (v1.md 10.9) |
 | `files` | `file_id`, `room_id`, `uploader`, `group_id`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
 | `shares` | `share_id`, `file_id`, `secret_hash`, `expires_at`, `created_by` | | by id |
 | `invites`, `invite_requests` | signed Offer with its `offer_mac` (added to schema 5 in place), Requests, Reveal, `expires_at`, `used_at`, `burned_at` | | by `invite_id` |
@@ -462,8 +462,12 @@ encrypted.
     the frontiers again, so that a post that fell out of the 30 days stops holding pruning back. A file is
     deleted when every envelope that named it is pruned and no counting frontier post keeps it; its tombstone
     row and `file_evicted` follow as for 9.4. A frontier post is refused with `bad-format` when a writer is not
-    a device of the room, a number lies beyond what the hub holds of that writer in the room group, or a hash
-    is not that envelope's, and with `too-large` beyond 20 000 files or 1 000 writers.
+    a device of the room, a number lies beyond what the hub holds of that writer in the room group, a hash is
+    not that envelope's, or `snapshot` is not a register value of the posting device the hub took; with
+    `removed-sender` when a number lies beyond a removed writer's Cut; with `replay` when `snapshot` is not the
+    newest value of its register or older than the one the device's post is bound to; with `too-large` beyond
+    20 000 files or 1 000 writers. Declarations only hold pruning back; nothing of a board is pruned before a
+    bound post counts.
     A register value or Note version that a later Cut leaves beyond its writer's chain (9.0.10) has already
     pruned the ones before it: devices that come later find that writer's value unreadable.
 

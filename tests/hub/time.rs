@@ -591,33 +591,40 @@ fn lifetimes_and_retention() {
         )
         .ok();
 
-    // ---- a restart keeps everything but tokens: the same data directory under a new hub
-    // ---- 10.9: a board frontier post counts for 30 days after the board's newest post
+    // ---- 10.9: a board frontier post counts for 30 days after the board's newest post (the arrival of the
+    // snapshot value it is bound to)
     let board: [u8; 16] = random();
-    type Head<'a> = (&'a [u8; 32], (u64, [u8; 32]));
-    let frontier = |heads: &[Head]| {
-        let mut f = serde_json::Map::new();
-        for (writer, (seq, hash)) in heads {
-            f.insert(b64(&writer[..]), json!([seq, b64(hash)]));
-        }
-        json!({ "frontier": f, "files": [] })
-    };
-    let fpath = format!("/v2/boards/{}/frontier", hex(&board));
     again(&mut [&mut w.ada, &mut bea]);
     w.ada.send(hub, &room, &board_item(&board)).ok();
     let x1 = w.ada.chain(&room);
     bea.send(hub, &room, &board_item(&board)).ok();
     let y1 = bea.chain(&room);
     let (ada_id, bea_id) = (w.ada.id(), bea.id());
+    let (ada_reg, bea_reg): ([u8; 16], [u8; 16]) = (random(), random());
     // bea's snapshot covers ada's x1 only (x1 goes), ada's covers both: bea's y1 stays (bea's post names no y)
     assert_eq!(
-        bea.post(hub, &fpath, &frontier(&[(&ada_id, x1)])).ok()["pruned"],
+        write_snapshot(
+            hub,
+            &mut bea,
+            &room,
+            &board,
+            &bea_reg,
+            &[(&ada_id, x1)],
+            &[]
+        )["pruned"],
         1
     );
+    let bea_value = bea.chain(&room);
     assert_eq!(
-        w.ada
-            .post(hub, &fpath, &frontier(&[(&ada_id, x1), (&bea_id, y1)]))
-            .ok()["pruned"],
+        write_snapshot(
+            hub,
+            &mut w.ada,
+            &room,
+            &board,
+            &ada_reg,
+            &[(&ada_id, x1), (&bea_id, y1)],
+            &[]
+        )["pruned"],
         0
     );
     let y1_body = |dev: &Dev| {
@@ -633,17 +640,31 @@ fn lifetimes_and_retention() {
             .is_some()
     };
     assert!(y1_body(&w.ada));
-    // 31 days on, ada posts again: bea's post is more than 30 days older than the newest and no longer counts
+    // 31 days on, bea posts her snapshot value again: its post keeps the value's time; ada writes a snapshot
+    // again: bea's is more than 30 days older than the newest and no longer counts
     hub.clock(31 * DAY);
     again(&mut [&mut w.ada, &mut bea]);
+    bea.post(
+        hub,
+        &format!("/v2/boards/{}/frontier", hex(&board)),
+        &frontier_body(&[(&ada_id, x1)], &[], Some(bea_value)),
+    )
+    .ok();
     assert_eq!(
-        w.ada
-            .post(hub, &fpath, &frontier(&[(&ada_id, x1), (&bea_id, y1)]))
-            .ok()["pruned"],
+        write_snapshot(
+            hub,
+            &mut w.ada,
+            &room,
+            &board,
+            &ada_reg,
+            &[(&ada_id, x1), (&bea_id, y1)],
+            &[]
+        )["pruned"],
         1
     );
     assert!(!y1_body(&w.ada));
 
+    // ---- a restart keeps everything but tokens: the same data directory under a new hub
     let room_before = w
         .ada
         .get(hub, &format!("/v1/rooms/{}/groups", b64(&room)))

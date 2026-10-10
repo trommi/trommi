@@ -249,19 +249,9 @@ fn decode_frontier(b: &[u8]) -> Frontier {
         .collect()
 }
 
-/// `POST /v1/boards/{board}/frontier`: a human device's word that its snapshot of `board` covers `frontier` and
-/// keeps `files` (10.9). Checked against the room group's chains, stored as that device's newest post, then the
-/// board is pruned to what the counting posts allow.
-pub fn post_frontier(
-    c: &Connection,
-    auth: &Auth,
-    board: &[u8; 16],
-    body: &Value,
-    now: u64,
-    fx: &mut Effects,
-) -> Res<Value> {
-    auth.human()?;
-    let room = auth.room;
+/// A frontier as a post names it: per writer `[seq, hash]`, each the writer's envelope in the room group that the
+/// hub holds under that number and has not cut (9.0.10).
+fn frontier_of(c: &Connection, room: &Room, body: &Value) -> Res<Frontier> {
     let group: &[u8] = &room[..];
     let named = body["frontier"]
         .as_object()
@@ -277,18 +267,7 @@ pub fn post_frontier(
         let writer: [u8; 32] = unb64(writer)
             .and_then(|b| b.try_into().ok())
             .ok_or_else(|| refuse("bad-format", "a frontier's writer is a device id"))?;
-        let seq = head[0]
-            .as_u64()
-            .filter(|s| *s >= 1 && *s <= i64::MAX as u64)
-            .ok_or_else(|| refuse("bad-format", "a frontier's number"))?;
-        let hash: [u8; 32] = head[1]
-            .as_str()
-            .and_then(unb64)
-            .and_then(|b| b.try_into().ok())
-            .ok_or_else(|| refuse("bad-format", "a frontier's hash"))?;
-        if head.as_array().map(|a| a.len()) != Some(2) {
-            return Err(refuse("bad-format", "a frontier's head is [seq, hash]"));
-        }
+        let (seq, hash) = head_of(head)?;
         let known: bool = c
             .prepare_cached("SELECT 1 FROM devices WHERE room_id = ?1 AND device = ?2")?
             .exists(params![&room[..], &writer[..]])?;
@@ -298,11 +277,13 @@ pub fn post_frontier(
                 "a frontier names a device that is not of this room",
             ));
         }
-        let held: Option<Vec<u8>> = c
+        let held: Option<(Vec<u8>, i64)> = c
             .prepare_cached(
-                "SELECT hash FROM envelopes WHERE group_id = ?1 AND sender = ?2 AND seq = ?3",
+                "SELECT hash, cut FROM envelopes WHERE group_id = ?1 AND sender = ?2 AND seq = ?3",
             )?
-            .query_row(params![group, &writer[..], seq as i64], |r| r.get(0))
+            .query_row(params![group, &writer[..], seq as i64], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
             .optional()?;
         match held {
             None => {
@@ -311,10 +292,17 @@ pub fn post_frontier(
                     "a frontier reaches beyond what the hub holds of a writer",
                 ))
             }
-            Some(h) if !same(&h, &hash) => {
+            Some((h, _)) if !same(&h, &hash) => {
                 return Err(refuse(
                     "bad-format",
                     "a frontier's hash is not that envelope's",
+                ))
+            }
+            // a snapshot that reaches beyond a removed writer's Cut is one no device loads (10.3)
+            Some((_, 1)) => {
+                return Err(refuse(
+                    "removed-sender",
+                    "a frontier reaches beyond a removed writer's Cut",
                 ))
             }
             Some(_) => {}
@@ -326,6 +314,28 @@ pub fn post_frontier(
     if frontier.len() != named.len() {
         return Err(refuse("bad-format", "a frontier names a writer twice"));
     }
+    Ok(frontier)
+}
+
+/// `[seq, hash]`: a number of 1 or more and a 32-byte hash.
+fn head_of(head: &Value) -> Res<(u64, [u8; 32])> {
+    if head.as_array().map(|a| a.len()) != Some(2) {
+        return Err(refuse("bad-format", "a head is [seq, hash]"));
+    }
+    let seq = head[0]
+        .as_u64()
+        .filter(|s| *s >= 1 && *s <= i64::MAX as u64)
+        .ok_or_else(|| refuse("bad-format", "a head's number"))?;
+    let hash: [u8; 32] = head[1]
+        .as_str()
+        .and_then(unb64)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| refuse("bad-format", "a head's hash"))?;
+    Ok((seq, hash))
+}
+
+/// The file ids a post keeps, one after another.
+fn files_of(body: &Value) -> Res<Vec<u8>> {
     let listed = body["files"]
         .as_array()
         .ok_or_else(|| refuse("bad-format", "files: a list of file ids"))?;
@@ -341,17 +351,186 @@ pub fn post_frontier(
             .ok_or_else(|| refuse("bad-format", "a file id is 16 bytes"))?;
         files.extend_from_slice(&id);
     }
-    c.prepare_cached(
-        "INSERT INTO board_frontiers (room_id, board, device, frontier, files, at, counts) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)
-         ON CONFLICT (room_id, board, device) DO UPDATE SET frontier = excluded.frontier, files = excluded.files, at = excluded.at, counts = 1",
-    )?
-    .execute(params![&room[..], &board[..], &auth.device[..], encode_frontier(&frontier), files, now as i64])?;
+    Ok(files)
+}
+
+/// Per writer the smaller number of both; a writer one of them lacks is left out (it counts 0).
+fn lower(a: &Frontier, b: &Frontier) -> Frontier {
+    a.iter()
+        .filter_map(|(w, s)| {
+            b.iter()
+                .find(|(v, _)| v == w)
+                .map(|(_, t)| (*w, (*s).min(*t)))
+        })
+        .collect()
+}
+
+/// Whether `a` reaches nowhere beyond `b`: every writer of `a` is in `b` with a number at least as high.
+fn within(a: &Frontier, b: &Frontier) -> bool {
+    a.iter()
+        .all(|(w, s)| b.iter().any(|(v, t)| v == w && t >= s))
+}
+
+/// `POST /v1/boards/{board}/frontier` (10.9), in two steps around a snapshot register value of `board`:
+///
+/// - `{ frontier, files }` before the register is written: the declaration. It only holds pruning back (a
+///   declaration that is already there keeps, per writer, the smaller number of both), so that a snapshot that
+///   becomes current before its device binds it is covered from the start.
+/// - `{ frontier, files, snapshot: [seq, hash] }` once the hub took the register value: bound to that envelope
+///   (the device's own, a register value, its newest of that register, not cut), it replaces the device's bound
+///   post; a bound post of an older value is `replay`. Its time is the value's arrival, never the post's.
+///
+/// Every frontier is checked against the room group's chains; then the board is pruned to what the counting
+/// posts allow.
+pub fn post_frontier(
+    c: &Connection,
+    auth: &Auth,
+    board: &[u8; 16],
+    body: &Value,
+    now: u64,
+    fx: &mut Effects,
+) -> Res<Value> {
+    auth.human()?;
+    let room = auth.room;
+    let group: &[u8] = &room[..];
+    let frontier = frontier_of(c, &room, body)?;
+    let files = files_of(body)?;
+    let key = params![&room[..], &board[..], &auth.device[..]];
+    let stored = |bound: i64| -> Res<Option<(Vec<u8>, Vec<u8>, Option<i64>, Option<Vec<u8>>)>> {
+        Ok(c.prepare_cached(
+            "SELECT frontier, files, snapshot_seq, register_id FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = ?4",
+        )?
+        .query_row(params![&room[..], &board[..], &auth.device[..], bound], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .optional()?)
+    };
+    if body.get("snapshot").is_none() {
+        // the declaration
+        let (frontier, files) = match stored(0)? {
+            Some((before, kept, _, _)) => {
+                // (both lists together: at most twice the files of one post)
+                let mut all = files;
+                let mut seen: std::collections::HashSet<Vec<u8>> =
+                    ids_of(&all).map(<[u8]>::to_vec).collect();
+                for id in ids_of(&kept) {
+                    if seen.insert(id.to_vec()) && all.len() < MAX_FRONTIER_FILES * 16 * 2 {
+                        all.extend_from_slice(id);
+                    }
+                }
+                (lower(&frontier, &decode_frontier(&before)), all)
+            }
+            None => (frontier, files),
+        };
+        c.prepare_cached(
+            "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1)
+             ON CONFLICT (room_id, board, device, bound) DO UPDATE SET frontier = excluded.frontier, files = excluded.files, at = excluded.at, counts = 1",
+        )?
+        .execute(params![&room[..], &board[..], &auth.device[..], encode_frontier(&frontier), files, now as i64])?;
+    } else {
+        // bound to the snapshot register value
+        let (seq, hash) = head_of(&body["snapshot"])?;
+        let value: Option<(Vec<u8>, Option<Vec<u8>>, i64, i64, Option<String>, i64)> = c
+            .prepare_cached(
+                "SELECT hash, register_id, cut, change, void_code, received_at FROM envelopes WHERE group_id = ?1 AND sender = ?2 AND seq = ?3",
+            )?
+            .query_row(params![group, &auth.device[..], seq as i64], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })
+            .optional()?;
+        let Some((held, Some(register_id), 0, change, None, arrived)) = value else {
+            return Err(refuse(
+                "bad-format",
+                "snapshot: no register value of this device that the hub took",
+            ));
+        };
+        if !same(&held, &hash) {
+            return Err(refuse(
+                "bad-format",
+                "snapshot: the hash is not that envelope's",
+            ));
+        }
+        let head: Option<i64> = c
+            .prepare_cached(
+                "SELECT head_change FROM registers WHERE group_id = ?1 AND writer = ?2 AND register_id = ?3",
+            )?
+            .query_row(params![group, &auth.device[..], &register_id], |r| r.get(0))
+            .optional()?;
+        if let Some((_, _, Some(before), Some(bound_register))) = stored(1)? {
+            if !same(&bound_register, &register_id) {
+                return Err(refuse(
+                    "bad-format",
+                    "snapshot: another register than this device's snapshot of the board",
+                ));
+            }
+            if before > seq as i64 {
+                return Err(refuse(
+                    "replay",
+                    "snapshot: an older value than the one bound",
+                ));
+            }
+            if before == seq as i64 {
+                // the same value again: nothing changes, its time stays
+                let pruned = apply_board(c, &room, board, now, fx)?;
+                return Ok(json!({ "pruned": pruned }));
+            }
+        }
+        if head != Some(change) {
+            return Err(refuse(
+                "replay",
+                "snapshot: not the newest value of its register",
+            ));
+        }
+        c.prepare_cached(
+            "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, 1)
+             ON CONFLICT (room_id, board, device, bound) DO UPDATE SET frontier = excluded.frontier, files = excluded.files, at = excluded.at, snapshot_seq = excluded.snapshot_seq, register_id = excluded.register_id, counts = 1",
+        )?
+        .execute(params![&room[..], &board[..], &auth.device[..], encode_frontier(&frontier), files, arrived, seq as i64, &register_id])?;
+        // the declaration of this snapshot is answered; a later one (a frontier beyond this) still holds back
+        if let Some((declared, _, _, _)) = stored(0)? {
+            if within(&decode_frontier(&declared), &frontier) {
+                c.prepare_cached("DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0")?
+                    .execute(key)?;
+            }
+        }
+    }
     let pruned = apply_board(c, &room, board, now, fx)?;
     Ok(json!({ "pruned": pruned }))
 }
 
-/// Marks which posts of `board` count (a human device that is a leaf of the room group, at most 30 days before
-/// the newest post), then prunes per writer up to the smallest number the counting posts give it.
+/// Whether a stored post still stands: nothing it names (its frontier, its snapshot value) lies beyond a Cut.
+fn standing(
+    c: &Connection,
+    room: &Room,
+    frontier: &Frontier,
+    snapshot: Option<(&[u8], i64)>,
+) -> Res<bool> {
+    let group: &[u8] = &room[..];
+    let mut s = c.prepare_cached(
+        "SELECT cut FROM envelopes WHERE group_id = ?1 AND sender = ?2 AND seq = ?3",
+    )?;
+    let cut = |s: &mut rusqlite::CachedStatement, w: &[u8], seq: i64| -> Res<bool> {
+        Ok(s.query_row(params![group, w, seq], |r| r.get::<_, i64>(0))
+            .optional()?
+            .is_none_or(|c| c == 1))
+    };
+    for (w, seq) in frontier {
+        if cut(&mut s, &w[..], *seq as i64)? {
+            return Ok(false);
+        }
+    }
+    if let Some((device, seq)) = snapshot {
+        if cut(&mut s, device, seq)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Marks which posts of `board` count, then prunes per writer up to the smallest number the counting posts give
+/// it. A post counts while it is at most 30 days older than the board's newest and nothing it names lies beyond a
+/// Cut; its device need not be a leaf any more: a removed device's snapshot value within its Cut can still be
+/// current. Declarations only hold back: without a counting bound post nothing is pruned.
 pub fn apply_board(
     c: &Connection,
     room: &Room,
@@ -360,44 +539,44 @@ pub fn apply_board(
     fx: &mut Effects,
 ) -> Res<usize> {
     let group: &[u8] = &room[..];
-    let posts: Vec<(Vec<u8>, Vec<u8>, i64)> = {
+    let posts: Vec<(Vec<u8>, i64, Vec<u8>, i64, Option<i64>)> = {
         let mut s = c.prepare_cached(
-            "SELECT device, frontier, at FROM board_frontiers WHERE room_id = ?1 AND board = ?2",
+            "SELECT device, bound, frontier, at, snapshot_seq FROM board_frontiers WHERE room_id = ?1 AND board = ?2",
         )?;
         let rows = s
             .query_map(params![&room[..], &board[..]], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
-    let mut live: Vec<(Vec<u8>, Frontier, i64)> = Vec::new();
-    for (device, frontier, at) in posts {
-        let human_leaf: bool = c
-            .prepare_cached(
-                "SELECT 1 FROM devices d JOIN group_members m ON m.device = d.device AND m.group_id = ?1
-                 WHERE d.room_id = ?2 AND d.device = ?3 AND d.role = 'human' AND d.removed_epoch IS NULL AND m.removed_epoch IS NULL",
-            )?
-            .exists(params![group, &room[..], &device])?;
-        if human_leaf {
-            live.push((device, decode_frontier(&frontier), at));
+    let mut live: Vec<(Vec<u8>, i64, Frontier, i64)> = Vec::new();
+    for (device, bound, frontier, at, snapshot) in posts {
+        let frontier = decode_frontier(&frontier);
+        if standing(c, room, &frontier, snapshot.map(|s| (&device[..], s)))? {
+            live.push((device, bound, frontier, at));
         } else {
-            c.prepare_cached("UPDATE board_frontiers SET counts = 0 WHERE room_id = ?1 AND board = ?2 AND device = ?3")?
-                .execute(params![&room[..], &board[..], &device])?;
+            c.prepare_cached("UPDATE board_frontiers SET counts = 0 WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = ?4")?
+                .execute(params![&room[..], &board[..], &device, bound])?;
         }
     }
-    let Some(newest) = live.iter().map(|p| p.2).max() else {
+    let Some(newest) = live.iter().map(|p| p.3).max() else {
         return Ok(0);
     };
     let from = newest.saturating_sub(FRONTIER_WINDOW_MS as i64);
     let mut counting: Vec<Frontier> = Vec::new();
-    for (device, frontier, at) in live {
+    let mut any_bound = false;
+    for (device, bound, frontier, at) in live {
         let counts = at >= from;
-        c.prepare_cached("UPDATE board_frontiers SET counts = ?1 WHERE room_id = ?2 AND board = ?3 AND device = ?4")?
-            .execute(params![counts as i64, &room[..], &board[..], &device])?;
+        c.prepare_cached("UPDATE board_frontiers SET counts = ?1 WHERE room_id = ?2 AND board = ?3 AND device = ?4 AND bound = ?5")?
+            .execute(params![counts as i64, &room[..], &board[..], &device, bound])?;
         if counts {
+            any_bound |= bound == 1;
             counting.push(frontier);
         }
+    }
+    if !any_bound {
+        return Ok(0);
     }
     // per writer the smallest number among the counting posts; a post without that writer counts 0
     let Some(first) = counting.first() else {

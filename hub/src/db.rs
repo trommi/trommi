@@ -31,18 +31,23 @@ CREATE TABLE IF NOT EXISTS welcome_bytes (
 -- 9.4.2: the register values that still carry a body, found per writer and register for pruning
 CREATE INDEX IF NOT EXISTS envelopes_register_bodies ON envelopes(group_id, sender, register_id, seq)
   WHERE register_id IS NOT NULL AND body IS NOT NULL;
--- 10.9: the newest frontier post per human device and board; `counts` as last judged (a human leaf, within 30
--- days of the board's newest post). `frontier`: per writer 32 bytes and the number as 8 bytes big-endian,
--- ascending; `files`: 16-byte file ids one after another.
+-- 10.9: per human device and board its frontier posts: `bound` 0 the declaration made before a snapshot register
+-- is written (it only holds pruning back), `bound` 1 the one bound to the device's snapshot register value
+-- (`snapshot_seq`, `register_id`; `at` its arrival). `counts` as last judged (within 30 days of the board's
+-- newest post, nothing it names beyond a Cut). `frontier`: per writer 32 bytes and the number as 8 bytes
+-- big-endian, ascending; `files`: 16-byte file ids one after another.
 CREATE TABLE IF NOT EXISTS board_frontiers (
   room_id        BLOB NOT NULL,
   board          BLOB NOT NULL CHECK (length(board) = 16),
   device         BLOB NOT NULL CHECK (length(device) = 32),
+  bound          INTEGER NOT NULL CHECK (bound IN (0, 1)),
   frontier       BLOB NOT NULL,
   files          BLOB NOT NULL,
   at             INTEGER NOT NULL,
+  snapshot_seq   INTEGER,
+  register_id    BLOB,
   counts         INTEGER NOT NULL DEFAULT 1 CHECK (counts IN (0, 1)),
-  PRIMARY KEY (room_id, board, device)
+  PRIMARY KEY (room_id, board, device, bound)
 ) STRICT, WITHOUT ROWID;
 -- 9.4.1: a Note deleted (closed) settles; one closed before this rule gets its arrival of closing
 CREATE INDEX IF NOT EXISTS notes_due ON notes(settled_at) WHERE settled_at IS NOT NULL AND pruned_at IS NULL;

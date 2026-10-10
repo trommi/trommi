@@ -17,7 +17,7 @@ async function canvas(client, from = null) {
 const picture = st => [...st.shapes].map(([id, s]) => [id, s.tool, s.pts?.slice(0, 2)]).sort()
 
 test('strokes, a move, an erase and live pieces between two devices; a third loads from a snapshot and the tail', async t => {
-  const { R, a, b } = await scene(t, { second: true })
+  const { fake, R, a, b } = await scene(t, { second: true })
   const drawing = a.sendStrokes({ timeline_id, content_type: 'strokes', strokes: [stroke(0, 0), stroke(100, 100)] })
   assert.equal([...a.model.timelines.get(key).items.values()].at(-1).pending, true)
   const first = await drawing
@@ -50,11 +50,20 @@ test('strokes, a move, an erase and live pieces between two devices; a third loa
   // a snapshot: the board as a file, and the register that points at it (10.2)
   const st = await canvas(a)
   const snap = st.snapshot()
+  // the hub hears first what the snapshot will cover (10.9), then the register is written, then the post is bound
+  // to it (the fake hub prunes nothing); a picture's file is kept by the post
+  const pic = { id: `${a.my_device_id}/1/9`, tool: 'image', rect: [0, 0, 160, 160], attachment: { file_id: 'Ab'.repeat(10) + 'Ag', file_key: 'Ab'.repeat(16), sha256: 'Ab'.repeat(16), total_size: 4 } }
+  assert.equal(await a.declareBoardFrontier(timeline_id, snap.frontier, [...snap.shapes, pic]), true)
   const attachment = await a.uploadAttachment(await packSnapshot(snap), { file_name: 'canvas.json.gz', media_type: 'application/gzip' })
   const sent = await a.setRegisters({ [`scribble_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number } })
-  // once the hub took the register, it hears what the snapshot covers (10.9; the fake hub prunes nothing)
-  assert.equal(await a.postBoardFrontier(timeline_id, sent, snap.frontier, snap.shapes), 0)
-  // a frontier with a head whose hash is not known yet is not posted
+  assert.equal(await a.postBoardFrontier(timeline_id, sent, snap.frontier, [...snap.shapes, pic]), 0)
+  const posts = [...fake.state.rooms.values()].find(r => r.frontiers)?.frontiers
+  const bound = [...posts.entries()].find(([k]) => k.endsWith('/bound'))[1]
+  assert.equal(bound.snapshot[0], sent.seq)
+  assert.deepEqual(bound.files, [pic.attachment.file_id], 'the picture of the snapshot (wire form) is kept')
+  assert.ok([...posts.keys()].some(k => k.endsWith('/declared')))
+  // a frontier with a head whose hash is not known yet is neither declared nor bound
+  assert.equal(await a.declareBoardFrontier(timeline_id, { [a.my_device_id]: [1, null] }, []), false)
   assert.equal(await a.postBoardFrontier(timeline_id, sent, { [a.my_device_id]: [1, null] }, []), null)
   await a.sendStrokes({ timeline_id, content_type: 'strokes', strokes: [stroke(500, 500)] })
   await a.settle(); await b.settle()

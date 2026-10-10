@@ -6,7 +6,7 @@ mod common;
 use common::*;
 use serde_json::Value;
 use trommi_hub::util::{b64, random, unb64};
-use trommi_hub::wire::Envelope;
+use trommi_hub::wire::{Cut, Envelope};
 
 /// Every envelope the asker may see, by its hash: whether it is served with its body.
 fn bodies(hub: &TestHub, dev: &Dev) -> Vec<([u8; 32], bool)> {
@@ -180,16 +180,42 @@ fn a_note_version_prunes_the_same_writers_earlier_versions_of_that_note() {
     chain_links(hub, &bea, &room, &w.ada.id());
 }
 
-/// `{ frontier: { writer: [seq, hash] }, files }` for `POST /v2/boards/{board}/frontier`.
-/// A writer and its head (number, hash).
-type Head<'a> = (&'a [u8; 32], (u64, [u8; 32]));
+type Head<'a> = FrontierHead<'a>;
 
 fn frontier_post(heads: &[Head], files: &[[u8; 16]]) -> Value {
-    let mut f = serde_json::Map::new();
-    for (writer, (seq, hash)) in heads {
-        f.insert(b64(&writer[..]), serde_json::json!([seq, b64(hash)]));
-    }
-    serde_json::json!({ "frontier": f, "files": files.iter().map(|x| b64(x)).collect::<Vec<_>>() })
+    frontier_body(heads, files, None)
+}
+
+fn board_path(board: &[u8; 16]) -> String {
+    format!("/v2/boards/{}/frontier", trommi_hub::util::hex(board))
+}
+
+/// Removes `dev` from the room group with a Cut at `cut` (its last envelope the remover accepted).
+fn remove(w: &mut World, dev: &Dev, cut: (u64, [u8; 32])) {
+    let room = w.room;
+    let now = w.ada.room_now();
+    let out = w.ada.commit(
+        &room,
+        &Change {
+            removes: vec![dev.id()],
+            cuts: vec![Cut {
+                device: dev.id(),
+                seq: cut.0,
+                hash: cut.1,
+            }],
+            ..Default::default()
+        },
+        now,
+    );
+    let sealed = w.ada.sealed_key(
+        &room,
+        out.epoch + 1,
+        &out.group_info,
+        out.epoch,
+        &w.recovery.hpke_public,
+        true,
+    );
+    w.ada.post_commit(&w.hub, &out, &sealed).ok();
 }
 
 #[test]
@@ -205,7 +231,8 @@ fn a_board_is_pruned_behind_the_smallest_frontier_of_the_human_devices() {
         .ok()["generation"]
         .as_u64();
     let board: [u8; 16] = random();
-    let path = format!("/v2/boards/{}/frontier", trommi_hub::util::hex(&board));
+    let path = board_path(&board);
+    let (ada_reg, bea_reg): ([u8; 16], [u8; 16]) = (random(), random());
     let (kept_pic, erased_pic): ([u8; 16], [u8; 16]) = (random(), random());
     upload(hub, &w.ada, &kept_pic);
     upload(hub, &w.ada, &erased_pic);
@@ -241,16 +268,30 @@ fn a_board_is_pruned_behind_the_smallest_frontier_of_the_human_devices() {
     agent
         .post(hub, &path, &frontier_post(&[(&ada, a1)], &[]))
         .refused(403, "forbidden");
+    // a declaration alone prunes nothing: no snapshot is written yet
+    assert_eq!(
+        w.ada
+            .post(
+                hub,
+                &path,
+                &frontier_post(&[(&ada, a3), (&bea_id, b2)], &[])
+            )
+            .ok()["pruned"],
+        0
+    );
+    let all = bodies(hub, &bea);
+    assert!(has_body(&all, &a1.1) && has_body(&all, &b2.1));
 
     // ada's snapshot covers a2 and b1 and keeps one picture: what only she posted counts
-    let r = w
-        .ada
-        .post(
-            hub,
-            &path,
-            &frontier_post(&[(&ada, a2), (&bea_id, b1)], &[kept_pic]),
-        )
-        .ok();
+    let r = write_snapshot(
+        hub,
+        &mut w.ada,
+        &room,
+        &board,
+        &ada_reg,
+        &[(&ada, a2), (&bea_id, b1)],
+        &[kept_pic],
+    );
     assert_eq!(r["pruned"], 3);
     let all = bodies(hub, &bea);
     assert!(!has_body(&all, &a1.1) && !has_body(&all, &a2.1) && !has_body(&all, &b1.1));
@@ -259,23 +300,26 @@ fn a_board_is_pruned_behind_the_smallest_frontier_of_the_human_devices() {
     fetch(hub, &bea, &kept_pic).ok();
 
     // bea's snapshot covers a1 and b2: per writer the smaller counts, nothing more goes
-    let r = bea
-        .post(
-            hub,
-            &path,
-            &frontier_post(&[(&ada, a1), (&bea_id, b2)], &[kept_pic]),
-        )
-        .ok();
+    let r = write_snapshot(
+        hub,
+        &mut bea,
+        &room,
+        &board,
+        &bea_reg,
+        &[(&ada, a1), (&bea_id, b2)],
+        &[kept_pic],
+    );
     assert_eq!(r["pruned"], 0);
     // ada's next snapshot covers everything: bea's b2 goes (both cover it), ada's a3 stays (bea's covers a1 only)
-    let r = w
-        .ada
-        .post(
-            hub,
-            &path,
-            &frontier_post(&[(&ada, a3), (&bea_id, b2)], &[]),
-        )
-        .ok();
+    let r = write_snapshot(
+        hub,
+        &mut w.ada,
+        &room,
+        &board,
+        &ada_reg,
+        &[(&ada, a3), (&bea_id, b2)],
+        &[],
+    );
     assert_eq!(r["pruned"], 1);
     let all = bodies(hub, &bea);
     assert!(!has_body(&all, &b2.1) && has_body(&all, &a3.1));
@@ -294,4 +338,165 @@ fn a_board_is_pruned_behind_the_smallest_frontier_of_the_human_devices() {
         )
         .ok();
     assert_eq!(items["items"].as_array().unwrap().len(), 5);
+}
+
+/// 10.9: a snapshot that is written while another device's is bound holds pruning back from its declaration on,
+/// before its own post is bound (two devices snapshotting at once).
+#[test]
+fn a_snapshot_holds_pruning_back_from_its_declaration_on() {
+    let mut w = World::new();
+    let mut bea = w.add_human();
+    let room = w.room;
+    w.catch_up(&mut bea, &room);
+    let hub = &w.hub;
+    let board: [u8; 16] = random();
+    let path = board_path(&board);
+    let ada = w.ada.id();
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a1 = w.ada.chain(&room);
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a2 = w.ada.chain(&room);
+
+    // bea declares a snapshot that covers a1; her register value is taken, her bound post has not come yet
+    bea.post(hub, &path, &frontier_post(&[(&ada, a1)], &[]))
+        .ok();
+    let bea_reg: [u8; 16] = random();
+    bea.send(hub, &room, &register(&bea_reg, "snapshot")).ok();
+    let bea_value = bea.chain(&room);
+    // ada's snapshot covers a2: only a1 goes
+    let r = write_snapshot(
+        hub,
+        &mut w.ada,
+        &room,
+        &board,
+        &random(),
+        &[(&ada, a2)],
+        &[],
+    );
+    assert_eq!(r["pruned"], 1);
+    let all = bodies(hub, &bea);
+    assert!(!has_body(&all, &a1.1) && has_body(&all, &a2.1));
+    // bea's post bound late changes nothing
+    assert_eq!(
+        bea.post(
+            hub,
+            &path,
+            &frontier_body(&[(&ada, a1)], &[], Some(bea_value))
+        )
+        .ok()["pruned"],
+        0
+    );
+    assert!(has_body(&bodies(hub, &bea), &a2.1));
+}
+
+/// 10.9: a bound post names the device's own newest snapshot value; an older one is `replay`; posting the same
+/// value again changes nothing.
+#[test]
+fn a_bound_post_names_the_devices_newest_snapshot_value() {
+    let mut w = World::new();
+    let mut bea = w.add_human();
+    let room = w.room;
+    w.catch_up(&mut bea, &room);
+    let hub = &w.hub;
+    let board: [u8; 16] = random();
+    let path = board_path(&board);
+    let ada = w.ada.id();
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a1 = w.ada.chain(&room);
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a2 = w.ada.chain(&room);
+    let item = a2;
+    let heads = [(&ada, a1)];
+
+    // not a register value, not this device's, a wrong hash
+    w.ada
+        .post(hub, &path, &frontier_body(&heads, &[], Some(item)))
+        .refused(400, "bad-format");
+    bea.post(hub, &path, &frontier_body(&heads, &[], Some(a1)))
+        .refused(400, "bad-format");
+    let reg: [u8; 16] = random();
+    w.ada.send(hub, &room, &register(&reg, "first")).ok();
+    let s1 = w.ada.chain(&room);
+    w.ada
+        .post(hub, &path, &frontier_body(&heads, &[], Some((s1.0, a1.1))))
+        .refused(400, "bad-format");
+    w.ada.send(hub, &room, &register(&reg, "second")).ok();
+    let s2 = w.ada.chain(&room);
+    // the first value is no longer its register's newest
+    w.ada
+        .post(hub, &path, &frontier_body(&heads, &[], Some(s1)))
+        .refused(409, "replay");
+    assert_eq!(
+        w.ada
+            .post(hub, &path, &frontier_body(&heads, &[], Some(s2)))
+            .ok()["pruned"],
+        1
+    );
+    // posting the same value again changes nothing (its time stays: tests/hub/time.rs)
+    assert_eq!(
+        w.ada
+            .post(hub, &path, &frontier_body(&[(&ada, a2)], &[], Some(s2)))
+            .ok()["pruned"],
+        0
+    );
+    assert!(has_body(&bodies(hub, &bea), &a2.1));
+}
+
+/// 10.9: a removed device's snapshot value within its Cut can still be current: its post keeps counting. A
+/// frontier beyond a removed writer's Cut is refused (`removed-sender`).
+#[test]
+fn a_removed_devices_snapshot_still_counts_and_a_frontier_beyond_a_cut_is_refused() {
+    let mut w = World::new();
+    let mut bea = w.add_human();
+    let room = w.room;
+    w.catch_up(&mut bea, &room);
+    let mut cara = w.add_human();
+    w.catch_up(&mut cara, &room);
+    w.catch_up(&mut bea, &room);
+    let board: [u8; 16] = random();
+    let path = board_path(&board);
+    let ada = w.ada.id();
+    let hub = &w.hub;
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a1 = w.ada.chain(&room);
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a2 = w.ada.chain(&room);
+    cara.send(hub, &room, &board_item(&board)).ok();
+    let c1 = cara.chain(&room);
+    cara.send(hub, &room, &board_item(&board)).ok();
+    let c2 = cara.chain(&room);
+    let cara_id = cara.id();
+
+    // bea's snapshot covers a1; then bea is removed with a Cut that keeps it
+    assert_eq!(
+        write_snapshot(hub, &mut bea, &room, &board, &random(), &[(&ada, a1)], &[])["pruned"],
+        1
+    );
+    let bea_head = bea.chain(&room);
+    remove(&mut w, &bea, bea_head);
+    // cara is removed with a Cut at c1: c2 lies beyond it
+    remove(&mut w, &cara, c1);
+    let hub = &w.hub;
+    w.ada
+        .post(
+            hub,
+            &path,
+            &frontier_post(&[(&ada, a2), (&cara_id, c2)], &[]),
+        )
+        .refused(403, "removed-sender");
+    // ada's snapshot covers a2 and c1: bea's post still holds a2 back
+    let r = write_snapshot(
+        hub,
+        &mut w.ada,
+        &room,
+        &board,
+        &random(),
+        &[(&ada, a2), (&cara_id, c1)],
+        &[],
+    );
+    assert_eq!(
+        r["pruned"], 0,
+        "bea's post names no c, ada's a2 is beyond bea's a1"
+    );
+    assert!(has_body(&bodies(hub, &w.ada), &a2.1));
 }

@@ -189,6 +189,7 @@ export class MockClient {
     })
   }
   /** (no hub: nothing is pruned) */
+  async declareBoardFrontier() { return true }
   async postBoardFrontier() { return 0 }
   setDraft(id, v) { return this.setRegisters({ [`draft/${id}`]: v }) }
   snooze(id, until) { return this.setRegisters({ [`snooze/${id}`]: until == null ? null : { until, at: Date.now() } }) }
