@@ -723,6 +723,7 @@ export function kitGate(client, { fresh = false } = {}) {
   box.addEventListener('close', () => { if (gate === box && box.isConnected) box.showModal() })
   box.addEventListener('keydown', e => e.stopPropagation())
   const registered = () => client.model.human?.raw?.get('kit')?.value?.pending === true
+  const kit = freshKit; freshKit = null
   if (!registered()) Promise.resolve(client.setRegisters({ kit: { pending: true } })).then(() => { try { localStorage.removeItem(KIT_MARK) } catch {} }, err => console.warn('kit register:', err?.message ?? err))
   const close = () => { off?.(); gate = null; box.close(); box.remove() }
   // (saved on another device meanwhile: this one opens too)
@@ -732,12 +733,13 @@ export function kitGate(client, { fresh = false } = {}) {
   //  shown must not close on that)
   let seenPending = registered()
   const watch = () => {
+    // a kit made on this page just now (sign-up, recovery) was seen by no other device: only "Open Trommi" closes it
+    if (kit?.words) return
     const r = client.model.human?.raw?.get('kit')
     if (r?.value?.pending === true) { seenPending = true; return }
     if (seenPending && r && !r.pending && read(KIT_MARK) !== '1') close()
   }
   const off = (() => { const un = client.on?.('change', watch); return typeof un === 'function' ? un : () => client.off?.('change', watch) })()
-  const kit = freshKit; freshKit = null
   // st: the account as the hub has it (which ways in it has); null when it could not be read: the password's form then
   const paint = (st, A = null) => { if (gate !== box) return; kitPage(root, {
     kit: { email: (kit ?? st)?.email ?? client.model.room.account?.email ?? null, account: kit?.account ?? st?.account ?? client.model.room.account?.account ?? null, form: kit?.form ?? st?.kit_form ?? 'email' }, words: kit?.words ?? null,

@@ -100,7 +100,7 @@ export const steps = [
     const since = ctx.mark()
     ctx.password = await ui.signUp(A, ctx.app.start(), ctx.email)
     check(await A.js("return document.querySelector('#kit-done').disabled && [...document.querySelectorAll('#kit-words li')].every(l => !l.textContent.trim())"), 'the kit is hidden and Open Trommi waits until it was shown')
-    check(await A.js("return document.querySelector('#kit-gate').textContent.includes('nobody can recover your account')"), 'the kit screen says what it is for')
+    check(await A.js("return document.querySelector('#kit-gate').textContent.includes('your account is lost. Nobody can recover it')"), 'the kit screen says what it is for')
     await A.shot('standin-01-kit-hidden')
     ctx.words = await ui.takeKit(A)
     check(ctx.words.split(' ').length === 12, 'twelve words', ctx.words.split(' ').length)
