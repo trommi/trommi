@@ -1337,11 +1337,41 @@ impl Client {
         Box::pin(self.take_welcomes_now(core, only))
     }
 
+    /// Every Welcome the hub holds for this device, oldest first. An answer holds at most 8 MiB of Welcomes
+    /// (hub-api.md point 22): the device asks again after the last one's `id` until the answer brings nothing
+    /// new. A hub that does not page answers the whole list to every form, and the second ask ends it.
+    async fn welcome_rows(&self) -> Result<Vec<Value>> {
+        let mut rows: Vec<Value> = Vec::new();
+        let mut after: Option<u64> = None;
+        loop {
+            let path = match after {
+                Some(id) => format!("/v2/welcomes?after={id}"),
+                None => "/v2/welcomes".to_string(),
+            };
+            let page = self.hub.get(&path).await?;
+            let mut last = after;
+            for row in page.as_array().cloned().unwrap_or_default() {
+                let Some(id) = row.get("id").and_then(Value::as_u64) else {
+                    continue;
+                };
+                if after.is_some_and(|seen| id <= seen) {
+                    continue;
+                }
+                last = Some(last.map_or(id, |l| l.max(id)));
+                rows.push(row);
+            }
+            if last == after {
+                return Ok(rows);
+            }
+            after = last;
+        }
+    }
+
     async fn take_welcomes_now(&self, core: &mut Core, only: Option<GroupId>) -> Result<()> {
-        let list = self.hub.get("/v2/welcomes").await?;
+        let rows = self.welcome_rows().await?;
         let room = self.room;
         let mut joined_any = false;
-        for row in list.as_array().cloned().unwrap_or_default() {
+        for row in rows {
             let (Ok(group), Ok(welcome)) = (group_of_item(&row), unb64(&row, "welcome")) else {
                 continue;
             };
