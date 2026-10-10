@@ -13,6 +13,10 @@ node site/dev/shots.mjs site         # pictures of every page, desktop and phone
 
 ## Deploy
 
-Cloudflare Workers Builds deploys the Worker `trommi-com` (custom domains trommi.com and www.trommi.com) on every
-push to main that touches `site/`: repository trommi/trommi, root directory `site/`, build watch path `site/*`, no
-build command, deploy command `npx wrangler deploy`. `Strict-Transport-Security` is set once for the zone.
+CI delivers the site: `.github/workflows/site.yml` runs the checks, and on a push to main that changed `site/` (or
+by hand: Actions -> site -> Run workflow on main) calls `.github/workflows/deploy_site.yml`. That job asks for the head
+of main, checks its site once more, runs the pinned wrangler (`.github/tools/wrangler`) `deploy --config
+site/wrangler.jsonc` to the Worker `trommi-com` (custom domains trommi.com and www.trommi.com) with the Cloudflare
+token of the 1Password Environment (GitHub environment `web`), and then compares the front page trommi.com serves
+with `site/public/index.html`. Cloudflare Workers Builds is disconnected from `trommi-com`: nothing else deploys the
+site. `Strict-Transport-Security` is set once for the zone.

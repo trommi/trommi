@@ -1,0 +1,119 @@
+# Delivers the website to https://trommi.com (the Cloudflare worker trommi-com, site/). Nothing is built: site/public/
+# goes out as it is, with site/worker.js in front of it.
+#
+# Interface (site.yml calls it after the site's checks, on a push to main that changed site/, or by hand):
+#   commit   the commit site.yml checked (named in the log; what is delivered is the head of main, see below)
+#
+#   deliver  asks GitHub for the head of main, runs the site's checks on it, `wrangler deploy --config
+#            site/wrangler.jsonc`, then asks trommi.com for its front page and compares it with site/public/index.html
+#            byte for byte (SHA-256)
+#
+# Secrets: the environment `web` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; CLOUDFLARE_API_TOKEN
+# and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment and are seen by the wrangler command only.
+# Cloudflare's Workers Builds is disconnected from trommi-com: this workflow is the only way the site is delivered.
+name: deploy_site
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: The commit site.yml checked
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  deliver:
+    name: Deliver to Cloudflare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: web
+      url: https://trommi.com
+    # one delivery at a time; a running one is not cut off, a waiting one is replaced by the next (both deliver main)
+    concurrency:
+      group: deploy_site
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      CALLER: ${{ inputs.commit }}
+    steps:
+      # Deliveries may be called out of order, and a waiting one is replaced by the next. So each delivers the site of
+      # the head of main as it is now, asked inside this job's concurrency group, and checks it once more: whichever
+      # delivery runs last delivers the newest site, and an older one never lands on a newer one.
+      - name: The head of main
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          printf '%s' "$CALLER" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::not a commit: $CALLER"; exit 1; }
+          head=
+          for _ in 1 2 3; do
+            head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha 2>/dev/null) && break
+            head= ; sleep 5
+          done
+          printf '%s' "$head" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::the head of main could not be found out, nothing was delivered"; exit 1; }
+          echo "called for $CALLER; main is at $head: delivering the site of $head"
+          echo "commit=$head" >> "$GITHUB_OUTPUT"
+      # only the site, its checks and the pinned wrangler are taken from the repository
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.head.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: |
+            site
+            tests/site
+            .github/tools/wrangler
+            .node-version
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      # the head may be newer than the commit site.yml checked
+      - name: The site's checks
+        run: node tests/site/check.mjs
+      - name: wrangler (pinned in .github/tools/wrangler)
+        run: npm ci --no-audit --no-fund --ignore-scripts --prefix .github/tools/wrangler
+      - name: Install the 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: latest-beta
+      - name: Deliver
+        env:
+          COMMIT: ${{ steps.head.outputs.commit }}
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -eu
+          test -n "$OP_SERVICE_ACCOUNT_TOKEN" || { echo "::error::OP_SERVICE_ACCOUNT_TOKEN is not set for this run"; exit 1; }
+          test -n "$OP_ENVIRONMENT_ID" || { echo "::error::OP_ENVIRONMENT_ID is not set for this run"; exit 1; }
+          wrangler="$PWD/.github/tools/wrangler/node_modules/.bin/wrangler"
+          # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment
+          op run --environment "$OP_ENVIRONMENT_ID" -- "$wrangler" deploy --config site/wrangler.jsonc --message "site of $COMMIT"
+      # What the site serves now must be this commit's front page (a rollout takes a moment).
+      - name: Ask trommi.com
+        env:
+          COMMIT: ${{ steps.head.outputs.commit }}
+        run: |
+          set -u
+          want=$(sha256sum site/public/index.html | cut -d' ' -f1)
+          got=
+          for try in $(seq 1 30); do
+            got=$(curl -fsS --max-time 10 "https://trommi.com/?ci=$GITHUB_RUN_ID-$try" | sha256sum | cut -d' ' -f1 || true)
+            echo "try $try: trommi.com serves a front page with SHA-256 $got"
+            [ "$got" = "$want" ] && break
+            sleep 5
+          done
+          {
+            echo "### Website"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`$COMMIT\` |"
+            echo "| site/public/index.html (SHA-256) | \`$want\` |"
+            echo "| trommi.com/ serves (SHA-256) | \`${got:-nothing}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$got" = "$want" ] || { echo "::error::trommi.com does not serve the front page of $COMMIT"; exit 1; }
