@@ -414,6 +414,7 @@ export type DraftKind =
  * cardVersion {session, objectId, closed, urgency, push, payload} ·
  * permissionRequest {session, urgency, expiresAt, push, payload} · artifactFirst {session, payload} ·
  * artifactVersion {session, objectId, closed, payload}
+ * A field its kind names and does not find is `bad-format`: nothing is filled in for it.
  */
 export interface Draft {
   kind: DraftKind
@@ -478,6 +479,9 @@ export interface EnvelopeHeader {
   registerId: Uint8Array | null
   object: ObjectHeader | null
   fileIds: Uint8Array[]
+  /** For a kind a newer Trommi defines: its number and its object block, unread. */
+  reservedKind: number | null
+  reservedBlock: Uint8Array | null
 }
 
 export type BindKind = 'answer' | 'request' | 'verdict' | 'takeBack'

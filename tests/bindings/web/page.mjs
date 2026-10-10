@@ -106,6 +106,12 @@ const cases = {
       await store.close()
     }
 
+    // Two closes at once both resolve only when the lock is free.
+    const twice = new IdbStore(name)
+    await twice.load()
+    await Promise.all([twice.close(), twice.close()])
+    found.closedTwice = !(await held())
+
     // A load that waits for the lock is given up by close(), and never takes the lock.
     const first = new IdbStore(name)
     await first.load()

@@ -181,7 +181,10 @@ impl FromJs for Vec<u8> {
         if u64::from(own.length()) > trommi_core::files::MAX_STORED_LEN {
             return Err(trommi_core::Error::TooLarge.into());
         }
-        Ok(own.to_vec())
+        let bytes = own.to_vec();
+        // The copy made here may be a key: it goes once it was read.
+        own.fill(0, 0, own.length());
+        Ok(bytes)
     }
 }
 
