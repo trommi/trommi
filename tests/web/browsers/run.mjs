@@ -9,6 +9,7 @@
 //     app        app.mjs: the built app against a local hub's binary (TROMMI_HUB_BIN)
 //     --no-sw    the app's service worker blocked in every profile (to tell its effects apart; not the real mode)
 //     streams    streams.mjs: ten reloads with the service worker in control; the streams the hub holds open
+//     e2e-remote e2e-remote.mjs: tests/web/e2e/remote.mjs against a deployed app and hub (--app, --hub), in this engine
 //     all        (default) engine, bindings, private, and app when TROMMI_HUB_BIN is set; not remote
 // Exit 0: every step passed · 1: a step failed · 2: it could not start (the message says what is missing).
 // Needs Playwright in a folder of its own (pw.mjs says how; TROMMI_PLAYWRIGHT, PLAYWRIGHT_BROWSERS_PATH) and the
@@ -21,10 +22,10 @@ import { ENGINES, OUT, TMP, counted, loadPlaywright, openProfile, watch } from '
 const args = process.argv.slice(2)
 const arg = name => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1] ?? null }
 const engine = arg('--browser')
-const flags = new Set(['--browser', '--app'])
+const flags = new Set(['--browser', '--app', '--hub'])
 if (args.includes('--no-sw')) process.env.TROMMI_BROWSERS_NO_SW = '1'
 const mode = args.find((a, i) => !a.startsWith('--') && !flags.has(args[i - 1])) ?? 'all'
-const MODES = { engine: './engine.mjs', bindings: './bindings.mjs', private: './private.mjs', remote: './remote.mjs', app: './app.mjs', streams: './streams.mjs' }
+const MODES = { engine: './engine.mjs', bindings: './bindings.mjs', private: './private.mjs', remote: './remote.mjs', app: './app.mjs', streams: './streams.mjs', 'e2e-remote': './e2e-remote.mjs' }
 if (!ENGINES.includes(engine) || (mode !== 'all' && !MODES[mode])) {
   console.error(`usage: node tests/web/browsers/run.mjs --browser ${ENGINES.join('|')} [${Object.keys(MODES).join('|')}|all] [--app <URL>]`)
   process.exit(2)
@@ -48,7 +49,7 @@ try {
     const scenario = await import(MODES[name])
     const server = scenario.ownServer ? null : await serveEngine()
     const ctx = {
-      engine, server, out, run: run(`${engine} ${name}`), report: { engine, mode: name }, appUrl: arg('--app'),
+      engine, server, out, run: run(`${engine} ${name}`), report: { engine, mode: name }, appUrl: arg('--app'), hubUrl: arg('--hub'),
       /** A profile for one piece of work: opened, handed to `fn` with what was seen in it, closed whatever happens. */
       async within(label, opts, fn) {
         const seen = Object.assign(watch(opts), { shots: out })
