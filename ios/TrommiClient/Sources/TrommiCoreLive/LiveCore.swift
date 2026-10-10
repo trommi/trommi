@@ -13,7 +13,7 @@
 //                       foundSession, addToSession, changeAgents (removing only: the core's removeAgents),
 //                       removeHumanDevices, cleanSession, update, archive, joinWelcome, processLogEntry, logFinding,
 //                       processRelay, sendHandover, sendStrokePiece, outbox, outboxAccepted, outboxRefused,
-//                       signHubAuth, close, register, cut,
+//                       signHubAuth, close, sendEnvelope, receiveEnvelope, register, cut,
 //                       openInvite, acceptInviteRequest, confirmInvite, burnInvite
 //   real by a detour    recoverySigner's id  the recovery key's public half is read out of a `HubAuth` it signed
 //   real, and not in    Recovery (section 8) as the core has it, which Core.swift's two awaited calls cannot say
@@ -27,9 +27,7 @@
 //   stubbed, CoreTools  inviteReveal(joiner:reveal:signature:)   (the core checks a Reveal on the device),
 //                       joinWithRecoveryCode(device:code:groupInfos:sealedKeys:nowMs:)   (the core needs more of the
 //                                            hub than this call hands over, and the hub's answer between its steps)
-//   stubbed, CoreDevice sendEnvelope, receiveEnvelope   (the binding has stored content: `seal`, `receiveEnvelope`;
-//                                            this adapter does not call it yet),
-//                       contentKey           (gone from the binding: a content key never leaves the core),
+//   stubbed, CoreDevice contentKey           (gone from the binding: a content key never leaves the core),
 //                       addHumanDevice, changeAgents(enrol:)   (gone from the core: a device comes by invite only),
 //                       replaceRecoveryCode(nowMs:)   (the core needs the code in force and the account's new copies)
 //

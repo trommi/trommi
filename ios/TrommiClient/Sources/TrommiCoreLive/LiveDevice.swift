@@ -121,7 +121,114 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     TrommiCoreRust.Cut(device: cut.device.data, seq: cut.seq, hash: cut.hash.data)
   }
 
-  // ---- real: what stored content left on the device (section 9) ---------------------------------------------
+  // ---- real: stored content (section 9) --------------------------------------------------------------------
+
+  /// Seals and signs the next envelope of this device's chain in the draft's group and puts it into the outbox. The
+  /// core addresses it as the rules ask. A draft of Core.swift names a card or a request without its session, which
+  /// the core asks for: it is the session group that holds that object (`not-found` if this device knows none).
+  public func sendEnvelope(_ draft: EnvelopeDraft, nowMs: UInt64) throws -> SentEnvelope {
+    func make(_ kind: DraftKind, session: SessionId? = nil, card: ObjectId? = nil, board: BoardId? = nil, group: GroupId? = nil, name: String? = nil,
+              value: Bytes? = nil, object: ObjectId? = nil, request: ObjectId? = nil, choices: [String]? = nil, closes: Bool? = nil, closed: Bool? = nil,
+              allow: Bool? = nil, payload: Bytes? = nil) -> Draft {
+      Draft(kind: kind, session: session?.data, card: card?.data, board: board?.data, group: group?.data, name: name, value: value?.data,
+            objectId: object?.data, requestId: request?.data, choices: choices, closes: closes, closed: closed, allow: allow, urgency: nil, push: nil,
+            expiresAt: nil, payload: payload?.data)
+    }
+    let theirs: Draft, files: [FileId]
+    switch draft {
+    case .sessionChat(let session, let payload, let f): theirs = make(.sessionChat, session: session, payload: payload); files = f
+    case .cardChat(let card, let payload, let f): theirs = make(.cardChat, session: try session(of: card), card: card, payload: payload); files = f
+    case .boardItem(let board, let payload, let f): theirs = make(.boardItem, board: board, payload: payload); files = f
+    case .register(let group, let name, let value): theirs = make(.register, group: group, name: name, value: value); files = []
+    case .note(nil, let payload, _, let f): theirs = make(.noteFirst, payload: payload); files = f
+    case .note(let object?, let payload, let closed, let f): theirs = make(.noteVersion, object: object, closed: closed, payload: payload); files = f
+    case .answer(let object, let choices, let closes, let payload, let f):
+      theirs = make(.answer, session: try session(of: object), object: object, choices: choices, closes: closes, payload: payload); files = f
+    case .takeBack(let object, let payload): theirs = make(.takeBack, session: try session(of: object), object: object, payload: payload); files = []
+    case .verdict(let request, let allow, let payload): theirs = make(.verdict, session: try session(of: request), request: request, allow: allow, payload: payload); files = []
+    }
+    let sealed = try core { try device.seal(draft: theirs, recipient: nil, fileIds: files.map(\.data), nowMs: nowMs) }
+    return SentEnvelope(outboxId: sealed.outboxId, hash: sealed.envelopeHash.bytes, seq: sealed.seq, objectId: sealed.objectId?.bytes)
+  }
+  /// The session whose group holds that object (a card, a permission request).
+  private func session(of object: ObjectId) throws -> SessionId {
+    for group in try core({ try device.groups() }) {
+      guard let session = group.session, try core({ try device.object(group: group.group, objectId: object.data) }) != nil else { continue }
+      return session.sessionId.bytes
+    }
+    throw TrommiError("not-found", "no session of this device holds that object")
+  }
+
+  /// The receiver checks on one envelope; chain, object and register state are written with it. `.page` is an
+  /// envelope fetched out of order: at most provisional, the chain is not touched. An envelope that consumed
+  /// nothing (the core's `refused`) is thrown as its code, so that `logFinding` sorts it like a refused log entry.
+  /// Core.swift has no place for these, which are dropped here: the finding to show beside an envelope, the object
+  /// after it, whether a register value became the current one, whether a provisional envelope was confirmed or is
+  /// to be dropped, that a group's state was built again, and the command gate's flag.
+  public func receiveEnvelope(_ bytes: Bytes, change: UInt64, source: EnvelopeSource, voidCode: String?, nowMs: UInt64) throws -> TrommiClient.ReceivedEnvelope {
+    let void = try voidCode.map { text -> ErrorCode in
+      guard let code = errorCodeFromText(text: text) else { throw TrommiError("bad-format", "a void code this core does not know") }
+      return code
+    }
+    let got = try core { try device.receiveEnvelope(envelope: bytes.data, change: change, ordered: source != .page, voidCode: void, nowMs: nowMs) }
+    let code = got.code.map { errorCodeText(code: $0) }
+    let standing: EnvelopeStanding
+    switch got.outcome {
+    case .applied: standing = .accepted
+    case .provisional: standing = .provisional
+    case .chained: standing = .notApplied(code: code ?? "chained")
+    case .void: standing = .notApplied(code: code ?? "void")
+    case .refused: throw TrommiError(code ?? "bad-format", "the envelope was refused and consumed nothing")
+    }
+    // The sender's role as the room names it now: a device the room group does not list as human writes as an agent.
+    let humans = try core { try device.roomRoles() }?.humans ?? []
+    return TrommiClient.ReceivedEnvelope(header: Self.header(got.header), hash: got.envelopeHash.bytes, standing: standing, bind: Self.bind(got.bind),
+                                         payload: got.payload?.bytes, senderRole: humans.contains(got.header.sender) ? ROLE.HUMAN : ROLE.AGENT)
+  }
+
+  /// The header in the numbers of spec/v2.md section 9, which Core.swift and the model read (Wire.swift). A kind a
+  /// newer Trommi defines has no number here that says which: 255, the last of the reserved ones.
+  private static func header(_ h: TrommiCoreRust.EnvelopeHeader) -> TrommiClient.EnvelopeHeader {
+    let kind: Int
+    switch h.kind {
+    case .item: kind = KIND.TIMELINE_ITEM
+    case .version: kind = KIND.OBJECT_VERSION
+    case .answer: kind = KIND.ANSWER
+    case .request: kind = KIND.PERMISSION_REQUEST
+    case .verdict: kind = KIND.VERDICT
+    case .register: kind = KIND.STATUS
+    case .takeBack: kind = KIND.DECIDE_AGAIN
+    case .reserved: kind = 255
+    }
+    var timeline: (kind: Int, scope: Int)?
+    switch h.timeline?.kind {
+    case .sessionChat: timeline = (TIMELINE.CHAT, TIMELINE_SCOPE.SESSION)
+    case .cardChat: timeline = (TIMELINE.CHAT, TIMELINE_SCOPE.CARD)
+    case .board: timeline = (TIMELINE.CANVAS, TIMELINE_SCOPE.DESK)
+    case nil: timeline = nil
+    }
+    var type: Int?, state: Int?, urgency: Int?
+    if let object = h.object {
+      switch object.objectType { case .card: type = OBJECT_TYPE.CARD; case .note: type = OBJECT_TYPE.NOTE; case .request: type = OBJECT_TYPE.REQUEST; case .artifact: type = OBJECT_TYPE.ARTIFACT }
+      switch object.objectState { case .open: state = CARD_STATE.OPEN; case .answered: state = CARD_STATE.ANSWERED; case .closed: state = CARD_STATE.CLOSED }
+      switch object.urgency { case .low: urgency = 0; case .normal: urgency = 1; case .high: urgency = 2; case .critical: urgency = 3 }
+    }
+    return TrommiClient.EnvelopeHeader(kind: kind, push: h.push, group: h.group.bytes, epoch: h.epoch, sender: h.sender.bytes, seq: h.seq, recipient: h.recipient?.bytes,
+                                       time: h.time, timelineKind: timeline?.kind, timelineScope: timeline?.scope, timelineRef: h.timeline?.id.bytes,
+                                       registerId: h.registerId?.bytes, objectId: h.object?.objectId.bytes, objectType: type, objectState: state, urgency: urgency,
+                                       answeredAt: h.object?.answeredAt, objectRef: h.object?.objectRef.bytes, fileIds: h.fileIds.map(\.bytes))
+  }
+
+  private static func bind(_ bind: TrommiCoreRust.Bind?) -> EnvelopeBind {
+    guard let b = bind else { return .none }
+    switch b.kind {
+    case .answer: return .answer(objectId: b.objectId?.bytes ?? [], versionHash: b.versionHash?.bytes ?? [], choices: b.choices)
+    case .request: return .request(requestId: b.requestId?.bytes ?? [], expiresAt: b.expiresAt)
+    case .verdict: return .verdict(requestId: b.requestId?.bytes ?? [], requestHash: b.requestHash?.bytes ?? [], expiresAt: b.expiresAt, allow: b.allow)
+    case .takeBack: return .takeBack(objectId: b.objectId?.bytes ?? [], previousHash: b.previousHash?.bytes ?? [], versionHash: b.versionHash?.bytes ?? [])
+    }
+  }
+
 
   /// The current value (JSON) of a shared register name in a group; nil: never written, or deleted.
   public func register(group: GroupId, name: String) throws -> Bytes? { try core { try device.register(group: group.data, name: name) }?.bytes }
@@ -242,11 +349,16 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   /// request (`internal`, `overloaded`, `rate-limited`, `unauthorised`, `bad-challenge`, `client-too-old`,
   /// `lease-lost`) changes nothing and returns: the entry stays and is sent again unchanged. A code no hub answers
   /// with, or one this core does not know, throws `bad-format` and changes nothing.
-  /// `voided` is not passed on: the binding has no stored content yet, and so no number of an envelope to void.
+  /// `voided`: the hub kept an envelope's number as a void record (9.0.8): the entry goes, the number stays used.
   public func outboxRefused(_ id: UInt64, code: String, voided: Bool) throws {
     guard let known = errorCodeFromText(text: code) else {
       throw TrommiError("bad-format", "outboxRefused: a code this core does not know is not a refusal for good: send the entry again")
     }
+    if voided { return try core { try device.outboxVoided(id: id) } }
+    // An envelope the hub refused without taking its number, because this device is out of the group, is given up.
+    // (After any other refusal the core keeps an envelope's entry: its number is used for good.)
+    let isEnvelope = try core { try device.outbox() }.contains { $0.id == id && $0.kind == .envelope }
+    if isEnvelope && (code == "not-member" || code == "removed-sender") { return try core { try device.envelopeAbandon(id: id) } }
     try core { try device.outboxRefused(id: id, code: known) }
   }
 
@@ -374,9 +486,6 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   // STUBBED: not in this build of the core binding. Each throws `not-built` and changes nothing.
   // =========================================================================================================
 
-  // stored content (spec section 9): the binding has it (`seal`, `receiveEnvelope`); this adapter does not call it yet
-  public func sendEnvelope(_ draft: EnvelopeDraft, nowMs: UInt64) throws -> SentEnvelope { try notBuilt() }
-  public func receiveEnvelope(_ bytes: Bytes, change: UInt64, source: EnvelopeSource, voidCode: String?, nowMs: UInt64) throws -> TrommiClient.ReceivedEnvelope { try notBuilt() }
   /// The core hands no content key out: what a key seals is written and opened inside it.
   public func contentKey(group: GroupId, epoch: UInt64) throws -> Bytes { try notBuilt() }
 
