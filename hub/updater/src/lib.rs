@@ -62,7 +62,9 @@ pub struct Asset {
     pub size: u64,
 }
 
-/// The signed statement of a release. The signature covers the exact bytes of the file.
+/// The signed statement of a release. The signature covers the exact bytes of the file. Fields this updater does
+/// not know are ignored (they are signed all the same), so a later release may say more without an older updater
+/// refusing it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Manifest {
     pub product: String,
@@ -71,6 +73,61 @@ pub struct Manifest {
     pub tag: String,
     pub commit: String,
     pub assets: Vec<Asset>,
+    /// what each program was built from; releases without it are decided by the programs' bytes (see `changes`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Inputs>,
+}
+
+/// `"inputs": {"hub": "<sha256>", "updater": "<sha256>"}`: per program, a SHA-256 over everything its build reads
+/// (sources, lockfile, toolchain). Two releases with the same value hold the same program, whatever their bytes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Inputs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updater: Option<String>,
+}
+
+/// One of the two programs of a release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    Hub,
+    Updater,
+}
+
+/// THE decision whether going from the release `from` to `to` changes a program, so that it has to be started
+/// anew. When both manifests name the program's inputs, those decide; otherwise the SHA-256 the manifests give for
+/// the program's file on this machine's kind. Nothing known about `from` counts as a change.
+///
+/// Today the updater is replaced by it (`stage_updater`); the hub is still started anew with every release that is
+/// not the one running. With one complete release per shipped change, the hub's swap asks it as well.
+pub fn changes(part: Part, target: &str, from: Option<&Manifest>, to: &Manifest) -> bool {
+    let Some(from) = from else {
+        return true;
+    };
+    let inputs = |m: &Manifest| {
+        m.inputs.as_ref().and_then(|i| match part {
+            Part::Hub => i.hub.clone(),
+            Part::Updater => i.updater.clone(),
+        })
+    };
+    if let (Some(a), Some(b)) = (inputs(from), inputs(to)) {
+        return a != b;
+    }
+    let name = match part {
+        Part::Hub => format!("{BINARY}-{target}"),
+        Part::Updater => format!("{UPDATER}-{target}"),
+    };
+    let sha256 = |m: &Manifest| {
+        m.assets
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.sha256.clone())
+    };
+    match (sha256(from), sha256(to)) {
+        (Some(a), Some(b)) => a != b,
+        _ => true,
+    }
 }
 
 /// `hub-v123` → 123. One spelling only: no sign, no leading zero, at most twelve digits.
@@ -148,8 +205,8 @@ pub fn verify_manifest(
     repository: &str,
     tag: &str,
 ) -> Result<Manifest, String> {
-    let signature =
-        Signature::from_slice(signature).map_err(|_| "the signature is not 64 bytes".to_string())?;
+    let signature = Signature::from_slice(signature)
+        .map_err(|_| "the signature is not 64 bytes".to_string())?;
     key.verify_strict(bytes, &signature)
         .map_err(|_| "the signature does not match the pinned key".to_string())?;
     let manifest: Manifest = serde_json::from_slice(bytes)
@@ -174,7 +231,6 @@ pub fn verify_manifest(
     }
     Ok(manifest)
 }
-
 
 // ---------------------------------------------------------------------------------------------------------------
 // Configuration, the service, the answer
@@ -258,10 +314,10 @@ impl HubCtl {
         stream
             .set_read_timeout(Some(Duration::from_secs(150)))
             .map_err(fail)?;
-        stream.write_all(format!("{verb}\n").as_bytes()).map_err(fail)?;
         stream
-            .shutdown(std::net::Shutdown::Write)
+            .write_all(format!("{verb}\n").as_bytes())
             .map_err(fail)?;
+        stream.shutdown(std::net::Shutdown::Write).map_err(fail)?;
         let mut answer = String::new();
         stream
             .take(4096)
@@ -487,7 +543,9 @@ impl Updater {
 
     /// Points a link at a release (or takes it away), in one step: a new link is made beside it and renamed over.
     fn point(&self, link: &str, tag: Option<&str>) -> Result<(), String> {
-        if self.linked(link).as_deref() == tag && (tag.is_some() || !self.cfg.root.join(link).exists()) {
+        if self.linked(link).as_deref() == tag
+            && (tag.is_some() || !self.cfg.root.join(link).exists())
+        {
             return Ok(());
         }
         let path = self.cfg.root.join(link);
@@ -512,13 +570,8 @@ impl Updater {
         let bytes = std::fs::read(dir.join(MANIFEST)).map_err(|e| format!("{MANIFEST}: {e}"))?;
         let signature =
             std::fs::read(dir.join(SIGNATURE)).map_err(|e| format!("{SIGNATURE}: {e}"))?;
-        let manifest = verify_manifest(
-            &self.cfg.key,
-            &bytes,
-            &signature,
-            &self.cfg.repository,
-            tag,
-        )?;
+        let manifest =
+            verify_manifest(&self.cfg.key, &bytes, &signature, &self.cfg.repository, tag)?;
         let mut hub = String::new();
         for (asset, stored, cap, _) in wanted(&self.cfg.target) {
             let entry = entry(&manifest, &asset, cap)?;
@@ -543,14 +596,7 @@ impl Updater {
         let dir = self.releases().join(tag);
         let bytes = std::fs::read(dir.join(MANIFEST)).ok()?;
         let signature = std::fs::read(dir.join(SIGNATURE)).ok()?;
-        verify_manifest(
-            &self.cfg.key,
-            &bytes,
-            &signature,
-            &self.cfg.repository,
-            tag,
-        )
-        .ok()
+        verify_manifest(&self.cfg.key, &bytes, &signature, &self.cfg.repository, tag).ok()
     }
 
     fn running(&self) -> Option<Running> {
@@ -699,9 +745,7 @@ impl Updater {
                 {
                     Ok(url.to_string())
                 }
-                [] => Err(Failure::Fetch(format!(
-                    "release {tag} has no asset {name}"
-                ))),
+                [] => Err(Failure::Fetch(format!("release {tag} has no asset {name}"))),
                 _ => Err(Failure::Fetch(format!(
                     "release {tag}: asset {name} is not at an address of this repository"
                 ))),
@@ -867,7 +911,11 @@ impl Updater {
         };
         if self.replaced() || self.cfg.root.join("updater-trial").exists() {
             // a new updater is taking over: it is not given a second change before it has shown that it is up
-            return Outcome::new("busy", tag, "the updater is being replaced; call again in a minute");
+            return Outcome::new(
+                "busy",
+                tag,
+                "the updater is being replaced; call again in a minute",
+            );
         }
         log("deploy", json!({ "tag": tag }));
         // a swap that was cut off earlier is settled before a new one begins
@@ -884,7 +932,9 @@ impl Updater {
         if outcome.ok {
             match self.stage_updater(tag) {
                 Ok(next) => outcome.updater.next = next,
-                Err(e) => outcome.message = format!("{}; its updater was not taken: {e}", outcome.message),
+                Err(e) => {
+                    outcome.message = format!("{}; its updater was not taken: {e}", outcome.message)
+                }
             }
             outcome.updater.reverted = self.reverted();
         }
@@ -1073,7 +1123,9 @@ impl Updater {
                 }
             }
         }
-        let health = self.put_back(&journal, commit_of(&journal.old).as_deref()).await;
+        let health = self
+            .put_back(&journal, commit_of(&journal.old).as_deref())
+            .await;
         log(
             "deploy-undone",
             json!({ "cut_off": journal.tag, "back_to": journal.old, "health": health }),
@@ -1149,20 +1201,22 @@ impl Updater {
     /// the running updater has to end for it.
     fn stage_updater(&self, tag: &str) -> Result<Option<String>, String> {
         let now = self.linked("updater");
-        if now.as_deref() == Some(tag) || self.replaced() || self.cfg.root.join("updater-trial").exists() {
+        if now.as_deref() == Some(tag)
+            || self.replaced()
+            || self.cfg.root.join("updater-trial").exists()
+        {
             return Ok(None);
         }
         // one that was tried and did not come up is not tried a second time; a later release may bring a better one
         if self.reverted().as_deref() == Some(tag) {
             return Ok(None);
         }
-        let new = file_sha256(&self.releases().join(tag).join(UPDATER))
-            .ok_or("the release's updater is unreadable")?;
-        let same = now
-            .as_ref()
-            .and_then(|n| file_sha256(&self.releases().join(n).join(UPDATER)))
-            .is_some_and(|old| old == new);
-        if same {
+        // both stored manifests are proved by their signature, and their files were proved against them
+        let new = self
+            .stored_manifest(tag)
+            .ok_or("the release's manifest does not verify")?;
+        let old = now.as_deref().and_then(|n| self.stored_manifest(n));
+        if !changes(Part::Updater, &self.cfg.target, old.as_ref(), &new) {
             return Ok(None);
         }
         let root = &self.cfg.root;
