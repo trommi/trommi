@@ -566,7 +566,7 @@ export async function startFakeHub(opts = {}) {
       const invite = openInvite(pathId(segs[1], 16))
       let asker = null
       try { asker = auth(rq) } catch { /* by invite id only */ }
-      const out = { offer: invite.offer, signature: invite.signature, expires_at: invite.expires_at }
+      const out = { offer: invite.offer, signature: invite.signature, ...(invite.mac ? { mac: invite.mac } : {}), expires_at: invite.expires_at }
       if (asker?.who === 'human' && asker.room.room_id === invite.room) out.requests = invite.requests.map(({ request, mac, signature }) => ({ request, mac, signature }))
       return out
     }
@@ -920,7 +920,9 @@ export async function startFakeHub(opts = {}) {
       const o = read('offer', offer, 'the Offer'), held = state.invites.get(o.invite_id)
       if (held) { if (held.offer !== b64(offer)) throw refuse('replay', 'this invite id is used'); return { invite_id: held.invite_id } }
       if (o.room_id !== a.room.room_id) throw refuse('bad-invite', 'an Offer of this room, by the device that posts it')
-      state.invites.set(o.invite_id, { invite_id: o.invite_id, room: a.room.room_id, inviter: a.device, offer: b64(offer), signature: b64(signature), expires_at: o.expires_at, requests: [], reveal: null, reveal_signature: null, burned: false })
+      // the MAC that binds the Offer to its link: kept and served as it came (optional, as on the hub at first)
+      const mac = body.mac === undefined || body.mac === null ? null : b64(field(body, 'mac'))
+      state.invites.set(o.invite_id, { invite_id: o.invite_id, room: a.room.room_id, inviter: a.device, offer: b64(offer), signature: b64(signature), mac, expires_at: o.expires_at, requests: [], reveal: null, reveal_signature: null, burned: false })
       return { invite_id: o.invite_id }
     }
     if (is('PUT', 'invites', null, 'reveal')) {

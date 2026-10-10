@@ -14,6 +14,7 @@
 // tabs.ts's to open again: the client says `device-closed`, this tab stands in line for the lock.
 //
 //   new Worker('/gen/vendor/core-worker.mjs', { type: 'module' })   (the app's build names the bundled one)
+import { closeAllStreams } from './hub.ts'
 import type { Client } from './client.ts'
 import { IdbStore } from './core-wasm.ts'
 import type { Store } from './core-api.ts'
@@ -123,6 +124,7 @@ async function make(m: Extract<ToWorker, { t: 'account' | 'join' }>, cache: Cach
 
 port.onmessage = async ({ data: m }) => {
   if (m.t === 'ack') { asked.get(m.ack)?.(m.ok); return }
+  if (m.t === 'pagehide') { closeAllStreams(); return }
   if (m.t === 'call' && m.method === 'join.cancel') { joining?.cancel(); post({ t: 'result', id: m.id, ok: true, value: null }); return }
   if (m.t === 'open' || m.t === 'account' || m.t === 'join') {
     try {

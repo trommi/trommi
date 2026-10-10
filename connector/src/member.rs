@@ -993,6 +993,8 @@ impl Member {
             return Err(Fault::plain("this session is already in a room"));
         }
         let (room_id, _hub) = room_of_link(link)?;
+        // An expired link is refused here, before a slot is touched or a hub asked.
+        crate::join::check_link(link, crate::util::now_ms())?;
         let _ = self.storage_for(&room_id, false).await?;
         let mut old: Option<SlotPaths> = None;
         let cur = self.paths().unwrap();

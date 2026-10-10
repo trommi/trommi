@@ -48,7 +48,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | **Files, shares, push, presence** | | |
 | `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; at most 67 125 269 stored bytes, which is 64 MiB of plaintext (`too-large`); `quota-exceeded` |
 | `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
-| `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | `{ offer, signature, mac }` (`mac`: the Offer's MAC, 32 bytes, length checked only, `bad-format` otherwise; optional for now, stored and served as null when absent, and required once every client sends it); Reveal + signature | human devices; `expires_at` at most the invite life of the Offer's kind ahead (10 minutes for a human device, 15 for an agent device) plus 2 minutes for the clocks (`bad-invite`); the hub's own expiry of the invite is the Offer's `expires_at`; the same Offer posted again with the same signature and MAC gets the first answer, with another `replay` |
+| `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | `{ offer, signature, mac }` (`mac`: the Offer's MAC, 32 bytes, length checked only, `bad-format` otherwise; may be left out for now (then stored and served as null; a `mac` that is there must be the 32 bytes, `null` too is `bad-format`), and required once every client sends it); Reveal + signature | human devices; `expires_at` at most the invite life of the Offer's kind ahead (10 minutes for a human device, 15 for an agent device) plus 2 minutes for the clocks (`bad-invite`); the hub's own expiry of the invite is the Offer's `expires_at`; the same Offer posted again with the same signature and MAC gets the first answer, with another `replay` |
 | `POST /v2/push` · `GET` · `DELETE` | `{ web_push: { endpoint, keys: { p256dh, auth } } \| apns: { token, key, environment, topic }, level }`; `GET` → `{ subscriptions, vapid_public_key, apns }` | 15; human devices |
 | `POST /v2/live-activity` | `{ kind: start \| activity, token, tag, environment, topic }` | 15.3 |
 | `POST /v2/link` | `{ process, generation?, hears, working, last_call_at }` → `{ generation, expires_at }` | 13.7; every later write of that device carries `Trommi-Lease: <generation>` (`lease-lost`) |
@@ -420,6 +420,13 @@ encrypted.
     groups only and is read in pages (`limit`). The bare list without `limit`, and the Desk's `groups`, stay as
     they were (with the leaves of live groups only) until the clients read the pages; then the bare form and the
     Desk's `groups` go.
+44. **One stream per device** (10 October 2026). Opening `GET /v2/stream` ends the device's older streams at once
+    (their connections are cut, their places freed): a browser that never closes the old stream of a page
+    reloaded under a service worker would otherwise reach the limit of v2.md section 16 and get `too-many`. A
+    device runs one stream (the web app in its leader tab). An agent device's processes overlap while one
+    restarts (13.7): its stream carries `Trommi-Lease`; only the lease holder's stream replaces the others, a
+    process that no longer holds the lease is answered `lease-lost` and ends nothing, and a stream opened without
+    `Trommi-Lease` (a client before this rule) is taken beside the others within the limit of 8.
 
 ## Known limits
 

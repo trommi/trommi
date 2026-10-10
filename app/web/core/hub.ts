@@ -627,6 +627,13 @@ interface Send {
   once?: boolean
 }
 
+/** Every stream of this context that is open: `closeAllStreams` ends them (the page goes: a reload, a tab closed). */
+const OPEN_STREAMS = new Set<() => void>()
+/** Ends every live stream of this context at once, its connection aborted. A browser may keep a stream's connection
+ *  open past the page that opened it (Firefox under a service worker did, one more per reload, until the six
+ *  connections to the host were taken): the page says when it goes, and nothing is left behind. */
+export function closeAllStreams(): void { for (const close of [...OPEN_STREAMS]) close() }
+
 export class Hub {
   hub_url: string
   /** `<kind>/<major>.<minor>.<patch>`, sent as `Trommi-Client` on every request (`client-too-old`). */
@@ -1375,7 +1382,9 @@ export class Hub {
       }
     }
     void run().catch(e => { if (!closed) { tell('offline'); report(e) } })
-    return () => { closed = true; connection?.abort(); this.wake() }
+    const close = (): void => { closed = true; connection?.abort(); OPEN_STREAMS.delete(close); this.wake() }
+    OPEN_STREAMS.add(close)
+    return close
   }
 
   // ---- files and Share links (v2.md 11)
@@ -1506,10 +1515,11 @@ export class Hub {
   // ---- invites (v2.md 12.1): the three signed messages, by invite id
 
   /** `GET /v2/invites/{invite_id}`: the Offer; a human device of its room (signed in) also gets the Requests. */
-  async getInvite(invite_id: Uint8Array): Promise<{ offer: Uint8Array; signature: Uint8Array; expires_at: number; requests: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }[] | null }> {
+  async getInvite(invite_id: Uint8Array): Promise<{ offer: Uint8Array; signature: Uint8Array; mac: Uint8Array; expires_at: number; requests: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }[] | null }> {
     const o = obj(await this.get(`/v2/invites/${own(invite_id, 'invite_id', 16)}`, undefined, CAP_SMALL, this.signer !== null), 'an invite')
     return {
-      offer: bytes(o.offer, 'offer', 1, MAX_SMALL_STRUCT), signature: bytes(o.signature, 'signature', 1, MAX_TAG), expires_at: int(o.expires_at, 'expires_at'),
+      // (the MAC that binds the Offer to the link; a hub before it serves none: the core then refuses the Offer)
+      offer: bytes(o.offer, 'offer', 1, MAX_SMALL_STRUCT), signature: bytes(o.signature, 'signature', 1, MAX_TAG), mac: o.mac === undefined || o.mac === null ? new Uint8Array(0) : bytes(o.mac, 'mac', 1, MAX_TAG), expires_at: int(o.expires_at, 'expires_at'),
       requests: maybe(o.requests, r => list(r, 'requests', 4).map(x => {
         const q = obj(x, 'a Request')
         return { request: bytes(q.request, 'request', 1, MAX_KEY_PACKAGE), mac: bytes(q.mac, 'mac', 1, MAX_TAG), signature: bytes(q.signature, 'signature', 1, MAX_TAG) }
@@ -1527,8 +1537,8 @@ export class Hub {
     return { reveal: bytes(o.reveal, 'reveal', 1, MAX_SMALL_STRUCT), signature: bytes(o.signature, 'signature', 1, MAX_TAG) }
   }
   /** `POST /v2/invites`: a human device publishes its signed Offer. */
-  async postInvite(offer: Uint8Array, signature: Uint8Array): Promise<{ invite_id: Uint8Array }> {
-    return { invite_id: id(obj(await this.send('POST', '/v2/invites', { offer: enc(offer), signature: enc(signature) }), 'an invite answer').invite_id, 'invite_id', 16) }
+  async postInvite(offer: Uint8Array, signature: Uint8Array, mac: Uint8Array): Promise<{ invite_id: Uint8Array }> {
+    return { invite_id: id(obj(await this.send('POST', '/v2/invites', { offer: enc(offer), signature: enc(signature), mac: enc(mac) }), 'an invite answer').invite_id, 'invite_id', 16) }
   }
   /** `PUT /v2/invites/{invite_id}/reveal`: the inviter accepted one Request. */
   async putReveal(invite_id: Uint8Array, reveal: Uint8Array, signature: Uint8Array): Promise<void> {

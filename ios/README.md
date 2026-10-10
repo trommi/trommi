@@ -230,17 +230,11 @@ distribution signing refuses App Manager keys: the key needs the Admin role.
 
 ## Export compliance
 
-The app ships its own implementation of standard algorithms (MLS, HPKE, X25519, Ed25519, ChaCha20-Poly1305, AES-GCM,
-Argon2id in the Rust core) and uses it to keep what people write confidential. `ITSAppUsesNonExemptEncryption` is
-therefore `YES` (the owner's decision, 10 October 2026): in `TrommiApp/Info.plist`, and the ship script writes the
-same unless `ITS_NON_EXEMPT_ENCRYPTION` says otherwise. CI writes the export compliance code into Info.plist: the
-repository variable `IOS_EXPORT_COMPLIANCE_CODE` when it is set, otherwise the code of the app's APPROVED
-documentation, read from App Store Connect with the API key (`asc.py export-code`); with none approved the step fails
-and lists the declarations' states.
-
-What follows: App Store Connect asks the encryption questions for the app once (standard algorithms, not proprietary
-ones); the owner answers them himself, it is his statement. Until he has, a build can sit at "Missing Compliance".
-Distribution in France needs the French encryption declaration to be checked.
+The app uses standard algorithms only (MLS, HPKE, X25519, Ed25519, ChaCha20-Poly1305, AES-GCM, Argon2id in the Rust
+core) and is not distributed in France, so it is exempt: `ITSAppUsesNonExemptEncryption` is `NO` in
+`TrommiApp/Info.plist`, CI and the ship script write the same, and no export compliance code is written or looked up
+(`IOS_NON_EXEMPT_ENCRYPTION=YES` with `asc.py export-code` stays for a later change). If France is added later, the
+French encryption declaration is needed.
 
 ## Privacy manifest
 
