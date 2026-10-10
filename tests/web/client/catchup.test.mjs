@@ -19,7 +19,7 @@ test('520 changes across groups, taken in pages, strictly in the hub\'s order', 
   const again = await R.openRoom({ storage: b.stored_as })
   t.after(() => again.stop().catch(() => {}))
   const from = again.engine.position, taken = []
-  again.engine.on('envelope', ({ received, how }) => { if (how === 'ordered') taken.push(received.header.change) })
+  again.engine.on('envelope', ({ received, how }) => { if (how === 'ordered') taken.push(received.change) })
   again.engine.on('log', ({ item }) => taken.push(item.change))
   const requests = fake.requests.length
   await again.start({ stream: false })
@@ -67,7 +67,7 @@ test('a hub that serves a page out of order, or an old envelope again: nothing o
 test('the stream drops and resumes: nothing is lost and nothing comes twice; an old event is not taken again', async t => {
   const { fake, a, b } = await scene(t, { second: true })
   const seen = []
-  a.engine.on('envelope', ({ received }) => seen.push(received.header.change))
+  a.engine.on('envelope', ({ received }) => seen.push(received.change))
   const room = [...fake.state.rooms.values()][0]
   for (let i = 0; i < 6; i++) {
     await b.saveNote({ text: `note ${i}` })

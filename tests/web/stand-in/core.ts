@@ -2,57 +2,53 @@
 // under tests/, is never shipped, and the product has no switch that loads it (a test hands it to the engine, or
 // bundles a worker with this file's `loadCore` in the place of core-wasm.ts).
 //
-// It is a HYBRID, to be as real as a test can be today:
+// It is a HYBRID. The engine, the client and room.ts cannot tell it from the real core: every shape is the binding's.
 //
 // REAL (the WASM binding, core/wasm/pkg, unchanged): the device and its key, every MLS group, Commits, Welcomes,
-// `processLogEntry`, the key handover, the work trail, KeyPackages, the hub sign-in, the binding's outbox and
-// cursor, recovery and signing in with the code, files, share links, the account's functions. Their bytes are the real ones.
+// `processLogEntry`, the key handover, the work trail, stroke pieces (`sendStrokePiece`, `receiveRelay`),
+// KeyPackages, joining by link on both sides (Offer, Request, Reveal, the check code, the Commit of a confirmed
+// invite and its steps), recovery and signing in with the code, files, share links, the account's functions, and
+// everything without state. Their bytes are the real ones.
 //
-// STAND-IN (this file, NO cryptography), for what core-api.ts calls PROVISIONAL:
-// - Stored content: `seal`, `receiveEnvelope`, `headsDue`, `cutOf`. An "envelope" is plain UTF-8 JSON in the shape
-//   the fake hub's default reader takes (tests/web/stand-in/hub.mjs), nothing is encrypted or signed. Its hash is
-//   the SHA-256 of its bytes. What is kept honestly: one chain per sender and group (seq, prev; replay, gap,
-//   equivocation, chain-break), the object state of spec/v2.md 9.2.1 replayed from headers, who may write what
-//   (9.2) by the roles the REAL groups give, the register rule of 9.3.2, Cuts from the real Commits (9.0.10), and
-//   "no key, no body": a body is handed out only if the real device holds the content key of that group and epoch
-//   (so a key handover is what makes history readable, as in the product). Not kept: signatures, freshness
-//   (9.0.5 check 8), the lamport wrap of 9.3.2, the leaves of past epochs: a sender counts as a member if this
-//   device ever saw it as a leaf, or holds the key of the envelope's epoch; a sender it never saw is a human
-//   device in the room group, and in a session group its role is not judged.
+// STAND-IN (this file, NO cryptography):
+// - Stored content: `seal`, `receiveEnvelope`, `headsDue`, `cutOf`, `outboxVoided`, `envelopeAbandon`. The binding
+//   has these calls; they are stood in for here because the fake hub (tests/web/stand-in/hub.mjs) files an
+//   envelope by reading its header as JSON, and because a device of the binding cannot yet read what was written
+//   before it joined (the tests of history after a join rest on that). An "envelope" is plain UTF-8 JSON, nothing
+//   is encrypted or signed, its hash is the SHA-256 of its bytes. What is kept honestly: one chain per sender and
+//   group (seq, prev; replay, gap, equivocation, chain-break), the object state of spec/v2.md 9.2.1 replayed from
+//   headers, who may write what (9.2) by the roles the REAL groups give, the register rule of 9.3.2, Cuts from
+//   the real Commits (9.0.10), and "no key, no body": a body is handed out only if the real device holds the
+//   content key of that group and epoch (`holdsKey`), so a key handover is what makes history readable. Not kept:
+//   signatures, freshness (9.0.5 check 8), the lamport wrap of 9.3.2, the leaves of past epochs: a sender counts
+//   as a member if this device ever saw it as a leaf, or holds the key of the envelope's epoch; a sender it never
+//   saw is a human device in the room group, and in a session group its role is not judged.
 //   READING BACK, as this stand-in defines it and the engine relies on it: `receiveEnvelope(…, ordered = false)` of
 //   an envelope the chain already holds answers `applied` (or what it was) with the object state stored for it, and
 //   with its body if the key is there now.
-// - Stroke pieces: `sendStrokePiece` and `receiveRelay` are stand-ins too (plain JSON). The binding seals a piece,
-//   but it can take a relayed message only through `processLogEntry`, which wants a change number above its cursor
-//   and moves the cursor to it; a relayed message has none.
-// - Joining by link: `inviteOpen`, `inviteAccept`, `inviteConfirm`, `joinRequest`, `joinReveal` make JSON Offer,
-//   Request and Reveal with made-up "signatures" and a MAC that is a hash. The check code is derived from Offer,
-//   Request, MAC and nonce, so both sides show the same six numbers. What follows is REAL: `addHumanDevice` or
-//   `changeAgents` with the Request's real KeyPackage, and the newcomer's real `joinWelcome`.
-// - Recovery is NOT stood in for: it is the binding's own (spec 8). This file only cuts its trailers (below) off
-//   what the fake hub serves before the binding sees it.
-// - `inviteLinkParse`, `checkEmoji`, `hubAddress`, `boardReduce` (scribble.ts `reduceBoard`).
+//   Because the real core holds no chain of this content, the Cuts it names in a takeover step are replaced by
+//   the stand-in's own (`inviteSteps`).
+// - `hubSignIn` of a device that is JOINING by link: the binding at this head refuses it (`no-room`) until the
+//   device has joined, and it cannot fetch its Welcome without a token. For exactly that case this file writes
+//   the HubAuth itself with a signature of zeros, which only the fake hub takes. It goes when the binding signs.
+// - `servedChainCut` (core-api.ts Part 2): the numbers and links of the stand-in's JSON envelopes.
 //
 // For the fake hub, which reads a GroupInfo and a Commit as JSON: this stand-in appends a TRAILER of facts to the
 // real bytes of a Commit and of a founding GroupInfo when it hands out the outbox ({ added, removed, agents } and
 // { group, epoch, leaves, session, recovery_signature_key }), and cuts it off again before the binding sees the
-// bytes. `hubReaders` reads the trailer, and the real HubAuth. The facts are what this device asked the binding
-// for, not what the Commit proves: the fake hub checks no cryptography anyway.
+// bytes. `hubReaders` reads the trailer, and the real HubAuth, Offer and Reveal. The facts are what this device
+// asked the binding for, not what the Commit proves: the fake hub checks no cryptography anyway.
 //
-// The stand-in's own state (chains, objects, registers, invites, its outbox, the facts) lives in a SECOND store,
-// given by the test. Each call writes the binding's state first (the binding does), then one atomic write of the
+// The stand-in's own state (chains, objects, registers, its outbox, the facts) lives in a SECOND store, given by
+// the test. Each call writes the binding's state first (the binding does), then one atomic write of the
 // stand-in's. THE GAP versus the real core: these are two transactions, not one. A crash between them leaves the
 // binding ahead (a Commit in the outbox without its facts: the fake hub then takes it as "no change of members").
 // A failed write of the stand-in's store closes the real device too, as the binding does on its own failure.
 import type * as BindingModule from '../../../core/wasm/js/trommi-core.js'
 import type {
-  Bind, Core, Cut, Device, Draft, EnvelopeHeader, EnvelopeKind, ErrorCode, GroupSummary, InviteLinkParts, InviteRole, LogEntry, ObjectState, ObjectType,
-  GroupCut, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, ServedGroup, ServedRoom, Store, Urgency,
+  Bind, Core, Cut, Device, Draft, EnvelopeHeader, EnvelopeKind, ErrorCode, GroupSummary, InviteConfirmed, InviteRole, InviteStep, JoinRequest, LogEntry,
+  ObjectState, ObjectType, GroupCut, OutboxEntry, Processed, ReceivedEnvelope, RoomRoles, Sealed, ServedGroup, ServedRoom, SignedHubAuth, SignedOffer, Store, Urgency,
 } from '../../../app/web/core/core-api.ts'
-import { CHECK_EMOJI } from '../../../app/web/core/check-emoji.ts'
-import { hubAddress } from '../../../app/web/core/hub.ts'
-import { reduceBoard } from '../../../app/web/core/scribble.ts'
-import type { BoardItem, BoardState } from '../../../app/web/core/scribble.ts'
 
 export type Binding = typeof BindingModule
 
@@ -161,6 +157,27 @@ export const hubReaders = {
     return facts
   },
   commit(bytes: Uint8Array): Record<string, unknown> { return splitFacts(bytes).facts ?? {} },
+  // struct Offer (spec 12.1): room_id[32] invite_id[16] role session_id[16] expires_at(u64) …
+  offer(bytes: Uint8Array): { room_id: string; invite_id: string; expires_at: number } {
+    if (bytes.length !== 177) throw new Error('not an Offer')
+    return { room_id: b64(bytes.subarray(0, 32)), invite_id: b64(bytes.subarray(32, 48)), expires_at: Number(new DataView(bytes.buffer, bytes.byteOffset + 65, 8).getBigUint64(0)) }
+  },
+  // struct Reveal: invite_id[16] nonce[32] request_hash[32]
+  reveal(bytes: Uint8Array): { invite_id: string; request_hash: string } {
+    if (bytes.length !== 80) throw new Error('not a Reveal')
+    return { invite_id: b64(bytes.subarray(0, 16)), request_hash: b64(bytes.subarray(48, 80)) }
+  },
+  /** request_hash = RefHash("Trommi Invite Request", Request ‖ mac): SHA-256 over label<V> ‖ value<V> (RFC 9420 5.2). */
+  requestHash(request: Uint8Array, mac: Uint8Array): string {
+    const label = utf8.encode('Trommi Invite Request'), value = concat(request, mac)
+    return b64(sha256(concat(varint(label.length), label, varint(value.length), value)))
+  },
+}
+/** A length as a variable-length integer of RFC 9000 16, as TLS presentation `<V>` writes it. */
+function varint(n: number): Uint8Array {
+  if (n < 64) return Uint8Array.of(n)
+  if (n < 16384) return Uint8Array.of(0x40 | (n >> 8), n & 255)
+  return Uint8Array.of(0x80 | (n >>> 24), (n >> 16) & 255, (n >> 8) & 255, n & 255)
 }
 
 // ---- the stand-in's own stored state -------------------------------------------------------------------------------
@@ -217,24 +234,25 @@ type WireBind =
   | { kind: 'verdict'; request_id: string; request_hash: string; expires_at: number; allow: boolean }
   | { kind: 'takeBack'; object_id: string; previous_hash: string; version_hash: string }
 
-function headerOf(w: Wire, change: number, hash: Uint8Array): EnvelopeHeader {
-  const o = w.object
+function headerOf(w: Wire): EnvelopeHeader {
+  const o = w.object, t = w.timeline
   return {
-    change, envelopeHash: hash, group: unb64(w.group), sessionId: w.session_id ? unb64(w.session_id) : null, epoch: w.epoch, sender: unb64(w.sender), seq: w.seq,
+    group: unb64(w.group), sessionId: w.session_id ? unb64(w.session_id) : null, epoch: w.epoch, sender: unb64(w.sender), seq: w.seq, prev: unb64(w.prev),
     recipient: w.recipient ? unb64(w.recipient) : null, time: w.time, kind: w.kind, push: w.push,
-    timeline: w.timeline ? { kind: w.timeline.kind, scope: w.timeline.scope, ref: unb64(w.timeline.ref) } as EnvelopeHeader['timeline'] : null,
+    timeline: t ? { kind: t.kind === 'board' ? 'board' : t.scope === 'card' ? 'cardChat' : 'sessionChat', id: unb64(t.ref) } : null,
     registerId: w.register_id ? unb64(w.register_id) : null,
-    object: o ? { objectId: unb64(o.object_id), objectType: o.object_type, objectState: o.object_state, urgency: o.urgency, answeredAt: o.answered_at, objectRef: o.object_ref === ZERO32 ? null : unb64(o.object_ref) } : null,
-    fileIds: w.file_ids.map(unb64),
+    object: o ? { objectId: unb64(o.object_id), objectType: o.object_type, objectState: o.object_state, urgency: o.urgency, answeredAt: o.answered_at, objectRef: unb64(o.object_ref) } : null,
+    fileIds: w.file_ids.map(unb64), reservedKind: null, reservedBlock: null,
   }
 }
 function bindOf(b: WireBind | null): Bind | null {
   if (!b) return null
+  const flat = { objectId: null, requestId: null, versionHash: null, previousHash: null, requestHash: null, choices: [], expiresAt: 0, allow: false }
   switch (b.kind) {
-    case 'answer': return { kind: 'answer', objectId: unb64(b.object_id), versionHash: unb64(b.version_hash), choices: b.choices }
-    case 'request': return { kind: 'request', requestId: unb64(b.request_id), expiresAt: b.expires_at }
-    case 'verdict': return { kind: 'verdict', requestId: unb64(b.request_id), requestHash: unb64(b.request_hash), expiresAt: b.expires_at, allow: b.allow }
-    case 'takeBack': return { kind: 'takeBack', objectId: unb64(b.object_id), previousHash: unb64(b.previous_hash), versionHash: unb64(b.version_hash) }
+    case 'answer': return { ...flat, kind: 'answer', objectId: unb64(b.object_id), versionHash: unb64(b.version_hash), choices: b.choices }
+    case 'request': return { ...flat, kind: 'request', requestId: unb64(b.request_id), expiresAt: b.expires_at }
+    case 'verdict': return { ...flat, kind: 'verdict', requestId: unb64(b.request_id), requestHash: unb64(b.request_hash), expiresAt: b.expires_at, allow: b.allow }
+    case 'takeBack': return { ...flat, kind: 'takeBack', objectId: unb64(b.object_id), previousHash: unb64(b.previous_hash), versionHash: unb64(b.version_hash) }
   }
 }
 /** `object_id` of an object's first version: derived from group, sender and number, as section 9 derives it. */
@@ -243,29 +261,16 @@ const objectIdOf = (group: string, sender: string, seq: number): string => b64(h
 /** What the stand-in keeps per object (9.2.1). */
 interface Obj { group: string; type: ObjectType; owner: string; state: ObjectState; current: string; urgency: Urgency; answer: string | null; expires_at: number; rank?: [number, string, number] }
 /** What it keeps per accepted envelope, for reading back. */
-interface Seen { g: string; s: string; q: number; code: ErrorCode | null; after: { owner: string; state: ObjectState; current: string; object_id: string } | null; reg: string | null }
+interface Seen { g: string; s: string; q: number; code: ErrorCode | null; after: { owner: string; state: ObjectState; current: string; object_id: string; type: ObjectType; answer: string | null } | null; reg: string | null }
 interface Chain { seq: number; hash: string }
 interface OwnEntry { id: number; after: number; kind: 'envelope' | 'relayMessage'; group: string; epoch: number; bytes: string }
-interface Invite {
-  secret: string; nonce: string; role: InviteRole; session_id: string | null; offer: string; expires_at: number; hub: string
-  used: { device: string; key_package: string; request_hash: string; code: number[] } | null; burned: boolean
-}
-interface Joining { invite_id: string; secret: string; offer: string; request: string; mac: string; inviter: string }
+/** What a confirmed invite's Commit does, for the fake hub: kept so that the Commit built again says the same. */
+interface InviteFacts { added?: string[]; agents?: string[]; removed?: string[] }
 
-/** What an agent or helper device writes; the web app's `Draft` (core-api.ts) has only a human's items. For the
- *  agent stand-in (tests/web/stand-in/agent.ts). */
-export type AgentDraft =
-  | { kind: 'objectFirst'; session: Uint8Array; objectType: 'card' | 'request' | 'artifact'; urgency: Urgency; push: boolean; expiresAt?: number; payload: Uint8Array }
-  | { kind: 'objectVersion'; session: Uint8Array; objectId: Uint8Array; closed: boolean; urgency: Urgency; push: boolean; payload: Uint8Array }
-
-/** What the stand-in's device has beside core-api.ts's `Device`: `sealAgent`, for the agent stand-in. */
-export interface StandInExtras {
-  sealAgent(draft: AgentDraft, fileIds: Uint8Array[], nowMs: number): Promise<Sealed>
-}
-export type StandInDevice = Device & StandInExtras
+/** The stand-in's device is core-api.ts's `Device`, nothing beside it. */
+export type StandInDevice = Device
 
 const OWN_IDS = 2 ** 40
-const INVITE_MS = 600_000
 
 class CoreMissing extends Error {
   readonly code = 'core-missing'
@@ -321,7 +326,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
   const reach = (change: number): void => { if (change > cursorOf()) state.set('cursor', change) }
 
   async function hasKey(group: string, epoch: number): Promise<boolean> {
-    try { await raw.contentKey(unb64(group), epoch); return true } catch { return false }
+    try { return await raw.holdsKey(unb64(group), epoch) } catch { return false }
   }
 
   // ---- the binding's outbox with facts, and the stand-in's own entries
@@ -383,63 +388,61 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
   const roomGroup = async (): Promise<string> => (await facts()).room ?? refuse('no-room', 'this device has no room')
   const obj = (id: string): Obj => state.get<Obj>(`obj/${id}`) ?? refuse('not-found', 'no such object')
 
-  async function seal(draft: Draft, recipient: Uint8Array | null, fileIds: Uint8Array[], nowMs: number): Promise<Sealed> {
-    const to = recipient ? b64(recipient) : null, file_ids = fileIds.map(b64), payload = (p: Uint8Array) => b64(p)
+  async function seal(draft: Draft, recipient: Uint8Array | null | undefined, fileIds: Uint8Array[], nowMs: number): Promise<Sealed> {
+    const to = recipient ? b64(recipient) : null, file_ids = fileIds.map(b64)
+    /** A field the draft's kind names: `bad-format` when it is missing, as the binding has it. */
+    const need = <T>(v: T | null | undefined): T => v ?? refuse('bad-format', `a ${draft.kind} draft lacks a field`)
+    const body = (): string => b64(need(draft.payload))
+    const base = { push: false, recipient: to, file_ids, bind: null }
     switch (draft.kind) {
-      case 'sessionChat': return sealWire(await sessionGroup(draft.session), () => ({ kind: 'item', push: false, recipient: to, timeline: { kind: 'chat', scope: 'session', ref: b64(draft.session) }, file_ids, bind: null, payload: payload(draft.payload) }), nowMs)
-      case 'cardChat': return sealWire(await sessionGroup(draft.session), () => ({ kind: 'item', push: false, recipient: to, timeline: { kind: 'chat', scope: 'card', ref: b64(draft.card) }, file_ids, bind: null, payload: payload(draft.payload) }), nowMs)
-      case 'boardItem': return sealWire(await roomGroup(), () => ({ kind: 'item', push: false, recipient: to, timeline: { kind: 'board', scope: 'desk', ref: b64(draft.board) }, file_ids, bind: null, payload: payload(draft.payload) }), nowMs)
+      case 'sessionChat': return sealWire(await sessionGroup(need(draft.session)), () => ({ ...base, kind: 'item', timeline: { kind: 'chat', scope: 'session', ref: b64(need(draft.session)) }, payload: body() }), nowMs)
+      case 'cardChat': return sealWire(await sessionGroup(need(draft.session)), () => ({ ...base, kind: 'item', timeline: { kind: 'chat', scope: 'card', ref: b64(need(draft.card)) }, payload: body() }), nowMs)
+      case 'boardItem': return sealWire(await roomGroup(), () => ({ ...base, kind: 'item', timeline: { kind: 'board', scope: 'desk', ref: b64(need(draft.board)) }, payload: body() }), nowMs)
       case 'register': {
-        const g = b64(draft.group), lamport = lamportOf(g) + 1
+        const g = b64(need(draft.group)), name = need(draft.name), lamport = lamportOf(g) + 1
         state.set(`lamport/${g}`, lamport)
-        const body = { name: draft.name, value: draft.value ? JSON.parse(text.decode(draft.value)) : null, lamport }
-        return sealWire(g, () => ({ kind: 'register', push: false, recipient: to, register_id: registerId(g, draft.name), file_ids, bind: null, payload: b64(utf8.encode(JSON.stringify(body))) }), nowMs)
+        const value = { name, value: draft.value ? JSON.parse(text.decode(draft.value)) : null, lamport }
+        return sealWire(g, () => ({ ...base, kind: 'register', register_id: registerId(g, name), payload: b64(utf8.encode(JSON.stringify(value))) }), nowMs)
       }
       case 'noteFirst': {
         const g = await roomGroup()
-        return sealWire(g, (seq, me) => ({ kind: 'version', push: false, recipient: to, file_ids, bind: null, payload: payload(draft.payload),
+        return sealWire(g, (seq, me) => ({ ...base, kind: 'version', payload: body(),
           object: { object_id: objectIdOf(g, me, seq), object_type: 'note', object_state: 'open', urgency: 'normal', answered_at: 0, object_ref: ZERO32 } }), nowMs)
       }
-      case 'noteVersion': {
-        const id = b64(draft.objectId), o = obj(id)
-        return sealWire(o.group, () => ({ kind: 'version', push: false, recipient: to, file_ids, bind: null, payload: payload(draft.payload),
-          object: { object_id: id, object_type: 'note', object_state: draft.closed ? 'closed' : 'open', urgency: 'normal', answered_at: 0, object_ref: o.current } }), nowMs)
+      case 'noteVersion': case 'cardVersion': case 'artifactVersion': {
+        const id = b64(need(draft.objectId)), o = obj(id), closed = need(draft.closed)
+        return sealWire(o.group, () => ({ ...base, kind: 'version', push: draft.push ?? false, payload: body(),
+          object: { object_id: id, object_type: o.type, object_state: closed ? 'closed' : 'open', urgency: draft.urgency ?? 'normal', answered_at: 0, object_ref: o.current } }), nowMs)
+      }
+      case 'cardFirst': case 'artifactFirst': case 'permissionRequest': {
+        const g = await sessionGroup(need(draft.session)), request = draft.kind === 'permissionRequest'
+        return sealWire(g, (seq, me) => {
+          const object_id = objectIdOf(g, me, seq)
+          return { ...base, kind: request ? 'request' : 'version', push: draft.push ?? false, payload: body(),
+            bind: request ? { kind: 'request', request_id: object_id, expires_at: need(draft.expiresAt) } : null,
+            object: { object_id, object_type: request ? 'request' : draft.kind === 'cardFirst' ? 'card' : 'artifact', object_state: 'open', urgency: draft.urgency ?? 'normal', answered_at: 0, object_ref: ZERO32 } }
+        }, nowMs)
       }
       case 'answer': {
-        const id = b64(draft.objectId), o = obj(id)
-        return sealWire(o.group, () => ({ kind: 'answer', push: false, recipient: to, file_ids, payload: payload(draft.payload),
-          bind: { kind: 'answer', object_id: id, version_hash: o.current, choices: draft.choices },
-          object: { object_id: id, object_type: 'card', object_state: draft.closes ? 'closed' : 'answered', urgency: o.urgency, answered_at: nowMs, object_ref: o.current } }), nowMs)
+        const id = b64(need(draft.objectId)), o = obj(id), choices = need(draft.choices), closes = need(draft.closes)
+        return sealWire(o.group, () => ({ ...base, kind: 'answer', payload: body(),
+          bind: { kind: 'answer', object_id: id, version_hash: o.current, choices },
+          object: { object_id: id, object_type: 'card', object_state: closes ? 'closed' : 'answered', urgency: o.urgency, answered_at: nowMs, object_ref: o.current } }), nowMs)
       }
       case 'takeBack': {
-        const id = b64(draft.objectId), o = obj(id)
+        const id = b64(need(draft.objectId)), o = obj(id)
         if (!o.answer) refuse('forbidden', 'no answer in force to take back')
-        return sealWire(o.group, () => ({ kind: 'takeBack', push: false, recipient: to, file_ids, payload: payload(draft.payload),
+        return sealWire(o.group, () => ({ ...base, kind: 'takeBack', payload: body(),
           bind: { kind: 'takeBack', object_id: id, previous_hash: o.answer!, version_hash: o.current },
           object: { object_id: id, object_type: 'card', object_state: 'open', urgency: o.urgency, answered_at: 0, object_ref: o.current } }), nowMs)
       }
       case 'verdict': {
-        const id = b64(draft.requestId), o = obj(id)
-        return sealWire(o.group, () => ({ kind: 'verdict', push: false, recipient: to, file_ids, payload: payload(draft.payload),
-          bind: { kind: 'verdict', request_id: id, request_hash: o.current, expires_at: o.expires_at, allow: draft.allow },
+        const id = b64(need(draft.requestId)), o = obj(id), allow = need(draft.allow)
+        return sealWire(o.group, () => ({ ...base, kind: 'verdict', payload: body(),
+          bind: { kind: 'verdict', request_id: id, request_hash: o.current, expires_at: o.expires_at, allow },
           object: { object_id: id, object_type: 'request', object_state: 'closed', urgency: o.urgency, answered_at: nowMs, object_ref: o.current } }), nowMs)
       }
     }
-  }
-  async function sealAgent(draft: AgentDraft, fileIds: Uint8Array[], nowMs: number): Promise<Sealed> {
-    const g = await sessionGroup(draft.session), file_ids = fileIds.map(b64)
-    if (draft.kind === 'objectFirst') {
-      const request = draft.objectType === 'request'
-      return sealWire(g, (seq, me) => {
-        const object_id = objectIdOf(g, me, seq)
-        return { kind: request ? 'request' : 'version', push: draft.push, recipient: null, file_ids, payload: b64(draft.payload),
-          bind: request ? { kind: 'request', request_id: object_id, expires_at: draft.expiresAt ?? 0 } : null,
-          object: { object_id, object_type: draft.objectType, object_state: 'open', urgency: draft.urgency, answered_at: 0, object_ref: ZERO32 } }
-      }, nowMs)
-    }
-    const id = b64(draft.objectId), o = obj(id)
-    return sealWire(g, () => ({ kind: 'version', push: draft.push, recipient: null, file_ids, bind: null, payload: b64(draft.payload),
-      object: { object_id: id, object_type: o.type, object_state: draft.closed ? 'closed' : 'open', urgency: draft.urgency, answered_at: 0, object_ref: o.current } }), nowMs)
   }
 
   // ---- receiving
@@ -459,7 +462,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
     if (!o) return 'forbidden'
     const key = `obj/${o.object_id}`
     const held = state.get<Obj>(key)
-    const put = (next: Obj): Seen['after'] => { if (change) state.set(key, next); return { owner: next.owner, state: next.state, current: next.current, object_id: o.object_id } }
+    const put = (next: Obj): Seen['after'] => { if (change) state.set(key, next); return { owner: next.owner, state: next.state, current: next.current, object_id: o.object_id, type: next.type, answer: next.answer } }
     if (w.kind === 'version' || w.kind === 'request') {
       const note = o.object_type === 'note'
       if (note ? !(room && human) : room || !agent) return 'forbidden'
@@ -512,16 +515,16 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
     } catch { return null }
   }
 
-  async function receiveEnvelope(bytes: Uint8Array, change: number, ordered: boolean, voidCode: ErrorCode | null, _nowMs: number): Promise<ReceivedEnvelope> {
+  async function receiveEnvelope(bytes: Uint8Array, change: number, ordered: boolean, voidCode: ErrorCode | null | undefined, _nowMs: number): Promise<ReceivedEnvelope> {
     if (ordered) reach(change)
     let w: Wire
     try { w = JSON.parse(text.decode(bytes)) as Wire } catch { return refuse('bad-format', 'an envelope the stand-in did not write') }
     if (w?.v !== 2 || typeof w.group !== 'string' || typeof w.sender !== 'string' || !Number.isSafeInteger(w.seq)) refuse('bad-format', 'an envelope the stand-in did not write')
     const hashBytes = sha256(bytes), hash = b64(hashBytes)
-    const header = headerOf(w, change, hashBytes)
+    const header = headerOf(w)
     const result = (outcome: ReceivedEnvelope['outcome'], code: ErrorCode | null, more: Partial<ReceivedEnvelope> = {}): ReceivedEnvelope =>
-      ({ header, outcome, code, payload: null, bind: null, objectAfter: null, register: null, ...more })
-    const afterOf = (a: Seen['after']): ReceivedEnvelope['objectAfter'] => a ? { objectId: unb64(a.object_id), owner: unb64(a.owner), objectState: a.state, currentVersion: unb64(a.current) } : null
+      ({ change, envelopeHash: hashBytes, header, outcome, code, finding: null, payload: null, bind: null, objectAfter: null, register: null, confirmed: null, dropped: null, replayed: false, command: false, ...more })
+    const afterOf = (a: Seen['after']): ReceivedEnvelope['objectAfter'] => a ? { objectId: unb64(a.object_id), objectType: a.type, owner: unb64(a.owner), objectState: a.state, current: unb64(a.current), answer: a.answer ? unb64(a.answer) : null } : null
     const k = await facts()
     if (k.room === null) return result('refused', 'no-room')
     const g = k.groups.get(w.group)
@@ -540,13 +543,13 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       if (seen) {
         // reading back an envelope the chain holds: what it was, with its body if the key is here now
         if (seen.code && seen.code !== 'no-key') return result(seen.code === 'forbidden' ? 'chained' : 'void', seen.code)
-        const register = reg ? { name: reg.name, current: registerAllowed(w, reg.name) && registerCurrent(w, reg.name, reg.lamport, false) } : null
+        const register = reg ? { name: reg.name, of: null, current: registerAllowed(w, reg.name) && registerCurrent(w, reg.name, reg.lamport, false) } : null
         return key ? result('applied', null, { ...opened(), objectAfter: afterOf(seen.after), register }) : result('chained', 'no-key', { objectAfter: afterOf(seen.after) })
       }
       if (voidCode) return result('void', voidCode)
       if (judge(w, hash, false) === 'forbidden' && (w.kind === 'item' || w.kind === 'register')) return result('refused', 'forbidden')
       if (!key) return result('refused', 'no-key')
-      return result('provisional', null, { ...opened(), register: reg ? { name: reg.name, current: registerAllowed(w, reg.name) && registerCurrent(w, reg.name, reg.lamport, false) } : null })
+      return result('provisional', null, { ...opened(), register: reg ? { name: reg.name, of: null, current: registerAllowed(w, reg.name) && registerCurrent(w, reg.name, reg.lamport, false) } : null })
     }
 
     const chainKey = `chain/${w.group}/${w.sender}`
@@ -566,7 +569,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
     let register: ReceivedEnvelope['register'] = null
     if (reg) {
       if (reg.lamport > lamportOf(w.group)) state.set(`lamport/${w.group}`, reg.lamport)
-      register = { name: reg.name, current: registerAllowed(w, reg.name) && registerCurrent(w, reg.name, reg.lamport, true) }
+      register = { name: reg.name, of: null, current: registerAllowed(w, reg.name) && registerCurrent(w, reg.name, reg.lamport, true) }
     }
     state.set(seenKey, { g: w.group, s: w.sender, q: w.seq, code: key ? null : 'no-key', after, reg: reg?.name ?? null } satisfies Seen)
     return key ? result('applied', null, { ...opened(), objectAfter: afterOf(after), register }) : result('chained', 'no-key', { objectAfter: afterOf(after) })
@@ -578,17 +581,16 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
     return JSON.stringify(heads)
   }
 
-  // ---- joining by link (JSON, no signature that means anything)
+  // ---- joining by link: the binding's own; here only what the fake hub is told of its Commits
 
-  const inviteIdOf = (secret: Uint8Array, room: Uint8Array): Uint8Array => hashOf('trommi invite id', secret, room).subarray(0, 16)
-  const macOf = (secret: Uint8Array, room: Uint8Array, request: Uint8Array): Uint8Array => hashOf('trommi invite mac', secret, room, request)
-  const codeOf = (offer: Uint8Array, request: Uint8Array, mac: Uint8Array, nonce: Uint8Array): number[] => {
-    const h = hashOf('Trommi Invite Code', offer, request, mac, nonce)
-    let bits = 0n
-    for (let i = 0; i < 5; i++) bits = (bits << 8n) | BigInt(h[i]!)
-    return Array.from({ length: 6 }, (_, i) => Number((bits >> BigInt(34 - i * 6)) & 63n))
+  const inviteFacts = async (confirmed: InviteConfirmed): Promise<InviteFacts> => {
+    const device = b64(confirmed.newDevice)
+    if (confirmed.role === 'human') return { added: [device] }
+    // an agent that takes a session over: the Commit that enrols it takes the seat's agent out of `agents`
+    const k = await facts(), seat = confirmed.sessionId ? k.groups.get(b64(binding.sessionGroupId(unb64(k.room!), confirmed.sessionId))) : null
+    const old = (seat?.leaves ?? []).filter(l => !isHuman(b64(l)) && b64(l) !== device).map(b64)
+    return { agents: [device], removed: old }
   }
-  const fakeSignature = (label: string, bytes: Uint8Array): Uint8Array => concat(hashOf(label, bytes), hashOf(`${label} 2`, bytes))
 
   const device = {
     close: async (): Promise<void> => { await run(async () => {}).catch(() => {}); closed = true; await raw.close(); await state.close() },
@@ -605,8 +607,11 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       // a refused envelope keeps its number: the device never signs another one under it (9.0.1)
       if (id >= OWN_IDS) { if (!state.get(`out/${id}`)) refuse('not-found', 'no such outbox entry'); state.delete(`out/${id}`); return }
       await raw.outboxRefused(id, code)
-      state.delete(`facts/${id}`)
+      // (a refusal that says nothing about the request leaves the entry, and its facts with it)
+      if (!(await raw.outbox()).some(e => e.id === id)) state.delete(`facts/${id}`)
     }),
+    outboxVoided: (id: number) => run(async () => { if (!state.get(`out/${id}`)) refuse('not-found', 'no such outbox entry'); state.delete(`out/${id}`) }),
+    envelopeAbandon: (id: number) => run(async () => { if (!state.get(`out/${id}`)) refuse('not-found', 'no such outbox entry'); state.delete(`out/${id}`) }),
     keyPackagesToUpload: (unused: number, nowMs: number) => run(() => raw.keyPackagesToUpload(unused, nowMs)),
 
     foundRoom: (code: Uint8Array, nowMs: number) => run(async () => {
@@ -624,9 +629,8 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       if (entry) note(entry.id, { 0: { group: g, epoch: 0, leaves: [k.me], session: { session_id: b64(session), parent: null } }, 2: { added: keyPackages.map(p => b64(binding.keyPackageInfo(p).device)) } })
       return session
     }),
-    addHumanDevice: (d: Uint8Array, keyPackage: Uint8Array, nowMs: number) => run(async () => { const id = await raw.addHumanDevice(d, keyPackage, nowMs); fresh(); note(id, { 0: { added: [b64(d)] } }); return id }),
     addToSession: (g: Uint8Array, d: Uint8Array, keyPackage: Uint8Array, nowMs: number) => run(async () => { const id = await raw.addToSession(g, d, keyPackage, nowMs); fresh(); note(id, { 0: { added: [b64(d)] } }); return id }),
-    changeAgents: (enrol: Uint8Array[], remove: Uint8Array[], nowMs: number) => run(async () => { const id = await raw.changeAgents(enrol, remove, nowMs); fresh(); note(id, { 0: { agents: enrol.map(b64), removed: remove.map(b64) } }); return id }),
+    removeAgents: (remove: Uint8Array[], nowMs: number) => run(async () => { const id = await raw.removeAgents(remove, nowMs); fresh(); note(id, { 0: { removed: remove.map(b64) } }); return id }),
     removeHumanDevices: (cuts: Cut[], nowMs: number) => run(async () => { const id = await raw.removeHumanDevices(cuts, nowMs); fresh(); note(id, { 0: { removed: cuts.map(c => b64(c.device)) } }); return id }),
     cleanSession: (g: Uint8Array, cuts: Cut[], replacement: { device: Uint8Array; keyPackage: Uint8Array } | null | undefined, nowMs: number) => run(async () => {
       const id = await raw.cleanSession(g, cuts, replacement, nowMs)
@@ -637,9 +641,9 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
     joinWelcome: (welcome: Uint8Array, room: Uint8Array, committer: Uint8Array | null | undefined, nowMs: number) => run(async () => { try { return await raw.joinWelcome(welcome, room, committer, nowMs) } finally { fresh() } }),
     observeRoom: (groupInfo: Uint8Array, expected?: Uint8Array | null) => run(async () => { try { await raw.observeRoom(splitFacts(groupInfo).bytes, expected) } finally { fresh() } }),
     observeSession: (groupInfo: Uint8Array) => run(async () => { try { await raw.observeSession(splitFacts(groupInfo).bytes) } finally { fresh() } }),
-    processLogEntry: (entry: LogEntry) => run(async (): Promise<Processed> => {
+    processLogEntry: (entry: LogEntry, nowMs: number) => run(async (): Promise<Processed> => {
       let done: Processed
-      try { done = await raw.processLogEntry({ ...entry, bytes: splitFacts(entry.bytes).bytes }) }
+      try { done = await raw.processLogEntry({ ...entry, bytes: splitFacts(entry.bytes).bytes }, nowMs) }
       catch (e) { fresh(); if (binding.logFinding((e as { code: ErrorCode }).code) === 'duplicate') reach(entry.change); throw e }
       fresh()
       reach(entry.change)
@@ -679,9 +683,8 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       return done
     }),
 
-    seal: (draft: Draft, recipient: Uint8Array | null, fileIds: Uint8Array[], nowMs: number) => run(() => seal(draft, recipient, fileIds, nowMs)),
-    sealAgent: (draft: AgentDraft, fileIds: Uint8Array[], nowMs: number) => run(() => sealAgent(draft, fileIds, nowMs)),
-    receiveEnvelope: (bytes: Uint8Array, change: number, ordered: boolean, voidCode: ErrorCode | null, nowMs: number) => run(() => receiveEnvelope(bytes, change, ordered, voidCode, nowMs)),
+    seal: (draft: Draft, recipient: Uint8Array | null | undefined, fileIds: Uint8Array[], nowMs: number) => run(() => seal(draft, recipient, fileIds, nowMs)),
+    receiveEnvelope: (bytes: Uint8Array, change: number, ordered: boolean, voidCode: ErrorCode | null | undefined, nowMs: number) => run(() => receiveEnvelope(bytes, change, ordered, voidCode, nowMs)),
     headsDue: (g: Uint8Array, nowMs: number) => run(async () => {
       const id = b64(g), value = headsValue(id), last = state.get<{ value: string; at: number }>(`heads/${id}`)
       if (value === '{}' || last?.value === value || (last && nowMs - last.at < 600_000)) return null
@@ -689,7 +692,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       return utf8.encode(value)
     }),
     // no signature to verify here: the numbers and links of the stand-in's JSON envelopes are all there is
-    chainCut: (_served: ServedGroup, d: Uint8Array, envelopes: Uint8Array[]) => run(async (): Promise<Cut> => {
+    servedChainCut: (_served: ServedGroup, d: Uint8Array, envelopes: Uint8Array[]) => run(async (): Promise<Cut> => {
       let seq = 0, hash = ZERO32
       for (const bytes of envelopes) {
         const w = JSON.parse(text.decode(bytes)) as Wire
@@ -705,87 +708,35 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       return { device: d, seq: c?.seq ?? 0, hash: c ? unb64(c.hash) : new Uint8Array(32) }
     }),
 
-    sendStrokePiece: (board: Uint8Array, piece: Uint8Array) => run(async () => {
-      const k = await facts(), g = await group(await roomGroup())
-      return queue('relayMessage', b64(g.group), g.epoch, utf8.encode(JSON.stringify({ relay: 'stroke_piece', from: k.me, board: b64(board), piece: b64(piece) })))
+    inviteConfirm: (inviteId: Uint8Array, code: Uint8Array, requestHash: Uint8Array, matches: boolean, nowMs: number) => run(async () => {
+      const confirmed = await raw.inviteConfirm(inviteId, code, requestHash, matches, nowMs)
+      fresh()
+      if (confirmed) { const f = await inviteFacts(confirmed); state.set(`invite/${b64(inviteId)}`, f); note(confirmed.outboxId, { 0: f }) }
+      return confirmed
     }),
-    receiveRelay: (g: Uint8Array, epoch: number, sender: Uint8Array, message: Uint8Array, _nowMs: number) => run(async (): Promise<ReceivedMessage | null> => {
-      const k = await facts(), held = k.groups.get(b64(g))
-      if (!held || held.epoch !== epoch || !isHuman(b64(sender))) return null
-      try {
-        const m = JSON.parse(text.decode(message))
-        if (m.relay !== 'stroke_piece' || m.from !== b64(sender)) return null
-        return { kind: 'strokePiece', from: sender, keysTaken: 0, last: false, board: unb64(m.board), turn: null, number: 0, time: 0, payload: unb64(m.piece) }
-      } catch { return null }
+    inviteRecommit: (inviteId: Uint8Array, nowMs: number) => run(async () => {
+      const id = await raw.inviteRecommit(inviteId, nowMs)
+      fresh(); note(id, { 0: state.get<InviteFacts>(`invite/${b64(inviteId)}`) ?? {} })
+      return id
     }),
-
-    inviteOpen: (role: InviteRole, sessionId: Uint8Array | null, app: string, hub: string, nowMs: number) => run(async () => {
-      const k = await facts()
-      if (!k.room || !k.roles || !isHuman(k.me)) refuse('forbidden', 'only a human device invites')
-      const room = unb64(k.room!), secret = random(32), nonce = random(32), inviteId = inviteIdOf(secret, room), expiresAt = nowMs + INVITE_MS
-      const offer = utf8.encode(JSON.stringify({ room_id: k.room, invite_id: b64(inviteId), role, session_id: sessionId ? b64(sessionId) : null, expires_at: expiresAt,
-        commitment: b64(hashOf('Trommi Invite Commitment', inviteId, nonce)), inviter: k.me, room_epoch: k.roles!.epoch, room_state: b64(k.roles!.state) }))
-      state.set(`invite/${b64(inviteId)}`, { secret: b64(secret), nonce: b64(nonce), role, session_id: sessionId ? b64(sessionId) : null, offer: b64(offer), expires_at: expiresAt, hub, used: null, burned: false } satisfies Invite)
-      const link = `${app.replace(/\/+$/, '')}/join#v2.${b64(utf8.encode(hub))}.${k.room}.${b64(secret)}`
-      return { inviteId, link, expiresAt, offer, signature: fakeSignature('TrommiInviteOffer', offer) }
+    inviteSteps: () => run(async (): Promise<InviteStep[]> => (await raw.inviteSteps()).map(step => (step.kind !== 'takeOver' || !step.group ? step : {
+      ...step, cuts: step.cuts.map(c => { const head = state.get<Chain>(`chain/${b64(step.group!)}/${b64(c.device)}`); return { device: c.device, seq: head?.seq ?? 0, hash: head ? unb64(head.hash) : new Uint8Array(32) } }),
+    }))),
+    joinRequest: (link: string, offer: SignedOffer, nowMs: number) => run(async (): Promise<JoinRequest> => {
+      const request = await raw.joinRequest(link, offer, nowMs)
+      state.set('joining', b64(request.roomId))
+      return request
     }),
-    inviteAccept: (inviteId: Uint8Array, signed: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }, nowMs: number) => run(async () => {
-      const { request, mac } = signed
-      const k = await facts(), key = `invite/${b64(inviteId)}`, inv = state.get<Invite>(key) ?? refuse('bad-invite', 'no such invite')
-      if (inv.burned) refuse('invite-burned', 'this invite was burned')
-      if (nowMs > inv.expires_at) refuse('invite-expired', 'this invite ran out')
-      // the hash the fake hub knows a Request by: SHA-256 of Request and MAC
-      const requestHash = sha256(concat(request, mac))
-      if (inv.used && inv.used.request_hash !== b64(requestHash)) refuse('invite-used', 'another Request was accepted')
-      if (!same(mac, macOf(unb64(inv.secret), unb64(k.room!), request))) refuse('bad-invite', 'the Request does not carry this invite\'s MAC')
-      const r = JSON.parse(text.decode(request)) as { room_id: string; invite_id: string; hub: string; role: InviteRole; key_package: string; offer_hash: string; device: string }
-      if (r.room_id !== k.room || r.invite_id !== b64(inviteId) || r.hub !== inv.hub || r.role !== inv.role || r.offer_hash !== b64(hashOf('Trommi Invite Offer', unb64(inv.offer)))) refuse('bad-invite', 'the Request is for another invite')
-      const keyPackage = unb64(r.key_package), newDevice = binding.keyPackageInfo(keyPackage).device
-      if (b64(newDevice) !== r.device) refuse('bad-signature', 'the Request is not by the KeyPackage\'s device')
-      const checkCode = codeOf(unb64(inv.offer), request, mac, unb64(inv.nonce))
-      state.set(key, { ...inv, used: { device: r.device, key_package: r.key_package, request_hash: b64(requestHash), code: checkCode } } satisfies Invite)
-      const reveal = utf8.encode(JSON.stringify({ invite_id: b64(inviteId), nonce: inv.nonce, request_hash: b64(requestHash) }))
-      return { newDevice, checkCode, reveal, signature: fakeSignature('TrommiInviteReveal', reveal), requestHash }
-    }),
-    inviteConfirm: (inviteId: Uint8Array, matches: boolean, nowMs: number) => run(async () => {
-      const key = `invite/${b64(inviteId)}`, inv = state.get<Invite>(key) ?? refuse('bad-invite', 'no such invite')
-      if (inv.burned) refuse('invite-burned', 'this invite was burned')
-      if (!inv.used) refuse('code-not-confirmed', 'no Request was accepted')
-      if (!matches) { state.set(key, { ...inv, burned: true } satisfies Invite); return null }
-      const newDevice = unb64(inv.used!.device), keyPackage = unb64(inv.used!.key_package)
-      // called again (its Commit lost the epoch), it commits again; a device that is in already is left alone
-      const k = await facts(), inside = inv.role === 'human' ? k.roles?.humans : k.roles?.agents
-      if (!inside?.some(d => same(d, newDevice))) {
-        const id = inv.role === 'human' ? await raw.addHumanDevice(newDevice, keyPackage, nowMs) : await raw.changeAgents([newDevice], [], nowMs)
-        fresh()
-        note(id, { 0: inv.role === 'human' ? { added: [inv.used!.device] } : { agents: [inv.used!.device], removed: [] } })
+    joinObserve: (groupInfo: Uint8Array) => run(async () => { try { await raw.joinObserve(splitFacts(groupInfo).bytes) } finally { fresh() } }),
+    hubSignIn: (hub: string, challenge: Uint8Array) => run(async (): Promise<SignedHubAuth> => {
+      try { return await raw.hubSignIn(hub, challenge) } catch (e) {
+        const room = state.get<string>('joining')
+        if ((e as { code?: unknown }).code !== 'no-room' || !room) throw e
+        // a joining device (see the header): the HubAuth of spec 12.3 with a signature of zeros, for the fake hub
+        const address = utf8.encode(hub)
+        return { auth: concat(unb64(room), varint(address.length), address, await raw.id(), challenge), signature: new Uint8Array(64) }
       }
-      return { newDevice, role: inv.role, sessionId: inv.session_id ? unb64(inv.session_id) : null, keyPackage }
     }),
-    joinRequest: (link: string, signed: { offer: Uint8Array; signature: Uint8Array }, nowMs: number) => run(async () => {
-      const offer = signed.offer
-      const parts = linkParts(link), o = JSON.parse(text.decode(offer)) as { room_id: string; invite_id: string; role: InviteRole; session_id: string | null; expires_at: number; inviter: string; room_epoch: number; room_state: string }
-      const room = unb64(parts.room)
-      if (o.room_id !== parts.room || o.invite_id !== b64(inviteIdOf(unb64(parts.secret), room))) refuse('bad-invite', 'the Offer is not this link\'s')
-      if (nowMs > o.expires_at) refuse('invite-expired', 'this invite ran out')
-      const keyPackage = await raw.keyPackage(nowMs), me = b64(await raw.id())
-      const request = utf8.encode(JSON.stringify({ room_id: o.room_id, invite_id: o.invite_id, hub: parts.hub, role: o.role, key_package: b64(keyPackage), offer_hash: b64(hashOf('Trommi Invite Offer', offer)), device: me }))
-      const mac = macOf(unb64(parts.secret), room, request)
-      state.set('joining', { invite_id: o.invite_id, secret: parts.secret, offer: b64(offer), request: b64(request), mac: b64(mac), inviter: o.inviter } satisfies Joining)
-      return { request, mac, signature: fakeSignature('TrommiInviteRequest', concat(request, mac)), role: o.role, inviter: unb64(o.inviter), expiresAt: o.expires_at,
-        sessionId: o.session_id ? unb64(o.session_id) : null, roomEpoch: o.room_epoch, roomState: unb64(o.room_state) }
-    }),
-    joinReveal: (signed: { reveal: Uint8Array; signature: Uint8Array }) => run(async () => {
-      const reveal = signed.reveal
-      const j = state.get<Joining>('joining') ?? refuse('bad-invite', 'this device asked to join nothing')
-      const r = JSON.parse(text.decode(reveal)) as { invite_id: string; nonce: string; request_hash: string }
-      const offer = JSON.parse(text.decode(unb64(j.offer))) as { commitment: string }
-      const request = unb64(j.request), mac = unb64(j.mac)
-      if (r.invite_id !== j.invite_id || r.request_hash !== b64(sha256(concat(request, mac)))) refuse('bad-invite', 'the Reveal is for another Request')
-      if (offer.commitment !== b64(hashOf('Trommi Invite Commitment', unb64(j.invite_id), unb64(r.nonce)))) refuse('bad-invite', 'the Reveal does not open the Offer\'s commitment')
-      return codeOf(unb64(j.offer), request, mac, unb64(r.nonce))
-    }),
-
   } as Record<string, unknown>
   // every other call of the binding's device is passed through as it is; what it may have changed is read again
   const real = raw as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>
@@ -798,17 +749,6 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
 
 const bare = (g: ServedGroup): ServedGroup => ({ founding: splitFacts(g.founding).bytes, current: splitFacts(g.current).bytes, commits: g.commits.map(c => ({ ...c, commit: splitFacts(c.commit).bytes })) })
 const bareRoom = (r: ServedRoom): ServedRoom => ({ ...r, group: bare(r.group), anchor: splitFacts(r.anchor).bytes, sessions: r.sessions.map(bare) })
-
-function linkParts(link: string): { app: string; hub: string; room: string; secret: string } {
-  const bad = (): never => { throw Object.assign(new Error('bad-format: not an invite link'), { name: 'TrommiError', code: 'bad-format' }) }
-  const m = /^(https?:\/\/[^/#]+)\/join#v(\d+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})$/.exec(link.trim())
-  if (!m) return bad()
-  if (Number(m[2]) > 2) throw Object.assign(new Error('newer-version: a link of a newer Trommi'), { name: 'TrommiError', code: 'newer-version' })
-  if (m[2] !== '2') return bad()
-  let hub: string
-  try { hub = text.decode(unb64(m[3]!)) } catch { return bad() }
-  return { app: m[1]!, hub, room: m[4]!, secret: m[5]! }
-}
 
 /**
  * The stand-in core over the loaded binding. `stateStore`: the stand-in's own store for the device kept in
@@ -825,18 +765,6 @@ export function standInCore(binding: Binding, opts: { stateStore(deviceStore: St
   }
   return {
     ...stateless,
-    inviteLinkParse(link: string): InviteLinkParts {
-      let p
-      try { p = linkParts(link) } catch (e) { throw new binding.TrommiError((e as { code: ErrorCode }).code, (e as Error).message) }
-      const roomId = unb64(p.room)
-      return { app: p.app, hub: p.hub, roomId, inviteId: hashOf('trommi invite id', unb64(p.secret), roomId).subarray(0, 16) }
-    },
-    checkEmoji: () => CHECK_EMOJI.map(e => [e.emoji, e.word]),
-    hubAddress: (address: string) => { try { return hubAddress(address) } catch { throw new binding.TrommiError('bad-format', 'bad-format: not a hub address') } },
-    boardReduce(snapshot: Uint8Array | null, items: Uint8Array[]): Uint8Array {
-      const state = reduceBoard(snapshot ? JSON.parse(text.decode(snapshot)) as BoardState : null, items.map(i => JSON.parse(text.decode(i)) as BoardItem))
-      return utf8.encode(JSON.stringify(state))
-    },
     createDevice: store => open('create', store),
     openDevice: store => open('open', store),
     errorCode: (error: unknown) => (error instanceof binding.TrommiError ? error.code : error instanceof CoreMissing ? error.code : null),
