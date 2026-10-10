@@ -11,7 +11,8 @@
 #
 #   attest   checks every file against checksums.txt and manifest.json against the run, then attests them: GitHub's
 #            build provenance for each file and for the manifest (no secret; who built what, from which commit)
-#   deliver  `wrangler deploy` of exactly those files, then asks app.trommi.com which commit it serves
+#   deliver  `wrangler deploy` of exactly those files, then asks app.trommi.com which commit it serves; a build
+#            that arrives after a newer one is not delivered (the newest commit stays)
 #
 # Secrets: the environment `web` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; CLOUDFLARE_API_TOKEN
 # and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment and are seen by the wrangler command only.
@@ -169,7 +170,44 @@ jobs:
         uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
         with:
           version: latest-beta
+      # Two deliveries may arrive out of order (a slow run of an older commit after a quick run of a newer one). A
+      # delivery called by a build is left out when the site already serves a commit that comes after this one on
+      # main. A delivery by hand is always made: that is how an older build is put back.
+      # The check is a step of this job, not a job before it: only inside the job's concurrency group is it sure that no
+      # other delivery lands between the question and the deploy. The price: GitHub's list of deployments shows such a
+      # left-out build as a deployment of `web`; the run's summary says that nothing was delivered.
+      - name: Is something newer served already
+        id: newer
+        if: inputs.run_id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          # Asked up to three times. What cannot be found out stops the delivery (an older build must not land on a
+          # newer one unseen); a delivery by hand does not ask.
+          page= ; status=
+          for try in 1 2 3; do
+            if page=$(curl -sS --max-time 10 -w '\n%{http_code}' "https://app.trommi.com/gen/build.txt?ci=$GITHUB_RUN_ID-before-$try"); then break; fi
+            page= ; sleep 5
+          done
+          [ -n "$page" ] || { echo "::error::app.trommi.com did not answer: which build it serves is not known, nothing was delivered. Deliver by hand (deploy_web, run_id $GITHUB_RUN_ID) once it answers."; exit 1; }
+          served=$(printf '%s\n' "$page" | sed -n 's/^commit: //p' | head -n 1)
+          # a site that names no commit (never delivered to, or not this app): delivering
+          printf '%s' "$served" | grep -Eq '^[0-9a-f]{7,40}$' || { echo "the site names no commit (HTTP $(printf '%s\n' "$page" | tail -n 1)): delivering"; exit 0; }
+          # how the served commit lies to this one: ahead = it comes after this one
+          for try in 1 2 3; do
+            full=$(gh api "repos/$GITHUB_REPOSITORY/commits/$served" --jq .sha 2>/dev/null) && status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$COMMIT...$full" --jq .status 2>/dev/null) && break
+            status= ; sleep 5
+          done
+          echo "app.trommi.com serves $served, which is ${status:-unknown} compared with $COMMIT"
+          [ -n "$status" ] || { echo "::error::how $served lies to $COMMIT could not be found out, nothing was delivered. Deliver by hand (deploy_web, run_id $GITHUB_RUN_ID)."; exit 1; }
+          if [ "$status" = ahead ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "served=$served" >> "$GITHUB_OUTPUT"
+            echo "::notice::app.trommi.com already serves $served, which is newer than this build; nothing was delivered"
+          fi
       - name: Deliver
+        if: steps.newer.outputs.skip != 'true'
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
@@ -184,6 +222,7 @@ jobs:
           op run --environment "$OP_ENVIRONMENT_ID" -- "$wrangler" deploy --message "build $VERSION of $COMMIT"
       # What the site serves now must be this build (a rollout takes a moment).
       - name: Ask app.trommi.com
+        if: steps.newer.outputs.skip != 'true'
         run: |
           set -u
           short=$(printf '%s' "$COMMIT" | cut -c1-7)
@@ -204,3 +243,13 @@ jobs:
             echo "| manifest (SHA-256) | \`$MANIFEST\` |"
           } >> "$GITHUB_STEP_SUMMARY"
           [ "$got" = "$short" ] || { echo "::error::app.trommi.com does not serve $short"; exit 1; }
+      - name: Nothing was delivered
+        if: steps.newer.outputs.skip == 'true'
+        env:
+          SERVED: ${{ steps.newer.outputs.served }}
+        run: |
+          {
+            echo "### Web app: build $VERSION was NOT delivered"
+            echo
+            echo "app.trommi.com already serves \`$SERVED\`, a commit that comes after \`$COMMIT\` on main."
+          } >> "$GITHUB_STEP_SUMMARY"
