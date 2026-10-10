@@ -2328,10 +2328,22 @@ impl<S: Storage> Device<S> {
             meta.previous_room_epoch = room_epoch;
             if let (Some(session), Some(room)) = (meta.session, room) {
                 if session.parent.is_zero() {
+                    // The group's place is the place of the Commit that led here. A Commit of this
+                    // device that is merged before the log shows it (a join from outside, a Commit of
+                    // a recovery) has no place yet: the change it makes stands behind every place
+                    // (`u64::MAX`) until the group's next place is known, and takes that one.
+                    let place = match meta.place {
+                        0 => u64::MAX,
+                        place => place,
+                    };
+                    if let Some((unplaced, _)) = meta.seats.last_mut() {
+                        if *unplaced == u64::MAX {
+                            *unplaced = place;
+                        }
+                    }
                     let now = observer::seat(&session, &leaves, &room);
                     if meta.seats.last().map(|(_, seat)| *seat) != Some(now) {
-                        // The group's place is the place of the Commit that led here.
-                        meta.seats.push((meta.place, now));
+                        meta.seats.push((place, now));
                     }
                 }
             }
