@@ -39,7 +39,7 @@ export async function setUp() {
   const seen = watch()
   const ctx = {
     app, fake, seen, run: run('passkeys: virtual authenticator + real core + fake hub'), open: [], shots: [],
-    url: (path = '/') => `${app.origin}${path}${path.includes('?') ? '&' : '?'}hub=${encodeURIComponent(app.origin)}`,
+    url: (path = '/') => `${app.origin}${path}${path.includes('?') ? '&' : '?'}hub=${encodeURIComponent(app.origin)}&passkeys=1`,
     email: `passkey+${Date.now().toString(36)}@example.org`,
     /** A browser profile with a virtual authenticator, for one step or several: closed by `close(name)`. */
     async profile(name, { prf = true } = {}) {
@@ -253,7 +253,7 @@ export const steps = [
     await ctx.close('bare')
     const page = await ctx.profile('new')
     // (the address as the QR holds it; `hub=` only tells this test's app where its own hub is, as every step does)
-    const link = ctx.bare.qr.replace('/#', `/?hub=${encodeURIComponent(ctx.app.origin)}#`)
+    const link = ctx.bare.qr.replace('/#', `/?hub=${encodeURIComponent(ctx.app.origin)}&passkeys=1#`)
     await page.go(link)
     await page.until("document.querySelector('#forgot-form')", 'the recovery screen')
     const seen = await page.js("return { hash: location.hash, href: location.href, account: document.querySelector('#forgot-form input[name=account]').value, hub: document.querySelector('#kit-hub')?.innerText ?? null, focus: document.activeElement?.name }")
@@ -261,19 +261,19 @@ export const steps = [
     await pictures(ctx, page, 'forgot-from-kit-code')
     // the same code pointing at another hub: said before anything is typed
     const other = `http://127.0.0.1:${new URL(ctx.app.origin).port}`
-    await page.go(`${ctx.app.origin}/?hub=${encodeURIComponent(ctx.app.origin)}#k1.${Buffer.from(other).toString('base64url')}.${ctx.bare.account.replaceAll('-', '')}`)
+    await page.go(`${ctx.app.origin}/?hub=${encodeURIComponent(ctx.app.origin)}&passkeys=1#k1.${Buffer.from(other).toString('base64url')}.${ctx.bare.account.replaceAll('-', '')}`)
     await page.until("document.querySelector('#kit-hub')", 'the line that names the other hub')
     ctx.run.check((await text(page, '#kit-hub')).includes(new URL(other).host) && await page.js("return location.hash === ''"), 'the other hub is named, the fragment is gone', await text(page, '#kit-hub'))
     await pictures(ctx, page, 'forgot-from-kit-code-other-hub')
     // a fragment that is no kit address is dropped without a word
-    await page.go(`${ctx.app.origin}/?hub=${encodeURIComponent(ctx.app.origin)}#k1.AAAA.${ctx.bare.account.replaceAll('-', '')}.extra`)
+    await page.go(`${ctx.app.origin}/?hub=${encodeURIComponent(ctx.app.origin)}&passkeys=1#k1.AAAA.${ctx.bare.account.replaceAll('-', '')}.extra`)
     await page.until("document.querySelector('#way-create')", 'the start page')
     ctx.run.check(await page.js("return location.hash === ''"), 'a wrong #k1 address leaves the bar too')
   }],
 
   ['The kit opens the account without e-mail: the words, then a new passkey, then a new kit under the same ID', async ctx => {
     const page = await ctx.profile('new'), since = ctx.mark()
-    await page.go(ctx.bare.qr.replace('/#', `/?hub=${encodeURIComponent(ctx.app.origin)}#`))
+    await page.go(ctx.bare.qr.replace('/#', `/?hub=${encodeURIComponent(ctx.app.origin)}&passkeys=1#`))
     await page.until("document.querySelector('#forgot-form textarea')", 'the recovery screen')
     await page.type('#forgot-form textarea', 'acorn '.repeat(12).trim())
     await page.click('#forgot-form button[type=submit]')
