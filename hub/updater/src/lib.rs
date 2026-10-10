@@ -148,8 +148,8 @@ pub fn verify_manifest(
     repository: &str,
     tag: &str,
 ) -> Result<Manifest, String> {
-    let signature =
-        Signature::from_slice(signature).map_err(|_| "the signature is not 64 bytes".to_string())?;
+    let signature = Signature::from_slice(signature)
+        .map_err(|_| "the signature is not 64 bytes".to_string())?;
     key.verify_strict(bytes, &signature)
         .map_err(|_| "the signature does not match the pinned key".to_string())?;
     let manifest: Manifest = serde_json::from_slice(bytes)
@@ -174,7 +174,6 @@ pub fn verify_manifest(
     }
     Ok(manifest)
 }
-
 
 // ---------------------------------------------------------------------------------------------------------------
 // Configuration, the service, the answer
@@ -271,7 +270,12 @@ impl Service for Systemd {
         }
     }
     fn start(&self) -> Result<(), String> {
-        run("systemctl", &["start", &self.unit], Duration::from_secs(120)).map(|_| ())
+        run(
+            "systemctl",
+            &["start", &self.unit],
+            Duration::from_secs(120),
+        )
+        .map(|_| ())
     }
     fn reload(&self) -> Result<(), String> {
         run("systemctl", &["daemon-reload"], Duration::from_secs(60)).map(|_| ())
@@ -484,7 +488,9 @@ impl Updater {
 
     /// Points a link at a release (or takes it away), in one step: a new link is made beside it and renamed over.
     fn point(&self, link: &str, tag: Option<&str>) -> Result<(), String> {
-        if self.linked(link).as_deref() == tag && (tag.is_some() || !self.cfg.root.join(link).exists()) {
+        if self.linked(link).as_deref() == tag
+            && (tag.is_some() || !self.cfg.root.join(link).exists())
+        {
             return Ok(());
         }
         let path = self.cfg.root.join(link);
@@ -509,13 +515,8 @@ impl Updater {
         let bytes = std::fs::read(dir.join(MANIFEST)).map_err(|e| format!("{MANIFEST}: {e}"))?;
         let signature =
             std::fs::read(dir.join(SIGNATURE)).map_err(|e| format!("{SIGNATURE}: {e}"))?;
-        let manifest = verify_manifest(
-            &self.cfg.key,
-            &bytes,
-            &signature,
-            &self.cfg.repository,
-            tag,
-        )?;
+        let manifest =
+            verify_manifest(&self.cfg.key, &bytes, &signature, &self.cfg.repository, tag)?;
         let mut hub = String::new();
         for (asset, stored, cap, _) in wanted(&self.cfg.target) {
             let entry = entry(&manifest, &asset, cap)?;
@@ -540,14 +541,7 @@ impl Updater {
         let dir = self.releases().join(tag);
         let bytes = std::fs::read(dir.join(MANIFEST)).ok()?;
         let signature = std::fs::read(dir.join(SIGNATURE)).ok()?;
-        verify_manifest(
-            &self.cfg.key,
-            &bytes,
-            &signature,
-            &self.cfg.repository,
-            tag,
-        )
-        .ok()
+        verify_manifest(&self.cfg.key, &bytes, &signature, &self.cfg.repository, tag).ok()
     }
 
     fn running(&self) -> Option<Running> {
@@ -697,9 +691,7 @@ impl Updater {
                 {
                     Ok(url.to_string())
                 }
-                [] => Err(Failure::Fetch(format!(
-                    "release {tag} has no asset {name}"
-                ))),
+                [] => Err(Failure::Fetch(format!("release {tag} has no asset {name}"))),
                 _ => Err(Failure::Fetch(format!(
                     "release {tag}: asset {name} is not at an address of this repository"
                 ))),
@@ -925,7 +917,11 @@ impl Updater {
         };
         if self.replaced() || self.cfg.root.join("updater-trial").exists() {
             // a new updater is taking over: it is not given a second change before it has shown that it is up
-            return Outcome::new("busy", tag, "the updater is being replaced; call again in a minute");
+            return Outcome::new(
+                "busy",
+                tag,
+                "the updater is being replaced; call again in a minute",
+            );
         }
         log("deploy", json!({ "tag": tag }));
         // a swap that was cut off earlier is settled before a new one begins
@@ -942,7 +938,9 @@ impl Updater {
         if outcome.ok {
             match self.stage_updater(tag) {
                 Ok(next) => outcome.updater.next = next,
-                Err(e) => outcome.message = format!("{}; its updater was not taken: {e}", outcome.message),
+                Err(e) => {
+                    outcome.message = format!("{}; its updater was not taken: {e}", outcome.message)
+                }
             }
             outcome.updater.reverted = self.reverted();
         }
@@ -1132,7 +1130,9 @@ impl Updater {
                 }
             }
         }
-        let health = self.put_back(&journal, commit_of(&journal.old).as_deref()).await;
+        let health = self
+            .put_back(&journal, commit_of(&journal.old).as_deref())
+            .await;
         log(
             "deploy-undone",
             json!({ "cut_off": journal.tag, "back_to": journal.old, "health": health }),
@@ -1208,7 +1208,10 @@ impl Updater {
     /// the running updater has to end for it.
     fn stage_updater(&self, tag: &str) -> Result<Option<String>, String> {
         let now = self.linked("updater");
-        if now.as_deref() == Some(tag) || self.replaced() || self.cfg.root.join("updater-trial").exists() {
+        if now.as_deref() == Some(tag)
+            || self.replaced()
+            || self.cfg.root.join("updater-trial").exists()
+        {
             return Ok(None);
         }
         // one that was tried and did not come up is not tried a second time; a later release may bring a better one
