@@ -50,9 +50,9 @@ use crate::mls::rules::{
     Verifier,
 };
 use crate::recovery::{
-    self, AuthMessage, CheckedRoom, KeyContext, MacKeys, PublicRules, RecoveryJoin, RecoveryKeys,
-    RecoveryMac, RecoveryPublic, Replacement, SealedKey, Sealing, ServedGroup, ServedRoom, Taken,
-    Walked,
+    self, AuthMessage, CheckedRoom, CheckedSession, KeyContext, MacKeys, PlacedCommit, PublicRules,
+    RecoveryJoin, RecoveryKeys, RecoveryMac, RecoveryPublic, Replacement, SealedKey, Sealing,
+    ServedCommit, ServedEnd, ServedGroup, ServedRoom, ServedStart, Taken, Walked,
 };
 use crate::store::{self, table, Batch, Entry, OutboxEntry, OutboxKind, Storage, StorageError};
 use openmls::group::MlsGroup;
@@ -94,7 +94,7 @@ pub use content::{
     RegisterChange, Sealed, HEADS_EVERY_MS,
 };
 pub use facts::Finding;
-pub use history::{GroupPast, Learned};
+pub use history::{GroupPast, LearnProgress, Learned};
 pub use invite::{
     InviteAccepted, InviteConfirmed, InviteOpened, InviteStep, JoinRequest, MAX_OPEN_INVITES,
 };
@@ -880,6 +880,13 @@ pub struct Device<S: Storage> {
     id: DeviceId,
     provider: Provider,
     memory: Memory,
+    /// The walks of groups' pasts that were started and not finished ([`Device::learn_start`]). They are
+    /// no state: nothing here is stored, and nothing the device answers reads it.
+    walks: BTreeMap<GroupId, history::PastWalk>,
+    /// The check of a served room that was started and not finished ([`Device::code_check_start`]), and
+    /// the checks of session groups ([`Device::session_check_start`]). The same holds for them.
+    room_check: Option<recovery::RoomCheck>,
+    session_checks: BTreeMap<GroupId, recovery::SessionCheck>,
     /// Another owner wrote to the stored state: this object works on it no more.
     lost: bool,
 }
@@ -1214,6 +1221,9 @@ impl<S: Storage> Device<S> {
                 record,
                 ..Memory::default()
             },
+            walks: BTreeMap::new(),
+            room_check: None,
+            session_checks: BTreeMap::new(),
             lost: false,
         })
     }
@@ -1239,6 +1249,9 @@ impl<S: Storage> Device<S> {
             key,
             provider: Provider::new(entropy, mls)?,
             memory,
+            walks: BTreeMap::new(),
+            room_check: None,
+            session_checks: BTreeMap::new(),
             lost: false,
         };
         device.read_groups()?;
@@ -3863,6 +3876,81 @@ impl<S: Storage> Device<S> {
             return Err(Error::Busy);
         }
         let checked = recovery::check_room(keys, served)?;
+        self.join_room_from(keys, served.room, checked, served.group.current, now_ms)
+    }
+
+    /// Begins the check of the room a hub serves to a device that signs in or recovers with the code
+    /// (8.5), for a caller that cannot hand a room's whole history in one call: `served` is everything but
+    /// the Commits. They follow in slices ([`Device::code_check_slice`]); [`Device::join_room_checked`] or
+    /// [`Device::recover_checked`] ends the check and builds on it.
+    ///
+    /// The check is held in memory only and is no state of the device: nothing of it is written, and
+    /// nothing the device answers reads it, before its finish has held it against the anchor's
+    /// authenticated state and the GroupInfos offered as current. A device that is opened again holds no
+    /// check: the caller starts again. A second start replaces the first.
+    pub fn code_check_start(
+        &mut self,
+        keys: &RecoveryKeys,
+        served: &ServedStart<'_>,
+    ) -> Result<(), Error> {
+        self.owner()?;
+        self.room_check = None;
+        if self.memory.record.room.is_some() {
+            return Err(Error::RoomExists);
+        }
+        self.room_check = Some(recovery::RoomCheck::start(keys, served)?);
+        Ok(())
+    }
+
+    /// Hands the check of the room the next Commits of the room's logs, of the room group and of every
+    /// session group named at the start, in the hub's order across groups: ascending by change number, at
+    /// most [`recovery::MAX_SLICE_COMMITS`] of them, of at most [`recovery::MAX_SLICE_LEN`] bytes together
+    /// (`too-large` otherwise, and the check stands where it was). A slice follows the one before it: each
+    /// Commit is taken only on the state the Commits before it led to, under a change number above the
+    /// last one's. Any other refusal ends the check ([`recovery::RoomCheck::slice`]), and the caller starts
+    /// again. `not-found` without a check.
+    pub fn code_check_slice(&mut self, commits: &[PlacedCommit<'_>]) -> Result<(), Error> {
+        self.owner()?;
+        if !recovery::fits_a_slice(commits.iter().map(|placed| placed.commit.commit.len())) {
+            return Err(Error::TooLarge);
+        }
+        let mut check = self.room_check.take().ok_or(Error::NotFound)?;
+        check.slice(commits)?;
+        self.room_check = Some(check);
+        Ok(())
+    }
+
+    /// Ends the check of the room ([`recovery::RoomCheck::finish`]) and, if it holds, builds the join of
+    /// the room group as [`Device::join_room_with_code`] does. Whatever the answer, the check is gone.
+    /// `not-found` without a check.
+    pub fn join_room_checked(
+        &mut self,
+        keys: &RecoveryKeys,
+        served: &ServedEnd<'_>,
+        now_ms: u64,
+    ) -> Result<CodeJoin, Error> {
+        self.owner()?;
+        let check = self.room_check.take().ok_or(Error::NotFound)?;
+        let room = check.room();
+        let checked = check.finish(keys, served)?;
+        self.join_room_from(keys, room, checked, served.current, now_ms)
+    }
+
+    /// Builds the join of the room group on a room that was checked.
+    fn join_room_from(
+        &mut self,
+        keys: &RecoveryKeys,
+        room: RoomId,
+        checked: CheckedRoom,
+        current: &[u8],
+        now_ms: u64,
+    ) -> Result<CodeJoin, Error> {
+        if self.memory.record.room.is_some() {
+            return Err(Error::RoomExists);
+        }
+        if self.joining(&GroupId::room(room)) {
+            return Err(Error::Busy);
+        }
         let missing_link = checked.missing_link;
         let walked = checked.walked.clone();
         let unverified = checked
@@ -3872,8 +3960,8 @@ impl<S: Storage> Device<S> {
             .filter_map(|(at, session)| Some((at, session.as_ref().err()?.clone())))
             .collect();
         let (posting, copy) = self.shadow(|this, batch| {
-            this.take_checked(batch, keys, served.room, checked)?;
-            this.join_built(batch, keys, served.group.current, &[], &walked, now_ms)
+            this.take_checked(batch, keys, room, checked)?;
+            this.join_built(batch, keys, current, &[], &walked, now_ms)
         })?;
         Ok(CodeJoin {
             outbox: vec![self.post_join(posting, copy)?],
@@ -3901,6 +3989,76 @@ impl<S: Storage> Device<S> {
         let checked = recovery::check_session(served, &room, self.history()?, &known, &|change| {
             self.room_epoch_at(change)
         })?;
+        self.join_session_from(keys, checked, served.current, now_ms)
+    }
+
+    /// Begins the verification of a live session group that this device, a human device that joined the
+    /// room group with the code, will join with it (8.4), for a caller that cannot hand the group's whole
+    /// history in one call: `founding` is its founding GroupInfo. Returns the group. Its Commits follow in
+    /// slices ([`Device::session_check_slice`]), and [`Device::join_session_checked`] ends the check and
+    /// builds the join. The check is held as [`Device::code_check_start`] holds its own.
+    pub fn session_check_start(&mut self, founding: &[u8]) -> Result<GroupId, Error> {
+        self.owner()?;
+        let room = self.memory.record.room.ok_or(Error::NoRoom)?;
+        if !self.is_human() {
+            return Err(Error::Forbidden);
+        }
+        let check = recovery::SessionCheck::start(founding, &room)?;
+        let group = check.group();
+        self.session_checks.insert(group, check);
+        Ok(group)
+    }
+
+    /// Hands the check of the session `group` its next Commits, in the hub's order, at most a slice of
+    /// them (`too-large` otherwise, and the check stands where it was). Each is judged against the room
+    /// states and the sessions this device holds, at the place its change number names
+    /// ([`recovery::SessionCheck::slice`]). Any other refusal ends the check, and the caller starts again.
+    /// `not-found` without a check.
+    pub fn session_check_slice(
+        &mut self,
+        group: &GroupId,
+        commits: &[ServedCommit<'_>],
+    ) -> Result<(), Error> {
+        self.owner()?;
+        if !recovery::fits_a_slice(commits.iter().map(|commit| commit.commit.len())) {
+            return Err(Error::TooLarge);
+        }
+        let mut check = self.session_checks.remove(group).ok_or(Error::NotFound)?;
+        let known = self.known().historical();
+        check.slice(commits, self.history()?, &known, &|change| {
+            self.room_epoch_at(change)
+        })?;
+        self.session_checks.insert(*group, check);
+        Ok(())
+    }
+
+    /// Ends the check of the session `group` with the GroupInfo the hub offers as current, and, if it
+    /// agrees with the state the check reached, builds the join as [`Device::join_session_with_code`] does.
+    /// Whatever the answer, the check is gone. `not-found` without a check.
+    pub fn join_session_checked(
+        &mut self,
+        keys: &RecoveryKeys,
+        group: &GroupId,
+        current: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        self.owner()?;
+        let check = self.session_checks.remove(group).ok_or(Error::NotFound)?;
+        if !self.is_human() {
+            return Err(Error::Forbidden);
+        }
+        let checked = check.finish(current)?;
+        self.join_session_from(keys, checked, current, now_ms)
+    }
+
+    /// Builds the join of a session group that was verified from its founding.
+    fn join_session_from(
+        &mut self,
+        keys: &RecoveryKeys,
+        checked: CheckedSession,
+        current: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
         if self.joining(&checked.observer.group()) {
             return Err(Error::Busy);
         }
@@ -3913,7 +4071,7 @@ impl<S: Storage> Device<S> {
         }
         let seats = checked.observer.seats().to_vec();
         let (posting, copy) = self.shadow(|this, batch| {
-            this.join_built(batch, keys, served.current, &seats, &checked.walked, now_ms)
+            this.join_built(batch, keys, current, &seats, &checked.walked, now_ms)
         })?;
         self.post_join(posting, copy)
     }
@@ -4041,28 +4199,94 @@ impl<S: Storage> Device<S> {
         if !self.memory.staged.is_empty() {
             return Err(Error::Busy);
         }
+        let checked = recovery::check_room(keys, served)?;
+        let currents: Vec<&[u8]> = served
+            .sessions
+            .iter()
+            .map(|session| session.current)
+            .collect();
+        let end = ServedEnd {
+            current: served.group.current,
+            sessions: &currents,
+            rows: served.rows,
+            links: served.links,
+        };
+        self.recover_from(
+            keys,
+            served.room,
+            checked,
+            &end,
+            replacement,
+            chains,
+            account,
+            now_ms,
+        )
+    }
+
+    /// Ends the check of the room ([`recovery::RoomCheck::finish`]) and, if it holds, builds the whole
+    /// recovery as [`Device::recover`] does. Whatever the answer, the check is gone. `not-found` without a
+    /// check.
+    pub fn recover_checked(
+        &mut self,
+        keys: &RecoveryKeys,
+        served: &ServedEnd<'_>,
+        replacement: &Replacement,
+        chains: &[ServedEnvelope<'_>],
+        account: &[u8],
+        now_ms: u64,
+    ) -> Result<CodeJoin, Error> {
+        self.owner()?;
+        let check = self.room_check.take().ok_or(Error::NotFound)?;
+        let room = check.room();
+        let checked = check.finish(keys, served)?;
+        self.recover_from(
+            keys,
+            room,
+            checked,
+            served,
+            replacement,
+            chains,
+            account,
+            now_ms,
+        )
+    }
+
+    /// Builds the recovery on a room that was checked; `served` names the GroupInfos to join on.
+    #[allow(clippy::too_many_arguments)]
+    fn recover_from(
+        &mut self,
+        keys: &RecoveryKeys,
+        room: RoomId,
+        mut checked: CheckedRoom,
+        served: &ServedEnd<'_>,
+        replacement: &Replacement,
+        chains: &[ServedEnvelope<'_>],
+        account: &[u8],
+        now_ms: u64,
+    ) -> Result<CodeJoin, Error> {
+        if self.memory.record.room.is_some() {
+            return Err(Error::RoomExists);
+        }
+        if !self.memory.staged.is_empty() {
+            return Err(Error::Busy);
+        }
         let chains = in_the_hubs_order(chains)?;
-        let mut checked = recovery::check_room(keys, served)?;
         let missing_link = checked.missing_link;
         // Every live session is joined and cleaned, or the hub publishes nothing.
         let mut sessions = Vec::new();
-        for (session, served) in std::mem::take(&mut checked.sessions)
+        for (session, current) in std::mem::take(&mut checked.sessions)
             .into_iter()
             .zip(served.sessions)
         {
             let session = session?;
-            sessions.push((
-                session.observer.seats().to_vec(),
-                session.walked,
-                served.current,
-            ));
+            sessions.push((session.observer.seats().to_vec(), session.walked, *current));
         }
         let walked = checked.walked.clone();
-        let room_group = GroupId::room(served.room);
+        let room_group = GroupId::room(room);
         let (postings, copy) = self.shadow(|this, batch| {
-            this.take_checked(batch, keys, served.room, checked)?;
+            this.take_checked(batch, keys, room, checked)?;
             this.hold_mac(batch, replacement.keys.mac_key())?;
-            let current = served.group.current;
+            let current = served.current;
             let mut postings = vec![this.join_built(batch, keys, current, &[], &walked, now_ms)?];
             for (seats, walked, current) in &sessions {
                 postings.push(this.join_built(batch, keys, current, seats, walked, now_ms)?);
