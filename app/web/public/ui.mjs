@@ -1289,7 +1289,12 @@ controller('curl', class extends Controller {
   /** The sheet is the page's main area: right of the sidebar, under a phone's bars, never beyond the window. */
   place() {
     const main = document.querySelector('main'), r = main.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight
-    const left = Math.max(0, Math.round(r.left)), right = Math.min(Math.round(r.right), vw), top = this.top = this.barTop()
+    // (a phone: the corner stays inside the safe area and the page's own margin, so its flap is never cut by the
+    //  screen's rounded edge or the status bar)
+    const narrow = vw <= 860, cs = getComputedStyle(document.documentElement), inset = name => parseFloat(cs.getPropertyValue(name)) || 0
+    const pad = narrow ? 10 : 0
+    const left = Math.max(0, Math.round(r.left)), right = Math.min(Math.round(r.right), vw - (narrow ? Math.round(inset('--safe-right') + pad) : 0))
+    const top = this.top = Math.max(this.barTop(), narrow ? Math.round(inset('--safe-top') + pad) : 0)
     this.box = { left, top, right, bottom: vh, width: right - left, height: vh - top }
     Object.assign(this.element.style, { left: `${left}px`, top: `${top}px`, width: `${this.box.width}px`, height: `${this.box.height}px` })
     this.svg.setAttribute('viewBox', `0 0 ${this.box.width} ${this.box.height}`)

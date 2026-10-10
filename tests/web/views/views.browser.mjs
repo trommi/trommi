@@ -92,6 +92,22 @@ const steps = [
       } finally { await P.close() }
     }
   }],
+  ['the page curl stays inside the window and its margin on a phone (390×844); its box on a wide window as before', async ctx => {
+    const { check } = ctx.run
+    for (const [width, height] of [[390, 844], [1440, 900]]) {
+      const P = await openProfile(`curl-${width}`, ctx.seen, { width, height })
+      try {
+        const page = P.page
+        await page.go(`${ctx.app.origin}/?mock=1`)
+        await page.until("document.documentElement.hasAttribute('data-ready') && document.querySelector('.curl')?.style.width", 'the demo room with its curl')
+        await sleep(300)
+        const got = await page.js("const r = document.querySelector('.curl').getBoundingClientRect(), vw = document.documentElement.clientWidth; return { right: r.right, top: r.top, vw }")
+        await page.shot(`curl-${width}`)
+        if (width < 860) check(got.right <= got.vw - 10 && got.top >= 10, `the curl's corner keeps 10 px from the right and top edges (${width})`, got)
+        else check(got.right <= got.vw, `the curl's box ends inside the window (${width})`, got)
+      } finally { await P.close() }
+    }
+  }],
 ]
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main('views', { setUp, steps, tearDown }, {})
