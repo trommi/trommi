@@ -483,13 +483,19 @@ public protocol CoreDevice: CoreSigner {
   func processLogEntry(_ entry: LogEntry) throws -> Processed
   /**
    * Learns the past of a group this device came into later (by link, or by a Welcome into a session group), from its
-   * public history: the founding GroupInfo (epoch 0) and every Commit from the first on, in the hub's order. The
-   * room group first, then main sessions, then helper sessions (`room-behind`, `group-behind` otherwise). Taken
-   * only if it arrives at this device's own state (`bad-group`, and nothing is written). How many epochs were
+   * public history, in steps (PastWalk.swift): `learnStart` with the founding GroupInfo (epoch 0), `learnSlice` with
+   * the next Commits of the group's log in the hub's order (at most 256 and 16 MiB a slice: `too-large`, and the walk
+   * stands), `learnFinish`, which alone compares with the device's own state and writes. The room group first, then
+   * main sessions, then helper sessions (`room-behind`, `group-behind` otherwise). Taken only if it arrives at this
+   * device's own state (`bad-group`, and nothing is written). The walk is held in memory only, one at a time: any
+   * refusal but `too-large` ends it (`not-found` after), and so does a restart. `learnFinish`: how many epochs were
    * recorded; 0 when there was nothing to learn. Envelopes of those epochs, `group-behind` until then, are handed
    * to `receiveEnvelope` again afterwards, `ordered`, in the hub's order.
    */
-  func learnHistory(group: GroupId, founding: Bytes, commits: [PastCommit]) throws -> UInt64
+  func learnStart(group: GroupId, founding: Bytes) throws -> LearnProgress
+  func learnSlice(group: GroupId, commits: [PastCommit]) throws -> LearnProgress
+  func learnFinish(group: GroupId) throws -> UInt64
+  func learnAbandon(group: GroupId)
   func logFinding(_ error: Error) -> LogFinding
 
   func sendHandover(group: GroupId, recipient: DeviceId) throws -> [UInt64]

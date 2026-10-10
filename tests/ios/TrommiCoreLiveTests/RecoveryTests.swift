@@ -117,7 +117,7 @@ final class PocketHub {
   func served(room: RoomId, code: Bytes, sessions: [GroupId] = [], tools: LiveCore) throws -> LiveServedRoom {
     let anchor = try tools.recoveryAnchor(code: code, room: room, sealedKeys: sealedKeys)
     XCTAssertEqual(anchor.group, room)
-    return (room, try served(room), try XCTUnwrap(infos[room]?[anchor.epoch]), sealedKeys, links, try sessions.map(served))
+    return (room, try served(room), try XCTUnwrap(infos[room]?[anchor.epoch]), sealedKeys, links, try sessions.map(served), sessions)
   }
 
   /// Hands the device everything above its cursor, strictly by change number: the log's entries (its own accepted

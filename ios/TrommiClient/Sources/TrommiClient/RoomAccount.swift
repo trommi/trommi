@@ -207,14 +207,19 @@ extension Room {
    * log does not say yet. A refusal of the hub is no "not taken": only the log decides.
    */
   static func stagedJoinTaken(_ device: CoreDevice, recoveryHub: HubClient, room: RoomId) async -> Bool? {
-    guard let past = try? await recoveryHub.history(of: room) else { return nil }
-    for commit in past.commits where commit.change > device.cursor {
-      let entry = LogEntry(change: commit.change, group: room, kind: .commit(bytes: commit.commit, recoveryAuth: commit.recoveryAuth))
-      guard let done = try? device.processLogEntry(entry) else { continue }
-      switch done {
-      case .ownCommit: return true
-      case .joinSuperseded: return false
-      default: continue
+    var pages = GroupLogPages(hub: recoveryHub, group: room)
+    while true {
+      let page: [PastCommit]?
+      do { page = try await pages.next() } catch { return nil }
+      guard let page else { break }
+      for commit in page where commit.change > device.cursor {
+        let entry = LogEntry(change: commit.change, group: room, kind: .commit(bytes: commit.commit, recoveryAuth: commit.recoveryAuth))
+        guard let done = try? device.processLogEntry(entry) else { continue }
+        switch done {
+        case .ownCommit: return true
+        case .joinSuperseded: return false
+        default: continue
+        }
       }
     }
     if device.room != nil { return true }

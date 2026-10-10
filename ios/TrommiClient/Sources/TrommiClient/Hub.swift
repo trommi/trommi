@@ -250,39 +250,13 @@ public final class HubClient: @unchecked Sendable {
   public func groupInfo(_ group: GroupId, epoch: UInt64? = nil) async throws -> JSON {
     try await request("GET", "/groups/\(b64u(group))/info", query: epoch.map { ["epoch": String($0)] } ?? [:])
   }
-  public func groupLog(_ group: GroupId, after: UInt64, limit: Int = 500) async throws -> JSON {
-    try await request("GET", "/groups/\(b64u(group))/log", query: ["after": String(after), "limit": String(limit)])
+  public func groupLog(_ group: GroupId, after: UInt64, limit: Int = 500, commitsOnly: Bool = false) async throws -> JSON {
+    var query = ["after": String(after), "limit": String(limit)]
+    if commitsOnly { query["kind"] = "commit" }
+    return try await request("GET", "/groups/\(b64u(group))/log", query: query)
   }
-  /**
-   * A group's public history from its founding: the GroupInfo of epoch 0 and every Commit of its log, in the hub's
-   * order. `reached`: the epoch the last Commit read leads to. Nothing in it is trusted: the core checks it.
-   */
-  /** The most a client reads of what the hub serves page by page for one check (a history, the sealed keys, the chains). */
+  /** The most a client reads of what the hub serves page by page for one check that is held whole (the sealed keys, the chains). A group's history is read in pages (`GroupLogPages`). */
   public static let maxServed = 128 << 20
-  public func history(of group: GroupId) async throws -> (founding: Bytes, commits: [PastCommit], reached: UInt64) {
-    func bytes(_ json: JSON, _ field: String) throws -> Bytes {
-      guard let text = json[field] as? String, let bytes = try? unb64u(text), !bytes.isEmpty else { throw TrommiError("bad-format", "the hub's answer has no \(field)") }
-      return bytes
-    }
-    let founding = try bytes(try await groupInfo(group, epoch: 0), "group_info")
-    var commits = [PastCommit](), after: UInt64 = 0, reached: UInt64 = 0, total = founding.count
-    while true {
-      let page = try await groupLog(group, after: after)
-      let items = page["items"] as? [JSON] ?? []
-      for item in items {
-        guard let n = Wire.uint(item["n"]), n > after else { throw TrommiError("bad-format", "the hub's log of a group is not in order") }
-        after = n
-        guard item["kind"] as? String == "commit" else { continue }
-        guard let change = Wire.uint(item["change"]), let epoch = Wire.uint(item["epoch"]) else { throw TrommiError("bad-format", "a Commit of the hub's log has no change number or epoch") }
-        let commit = try bytes(item, "bytes")
-        total += commit.count
-        guard total <= Self.maxServed else { throw TrommiError("too-large", "a group's history is larger than this client reads") }
-        commits.append((change, commit, (item["recovery_auth"] as? String).flatMap { try? unb64u($0) }))
-        reached = epoch + 1
-      }
-      guard page["more"] as? Bool == true, !items.isEmpty else { return (founding, commits, reached) }
-    }
-  }
   /** A page of a Chat, newest first below `before` (a change number). `timeline`: "session/<hex>" or "card/<hex>". */
   public func chatItems(timeline: String, before: UInt64? = nil, limit: Int = 50) async throws -> JSON {
     var q = ["limit": String(limit)]
