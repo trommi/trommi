@@ -44,8 +44,10 @@ async function fromPage(id, clientId) {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url)
   if (url.origin !== self.location.origin || event.request.method !== 'GET') return
-  // The hub may answer on the app's own origin (under /v2/): its requests are not this worker's, the live stream
-  // least of all. They go to the network as the page or the core worker sent them.
+  // The hub may answer on the app's own origin (under /v2/, as a local stack does): its requests are never this
+  // worker's, the live stream least of all (Firefox kept a stream the worker had passed on open after a reload: one
+  // more per reload, until the six connections to the host were taken and every request waited). They go to the
+  // network as the page or the core worker sent them. In production the hub is another origin: not touched above.
   if (url.pathname.startsWith('/v2/')) return
   const att = /^\/att\/([0-9a-f]{32})$/.exec(url.pathname)
   if (att) {
@@ -69,6 +71,8 @@ self.addEventListener('fetch', event => {
   }
   // (The sandboxed frame keeps its own CSP: it never comes from the shell cache.)
   if (DEV || url.pathname.startsWith('/demo/') || url.pathname.startsWith('/a/') || url.pathname === '/frame') return
+  // Only the app's own files and its pages: anything else on this origin goes to the network untouched.
+  if (event.request.mode !== 'navigate' && !SHELL.includes(url.pathname)) return
   // Network first, the cache when offline: a phone that is online never runs yesterday's code. A navigation inside the
   // app gets the shell ("/": the app routes in the page).
   const key = event.request.mode === 'navigate' && !/\.\w+$/.test(url.pathname) && !url.pathname.endsWith('/') ? '/' : url.pathname
