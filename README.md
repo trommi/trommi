@@ -2,6 +2,8 @@
 
 Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted.
 
+Security in one page: [SECURITY.md](SECURITY.md).
+
 ## What lies where
 
 | | |
