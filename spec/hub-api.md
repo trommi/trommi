@@ -41,6 +41,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v1/desk` | → `{ cards, permission_requests, notes, artifacts, registers, groups, change }` | open objects' newest envelopes, every writer's newest value per register, in the asker's groups |
 | `GET /v1/chats/{timeline}/items?before=&limit=` | → envelopes, newest first | `timeline` = `session/<hex>` or `card/<hex>` |
 | `GET /v1/boards/{board}?after_change=` | → `{ items, more }` | the board's items after the given change (10.3) |
+| `POST /v1/boards/{board}/frontier` | `{ frontier: { <writer>: [seq, hash] }, files: [file_id] }` → `{ pruned }` | human devices, after writing `board_snapshot/<board>` (v1.md 10.9); the newest post per device and board counts; `pruned`: item bodies pruned now |
 | `GET /v1/cards/{object}?after=&limit=` (and `/notes/`, `/permission-requests/`, `/artifacts/`) | → `{ items, more, state, owner, … }`: every envelope of the object | pruned ones in pruned form |
 | `GET /v1/groups/{group}/chains/{sender}?after=&limit=` | → envelopes in pruned form, by `seq` | chain checks (9.0.5, 10.3) |
 | `GET /v1/changes?after=&limit=` | → `{ items, change, more }` | catch-up: everything the asker may see with a change number above `after` |
@@ -74,6 +75,7 @@ written. Catch-up is "everything above N".
 | `cards`, `notes`, `permission_requests`, `artifacts` | `object_id`, `group_id`, `state`, `urgency`, `answered_at`, `owner`, `first_change`, `head_change`, `closed_at` | | **the Desk**: partial index on `state = open` by (`urgency` desc, `first_change`). Derived from `envelopes`, rebuildable |
 | `chats`, `boards` | `timeline`, `group_id`, `item_count`, `last_change` | | derived |
 | `registers` | `group_id`, `writer`, `register_id`, `head_change` | | **all current values**: (`group_id`); derived |
+| `board_frontiers` | `room_id`, `board`, `device`, `frontier` (writer → `seq`, `hash`), `files`, `at` | | the newest post per human device and board (v1.md 10.9) |
 | `files` | `file_id`, `room_id`, `uploader`, `group_id`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
 | `shares` | `share_id`, `file_id`, `secret_hash`, `expires_at`, `created_by` | | by id |
 | `invites`, `invite_requests` | signed Offer with its `offer_mac` (added to schema 5 in place), Requests, Reveal, `expires_at`, `used_at`, `burned_at` | | by `invite_id` |
@@ -85,7 +87,7 @@ written. Catch-up is "everything above N".
   transaction from signed header fields, and can be dropped and rebuilt. One write route, one truth table; the app's
   names are on what is read.
 - Retention: `group_log` messages 30 days; Commits and the founding GroupInfo of a group while it is live and as long as any envelope of
-  it is kept (the room group: for ever); `envelopes.body` per v1.md 9.4; `welcomes` until joined; relay-only messages never.
+  it is kept (the room group: for ever); `envelopes.body` per v1.md 9.4 (settled objects after 30 days, a writer's older register values and Note versions at once, board items behind the frontiers of 10.9); `welcomes` until joined; relay-only messages never.
 - Who may read: a human device everything of its room; an agent or helper device the Commits and GroupInfo of the
   room group and, for a helper session, of its main session's group (public state only, no messages), and the log,
   envelopes, files and registers of the groups it is a leaf of (a file: while it is a leaf, v1.md 11.3; a file no
@@ -454,6 +456,14 @@ encrypted.
     restarts (13.7): its stream carries `Trommi-Lease`; only the lease holder's stream replaces the others, a
     process that no longer holds the lease is answered `lease-lost` and ends nothing, and a stream opened without
     `Trommi-Lease` (a client before this rule) is taken beside the others within the limit of 8.
+45. **Pruning as content arrives** (owner, 10 October 2026; v1.md 9.4). A register value or Note version prunes
+    the same writer's earlier ones in the same transaction; a board frontier post prunes the board's items behind
+    the frontiers that count. The retention job prunes settled objects (Notes too) and, for every board, applies
+    the frontiers again, so that a post that fell out of the 30 days stops holding pruning back. A file is
+    deleted when every envelope that named it is pruned and no counting frontier post keeps it; its tombstone
+    row and `file_evicted` follow as for 9.4. A frontier post is refused with `bad-format` when a writer is not
+    a device of the room, a number lies beyond what the hub holds of that writer in the room group, or a hash
+    is not that envelope's, and with `too-large` beyond 20 000 files or 1 000 writers.
 
 ## Known limits
 
