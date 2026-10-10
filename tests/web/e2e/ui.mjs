@@ -99,7 +99,7 @@ export async function logIn(page, url, email, password) {
   await page.until("document.querySelector('#way-login')", 'the welcome screen')
   await page.click('#way-login')
   await page.until("document.querySelector('#login-form')", 'the login screen')
-  await page.type('#login-form input[name=email]', email)
+  await page.type('#login-form input[name=account]', email)
   await page.type('#login-form input[name=password]', password)
   await page.click('#login-form button[type=submit]')
 }
