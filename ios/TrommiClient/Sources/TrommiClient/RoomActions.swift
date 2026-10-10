@@ -296,13 +296,12 @@ extension Room {
     return id
   }
   /**
-   * A board as it stands (10.3), by the core alone. The first time: the newest snapshot (the core's own value of
-   * the register board_snapshot/<board>, its file fetched and unpacked), the board's items the hub serves after it,
-   * `boardLoad` to verify them against the chains and Cuts this device holds, and `boardReduce` to merge the fresh
-   * ones into the snapshot. The core then holds that frontier as applied: from there on the board this device made
-   * is kept (sealed beside the record cache, `HeldBoard`) and only what came after it is merged, since an older
-   * snapshot loaded again would be `replay`. A board the core refuses (`withheld`, `equivocation`, `gap`, …) is
-   * thrown, not drawn; `withheld` is asked once more after a catch-up (the chains read up to their heads).
+   * A board as it stands (10.3), by the core alone: the newest snapshot (the core's own value of the register
+   * board_snapshot/<board>, its file fetched and unpacked), the board's items the hub serves after it, `boardLoad`
+   * to verify them against the chains and Cuts this device holds, and `boardReduce` to merge the fresh ones into the
+   * snapshot. Every opening loads it so anew (the core takes the same snapshot again, also after a Cut dropped
+   * items). A board the core refuses (`withheld`, `equivocation`, `gap`, …) is thrown, not drawn; `withheld` is
+   * asked once more after a catch-up (the chains read up to their heads).
    */
   public func loadCanvas(_ timelineId: String) async throws -> CanvasState {
     do { return try await loadCanvasOnce(timelineId) }
@@ -315,13 +314,6 @@ extension Room {
     let key = timelineKeyOf("scribble", timelineId)
     let id = try boardId(timelineId)
     let st = CanvasState()
-    if let held = heldBoard(id) {
-      try st.show(reduced: held.file, frontier: held.frontier)
-      st.heldChange = held.change
-      _ = try await loadBoardItems(key, id, after: held.change)
-      try mergeCanvasItems(st, key)
-      return st
-    }
     guard let room = roomGroup else { throw TrommiError("no-key", "this device is in no room") }
     let name = "board_snapshot/\(b64u(id))"
     let value = try await onCore { try $0.register(group: room, name: name) }
@@ -349,31 +341,9 @@ extension Room {
     let bodies = fresh.map { BoardItemBody(sender: items[$0].head.writer, seq: items[$0].head.seq, payload: items[$0].payload) }
     let out = try Core.tools.boardReduce(snapshot: file, snapshotFrontier: snapFrontier, items: bodies, frontier: frontier)
     try st.show(reduced: out, frontier: frontier)
-    st.heldChange = max(after, items.map { $0.change }.max() ?? 0)
-    keepBoard(id, st)
     return st
   }
 
-  // ---- the board this device made, kept between starts ----------------------------------------------------
-
-  /** The board the core made last on this device, sealed under the cache key: its file, frontier and change. */
-  struct HeldBoard: Codable {
-    var file: Bytes
-    var writers: [String], seqs: [UInt64], hashes: [String]
-    var change: UInt64
-    var frontier: [WriterHead] { zip(writers, zip(seqs, hashes)).compactMap { w, h in (try? unhex(w)).flatMap { w in (try? unhex(h.1)).map { WriterHead(writer: w, seq: h.0, hash: $0) } } } }
-  }
-  private func heldURL(_ id: BoardId) -> URL { store.dir.appendingPathComponent("board-\(hex(id)).sealed") }
-  func heldBoard(_ id: BoardId) -> HeldBoard? {
-    guard let key = try? store.cacheKey() else { return nil }
-    return RecordStore(dir: store.dir, key: key).readSmall(HeldBoard.self, from: heldURL(id), aad: "trommi ios scribble \(hex(id))")
-  }
-  func keepBoard(_ id: BoardId, _ st: CanvasState) {
-    guard let file = st.reduced, let key = try? store.cacheKey() else { return }
-    let f = st.reducedFrontier
-    let held = HeldBoard(file: file, writers: f.map { hex($0.writer) }, seqs: f.map(\.seq), hashes: f.map { hex($0.hash) }, change: st.heldChange)
-    try? RecordStore(dir: store.dir, key: key).writeSmall(held, to: heldURL(id), aad: "trommi ios scribble \(hex(id))")
-  }
   /** A frontier's heads from the register's JSON (`{ <writer b64u>: [seq, hash b64u] }`); nil when it does not read. */
   static func heads(_ v: JV) -> [WriterHead]? {
     guard let o = v.object else { return nil }
@@ -425,7 +395,7 @@ extension Room {
   }
   /**
    * The board's items that came since `st` was made, merged into it by the core (`boardReduce` over the board it
-   * made last, which skips what that covers), and kept. The ids whose shape changed. A board the core refuses is
+   * made last, which skips what that covers). The ids whose shape changed. A board the core refuses is
    * left as it was, and an alert says so.
    */
   @discardableResult public func applyCanvasItems(_ st: CanvasState, _ key: String) -> Set<String> {
@@ -444,10 +414,7 @@ extension Room {
     let frontier = Self.frontier(of: new.map { $0.head }, over: st.reducedFrontier)
     let out = try Core.tools.boardReduce(snapshot: st.reduced, snapshotFrontier: st.reducedFrontier,
                                          items: new.map { BoardItemBody(sender: $0.head.writer, seq: $0.head.seq, payload: $0.payload) }, frontier: frontier)
-    let changed = try st.show(reduced: out, frontier: frontier)
-    st.heldChange = max(st.heldChange, new.map { $0.change }.max() ?? 0)
-    if let id = try? boardId(String(key.dropFirst("scribble:".count))) { keepBoard(id, st) }
-    return changed
+    return try st.show(reduced: out, frontier: frontier)
   }
   /** One board item (strokes, erase, move, send_away): the room group, human devices only. */
   public func sendCanvas(_ timelineId: String, _ content: JV) async throws {
