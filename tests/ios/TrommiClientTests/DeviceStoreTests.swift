@@ -162,10 +162,10 @@ final class DeviceStoreTests: XCTestCase {
     var s = try DeviceStore(directory: dir, key: key, anchor: anchor)
     _ = try s.load()
     try s.apply(expectedRevision: 0, batch: StoreBatch(put: [entry(1, "a")]))
-    XCTAssertNil(anchor.value, "a batch that signs nothing does not move the anchor")
+    XCTAssertEqual(anchor.value, 1, "every batch moves the anchor, before it is answered")
     let old = try Data(contentsOf: dir.appendingPathComponent("state.log"))
     try s.apply(expectedRevision: 1, batch: StoreBatch(put: [outbox(1)]))
-    XCTAssertEqual(anchor.value, 2, "a batch with something to send does, before it is answered")
+    XCTAssertEqual(anchor.value, 2)
     try s.apply(expectedRevision: 2, batch: StoreBatch(put: [entry(2, "b")]))
     s.close()
     // the log from before the outbox entry, put back: authentic, and refused
@@ -174,11 +174,12 @@ final class DeviceStoreTests: XCTestCase {
     s = try DeviceStore(directory: dir, key: key, anchor: anchor)
     XCTAssertThrowsError(try s.load())
     s.close()
-    // only the batch above the anchor dropped: loads (it signed nothing; the hub gives its items again)
+    // the last answered batch cut off: refused as well
     try now.dropLast(10).write(to: dir.appendingPathComponent("state.log"))
     s = try DeviceStore(directory: dir, key: key, anchor: anchor)
-    XCTAssertEqual(try s.load().revision, 2)
+    XCTAssertThrowsError(try s.load())
     s.close()
+    try now.write(to: dir.appendingPathComponent("state.log"))
     // an anchor that cannot be read is not "no anchor"
     anchor.fail = true
     s = try DeviceStore(directory: dir, key: key, anchor: anchor)

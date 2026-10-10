@@ -27,9 +27,12 @@ extension Room {
   }
 
   /**
-   * Join with an invite link a signed-in device made (for a human device). `onEvent` gets the check code to show as
-   * emoji; the human compares it with the other device and confirms there. Returns once the inviter added this
-   * device and its Welcome checked: for this room, committed by the inviter of the Offer.
+   * Join with an invite link a signed-in device made (for a human device), spec/v2.md 12.1. The steps are the
+   * core's: it checks the Offer and makes the Request (`joinRequest`), checks the Reveal (`joinReveal`: only then
+   * is a code shown), and takes the one Welcome that answers its Request (`joinInvited`: the Offer's room,
+   * committed by the inviter). `onEvent` gets the check code to show as emoji; the human compares it with the other
+   * device and confirms there. Between the Reveal and the inviter's Commit the hub answers this device's sign-in
+   * with `not-member`: asked again until the invite runs out.
    */
   public static func join(link: String, base: URL = Store.defaultBase(), pollMs: UInt64 = 800, timeoutMs: UInt64 = 15 * 60_000, onEvent: (JoinEvent) -> Void) async throws -> Room {
     let tools = Core.tools
@@ -40,9 +43,9 @@ extension Room {
       let hub = try HubClient(hubURL: l.hub, room: l.room, signer: made.device)
       let inv = try await hub.getInvite(l.invite)
       guard let offer = (inv["offer"] as? String).flatMap({ try? unb64u($0) }), let sig = (inv["signature"] as? String).flatMap({ try? unb64u($0) }) else { throw TrommiError("bad-invite", "the hub gave no Offer") }
-      let join = try tools.inviteRequest(link: link, offer: offer, offerSignature: sig, device: made.device, nowMs: nowMs())
-      if join.role != ROLE.HUMAN { throw TrommiError("bad-invite", "this is an invite for an agent: make one for a device in the app") }
-      try await hub.postInviteRequest(l.invite, request: join.request, mac: join.mac, signature: join.signature)
+      let join = try made.device.joinRequest(link: link, offer: SignedOffer(offer: offer, signature: sig), nowMs: nowMs())
+      if join.role != .human { throw TrommiError("bad-invite", "this is an invite for an agent: make one for a device in the app") }
+      try await hub.postInviteRequest(l.invite, request: join.request.request, mac: join.request.mac, signature: join.request.signature)
       onEvent(.requested)
       let until = nowMs() + timeoutMs
       var shown = false
@@ -51,15 +54,15 @@ extension Room {
           do {
             let r = try await hub.getInviteReveal(l.invite)
             if let reveal = (r["reveal"] as? String).flatMap({ try? unb64u($0) }), let rs = (r["signature"] as? String).flatMap({ try? unb64u($0) }) {
-              // The Reveal is checked against invite, request and commitment before one emoji is shown.
-              onEvent(.checkCode(checkCodeText(try tools.inviteReveal(joiner: join.joiner, reveal: reveal, signature: rs))))
+              // The core checks the Reveal against invite, Request and commitment before one emoji is shown.
+              onEvent(.checkCode(checkCodeText(try made.device.joinReveal(SignedReveal(reveal: reveal, signature: rs)).numbers)))
               shown = true
             }
           }
           catch let e as HubError where e.code == "invite-burned" { throw TrommiError("code-mismatch", "the other device said the emoji do not match: nobody was added") }
           catch let e as HubError where e.code == "invite-used" { throw TrommiError("invite-used", "this invite was answered for another device") }
           catch let e as HubError where e.code == "not-found" || e.isOffline { _ = e }
-        } else if let room = try await takeFirstWelcome(hub: hub, made: made, room: l.room, inviter: join.inviter, hubURL: l.hub) {
+        } else if let room = try await takeFirstWelcome(hub: hub, made: made, room: l.room, hubURL: l.hub) {
           onEvent(.joined)
           return room
         }
@@ -69,14 +72,19 @@ extension Room {
     } catch { abandon(made); throw error }
   }
 
-  /** Once the inviter committed: the token (only a leaf gets one), the Welcome, the room record. nil: not yet. */
-  private static func takeFirstWelcome(hub: HubClient, made: (store: Store, state: DeviceStore, device: CoreDevice), room: RoomId, inviter: DeviceId, hubURL: String) async throws -> Room? {
+  /**
+   * Once the inviter committed: the token (only a leaf gets one: `not-member` until then), the Welcome, the room
+   * record. nil: not yet. A refusal of the core to sign (a core that signs in only for a room it is already in:
+   * `no-room`) is thrown, not waited out.
+   */
+  private static func takeFirstWelcome(hub: HubClient, made: (store: Store, state: DeviceStore, device: CoreDevice), room: RoomId, hubURL: String) async throws -> Room? {
     do { _ = try await hub.signIn() }
     catch let e as HubError where e.code == "not-member" || e.code == "unauthorised" || e.isOffline { return nil }
     for w in try await hub.welcomes() {
       guard let bytes = (w["welcome"] as? String).flatMap({ try? unb64u($0) }) else { continue }
-      // (a Welcome into a session group comes later, in the catch-up; the first to take is the room group's)
-      guard let joined = try? made.device.joinWelcome(bytes, room: room, committer: inviter, nowMs: nowMs()), joined.group.count == 32 else { continue }
+      // (a Welcome into a session group comes later, in the catch-up; the one to take here is the room group's,
+      // which the core knows by the invite it stored)
+      guard let joined = try? made.device.joinInvited(bytes, nowMs: nowMs()), joined.group == room else { continue }
       let record = RoomRecord(hubURL: hubURL, roomId: hex(room), myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
       try made.store.save(record)
       return try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
@@ -126,29 +134,8 @@ extension Room {
     do {
       let hub = try HubClient(hubURL: hubURL, room: room, signer: try tools.recoverySigner(code: code))
       _ = try await hub.signIn(challenge: challenge)
-      // What the recovery key may read: the groups, each one's GroupInfo, the sealed keys.
-      var infos = [(group: GroupId, groupInfo: Bytes)]()
-      for g in try await hub.groups() where g["live"] as? Bool != false {
-        guard let id = (g["group_id"] as? String).flatMap({ try? unb64u($0) }) else { continue }
-        let info = try await hub.groupInfo(id)
-        guard let bytes = (info["group_info"] as? String).flatMap({ try? unb64u($0) }) else { throw TrommiError("incomplete", "the hub gave no GroupInfo for a group") }
-        infos.append((id, bytes))
-      }
-      var sealed = [Bytes](), after: UInt64 = 0
-      while true {
-        let page = try await hub.request("GET", "/sealed-keys", query: ["after": String(after)])
-        sealed += (page["rows"] as? [JSON] ?? []).compactMap { ($0["sealed_key"] as? String).flatMap { try? unb64u($0) } }
-        guard page["more"] as? Bool == true, let next = Wire.uint(page["change"]), next > after else { break }
-        after = next
-      }
-      _ = try tools.joinWithRecoveryCode(device: made.device, code: code, groupInfos: infos, sealedKeys: sealed, nowMs: nowMs())
-      // Each join from outside goes to its group's Commit route with its RecoveryAuth, under the recovery key's
-      // token, the room group first (the core queued them in that order). A refused one stops the sign-in; what was
-      // taken before it stands, and the device is found again by the next sign-in's fresh join.
-      for e in made.device.outbox() where e.kind == .externalCommit {
-        let r = try await hub.post(e)
-        try made.device.outboxAccepted(e.id, change: Wire.uint(r["change"]))
-      }
+      // The core reads the room from the hub under the recovery key's token, checks it, and posts the joins.
+      _ = try await tools.joinWithRecoveryCode(device: made.device, code: code, hub: hub, nowMs: nowMs())
       let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
       try made.store.save(record)
       return try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
