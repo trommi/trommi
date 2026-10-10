@@ -18,7 +18,9 @@ use crate::error::Error;
 use crate::ids::SessionId;
 use crate::ids::{DeviceId, GroupId, Hash32, RoomId};
 use crate::mls::observer::{Context, Observer, Place, RoomEpochAt};
-use crate::mls::profile::{Cut, TrommiRoom, MAX_HUMAN_DEVICES_IN_RECOVERY, RECOVERY_KEY_LEN};
+use crate::mls::profile::{
+    Cut, TrommiRoom, MAX_COMMIT_REQUEST_LEN, MAX_HUMAN_DEVICES_IN_RECOVERY, RECOVERY_KEY_LEN,
+};
 use crate::mls::rules::{
     self, CommitFacts, JoinClaim, Parent, RecoveryRules, RoomHistory, RoomState, SealedKeyClaim,
     SessionFacts,
@@ -1337,6 +1339,23 @@ impl Walked {
         })
     }
 
+    /// Whether every session Commit followed still names the room epoch that `room_epoch_at` gives for its
+    /// place: a verifier's own log may have learned since where a room epoch began (4.6). `bad-group` for
+    /// one that names another, `room-behind` where the verifier cannot tell any longer.
+    pub(crate) fn still_placed(
+        &self,
+        room_epoch_at: &dyn Fn(u64) -> Result<u64, Error>,
+    ) -> Result<(), Error> {
+        // Epoch 0 repeats the founding Commit's place and room epoch.
+        for epoch in self.epochs.iter().skip(1) {
+            let at = room_epoch_at(epoch.change).map_err(|_| Error::RoomBehind)?;
+            if at != epoch.room_epoch {
+                return Err(Error::BadGroup);
+            }
+        }
+        Ok(())
+    }
+
     /// Follows the next Commit with `observer`, at the place its change number names, and records the
     /// epoch it ends and the one it begins. `at` is the room epoch a session Commit is judged against
     /// ([`Observer::process_commit_at`]). On a refusal nothing is recorded and the observer is unchanged.
@@ -1549,16 +1568,14 @@ impl SessionFacts for Standing<'_> {
             })
     }
 
-    fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
-        self.observers()
-            .filter(|observer| observer.seat_at(u64::MAX) == Parent::Seat(Some(*agent)))
-            .find_map(|observer| observer.session().map(|session| session.session_id))
+    // 4.6: which live main session an agent device sat in at a past place, and how many helper sessions
+    // lived there (5.2.2, 5.2.5), no Commit says: a walk does not judge them, the hub did.
+    fn main_session_of(&self, _: &DeviceId) -> Option<SessionId> {
+        None
     }
 
-    fn live_helpers(&self, parent: &SessionId) -> usize {
-        self.observers()
-            .filter(|observer| observer.session().is_some_and(|s| s.parent == *parent))
-            .count()
+    fn live_helpers(&self, _: &SessionId) -> usize {
+        0
     }
 }
 
@@ -1573,7 +1590,12 @@ impl Walk {
         };
         Self {
             group: named.ok(),
-            founding: founding.to_vec(),
+            // A founding that does not verify is not followed, and is not kept.
+            founding: if failed.is_none() {
+                founding.to_vec()
+            } else {
+                Vec::new()
+            },
             observer: None,
             begun: Vec::new(),
             walked: Walked::default(),
@@ -1796,8 +1818,18 @@ pub struct RoomCheck {
 
 impl RoomCheck {
     /// Selects the anchor from the rows and begins at the room group's founding GroupInfo, which must obey
-    /// 5.1.1 and 8.1 (`bad-group`); `wrong-recovery` for a founding of another group.
+    /// 5.1.1 and 8.1 (`bad-group`); `wrong-recovery` for a founding of another group. A GroupInfo above
+    /// [`MAX_COMMIT_REQUEST_LEN`] is `too-large`, and two session foundings of one group are `bad-format`;
+    /// of a founding that does not verify nothing is kept but the finding.
     pub fn start(keys: &RecoveryKeys, served: &ServedStart<'_>) -> Result<Self, Error> {
+        // Section 16: no GroupInfo above the limit of a Commit's request is kept, and a session is named
+        // once (`bad-format` for one named twice).
+        let mut infos = [served.founding, served.anchor]
+            .into_iter()
+            .chain(served.sessions.iter().copied());
+        if infos.any(|info| info.len() > MAX_COMMIT_REQUEST_LEN) {
+            return Err(Error::TooLarge);
+        }
         let anchor = select_anchor(keys, &served.room, served.rows)?;
         let observer =
             Observer::follow_room(served.founding, None).map_err(|_| Error::WrongRecovery)?;
@@ -1807,17 +1839,26 @@ impl RoomCheck {
         // 5.1.1, 8.1: a row's `mac` says who wrote it, not that the founding it names obeys the rules.
         let first = observer.history().ok_or(Error::Internal("room observer"))?;
         rules::check_room_founding(first.newest()).map_err(|_| Error::BadGroup)?;
+        let walks: Vec<Walk> = served
+            .sessions
+            .iter()
+            .map(|founding| Walk::begin(founding, &served.room))
+            .collect();
+        let mut named = BTreeSet::new();
+        if walks
+            .iter()
+            .filter_map(|walk| walk.group)
+            .any(|group| !named.insert(group))
+        {
+            return Err(Error::BadFormat);
+        }
         Ok(Self {
             room: served.room,
             anchor,
             anchor_info: served.anchor.to_vec(),
             walked: Walked::begin(&observer)?,
             observer,
-            walks: served
-                .sessions
-                .iter()
-                .map(|founding| Walk::begin(founding, &served.room))
-                .collect(),
+            walks,
             places: Vec::new(),
             last_committer: None,
             anchored: false,
@@ -1850,21 +1891,33 @@ impl RoomCheck {
         if !fits_a_slice(commits.iter().map(|placed| placed.commit.commit.len())) {
             return Err(Error::TooLarge);
         }
+        self.take(
+            commits
+                .iter()
+                .map(|placed| (Some(placed.group), &placed.commit)),
+        )
+    }
+
+    /// Takes Commits as [`RoomCheck::slice`] does; one of a group none can name (`None`) is passed over
+    /// after its change number is checked, as one of a group not named at the start.
+    fn take<'c, 'a: 'c>(
+        &mut self,
+        commits: impl Iterator<Item = (Option<GroupId>, &'c ServedCommit<'a>)>,
+    ) -> Result<(), Error> {
         let room_group = self.observer.group();
-        for placed in commits {
-            let commit = &placed.commit;
+        for (group, commit) in commits {
             if self.place.is_some_and(|place| place >= commit.change) {
                 return Err(Error::BadGroup);
             }
             self.place = Some(commit.change);
-            if placed.group == room_group {
+            if group == Some(room_group) {
                 self.room_step(commit)?;
                 continue;
             }
             let Some(at) = self
                 .walks
                 .iter()
-                .position(|walk| walk.group == Some(placed.group))
+                .position(|walk| group.is_some() && walk.group == group)
             else {
                 continue;
             };
@@ -1924,13 +1977,16 @@ impl RoomCheck {
     /// Ends the check. The room walk stood in the anchor's state at the anchor's epoch, the rows name the
     /// anchor the check began with, and the GroupInfo offered as current agrees with the state reached, whose
     /// `TrommiRoom` holds exactly the code's two public keys (`wrong-recovery` for each). Then the links are
-    /// walked back to older codes and the content keys are selected. A session without its current
-    /// GroupInfo is not verified.
+    /// walked back to older codes and the content keys are selected. `served` names one current GroupInfo
+    /// for each session named at the start, in its order (`bad-format` otherwise, before anything else).
     pub fn finish(
         mut self,
         keys: &RecoveryKeys,
         served: &ServedEnd<'_>,
     ) -> Result<CheckedRoom, Error> {
+        if served.sessions.len() != self.walks.len() {
+            return Err(Error::BadFormat);
+        }
         if self.observer.epoch()? == self.anchor.epoch {
             at_anchor(&self.observer, &self.anchor, &self.anchor_info)?;
             self.anchored = true;
@@ -1951,14 +2007,11 @@ impl RoomCheck {
         keys.check_room(&history.newest().room)?;
 
         let opened = open_links(keys, &self.room, served.links, &key_changes(history))?;
-        let mut currents = served.sessions.iter();
         let sessions: Vec<Result<CheckedSession, Error>> = self
             .walks
             .into_iter()
-            .map(|walk| match currents.next() {
-                Some(current) => walk.finish(current),
-                None => Err(Error::WrongRecovery),
-            })
+            .zip(served.sessions)
+            .map(|(walk, current)| walk.finish(current))
             .collect();
         let begun = |group: &GroupId, epoch: u64| {
             let verified = sessions
@@ -2006,30 +2059,25 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
         },
     )?;
     let (room_group, session_groups) = check.groups();
-    let mut order: Vec<PlacedCommit<'_>> = served
+    // Every Commit served is placed in the one order, also one of a session whose founding names no
+    // group: the sliced check passes over such a Commit after its number, and so does this.
+    let mut order: Vec<(Option<GroupId>, &ServedCommit<'_>)> = served
         .group
         .commits
         .iter()
-        .map(|commit| PlacedCommit {
-            group: room_group,
-            commit: *commit,
-        })
+        .map(|commit| (Some(room_group), commit))
         .collect();
     for (session, group) in served.sessions.iter().zip(session_groups) {
-        let Some(group) = group else { continue };
-        order.extend(session.commits.iter().map(|commit| PlacedCommit {
-            group,
-            commit: *commit,
-        }));
+        order.extend(session.commits.iter().map(|commit| (group, commit)));
     }
-    order.sort_by_key(|placed| placed.commit.change);
+    order.sort_by_key(|(_, commit)| commit.change);
     let mut rest = order.as_slice();
     while !rest.is_empty() {
-        let count = slice_of(rest.iter().map(|placed| placed.commit.commit.len()));
+        let count = slice_of(rest.iter().map(|(_, commit)| commit.commit.len()));
         let (slice, later) = rest
             .split_at_checked(count)
             .ok_or(Error::Internal("a slice of a history"))?;
-        check.slice(slice)?;
+        check.take(slice.iter().copied())?;
         rest = later;
     }
     let currents: Vec<&[u8]> = served
