@@ -52,6 +52,8 @@ struct Make {
     published_as: Option<String>,
     /// further fields of the manifest (signed with it)
     extra: serde_json::Map<String, serde_json::Value>,
+    /// the tag's series: `hub-v` (the hub's own releases) or `v` (the release of every part)
+    series: &'static str,
 }
 
 fn make(version: u64) -> Make {
@@ -65,7 +67,24 @@ fn make(version: u64) -> Make {
         unit: format!("[Service]\n# unit of {version}\n").into_bytes(),
         published_as: None,
         extra: serde_json::Map::new(),
+        series: "hub-v",
     }
+}
+
+/// A release of every part, as release.yml publishes it: product trommi, tag v<N>, the inputs per part.
+fn make_all(version: u64, hub_inputs: &str, updater_inputs: &str) -> Make {
+    let mut m = make(version);
+    m.product = "trommi".into();
+    m.series = "v";
+    m.extra.insert(
+        "inputs".into(),
+        serde_json::json!({ "web": "a".repeat(64), "connector": "b".repeat(64), "ios": "c".repeat(64), "hub": hub_inputs, "updater": updater_inputs }),
+    );
+    m.extra.insert(
+        "changed".into(),
+        serde_json::json!({ "web": false, "connector": false, "ios": false, "hub": true, "updater": false }),
+    );
+    m
 }
 
 impl Make {
@@ -86,7 +105,7 @@ impl Make {
         if with_unit {
             files.push(("trommi-hub.service".to_string(), self.unit.clone()));
         }
-        let tag = format!("hub-v{}", self.version);
+        let tag = format!("{}{}", self.series, self.version);
         let manifest = Manifest {
             product: self.product.clone(),
             repository: self.repository.clone(),
@@ -340,7 +359,10 @@ impl Drop for Bench {
 }
 
 fn parse_version(tag: &str) -> u64 {
-    tag.trim_start_matches("hub-v").parse().unwrap()
+    tag.trim_start_matches("hub-v")
+        .trim_start_matches('v')
+        .parse()
+        .unwrap()
 }
 
 async fn bench(name: &str) -> Bench {
@@ -497,7 +519,10 @@ async fn a_release_of_another_product_repository_or_name_is_not_taken() {
     // not a release name at all: refused before anything is asked of GitHub
     let before = b.fetched();
     for tag in [
-        "v5",
+        "v05",
+        "v",
+        "vv5",
+        "x5",
         "hub-v05",
         "hub-v",
         "hub-v5/../x",
@@ -608,7 +633,8 @@ async fn a_hub_that_reports_another_commit_is_not_accepted() {
     let b = bench("commit").await;
     b.publish(make(5).release());
     let mut liar = make(6);
-    liar.hub = hub_file(5, true); // well, but it is not the commit the manifest names
+    // well, but it is not the commit the manifest names (other bytes, so that it counts as another hub)
+    liar.hub = [hub_file(5, true), b"# built elsewhere\n".to_vec()].concat();
     b.publish(liar.release());
     let updater = b.updater();
     assert!(deploy(&updater, 5).await.ok);
@@ -1158,6 +1184,68 @@ async fn whether_the_updater_is_replaced_is_decided_by_its_inputs_when_both_rele
         outcome.message
     );
     assert!(updater.replaced());
+}
+
+/// One release of every part: a release whose hub has the inputs of the one running leaves the hub running (no
+/// stop, no start), is noted as accepted (nothing older is taken after it), and its updater is still taken when that
+/// changed. A release with other hub inputs swaps as before. The hub's own releases (hub-v) before it are a running
+/// release like any other.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_with_the_same_hub_inputs_leaves_the_hub_running() {
+    let b = bench("same-hub").await;
+    let (h1, h2, u1, u2) = ("1".repeat(64), "2".repeat(64), "3".repeat(64), "4".repeat(64));
+    // what ran before: one of the hub's own releases, then the first release of every part (other bytes: swapped)
+    b.publish(make(5).release_without_unit());
+    assert!(deploy(&b.updater(), 5).await.ok);
+    b.publish(make_all(6, &h1, &u1).release_without_unit());
+    let outcome = b.updater().deploy("v6").await;
+    assert_eq!(outcome.result, "deployed", "{}", outcome.message);
+    assert_eq!(b.link("current").as_deref(), Some("v6"));
+    assert_eq!(b.hub_commit(), Some(commit_of(6)));
+    let starts = b.world.starts.load(Ordering::SeqCst);
+    let stops = b.world.stops.load(Ordering::SeqCst);
+
+    // v7: built again from the same hub inputs (other bytes, another commit compiled in): not restarted
+    b.publish(make_all(7, &h1, &u1).release_without_unit());
+    let updater = b.updater();
+    let outcome = updater.deploy("v7").await;
+    assert!(outcome.ok, "{}", outcome.message);
+    assert_eq!(outcome.result, "unchanged", "{}", outcome.message);
+    assert_eq!(outcome.commit.as_deref(), Some(commit_of(6).as_str()));
+    assert_eq!(outcome.running.as_deref(), Some("v6"));
+    assert_eq!(b.link("current").as_deref(), Some("v6"));
+    assert_eq!(b.hub_commit(), Some(commit_of(6)), "the hub of v6 runs on");
+    assert_eq!(b.world.starts.load(Ordering::SeqCst), starts);
+    assert_eq!(b.world.stops.load(Ordering::SeqCst), stops);
+    assert_eq!(outcome.updater.next, None, "the same updater inputs");
+    // accepted: nothing older than v7 is taken now
+    let outcome = updater.deploy("v6").await;
+    assert_eq!(outcome.result, "unchanged", "what runs is v6: asked again, nothing changes");
+    b.publish(make_all(4, &h2, &u1).release_without_unit());
+    assert_eq!(updater.deploy("v4").await.result, "refused");
+
+    // v8: the same hub, another updater: the hub runs on, the updater is taken
+    let mut eight = make_all(8, &h1, &u2);
+    eight.updater = b"updater B\n".to_vec();
+    b.publish(eight.release_without_unit());
+    let outcome = updater.deploy("v8").await;
+    assert_eq!(outcome.result, "unchanged", "{}", outcome.message);
+    assert_eq!(outcome.updater.next.as_deref(), Some("v8"), "{}", outcome.message);
+    assert_eq!(b.world.starts.load(Ordering::SeqCst), starts);
+
+    // v9: another hub: swapped and started
+    let mut nine = make_all(9, &h2, &u2);
+    nine.updater = b"updater B\n".to_vec();
+    b.publish(nine.release_without_unit());
+    // (the updater of v8 comes up first, as on the server)
+    prestart(&b.root);
+    let new = b.updater();
+    new.started().await;
+    let outcome = new.deploy("v9").await;
+    assert_eq!(outcome.result, "deployed", "{}", outcome.message);
+    assert_eq!(b.link("current").as_deref(), Some("v9"));
+    assert_eq!(b.link("previous").as_deref(), Some("v6"));
+    assert_eq!(b.hub_commit(), Some(commit_of(9)));
 }
 
 // ---- the endpoint ----

@@ -4,7 +4,7 @@
 //! put in place of the running one is noticed (`server.rs` polls its own path), announced to the agent once, and
 //! runs after `reload_connector` and a reconnect of the MCP server.
 //!
-//! **Release signatures.** Releases are built and signed in CI (`.github/workflows/deploy_connector.yml`), in the
+//! **Release signatures.** Releases are built and signed in CI (`.github/workflows/release.yml`), in the
 //! form every signed part of the repository uses (`release/manifest.sh`, `release/sign.sh`): one `manifest.json`
 //! for all files of a release, and `manifest.json.sig`, an Ed25519 signature (64 raw bytes) over the exact bytes
 //! of the manifest. The public key is `release/public-key.pem` of this repository, compiled in ([`RELEASE_KEY`]):
@@ -198,7 +198,9 @@ pub fn installed_version(key: &[u8; 32], dir: &Path) -> u64 {
 
 /// Puts a release into `dir` after [`check`] passed: `manifest.json.sig`, `manifest.json`, then
 /// `trommi-connector` (0755), each written beside its place and renamed onto it. A release older than the one
-/// `dir` holds is refused. `Ok` is the version that is installed now.
+/// `dir` holds is refused. The program is left in place when it is the same file (a release in which the
+/// connector did not change): only the manifest and its signature are new. `Ok` is the version that is installed
+/// now.
 pub fn install(
     expect: &Expect<'_>,
     dir: &Path,
@@ -228,7 +230,14 @@ pub fn install(
     std::fs::create_dir_all(dir)
         .and_then(|()| put("manifest.json.sig", signature, 0o644))
         .and_then(|()| put("manifest.json", manifest, 0o644))
-        .and_then(|()| put("trommi-connector", binary, 0o755))
+        .and_then(|()| {
+            let same = std::fs::read(dir.join("trommi-connector")).is_ok_and(|have| have == binary);
+            if same {
+                Ok(())
+            } else {
+                put("trommi-connector", binary, 0o755)
+            }
+        })
         .map_err(|error| format!("{} could not be written: {error}", dir.display()))?;
     Ok(version)
 }
@@ -435,7 +444,28 @@ pub async fn update(only_look: bool) -> Result<String, String> {
         ));
     }
     let name = format!("trommi-connector-{TARGET}");
-    let binary = asset(&http, &tag, &name, MAX_BINARY_LEN).await?;
+    // The connector did not change in that release (the same SHA-256 as the installed program): nothing is
+    // downloaded, and `install` keeps the program and takes the newer manifest.
+    let stated_sha256 = stated
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets
+                .iter()
+                .find(|a| a.get("name").and_then(Value::as_str) == Some(name.as_str()))
+        })
+        .and_then(|a| a.get("sha256").and_then(Value::as_str))
+        .map(str::to_string);
+    let have = std::fs::read(&installed).ok();
+    let binary = match have {
+        Some(have)
+            if stated_sha256.as_deref()
+                == Some(crate::util::hex(&crate::util::sha256(&have)).as_str()) =>
+        {
+            have
+        }
+        _ => asset(&http, &tag, &name, MAX_BINARY_LEN).await?,
+    };
     let version = install(&expect, &dir, &manifest, &signature, &binary)
         .map_err(|why| format!("release {tag}: {why}; nothing was changed"))?;
     Ok(format!(

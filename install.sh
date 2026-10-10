@@ -208,9 +208,11 @@ case $answer in
   *"release $version, signature verified"*|*"release $stated_tag, signature verified"*) ;;
   *) fail "the connector does not find itself verified ($answer). Nothing was installed." ;;
 esac
-# the manifest first, the program last: each by a rename within one folder
+# the manifest first, the program last: each by a rename within one folder. The program stays when it is the same
+# file (a release in which the connector did not change): only its manifest is newer.
 chmod 644 "$work/stage/manifest.json" "$work/stage/manifest.json.sig"
 for file in manifest.json.sig manifest.json trommi-connector; do
+  if [ "$file" = trommi-connector ] && cmp -s "$work/stage/$file" "$bin/$file"; then continue; fi
   mv -f "$work/stage/$file" "$bin/.new.$file"
   mv -f "$bin/.new.$file" "$bin/$file"
 done

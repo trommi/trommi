@@ -1,0 +1,295 @@
+# Makes the one release of a build: `v<version>`, every part's files and one signed manifest. It publishes the files
+# a build run made and tested, and builds nothing itself.
+#
+# Interface (build.yml calls it when the inputs of at least one part changed since the newest release):
+#   version  the release number of the build run; the release is v<version>
+#   commit   the commit that was built
+#   parts    lines `<part> <inputs sha256> <true|false>` (.github/scripts/inputs.sh, compared with the newest
+#            release): written into the manifest as "inputs" and "changed"
+#
+#   assemble  takes the run's artifacts connector-release, hub-release and web-release, puts the files of the
+#             release together (the four connector binaries, the hub and its updater, web.tar.gz: the web app as
+#             the web delivery takes it) and writes manifest.json (release/manifest.sh, product trommi)
+#   sign      signs the manifest with SIGN_RELEASE_KEY (the only job that sees that key) and checks the signature
+#             against release/public-key.pem
+#   publish   attests the files (GitHub's build provenance) and makes the release v<version>; output `published`
+#
+# A release is complete: every part's files are in it, also the parts that did not change (rebuilt from the same
+# inputs). Its manifest says per part whether it changed; the deliveries (web, hub, iOS) follow that.
+#
+# Overtaken: when a release with a higher number is published already, or a later commit changed a workflow file
+# (GitHub then refuses the tag, 403), nothing is published and `published` is false: the later run releases.
+#
+# Secrets: the environment `connector` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; SIGN_RELEASE_KEY comes
+# from the 1Password Environment.
+name: release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The release number of the build run; the release is v<version>
+        required: true
+        type: string
+      commit:
+        description: The commit that was built
+        required: true
+        type: string
+      parts:
+        description: Lines `<part> <inputs sha256> <true|false>`
+        required: true
+        type: string
+    outputs:
+      published:
+        description: true when v<version> was published by this run
+        value: ${{ jobs.publish.outputs.published }}
+
+permissions: {}
+
+# one release at a time; a waiting one is not cut off
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    name: Put the release together
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    env:
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ inputs.commit }}
+      PARTS: ${{ inputs.parts }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: repo
+          persist-credentials: false
+          sparse-checkout: release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: connector-release
+          path: connector
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hub-release
+          path: hub
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-release
+          path: web
+      - name: The files and the manifest
+        run: |
+          set -eu
+          printf '%s' "$VERSION" | grep -Eq '^[1-9][0-9]{0,11}$' || { echo "::error::not a release number: $VERSION"; exit 1; }
+          printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::not a commit: $COMMIT"; exit 1; }
+          # each part's build checked its own files against its own manifest; checked again here
+          for part in connector hub; do
+            sh repo/release/sign.sh files "$part/manifest.json"
+            [ "$(jq -r .commit "$part/manifest.json")" = "$COMMIT" ] || { echo "::error::$part was built from another commit"; exit 1; }
+          done
+          (cd web && sha256sum -c --quiet checksums.txt)
+          [ "$(jq -r .commit web/manifest.json)" = "$COMMIT" ] || { echo "::error::web was built from another commit"; exit 1; }
+          mkdir publish
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
+            cp "connector/trommi-connector-$target" publish/
+          done
+          cp hub/trommi-hub-x86_64-unknown-linux-musl hub/trommi-hub-updater-x86_64-unknown-linux-musl publish/
+          # the same bytes for the same files: names sorted, no times, no owners
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C web -cf - . | gzip -9n > publish/web.tar.gz
+          for part in web connector ios hub updater; do
+            printf '%s\n' "$PARTS" | grep -Eq "^$part [0-9a-f]{64} (true|false)$" || { echo "::error::parts names no $part"; exit 1; }
+          done
+          PARTS="$PARTS" sh repo/release/manifest.sh trommi "$VERSION" "$COMMIT" publish/* > manifest.json
+          mv manifest.json publish/manifest.json
+          sh repo/release/sign.sh files publish/manifest.json
+          cat publish/manifest.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: publish/
+          if-no-files-found: error
+          retention-days: 30
+
+  sign:
+    name: Sign
+    needs: assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # reads the secrets of the environment without counting as a deployment of it
+    environment:
+      name: connector
+      deployment: false
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      manifest: ${{ steps.check.outputs.manifest }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: out
+      # the signing script and the public key of the revision this workflow runs from, never of an artifact
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: repo
+          persist-credentials: false
+          sparse-checkout: release
+      - name: The manifest is the one of this build
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -eu
+          jq -e --arg v "$VERSION" --arg c "$COMMIT" --arg r "$GITHUB_REPOSITORY" \
+            '.product == "trommi" and .repository == $r and (.version | tostring) == $v and .tag == "v" + $v and .commit == $c' \
+            out/manifest.json > /dev/null || { echo "::error::manifest.json is not v$VERSION of $COMMIT in this repository"; exit 1; }
+          # Every file the manifest names is there and is that file; nothing else lies beside it.
+          jq -e '(.assets | length) > 0 and all(.assets[]; (.name | test("^[A-Za-z0-9._-]+$")) and (.sha256 | test("^[0-9a-f]{64}$")) and (.size | type) == "number") and ([.assets[].name] | unique | length) == (.assets | length)' \
+            out/manifest.json > /dev/null || { echo "::error::manifest.json has an entry that is not a plain file with hash and size"; exit 1; }
+          sh repo/release/sign.sh files out/manifest.json
+          find out -type f ! -name manifest.json -printf '%f\n' | sort > "$RUNNER_TEMP/there"
+          jq -r '.assets[].name' out/manifest.json | sort > "$RUNNER_TEMP/named"
+          diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the manifest does not name"; exit 1; }
+          echo "manifest=$(sha256sum out/manifest.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Install the 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: latest-beta
+      - name: Sign the manifest
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
+        run: |
+          set -eu
+          test -n "$OP_SERVICE_ACCOUNT_TOKEN" || { echo "::error::OP_SERVICE_ACCOUNT_TOKEN is not set for this run"; exit 1; }
+          test -n "$OP_ENVIRONMENT_ID" || { echo "::error::OP_ENVIRONMENT_ID is not set for this run"; exit 1; }
+          # release/sign.sh puts the key back into PEM form (in a file of mode 600 under RUNNER_TEMP, removed when it
+          # ends), signs, and checks the result against release/public-key.pem
+          op run --environment "$OP_ENVIRONMENT_ID" -- sh repo/release/sign.sh sign out/manifest.json
+      - name: No key file is left
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/sign.*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-signature
+          path: out/manifest.json.sig
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish the release
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: connector
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ inputs.version }}
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: v${{ inputs.version }}
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ inputs.commit }}
+      MANIFEST: ${{ needs.sign.outputs.manifest }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: out
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-signature
+          path: out
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: repo
+          persist-credentials: false
+          sparse-checkout: release
+      # What is published is what was signed: checked again against the manifest whose hash the signing job passed on.
+      - name: Check the signature and the files
+        run: |
+          set -eu
+          [ "$(sha256sum out/manifest.json | cut -d' ' -f1)" = "$MANIFEST" ] || { echo "::error::manifest.json is not the one that was signed"; exit 1; }
+          sh repo/release/sign.sh verify out/manifest.json
+          sh repo/release/sign.sh files out/manifest.json
+          mkdir publish
+          jq -r '.assets[].name' out/manifest.json | while read -r name; do cp "out/$name" "publish/$name"; done
+          cp out/manifest.json out/manifest.json.sig publish/
+      - name: Attest the files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            publish/trommi-*
+            publish/web.tar.gz
+            publish/manifest.json
+      # A published release is never replaced. A release with a higher number published already: this run is
+      # overtaken and publishes nothing.
+      - name: Publish
+        id: publish
+        run: |
+          set -eu
+          echo "published=false" >> "$GITHUB_OUTPUT"
+          newest=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1)
+          if [ -n "$newest" ] && [ "$newest" -gt "$VERSION" ]; then
+            echo "### Release \`$TAG\`: NOT published, v$newest is newer" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::v$newest is published already, which is newer than $TAG: nothing is published or delivered"
+            exit 0
+          fi
+          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$state" = true ]; then
+            echo "an unfinished draft of $TAG is removed"
+            gh release delete "$TAG" --yes
+            state=none
+          fi
+          if [ "$state" = none ]; then
+            # a tag of that name that is already there must be of this commit (--target only names a new tag's)
+            if tagged=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha 2>/dev/null); then
+              [ "$tagged" = "$COMMIT" ] || { echo "::error::the tag $TAG is there already and names $tagged, not $COMMIT"; exit 1; }
+            fi
+            changed=$(jq -r '[.changed | to_entries[] | select(.value) | .key] | join(", ")' publish/manifest.json)
+            gh release create "$TAG" --target "$COMMIT" --latest --title "Trommi $TAG" \
+              --notes "Every part of Trommi, built from $COMMIT; changed since the release before: $changed. Signed: manifest.json and manifest.json.sig (see release/sign.sh). Install the connector: install.sh of this repository." \
+              publish/* 2> "$RUNNER_TEMP/create.err" && code=0 || code=$?
+            cat "$RUNNER_TEMP/create.err" >&2
+            if [ "$code" != 0 ]; then
+              # Overtaken: GitHub answers 403 (or 404) when the workflow files of the commit are not those of the
+              # main branch any more. Said plainly; every other failure is shown as it came.
+              theirs=$(gh api "repos/$GH_REPO/contents/.github?ref=$COMMIT" --jq '.[] | select(.name == "workflows") | .sha') || theirs=
+              main=$(gh api "repos/$GH_REPO/contents/.github?ref=$DEFAULT_BRANCH" --jq '.[] | select(.name == "workflows") | .sha') || main=
+              if grep -Eq 'HTTP 40[34]' "$RUNNER_TEMP/create.err" && [ -n "$theirs" ] && [ -n "$main" ] && [ "$theirs" != "$main" ]; then
+                {
+                  echo "### Release \`$TAG\`: NOT published (overtaken)"
+                  echo
+                  echo "A later commit on \`$DEFAULT_BRANCH\` changed a file under \`.github/workflows\`; GitHub lets a run make a release tag only on a commit whose workflow files are the branch's own. The later commit's run releases; if it does not, start \`build\` by hand on \`$DEFAULT_BRANCH\`."
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::notice::$TAG was not published: a later commit changed the workflow files (overtaken)"
+                exit 0
+              fi
+              echo "::error::$TAG was not published (gh release create ended with $code)"
+              exit 1
+            fi
+            echo "published $TAG (changed: $changed)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # published already (the same run started again): it stays, and it must be this build
+            gh release download "$TAG" --pattern manifest.json --dir "$RUNNER_TEMP/published"
+            cmp -s "$RUNNER_TEMP/published/manifest.json" publish/manifest.json || { echo "::error::$TAG is published already with another manifest"; exit 1; }
+            echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
