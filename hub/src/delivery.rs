@@ -1139,6 +1139,116 @@ pub fn log(
 }
 
 /// The log entry at a change number, for the stream.
+/// How long after its removal a device may still fetch the Commits that prove it (13.5).
+pub const REMOVAL_KEPT_MS: u64 = 30 * 86_400_000;
+/// Commits per answer of that route.
+pub const REMOVAL_PAGE: i64 = 200;
+
+/// Where a device was removed in a group, if it was and that is not longer ago than `REMOVAL_KEPT_MS`: the log
+/// number of the removing Commit. The room group: the Commit that revoked the device (a human device's Remove,
+/// an agent's leaving `agents`); a session group: the Commit that removed its leaf.
+fn removal_at(
+    c: &Connection,
+    room: &Room,
+    device: &Device,
+    group_id: &[u8],
+    now: u64,
+) -> Res<Option<(i64, i64)>> {
+    let epoch: Option<i64> = if group_id == &room[..] {
+        c.prepare_cached("SELECT removed_epoch FROM devices WHERE room_id = ?1 AND device = ?2")?
+            .query_row(params![&room[..], &device[..]], |r| r.get(0))
+            .optional()?
+            .flatten()
+    } else {
+        c.prepare_cached(
+            "SELECT m.removed_epoch FROM group_members m JOIN groups g ON g.group_id = m.group_id
+             WHERE m.group_id = ?1 AND m.device = ?2 AND g.room_id = ?3",
+        )?
+        .query_row(params![group_id, &device[..], &room[..]], |r| r.get(0))
+        .optional()?
+        .flatten()
+    };
+    let Some(epoch) = epoch else {
+        return Ok(None);
+    };
+    // the Commit that made that epoch
+    let found: Option<(i64, i64)> = c
+        .prepare_cached(
+            "SELECT n, at FROM group_log WHERE group_id = ?1 AND epoch = ?2 AND kind = 'commit'",
+        )?
+        .query_row(params![group_id, epoch - 1], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    Ok(found
+        .filter(|(_, at)| (*at as u64).saturating_add(REMOVAL_KEPT_MS) > now)
+        .map(|(n, _)| (n, epoch - 1)))
+}
+
+/// Whether a key that has no standing in the room was removed from it, or from a group of it, so recently that
+/// it may still sign in to fetch the proof (`removal`).
+pub fn removed_lately(c: &Connection, room: &Room, device: &Device, now: u64) -> Res<bool> {
+    if removal_at(c, room, device, &room[..], now)?.is_some() {
+        return Ok(true);
+    }
+    // any group of the room it was removed from within the time (each removing Commit by the index of Commits)
+    Ok(c.prepare_cached(
+        "SELECT 1 FROM group_members m JOIN groups g ON g.group_id = m.group_id
+           JOIN group_log l INDEXED BY group_log_one_commit ON l.group_id = m.group_id AND l.epoch = m.removed_epoch - 1 AND l.kind = 'commit'
+         WHERE m.device = ?1 AND g.room_id = ?2 AND m.removed_epoch IS NOT NULL AND l.at + ?3 > ?4 LIMIT 1",
+    )?
+    .exists(params![&device[..], &room[..], REMOVAL_KEPT_MS as i64, now as i64])?)
+}
+
+/// `GET /v2/groups/{group}/removal?after=`: for a device that was removed, the Commits of that group after
+/// `after` up to and including the one that removed it — public group state it could read as a member — so
+/// that it can verify its removal itself (13.5). Nothing else, and nothing after that Commit. One answer for a
+/// device that was never there, was not removed, or was removed too long ago.
+pub fn removal(
+    c: &Connection,
+    room: &Room,
+    device: &Device,
+    group_id: &[u8],
+    after: i64,
+    now: u64,
+) -> Res<Value> {
+    let Some((last, last_epoch)) = removal_at(c, room, device, group_id, now)? else {
+        return Err(refuse("not-found", "no removal to show"));
+    };
+    // The Commits are read by their own index, by epoch: what lies between two Commits in the log (messages,
+    // however many) is not walked. The epoch of the entry at the cursor says where to begin.
+    let from: i64 = c
+        .prepare_cached(
+            "SELECT epoch FROM group_log WHERE group_id = ?1 AND n <= ?2 ORDER BY n DESC LIMIT 1",
+        )?
+        .query_row(params![group_id, after], |r| r.get(0))
+        .optional()?
+        .unwrap_or(0);
+    let mut s = c.prepare_cached(
+        "SELECT n, change, epoch, at, kind, bytes, recovery_auth, sender FROM group_log INDEXED BY group_log_one_commit
+         WHERE group_id = ?1 AND kind = 'commit' AND epoch >= ?5 AND epoch <= ?6 AND n > ?2 AND n <= ?3 ORDER BY epoch LIMIT ?4",
+    )?;
+    let mut rows = s.query(params![
+        group_id,
+        after,
+        last,
+        REMOVAL_PAGE + 1,
+        from,
+        last_epoch
+    ])?;
+    let (mut items, mut bytes, mut more) = (Vec::new(), 0usize, false);
+    while let Some(r) = rows.next()? {
+        let item = log_item(group_id, r)?;
+        bytes += item["bytes"].as_str().map_or(0, str::len);
+        if items.len() as i64 == REMOVAL_PAGE
+            || (bytes > crate::content::ANSWER_BYTES && !items.is_empty())
+        {
+            more = true;
+            break;
+        }
+        items.push(item);
+    }
+    Ok(json!({ "items": items, "more": more, "removed_at": last }))
+}
+
 pub fn log_at(c: &Connection, room: &Room, change: i64) -> Res<Option<Value>> {
     Ok(c.prepare_cached("SELECT n, change, epoch, at, kind, bytes, recovery_auth, sender, group_id FROM group_log WHERE room_id = ?1 AND change = ?2")?
         .query_row(params![&room[..], change], |r| log_item(&r.get::<_, Vec<u8>>(8)?, r))
