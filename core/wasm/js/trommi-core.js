@@ -87,9 +87,14 @@ const typedArray = Object.getPrototypeOf(Uint8Array.prototype)
 const typedArrayName = Object.getOwnPropertyDescriptor(typedArray, Symbol.toStringTag).get
 const typedArrayLength = Object.getOwnPropertyDescriptor(typedArray, 'byteLength').get
 const fill = Uint8Array.prototype.fill
-const MAX_BYTES = 80 * 1024 * 1024 // a little above the largest stored file, for all bytes of one call together
+const MAX_BYTES = 256 * 1024 * 1024 // all bytes of one call together: above the largest stored file, and room for a long room history
 const MAX_VALUES = 4 * 1024 * 1024 // every value of one call together: a room's whole log served for a join is far below
 const MAX_TEXT = 1024 * 1024       // no call takes longer text
+// How deep the deepest argument of any call is nested: a ServedRoom holds a list of groups, each a list of
+// Commits, each with its bytes. tests/bindings/manifest.mjs works this out from the facade's declarations and
+// fails when this number is another. It keeps a cyclic object from being walked for ever; the budgets above are
+// what bounds the work.
+const MAX_DEPTH = 5
 
 /** Copies one argument. `copies` collects the byte arrays made, so that they can be overwritten after the call. */
 function snapshot(value, copies, depth = 0) {
@@ -101,7 +106,7 @@ function snapshot(value, copies, depth = 0) {
     if (value.length > MAX_TEXT) throw new TrommiError('too-large', 'too-large: a text')
     return value
   }
-  if (type !== 'object' || depth > 4) throw new TrommiError('bad-format', 'bad-format: an argument of a kind no call takes')
+  if (type !== 'object' || depth > MAX_DEPTH) throw new TrommiError('bad-format', 'bad-format: an argument of a kind no call takes')
   if (typedArrayName.call(value) !== undefined) {
     if (typedArrayName.call(value) !== 'Uint8Array') throw new TrommiError('bad-format', 'bad-format: bytes are a Uint8Array')
     copies.bytes += typedArrayLength.call(value)
@@ -146,6 +151,13 @@ function callWith(target, name, args) {
   }
 }
 
+/** Overwrites every byte array in a result that reaches nobody. */
+function wipeResult(value, depth = 0) {
+  if (value === null || typeof value !== 'object' || depth > MAX_DEPTH + 1) return
+  if (value instanceof Uint8Array) fill.call(value, 0)
+  else for (const inner of Array.isArray(value) ? value : Object.values(value)) wipeResult(inner, depth + 1)
+}
+
 /** Overwrites the bytes of records the module made for a store (they hold private keys), once they were used. */
 function wipe(entries) {
   for (const entry of entries) fill.call(entry.value, 0)
@@ -155,14 +167,19 @@ function wipe(entries) {
 
 // The device's calls, by the names the module exports them under.
 const DEVICE_CALLS = [
-  'id', 'room', 'cursor', 'is_human', 'is_owner', 'room_roles', 'groups', 'group', 'content_key',
+  'id', 'room', 'cursor', 'is_human', 'is_owner', 'room_roles', 'groups', 'group', 'holds_key',
   'outbox', 'outbox_accepted', 'outbox_refused', 'key_packages_to_upload', 'key_package',
-  'found_room', 'found_session', 'found_helper', 'add_human_device', 'add_to_session', 'change_agents',
+  'found_room', 'found_session', 'found_helper', 'add_to_session', 'remove_agents',
   'remove_human_devices', 'clean_session', 'readmit_helper', 'update', 'archive',
   'join_welcome', 'observe_room', 'observe_session', 'process_log_entry',
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
   'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
+  'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_forget',
+  'join_request', 'join_reveal', 'join_observe', 'join_invited',
+  'seal', 'outbox_voided', 'envelope_abandon', 'receive_envelope', 'receive_relay', 'heads_due', 'compare_heads',
+  'cut_of', 'chain_head', 'chain_cut', 'object', 'objects', 'object_owner', 'register', 'register_of', 'board_load',
+  'command', 'command_finished', 'commands_pending', 'commands_uncertain', 'findings', 'findings_read',
 ]
 
 const CONSTRUCT = Symbol('Device')
@@ -225,8 +242,14 @@ export class Device {
       } catch (error) {
         refusal = error
       }
-      // Also after a refusal: whatever the call wrote is stored before anyone hears of it.
-      await this.#flush()
+      // Also after a refusal: whatever the call wrote is stored before anyone hears of it. A result that is
+      // withheld because storing failed may hold decrypted content: it is overwritten, not left to the collector.
+      try {
+        await this.#flush()
+      } catch (error) {
+        wipeResult(result)
+        throw error
+      }
       if (refusal) throw refusal
       return result
     })
@@ -390,3 +413,7 @@ export const openApnsPush = plain('open_apns_push')
 export const readWebPush = plain('read_web_push')
 export const recoveryAnchor = plain('recovery_anchor')
 export const recoverySignIn = plain('recovery_sign_in')
+export const boardReduce = plain('board_reduce')
+export const inviteLinkParse = plain('invite_link_parse')
+export const checkEmoji = plain('check_emoji')
+export const hubAddress = plain('hub_address')

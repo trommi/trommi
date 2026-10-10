@@ -45,8 +45,13 @@ struct Pool {
     last_resort: Option<Vec<u8>>,
 }
 
+#[path = "hub_content.rs"]
+pub mod content;
+
 /// The hub.
 pub struct Hub {
+    /// Stored content: the envelopes it took, and what it follows of the groups to check them.
+    pub content: content::Content,
     /// Whether the hub verifies what is posted (14.1). Off: it only orders and stores.
     pub checks: bool,
     /// The hub's clock, set by the test.
@@ -146,6 +151,7 @@ impl Hub {
     /// A hub without a room.
     pub fn new(checks: bool) -> Self {
         Self {
+            content: content::Content::default(),
             checks,
             clock: 0,
             recovery: None,
@@ -430,6 +436,7 @@ impl Hub {
             _ => {}
         }
         let answer = self.take(from, entry);
+        self.follow_content();
         if staged {
             // A refused part ends the recovery. An accepted one is answered again like the first time, as long
             // as the recovery stands; the finish for good, since it is published.
@@ -706,7 +713,7 @@ impl Hub {
                     .push((place.0, place.1, part(entry, 0).to_vec()));
                 Ok(Accepted::default())
             }
-            OutboxKind::Envelope => Err(Error::Internal("not built here")),
+            OutboxKind::Envelope => self.take_envelope(from, entry),
         }
     }
 

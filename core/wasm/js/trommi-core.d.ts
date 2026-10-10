@@ -297,6 +297,307 @@ export interface SelfTestReport {
   versions: Versions
 }
 
+// ---- joining by link ----------------------------------------------------------------------------------------------
+// Every signed part travels as its bytes with the signature beside it.
+
+export type InviteRole = 'human' | 'agent'
+
+/** An invite as its inviter opened it. `link` holds the invite's secret. */
+export interface InviteOpened {
+  inviteId: Uint8Array
+  link: string
+  expiresAt: number
+  offer: Uint8Array
+  signature: Uint8Array
+}
+
+/** An Offer as the hub takes and serves it. */
+export interface SignedOffer {
+  offer: Uint8Array
+  signature: Uint8Array
+}
+
+/** A Request as the hub takes and serves it. */
+export interface SignedRequest {
+  request: Uint8Array
+  mac: Uint8Array
+  signature: Uint8Array
+}
+
+/** A Reveal as the hub takes and serves it. */
+export interface SignedReveal {
+  reveal: Uint8Array
+  signature: Uint8Array
+}
+
+/** An invite link, taken apart; its secret is not among the parts. */
+export interface InviteLinkParts {
+  app: string
+  hub: string
+  roomId: Uint8Array
+  inviteId: Uint8Array
+}
+
+export interface EmojiWord {
+  emoji: string
+  word: string
+}
+
+/** The check code both sides show: six of 64 emoji. */
+export interface CheckCode {
+  /** Six numbers, 0 to 63: what `inviteConfirm` takes. */
+  numbers: Uint8Array
+  emoji: string[]
+  words: string[]
+}
+
+export interface InviteAccepted {
+  newDevice: Uint8Array
+  code: CheckCode
+  reveal: Uint8Array
+  signature: Uint8Array
+  requestHash: Uint8Array
+}
+
+export interface InviteConfirmed {
+  newDevice: Uint8Array
+  role: InviteRole
+  sessionId: Uint8Array | null
+  outboxId: number
+}
+
+export type InviteStepKind = 'wait' | 'commit' | 'handover' | 'addToSession' | 'foundSession' | 'takeOver'
+
+/** One thing to do next for an invite. The fields are filled as `kind` says. */
+export interface InviteStep {
+  inviteId: Uint8Array
+  kind: InviteStepKind
+  group: Uint8Array | null
+  device: Uint8Array | null
+  keyPackage: Uint8Array | null
+  cuts: Cut[]
+}
+
+export interface JoinRequest {
+  inviteId: Uint8Array
+  request: Uint8Array
+  mac: Uint8Array
+  signature: Uint8Array
+  role: InviteRole
+  inviter: Uint8Array
+  expiresAt: number
+  /** For an agent device, the session its invite takes over. */
+  sessionId: Uint8Array | null
+  roomId: Uint8Array
+  /** An agent device follows the room from the GroupInfo of this epoch (`joinObserve`). */
+  roomEpoch: number
+  roomState: Uint8Array
+}
+
+// ---- stored content -----------------------------------------------------------------------------------------------
+// No content key reaches JavaScript: a body is sealed by `seal` and opened by `receiveEnvelope`, after the checks
+// of its sender's chain. A payload is the UTF-8 JSON of one object, as bytes.
+
+export type Urgency = 'low' | 'normal' | 'high' | 'critical'
+export type ObjectType = 'card' | 'note' | 'request' | 'artifact'
+export type ObjectState = 'open' | 'answered' | 'closed'
+export type DraftKind =
+  | 'sessionChat' | 'cardChat' | 'boardItem' | 'register' | 'noteFirst' | 'noteVersion' | 'answer' | 'takeBack'
+  | 'verdict' | 'cardFirst' | 'cardVersion' | 'permissionRequest' | 'artifactFirst' | 'artifactVersion'
+
+/**
+ * What a device writes: its `kind` and the fields that kind names; the others are left out.
+ * sessionChat {session, payload} · cardChat {session, card, payload} · boardItem {board, payload} ·
+ * register {group, name, value (null deletes)} · noteFirst {payload} · noteVersion {objectId, closed, payload} ·
+ * answer {session, objectId, choices, closes, payload} · takeBack {session, objectId, payload} ·
+ * verdict {session, requestId, allow, payload} · cardFirst {session, urgency, push, payload} ·
+ * cardVersion {session, objectId, closed, urgency, push, payload} ·
+ * permissionRequest {session, urgency, expiresAt, push, payload} · artifactFirst {session, payload} ·
+ * artifactVersion {session, objectId, closed, payload}
+ * A field its kind names and does not find is `bad-format`: nothing is filled in for it.
+ */
+export interface Draft {
+  kind: DraftKind
+  session?: Uint8Array | null
+  card?: Uint8Array | null
+  board?: Uint8Array | null
+  group?: Uint8Array | null
+  name?: string | null
+  value?: Uint8Array | null
+  objectId?: Uint8Array | null
+  requestId?: Uint8Array | null
+  choices?: string[] | null
+  closes?: boolean | null
+  closed?: boolean | null
+  allow?: boolean | null
+  urgency?: Urgency | null
+  push?: boolean | null
+  expiresAt?: number | null
+  payload?: Uint8Array | null
+}
+
+export interface Sealed {
+  outboxId: number
+  envelopeHash: Uint8Array
+  seq: number
+  group: Uint8Array
+  objectId: Uint8Array | null
+  time: number
+}
+
+export type EnvelopeKind = 'item' | 'version' | 'answer' | 'request' | 'verdict' | 'register' | 'takeBack' | 'reserved'
+export type TimelineKind = 'sessionChat' | 'cardChat' | 'board'
+
+/** The timeline of an item: `id` is the session, the card or the board. */
+export interface TimelineRef {
+  kind: TimelineKind
+  id: Uint8Array
+}
+
+export interface ObjectHeader {
+  objectId: Uint8Array
+  objectType: ObjectType
+  objectState: ObjectState
+  urgency: Urgency
+  answeredAt: number
+  objectRef: Uint8Array
+}
+
+/** The readable, signed header of an envelope. `time` is the sender's claim. */
+export interface EnvelopeHeader {
+  group: Uint8Array
+  sessionId: Uint8Array | null
+  epoch: number
+  sender: Uint8Array
+  seq: number
+  prev: Uint8Array
+  recipient: Uint8Array | null
+  time: number
+  kind: EnvelopeKind
+  push: boolean
+  timeline: TimelineRef | null
+  registerId: Uint8Array | null
+  object: ObjectHeader | null
+  fileIds: Uint8Array[]
+  /** For a kind a newer Trommi defines: its number and its object block, unread. */
+  reservedKind: number | null
+  reservedBlock: Uint8Array | null
+}
+
+export type BindKind = 'answer' | 'request' | 'verdict' | 'takeBack'
+
+/** What the body of an answer, a request, a verdict or a take back binds. The fields are filled as `kind` says. */
+export interface Bind {
+  kind: BindKind
+  objectId: Uint8Array | null
+  requestId: Uint8Array | null
+  versionHash: Uint8Array | null
+  previousHash: Uint8Array | null
+  requestHash: Uint8Array | null
+  choices: string[]
+  expiresAt: number
+  allow: boolean
+}
+
+/** An object as the envelopes accepted so far leave it. */
+export interface ObjectView {
+  objectId: Uint8Array
+  objectType: ObjectType
+  owner: Uint8Array
+  objectState: ObjectState
+  current: Uint8Array
+  answer: Uint8Array | null
+}
+
+export interface RegisterChange {
+  name: string
+  of: Uint8Array | null
+  current: boolean
+}
+
+export type EnvelopeOutcome = 'applied' | 'chained' | 'void' | 'provisional' | 'refused'
+
+/** A received envelope and what became of it. `payload` is decrypted content. */
+export interface ReceivedEnvelope {
+  change: number
+  envelopeHash: Uint8Array
+  header: EnvelopeHeader
+  outcome: EnvelopeOutcome
+  /** Why it is not applied. */
+  code: ErrorCode | null
+  /** A finding to show beside it: `hub-voided-other`. */
+  finding: ErrorCode | null
+  payload: Uint8Array | null
+  bind: Bind | null
+  objectAfter: ObjectView | null
+  register: RegisterChange | null
+  /** For one that was shown as provisional before: true when its chain took it, false when it is to be dropped. */
+  confirmed: boolean | null
+  dropped: ErrorCode | null
+  /** The group's objects and registers were built again in the hub's order: read them again. */
+  replayed: boolean
+  /** On an agent or helper device: `command` decides whether to act on it. */
+  command: boolean
+}
+
+export interface ChainHead {
+  seq: number
+  hash: Uint8Array
+}
+
+export interface WriterHead {
+  writer: Uint8Array
+  seq: number
+  hash: Uint8Array
+}
+
+export type Standing = 'held' | 'behind' | 'equivocation' | 'unknown'
+
+export interface HeadStanding {
+  sender: Uint8Array
+  standing: Standing
+  have: number
+}
+
+export interface ServedItem {
+  sender: Uint8Array
+  seq: number
+  hash: Uint8Array
+}
+
+/** A Scribble Board, loaded and verified: `fresh` and `covered` are places in what was served, from 0. */
+export interface BoardLoaded {
+  frontier: WriterHead[]
+  fresh: number[]
+  covered: number[]
+}
+
+export type Gate = 'act' | 'refused' | 'done' | 'uncertain'
+export type CommandKind = 'chat' | 'answer' | 'verdict' | 'takeBack'
+export type AnswerKind = 'answer' | 'read' | 'shred'
+
+export interface CommandDecision {
+  gate: Gate
+  command: CommandKind | null
+  action: AnswerKind | null
+  choices: string[]
+  allow: boolean | null
+  refusal: string | null
+}
+
+export interface Finding {
+  group: Uint8Array
+  sender: Uint8Array
+  code: ErrorCode
+}
+
+/** One item of a board for `boardReduce`. `payload` is decrypted content. */
+export interface BoardItem {
+  sender: Uint8Array
+  seq: number
+  payload: Uint8Array
+}
+
 // ---- recovery -----------------------------------------------------------------------------------------------------
 // The recovery code is 32 bytes the host holds only while it founds a room, joins with the code, recovers or
 // replaces the code. What the hub serves for a join with the code is handed over as it came: nothing in it is trusted.
@@ -390,8 +691,8 @@ export class Device {
   roomRoles(): Promise<RoomRoles | null>
   groups(): Promise<GroupSummary[]>
   group(group: Uint8Array): Promise<GroupSummary>
-  /** The content key of a group and epoch, 32 bytes. Hand it to the code that seals and opens, nothing else. */
-  contentKey(group: Uint8Array, epoch: number): Promise<Uint8Array>
+  /** Whether the content key of a group and epoch is held. The key itself never leaves the device. */
+  holdsKey(group: Uint8Array, epoch: number): Promise<boolean>
   outbox(): Promise<OutboxEntry[]>
   outboxAccepted(id: number, change?: number | null): Promise<void>
   outboxRefused(id: number, code: ErrorCode): Promise<void>
@@ -400,9 +701,8 @@ export class Device {
   foundRoom(recoveryCode: Uint8Array, nowMs: number): Promise<Uint8Array>
   foundSession(agent: Uint8Array, keyPackages: Uint8Array[], nowMs: number): Promise<Uint8Array>
   foundHelper(parent: Uint8Array, keyPackages: Uint8Array[], nowMs: number): Promise<Uint8Array>
-  addHumanDevice(device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
   addToSession(group: Uint8Array, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
-  changeAgents(enrol: Uint8Array[], remove: Uint8Array[], nowMs: number): Promise<number>
+  removeAgents(remove: Uint8Array[], nowMs: number): Promise<number>
   removeHumanDevices(cuts: Cut[], nowMs: number): Promise<number>
   cleanSession(group: Uint8Array, cuts: Cut[], replacement: Replacement | null | undefined, nowMs: number): Promise<number>
   readmitHelper(group: Uint8Array, old: Cut, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
@@ -411,13 +711,62 @@ export class Device {
   joinWelcome(welcome: Uint8Array, room: Uint8Array, committer: Uint8Array | null | undefined, nowMs: number): Promise<Joined>
   observeRoom(groupInfo: Uint8Array, expectedState?: Uint8Array | null): Promise<void>
   observeSession(groupInfo: Uint8Array): Promise<void>
-  processLogEntry(entry: LogEntry): Promise<Processed>
+  processLogEntry(entry: LogEntry, nowMs: number): Promise<Processed>
   sendHandover(group: Uint8Array, recipient: Uint8Array): Promise<number[]>
   handoversSent(): Promise<HandoverSent[]>
   handoverRead(group: Uint8Array, recipient: Uint8Array): Promise<void>
   sendStrokePiece(board: Uint8Array, piece: Uint8Array): Promise<number>
   sendWorkTrail(group: Uint8Array, turn: Uint8Array, number: number, step: Uint8Array, nowMs: number): Promise<number>
-  hubSignIn(room: Uint8Array, hub: string, challenge: Uint8Array): Promise<SignedHubAuth>
+  /** Signs the hub's challenge with this device's key, for the room it belongs to. */
+  hubSignIn(hub: string, challenge: Uint8Array): Promise<SignedHubAuth>
+  inviteOpen(role: InviteRole, sessionId: Uint8Array | null | undefined, app: string, hub: string, nowMs: number): Promise<InviteOpened>
+  inviteAccept(inviteId: Uint8Array, request: SignedRequest, nowMs: number): Promise<InviteAccepted>
+  /** `code`: the six numbers the person confirmed. Null when `matches` is false: the invite is burned. */
+  inviteConfirm(inviteId: Uint8Array, code: Uint8Array, requestHash: Uint8Array, matches: boolean, nowMs: number): Promise<InviteConfirmed | null>
+  inviteRecommit(inviteId: Uint8Array, nowMs: number): Promise<number>
+  inviteSteps(): Promise<InviteStep[]>
+  inviteHandover(inviteId: Uint8Array): Promise<number[]>
+  inviteForget(inviteId: Uint8Array): Promise<void>
+  joinRequest(link: string, offer: SignedOffer, nowMs: number): Promise<JoinRequest>
+  joinReveal(reveal: SignedReveal): Promise<CheckCode>
+  joinObserve(groupInfo: Uint8Array): Promise<void>
+  joinInvited(welcome: Uint8Array, nowMs: number): Promise<Joined>
+
+  /** Seals one item into the outbox (kind `envelope`, one part). Its number is used for good. */
+  seal(draft: Draft, recipient: Uint8Array | null | undefined, fileIds: Uint8Array[], nowMs: number): Promise<Sealed>
+  /** The hub refused the envelope with `voided: true`: the entry goes, the number stays used. */
+  outboxVoided(id: number): Promise<void>
+  /** Gives up on an envelope the hub refused without taking its number, for a device that is out of the group. */
+  envelopeAbandon(id: number): Promise<void>
+  /**
+   * One envelope from the hub. `ordered`: at its place in the hub's order (the cursor moves to `change`), or read
+   * back at or below the cursor; not `ordered`: fetched out of order, at most provisional. Only bytes that are no
+   * envelope at all reject; every other finding is an outcome.
+   */
+  receiveEnvelope(envelope: Uint8Array, change: number, ordered: boolean, voidCode: ErrorCode | null | undefined, nowMs: number): Promise<ReceivedEnvelope>
+  /** A relayed stroke piece: no cursor movement. Null for one that does not open; `bad-format` for anything else. */
+  receiveRelay(group: Uint8Array, message: Uint8Array, nowMs: number): Promise<ReceivedMessage | null>
+  /** The `heads` value (JSON) to write in `group` now as a register named `heads`, or null when nothing is due. */
+  headsDue(group: Uint8Array, nowMs: number): Promise<Uint8Array | null>
+  compareHeads(group: Uint8Array, writer: Uint8Array): Promise<HeadStanding[]>
+  /** The Cut of `device` in `group` for a Commit that removes it: its last accepted envelope; 0 and zeros if none. */
+  cutOf(group: Uint8Array, device: Uint8Array): Promise<Cut>
+  chainHead(group: Uint8Array, sender: Uint8Array): Promise<ChainHead>
+  chainCut(group: Uint8Array, device: Uint8Array): Promise<ChainHead | null>
+  object(group: Uint8Array, objectId: Uint8Array): Promise<ObjectView | null>
+  objects(group: Uint8Array): Promise<ObjectView[]>
+  objectOwner(group: Uint8Array, objectId: Uint8Array): Promise<Uint8Array | null>
+  /** The current value of a shared register, JSON text as bytes. */
+  register(group: Uint8Array, name: string): Promise<Uint8Array | null>
+  registerOf(group: Uint8Array, name: string, sender: Uint8Array): Promise<Uint8Array | null>
+  /** Verifies a board's served items against the snapshot register and the writers' chains this device holds. */
+  boardLoad(board: Uint8Array, served: ServedItem[]): Promise<BoardLoaded>
+  command(envelopeHash: Uint8Array, nowMs: number): Promise<CommandDecision>
+  commandFinished(envelopeHash: Uint8Array): Promise<void>
+  commandsPending(): Promise<Uint8Array[]>
+  commandsUncertain(): Promise<Uint8Array[]>
+  findings(): Promise<Finding[]>
+  findingsRead(): Promise<void>
   holdsRecoveryMac(): Promise<boolean>
   keyIsConfirmed(group: Uint8Array, epoch: number): Promise<boolean>
   sendRecoveryAuth(recipient: Uint8Array): Promise<number | null>
@@ -491,6 +840,12 @@ export function generateUserHandle(): Uint8Array
 export function generatePushKey(): Uint8Array
 export function openApnsPush(key: Uint8Array, sealed: Uint8Array): PushNote
 export function readWebPush(payload: Uint8Array): PushNote
+/** The Scribble Board's merge, without state: the snapshot file's JSON after `items` on `snapshot`. */
+export function boardReduce(snapshot: Uint8Array | null | undefined, snapshotFrontier: WriterHead[], items: BoardItem[], frontier: WriterHead[]): Uint8Array
+export function inviteLinkParse(text: string): InviteLinkParts
+export function checkEmoji(): EmojiWord[]
+/** The address if `text` spells it canonically; `bad-format` otherwise. Never normalised. */
+export function hubAddress(text: string): string
 export function recoveryAnchor(recoveryCode: Uint8Array, room: Uint8Array, rows: Uint8Array[]): Anchor
 /** The hub's sign-in under the recovery code, for a device that is not yet a member. */
 export function recoverySignIn(recoveryCode: Uint8Array, room: Uint8Array, hub: string, challenge: Uint8Array): SignedHubAuth

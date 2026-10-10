@@ -1,0 +1,279 @@
+{
+  "about": "Joining by link (spec/v2.md section 12.1), played once for each role. Each invite: the link with its secret and what follows from it (invite_id, mac_key), the inviter's nonce and its commitment, the Offer, the Request with its MAC, the Reveal, each as its encoding (hex) with its signature and hash, and the check code as six numbers, emoji and words. The KeyPackage is one the new device made at opened_at; OpenMLS holds a KeyPackage's lifetime against the clock, so the steps that verify it (taking a Request) pass only until key_package_not_after. room_state stands for the hash of the room group's GroupContext and is random here. inviter_stored and joiner_stored are the two sides' stored state after the Reveal, from which everything behind it is computed again without the KeyPackage being verified. confirmations: what the function that commits answers (12.1.4) when it is given a code and a request hash at now, from the stored inviter, or from it after \"they don't match\": 'confirmed' or the code.",
+  "app": "https://app.example.org",
+  "hub": "https://hub.example.org",
+  "invites": [
+    {
+      "accepted_at": 1790000002000,
+      "code": [
+        15,
+        9,
+        62,
+        2,
+        48,
+        36
+      ],
+      "commitment": "67157f5a28f82df7c71abcc9d6022e0b104dad2552bf866cbb3605e6d4b0c90c",
+      "confirmations": [
+        {
+          "after_they_dont_match": false,
+          "code": [
+            15,
+            9,
+            62,
+            2,
+            48,
+            36
+          ],
+          "now": 1790000302000,
+          "request_hash": "2731a2d5630c79439a06d1d08508448339551ea3d7244bad161120bb8cccdcc4",
+          "result": "confirmed",
+          "why": "the code and the Request the person compared"
+        },
+        {
+          "after_they_dont_match": false,
+          "code": [
+            16,
+            9,
+            62,
+            2,
+            48,
+            36
+          ],
+          "now": 1790000002000,
+          "request_hash": "2731a2d5630c79439a06d1d08508448339551ea3d7244bad161120bb8cccdcc4",
+          "result": "code-not-confirmed",
+          "why": "another code"
+        },
+        {
+          "after_they_dont_match": false,
+          "code": [
+            15,
+            9,
+            62,
+            2,
+            48,
+            36
+          ],
+          "now": 1790000002000,
+          "request_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+          "result": "code-not-confirmed",
+          "why": "the code, for another Request"
+        },
+        {
+          "after_they_dont_match": false,
+          "code": [
+            15,
+            9,
+            62,
+            2,
+            48,
+            36
+          ],
+          "now": 1790000302001,
+          "request_hash": "2731a2d5630c79439a06d1d08508448339551ea3d7244bad161120bb8cccdcc4",
+          "result": "invite-expired",
+          "why": "more than five minutes after the Request was accepted"
+        },
+        {
+          "after_they_dont_match": true,
+          "code": [
+            15,
+            9,
+            62,
+            2,
+            48,
+            36
+          ],
+          "now": 1790000002000,
+          "request_hash": "2731a2d5630c79439a06d1d08508448339551ea3d7244bad161120bb8cccdcc4",
+          "result": "invite-burned",
+          "why": "after \"they don't match\""
+        }
+      ],
+      "emoji": [
+        "🌷",
+        "🐓",
+        "📁",
+        "🦁",
+        "🔨",
+        "👍"
+      ],
+      "expires_at": 1790000600000,
+      "invite_id": "ad1589689b037d69400b7bca5084b414",
+      "inviter": "063f3a51333075137ceac93ca7198ed090691dcc7109d6d478f308f91b4cc7b2",
+      "inviter_seed": "fbd00b15bac49c504a5034eab121e1df109f3b1a990200653c2993c197d4bb15",
+      "inviter_stored": "011768747470733a2f2f6170702e6578616d706c652e6f72671768747470733a2f2f6875622e6578616d706c652e6f7267a52987bc3fdc273fc75220ca73b77142ca2d1e66ef6c04b5c67df5f3f1a8786497c260b3f15b408c99a37c5c56899d765a0cff32290eb3bbb3adb2de4d6375ea40b116bfdf8fedfb7b3b340acd3d73c01fcd137722445760e76a811046458d920476ad1589689b037d69400b7bca5084b4140100000000000000000000000000000000000001a0c45993c067157f5a28f82df7c71abcc9d6022e0b104dad2552bf866cbb3605e6d4b0c90c063f3a51333075137ceac93ca7198ed090691dcc7109d6d478f308f91b4cc7b200000000000000031fb536f610c890f9d97cf3a9931752e1a8836949238e87a4a2b1c7073bbbb8c94040579a2d24101264452c4a9e70728d98ff36f8bce4ffbbb4dd42099fe71c50d0478f134ce011030ba142fa3766f02528e563e5b961a1562a308fec2abae1fb4a0d0241a116bfdf8fedfb7b3b340acd3d73c01fcd137722445760e76a811046458d920476ad1589689b037d69400b7bca5084b4141768747470733a2f2f6875622e6578616d706c652e6f72670141360001000500010003206ba7bb66bbfdb6acfd6bd43512450e35c748e305380eaf756a6a190f21a4926220f8f1421ef0a63248b9543508fcc429ddbe9add01c8390600ae06af85b49d0715203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d740001203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d7402000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040403a3229178860176a14844b875e86555761ceeef5772fa1b197a1d1901dcf00d4ff54e4fab13d9c5970260ca0acba367a549cc9a5e828590b94d65e92c82b740000404014a6fc386dd7b15f9e7a87024a4de21e20bdf013b46af707d7bd5cae11b21fe14e4f3c0f367595274a601d0522c9efb11ea6f6cebef4958b41bdc83d66235d0673404544f976bc72ac14ad44cee2d1e8f1dc48eee02eba308f51a9c96a1fd8da20d062ab8843dac49883f0d66d480b3356f4da5f26f66c93fae0b4672fe14bb5ab4040f14d8b85bd5d003f75395beb0944e76e949cb6fe3318d7e7ed2c64dec07aa5314cc7326a21bb1eea7fdd81bd9dc61b2981c9488222240e542f3514a07d84670d3e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d74000001a0c45073d0",
+      "joiner_stored": "0140b116bfdf8fedfb7b3b340acd3d73c01fcd137722445760e76a811046458d920476ad1589689b037d69400b7bca5084b4140100000000000000000000000000000000000001a0c45993c067157f5a28f82df7c71abcc9d6022e0b104dad2552bf866cbb3605e6d4b0c90c063f3a51333075137ceac93ca7198ed090691dcc7109d6d478f308f91b4cc7b200000000000000031fb536f610c890f9d97cf3a9931752e1a8836949238e87a4a2b1c7073bbbb8c94040579a2d24101264452c4a9e70728d98ff36f8bce4ffbbb4dd42099fe71c50d0478f134ce011030ba142fa3766f02528e563e5b961a1562a308fec2abae1fb4a0d41a116bfdf8fedfb7b3b340acd3d73c01fcd137722445760e76a811046458d920476ad1589689b037d69400b7bca5084b4141768747470733a2f2f6875622e6578616d706c652e6f72670141360001000500010003206ba7bb66bbfdb6acfd6bd43512450e35c748e305380eaf756a6a190f21a4926220f8f1421ef0a63248b9543508fcc429ddbe9add01c8390600ae06af85b49d0715203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d740001203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d7402000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040403a3229178860176a14844b875e86555761ceeef5772fa1b197a1d1901dcf00d4ff54e4fab13d9c5970260ca0acba367a549cc9a5e828590b94d65e92c82b740000404014a6fc386dd7b15f9e7a87024a4de21e20bdf013b46af707d7bd5cae11b21fe14e4f3c0f367595274a601d0522c9efb11ea6f6cebef4958b41bdc83d66235d0673404544f976bc72ac14ad44cee2d1e8f1dc48eee02eba308f51a9c96a1fd8da20d062ab8843dac49883f0d66d480b3356f4da5f26f66c93fae0b4672fe14bb5ab4040f14d8b85bd5d003f75395beb0944e76e949cb6fe3318d7e7ed2c64dec07aa5314cc7326a21bb1eea7fdd81bd9dc61b2981c9488222240e542f3514a07d84670d",
+      "key_package": "0001000500010003206ba7bb66bbfdb6acfd6bd43512450e35c748e305380eaf756a6a190f21a4926220f8f1421ef0a63248b9543508fcc429ddbe9add01c8390600ae06af85b49d0715203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d740001203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d7402000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040403a3229178860176a14844b875e86555761ceeef5772fa1b197a1d1901dcf00d4ff54e4fab13d9c5970260ca0acba367a549cc9a5e828590b94d65e92c82b740000404014a6fc386dd7b15f9e7a87024a4de21e20bdf013b46af707d7bd5cae11b21fe14e4f3c0f367595274a601d0522c9efb11ea6f6cebef4958b41bdc83d66235d06",
+      "key_package_not_after": 2105360000000,
+      "link": "https://app.example.org/join#v2.aHR0cHM6Ly9odWIuZXhhbXBsZS5vcmc.Fr_fj-37ezs0Cs09c8AfzRN3IkRXYOdqgRBGRY2SBHY.pSmHvD_cJz_HUiDKc7dxQsotHmbvbAS1xn318_GoeGQ",
+      "mac": "d062ab8843dac49883f0d66d480b3356f4da5f26f66c93fae0b4672fe14bb5ab",
+      "mac_key": "dd6c351475dd6cf4711bef3e9fdf2de25b1bce40c07905eb01603efddc919ed4",
+      "new_device": "3e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d74",
+      "new_device_seed": "0457a554f4ffed936f361b7d410e19cdc9d0428ca985620b84812fb0e81c9c4f",
+      "nonce": "97c260b3f15b408c99a37c5c56899d765a0cff32290eb3bbb3adb2de4d6375ea",
+      "offer": "16bfdf8fedfb7b3b340acd3d73c01fcd137722445760e76a811046458d920476ad1589689b037d69400b7bca5084b4140100000000000000000000000000000000000001a0c45993c067157f5a28f82df7c71abcc9d6022e0b104dad2552bf866cbb3605e6d4b0c90c063f3a51333075137ceac93ca7198ed090691dcc7109d6d478f308f91b4cc7b200000000000000031fb536f610c890f9d97cf3a9931752e1a8836949238e87a4a2b1c7073bbbb8c9",
+      "offer_hash": "73404544f976bc72ac14ad44cee2d1e8f1dc48eee02eba308f51a9c96a1fd8da",
+      "offer_signature": "579a2d24101264452c4a9e70728d98ff36f8bce4ffbbb4dd42099fe71c50d0478f134ce011030ba142fa3766f02528e563e5b961a1562a308fec2abae1fb4a0d",
+      "opened_at": 1790000000000,
+      "request": "16bfdf8fedfb7b3b340acd3d73c01fcd137722445760e76a811046458d920476ad1589689b037d69400b7bca5084b4141768747470733a2f2f6875622e6578616d706c652e6f72670141360001000500010003206ba7bb66bbfdb6acfd6bd43512450e35c748e305380eaf756a6a190f21a4926220f8f1421ef0a63248b9543508fcc429ddbe9add01c8390600ae06af85b49d0715203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d740001203e7b9afb128b6131b25d387788c3a34154e2da024f6342bf9afdeaafbce70d7402000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040403a3229178860176a14844b875e86555761ceeef5772fa1b197a1d1901dcf00d4ff54e4fab13d9c5970260ca0acba367a549cc9a5e828590b94d65e92c82b740000404014a6fc386dd7b15f9e7a87024a4de21e20bdf013b46af707d7bd5cae11b21fe14e4f3c0f367595274a601d0522c9efb11ea6f6cebef4958b41bdc83d66235d0673404544f976bc72ac14ad44cee2d1e8f1dc48eee02eba308f51a9c96a1fd8da",
+      "request_hash": "2731a2d5630c79439a06d1d08508448339551ea3d7244bad161120bb8cccdcc4",
+      "request_signature": "f14d8b85bd5d003f75395beb0944e76e949cb6fe3318d7e7ed2c64dec07aa5314cc7326a21bb1eea7fdd81bd9dc61b2981c9488222240e542f3514a07d84670d",
+      "requested_at": 1790000001000,
+      "reveal": "ad1589689b037d69400b7bca5084b41497c260b3f15b408c99a37c5c56899d765a0cff32290eb3bbb3adb2de4d6375ea2731a2d5630c79439a06d1d08508448339551ea3d7244bad161120bb8cccdcc4",
+      "reveal_signature": "cbc04394271e098a78809fe83da4cf18badd55fddcb85845a26bec845442b644312775a8f4ea9c9e86e39aa1c4220e5ae8edce690b9b005c8c2acd841413a105",
+      "role": 1,
+      "room_epoch": 3,
+      "room_id": "16bfdf8fedfb7b3b340acd3d73c01fcd137722445760e76a811046458d920476",
+      "room_state": "1fb536f610c890f9d97cf3a9931752e1a8836949238e87a4a2b1c7073bbbb8c9",
+      "secret": "a52987bc3fdc273fc75220ca73b77142ca2d1e66ef6c04b5c67df5f3f1a87864",
+      "session_id": "00000000000000000000000000000000",
+      "what": "a human device",
+      "words": [
+        "flower",
+        "rooster",
+        "folder",
+        "lion",
+        "hammer",
+        "thumbs up"
+      ]
+    },
+    {
+      "accepted_at": 1790000002000,
+      "code": [
+        31,
+        11,
+        53,
+        24,
+        2,
+        45
+      ],
+      "commitment": "b87a4930c83ea53da814d95025998c6815e273e61aa25cb7203a48af663889c2",
+      "confirmations": [
+        {
+          "after_they_dont_match": false,
+          "code": [
+            31,
+            11,
+            53,
+            24,
+            2,
+            45
+          ],
+          "now": 1790000302000,
+          "request_hash": "69aa41e6918b2ead587f284fcc8a8a38b5473cf842c63fa4a5bbdc1f5e2ef1ee",
+          "result": "confirmed",
+          "why": "the code and the Request the person compared"
+        },
+        {
+          "after_they_dont_match": false,
+          "code": [
+            32,
+            11,
+            53,
+            24,
+            2,
+            45
+          ],
+          "now": 1790000002000,
+          "request_hash": "69aa41e6918b2ead587f284fcc8a8a38b5473cf842c63fa4a5bbdc1f5e2ef1ee",
+          "result": "code-not-confirmed",
+          "why": "another code"
+        },
+        {
+          "after_they_dont_match": false,
+          "code": [
+            31,
+            11,
+            53,
+            24,
+            2,
+            45
+          ],
+          "now": 1790000002000,
+          "request_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+          "result": "code-not-confirmed",
+          "why": "the code, for another Request"
+        },
+        {
+          "after_they_dont_match": false,
+          "code": [
+            31,
+            11,
+            53,
+            24,
+            2,
+            45
+          ],
+          "now": 1790000302001,
+          "request_hash": "69aa41e6918b2ead587f284fcc8a8a38b5473cf842c63fa4a5bbdc1f5e2ef1ee",
+          "result": "invite-expired",
+          "why": "more than five minutes after the Request was accepted"
+        },
+        {
+          "after_they_dont_match": true,
+          "code": [
+            31,
+            11,
+            53,
+            24,
+            2,
+            45
+          ],
+          "now": 1790000002000,
+          "request_hash": "69aa41e6918b2ead587f284fcc8a8a38b5473cf842c63fa4a5bbdc1f5e2ef1ee",
+          "result": "invite-burned",
+          "why": "after \"they don't match\""
+        }
+      ],
+      "emoji": [
+        "🤖",
+        "🐢",
+        "✈️",
+        "🍎",
+        "🦁",
+        "✂️"
+      ],
+      "expires_at": 1790000600000,
+      "invite_id": "105b2dbf5c9492b9456ff419fb69c716",
+      "inviter": "b5a366d34b8fccc9f4a3f2ace40a0e2f7d1bccc4bcbf57126c43f455fc4723b6",
+      "inviter_seed": "ee81ac0987e51f0a402dc4f90572ae30c78eefadf491a634d317f5fc076b068d",
+      "inviter_stored": "011768747470733a2f2f6170702e6578616d706c652e6f72671768747470733a2f2f6875622e6578616d706c652e6f7267c10d103c9f885111795da09a7afa742acad0b010eea847bbd443cd7de55cf921d9a16e6a02d51974f161a9a15d6a3fcf9889efd0ecfbdc6961cfa42e4ef6cc2640b10c051c084e70e02f42084b4a5645ee441e4c7c3f2fc10c12598a14c0dabd6467105b2dbf5c9492b9456ff419fb69c71602ccdb34dfa7420be62c8f3ab126c547a6000001a0c45993c0b87a4930c83ea53da814d95025998c6815e273e61aa25cb7203a48af663889c2b5a366d34b8fccc9f4a3f2ace40a0e2f7d1bccc4bcbf57126c43f455fc4723b6000000000000000314a1d150f4019808e594cca1c2fbbf9c509208d8636f37f3d3eb9cbb2ecf058f4040b04eafdc5c6d8408b081d2c238beeceb99b445a102de8f27c6143de0f955692b9fb5e1d4ecb0c94a2923ac8d05b92cf3dc944fbd953602058fcd147ee44b1f070241a10c051c084e70e02f42084b4a5645ee441e4c7c3f2fc10c12598a14c0dabd6467105b2dbf5c9492b9456ff419fb69c7161768747470733a2f2f6875622e6578616d706c652e6f7267024136000100050001000320d0121105de1a045f8f6bee174db51f603cc83fd0f73ea24da8a80570cf3098182075b7950cf2a11566fefddaf61890449e49ff4a7abe061664021d07ec7e193d4020b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca000120b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca02000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040407730dbdc2dd26885a5bbe021f690f477cb2e2834a1090a6273822a426920fc80ba7d91d3d1cd1df73f73a303887f1fa1ae92348d56a44ec190230cae27c513050040406ad059e770306225d5c4e4e449cce8c543ff6139ecf98588597d7e65a3d8caa6d70023697e278661a7c2ddc5f5051450e41d2ed6b8516f6a1824f0bb5f4195026e9627ab5496ed701d0d395c0da63081a9e4cdeae0f8f6c067f85c38c6d9b69e2066932fb55b92bf933775a39f57d8784d81d6c0e522a096c0e55f14592ee8169740400ef62c8e5fbbca3dfb564005e80cff66e43d63f72fd14c44aa360f69d584335ed2027e7c1c56d618e11c2e0ffdfa20527ab5ea523444a85bd3bd04a40ef5510db5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca000001a0c45073d0",
+      "joiner_stored": "0140b10c051c084e70e02f42084b4a5645ee441e4c7c3f2fc10c12598a14c0dabd6467105b2dbf5c9492b9456ff419fb69c71602ccdb34dfa7420be62c8f3ab126c547a6000001a0c45993c0b87a4930c83ea53da814d95025998c6815e273e61aa25cb7203a48af663889c2b5a366d34b8fccc9f4a3f2ace40a0e2f7d1bccc4bcbf57126c43f455fc4723b6000000000000000314a1d150f4019808e594cca1c2fbbf9c509208d8636f37f3d3eb9cbb2ecf058f4040b04eafdc5c6d8408b081d2c238beeceb99b445a102de8f27c6143de0f955692b9fb5e1d4ecb0c94a2923ac8d05b92cf3dc944fbd953602058fcd147ee44b1f0741a10c051c084e70e02f42084b4a5645ee441e4c7c3f2fc10c12598a14c0dabd6467105b2dbf5c9492b9456ff419fb69c7161768747470733a2f2f6875622e6578616d706c652e6f7267024136000100050001000320d0121105de1a045f8f6bee174db51f603cc83fd0f73ea24da8a80570cf3098182075b7950cf2a11566fefddaf61890449e49ff4a7abe061664021d07ec7e193d4020b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca000120b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca02000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040407730dbdc2dd26885a5bbe021f690f477cb2e2834a1090a6273822a426920fc80ba7d91d3d1cd1df73f73a303887f1fa1ae92348d56a44ec190230cae27c513050040406ad059e770306225d5c4e4e449cce8c543ff6139ecf98588597d7e65a3d8caa6d70023697e278661a7c2ddc5f5051450e41d2ed6b8516f6a1824f0bb5f4195026e9627ab5496ed701d0d395c0da63081a9e4cdeae0f8f6c067f85c38c6d9b69e2066932fb55b92bf933775a39f57d8784d81d6c0e522a096c0e55f14592ee8169740400ef62c8e5fbbca3dfb564005e80cff66e43d63f72fd14c44aa360f69d584335ed2027e7c1c56d618e11c2e0ffdfa20527ab5ea523444a85bd3bd04a40ef5510d",
+      "key_package": "000100050001000320d0121105de1a045f8f6bee174db51f603cc83fd0f73ea24da8a80570cf3098182075b7950cf2a11566fefddaf61890449e49ff4a7abe061664021d07ec7e193d4020b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca000120b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca02000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040407730dbdc2dd26885a5bbe021f690f477cb2e2834a1090a6273822a426920fc80ba7d91d3d1cd1df73f73a303887f1fa1ae92348d56a44ec190230cae27c513050040406ad059e770306225d5c4e4e449cce8c543ff6139ecf98588597d7e65a3d8caa6d70023697e278661a7c2ddc5f5051450e41d2ed6b8516f6a1824f0bb5f419502",
+      "key_package_not_after": 2105360000000,
+      "link": "https://app.example.org/join#v2.aHR0cHM6Ly9odWIuZXhhbXBsZS5vcmc.DAUcCE5w4C9CCEtKVkXuRB5MfD8vwQwSWYoUwNq9ZGc.wQ0QPJ-IURF5XaCaevp0KsrQsBDuqEe71EPNfeVc-SE",
+      "mac": "66932fb55b92bf933775a39f57d8784d81d6c0e522a096c0e55f14592ee81697",
+      "mac_key": "5d2990cc744f2d11f82d3359448354c0c651a7cc4712d3232037a988a8602030",
+      "new_device": "b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca",
+      "new_device_seed": "7d4e8a5fea623c01b46f9eadd09d63b2ecfe3b411af57ffc0ab845bcb185b0c1",
+      "nonce": "d9a16e6a02d51974f161a9a15d6a3fcf9889efd0ecfbdc6961cfa42e4ef6cc26",
+      "offer": "0c051c084e70e02f42084b4a5645ee441e4c7c3f2fc10c12598a14c0dabd6467105b2dbf5c9492b9456ff419fb69c71602ccdb34dfa7420be62c8f3ab126c547a6000001a0c45993c0b87a4930c83ea53da814d95025998c6815e273e61aa25cb7203a48af663889c2b5a366d34b8fccc9f4a3f2ace40a0e2f7d1bccc4bcbf57126c43f455fc4723b6000000000000000314a1d150f4019808e594cca1c2fbbf9c509208d8636f37f3d3eb9cbb2ecf058f",
+      "offer_hash": "6e9627ab5496ed701d0d395c0da63081a9e4cdeae0f8f6c067f85c38c6d9b69e",
+      "offer_signature": "b04eafdc5c6d8408b081d2c238beeceb99b445a102de8f27c6143de0f955692b9fb5e1d4ecb0c94a2923ac8d05b92cf3dc944fbd953602058fcd147ee44b1f07",
+      "opened_at": 1790000000000,
+      "request": "0c051c084e70e02f42084b4a5645ee441e4c7c3f2fc10c12598a14c0dabd6467105b2dbf5c9492b9456ff419fb69c7161768747470733a2f2f6875622e6578616d706c652e6f7267024136000100050001000320d0121105de1a045f8f6bee174db51f603cc83fd0f73ea24da8a80570cf3098182075b7950cf2a11566fefddaf61890449e49ff4a7abe061664021d07ec7e193d4020b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca000120b5024545fe09a3b1bb74a3794160e0abf1dbe9d3a28312fc6810bf8df05a13ca02000102000306f001f002000a0002000101000000006ab12d70000000007d7d3e800040407730dbdc2dd26885a5bbe021f690f477cb2e2834a1090a6273822a426920fc80ba7d91d3d1cd1df73f73a303887f1fa1ae92348d56a44ec190230cae27c513050040406ad059e770306225d5c4e4e449cce8c543ff6139ecf98588597d7e65a3d8caa6d70023697e278661a7c2ddc5f5051450e41d2ed6b8516f6a1824f0bb5f4195026e9627ab5496ed701d0d395c0da63081a9e4cdeae0f8f6c067f85c38c6d9b69e",
+      "request_hash": "69aa41e6918b2ead587f284fcc8a8a38b5473cf842c63fa4a5bbdc1f5e2ef1ee",
+      "request_signature": "0ef62c8e5fbbca3dfb564005e80cff66e43d63f72fd14c44aa360f69d584335ed2027e7c1c56d618e11c2e0ffdfa20527ab5ea523444a85bd3bd04a40ef5510d",
+      "requested_at": 1790000001000,
+      "reveal": "105b2dbf5c9492b9456ff419fb69c716d9a16e6a02d51974f161a9a15d6a3fcf9889efd0ecfbdc6961cfa42e4ef6cc2669aa41e6918b2ead587f284fcc8a8a38b5473cf842c63fa4a5bbdc1f5e2ef1ee",
+      "reveal_signature": "816878057511dca207ef09e6127ac378308b3804f3ed0f63d036c87684afb7e906305ecf4848a28f72b0413fedbd3035a98e40d3454f266f0ca2f78ea2b99c0c",
+      "role": 2,
+      "room_epoch": 3,
+      "room_id": "0c051c084e70e02f42084b4a5645ee441e4c7c3f2fc10c12598a14c0dabd6467",
+      "room_state": "14a1d150f4019808e594cca1c2fbbf9c509208d8636f37f3d3eb9cbb2ecf058f",
+      "secret": "c10d103c9f885111795da09a7afa742acad0b010eea847bbd443cd7de55cf921",
+      "session_id": "ccdb34dfa7420be62c8f3ab126c547a6",
+      "what": "an agent device that takes a session over",
+      "words": [
+        "robot",
+        "turtle",
+        "aeroplane",
+        "apple",
+        "lion",
+        "scissors"
+      ]
+    }
+  ]
+}

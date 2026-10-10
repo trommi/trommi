@@ -7,11 +7,12 @@ use trommi_core::hub_auth::{self, HubAddress, IssuedChallenge};
 use trommi_core::ids::RoomId;
 use trommi_core::store::{Batch, Loaded, Storage, StorageError};
 use trommi_core_ffi::{
-    base64url_decode, error_code_from_text, error_code_text, format_recovery_code,
-    generate_kit_words, generate_recovery_code, kit_keys, log_finding, open_recovery_code,
-    parse_recovery_code, recovery_anchor, recovery_sign_in, seal_recovery_code, self_test,
-    versions, AccountWay, CoreDevice, CoreError, Cut, ErrorCode, FileDecryptor, FileEncryptor,
-    GroupCut, LogFinding, OutboxKind, ServedGroup, ServedRoom,
+    base64url_decode, check_emoji, error_code_from_text, error_code_text, format_recovery_code,
+    generate_kit_words, generate_recovery_code, hub_address, invite_link_parse, kit_keys,
+    log_finding, open_recovery_code, parse_recovery_code, recovery_anchor, recovery_sign_in,
+    seal_recovery_code, self_test, versions, AccountWay, CoreDevice, CoreError, Cut, Draft,
+    DraftKind, ErrorCode, FileDecryptor, FileEncryptor, GroupCut, LogFinding, OutboxKind,
+    ServedGroup, ServedRoom,
 };
 use trommi_tests::{now, MemoryStorage};
 
@@ -90,18 +91,18 @@ fn every_code_of_section_16_is_a_case_with_its_spelling() {
 
 #[test]
 fn arguments_of_the_wrong_shape_are_bad_format() {
-    let (device, room) = founder(MemoryStorage::new());
+    let (device, _) = founder(MemoryStorage::new());
     assert_eq!(code_of(device.group(vec![1; 31])), ErrorCode::BadFormat);
     assert_eq!(
         code_of(device.found_room(vec![1; 31], now())),
         ErrorCode::BadFormat
     );
     assert_eq!(
-        code_of(device.hub_sign_in(room.clone(), "https://hub.example".into(), vec![0; 31])),
+        code_of(device.hub_sign_in("https://hub.example".into(), vec![0; 31])),
         ErrorCode::BadFormat
     );
     assert_eq!(
-        code_of(device.hub_sign_in(room, "HTTPS://Hub.Example/".into(), vec![0; 32])),
+        code_of(device.hub_sign_in("HTTPS://Hub.Example/".into(), vec![0; 32])),
         ErrorCode::BadFormat
     );
     assert_eq!(
@@ -111,10 +112,76 @@ fn arguments_of_the_wrong_shape_are_bad_format() {
 }
 
 #[test]
+fn a_draft_that_lacks_what_its_kind_needs_is_bad_format_and_uses_no_number() {
+    let (device, room) = founder(MemoryStorage::new());
+    let empty = Draft {
+        kind: DraftKind::SessionChat,
+        session: None,
+        card: None,
+        board: None,
+        group: None,
+        name: None,
+        value: None,
+        object_id: None,
+        request_id: None,
+        choices: None,
+        closes: None,
+        closed: None,
+        allow: None,
+        urgency: None,
+        push: None,
+        expires_at: None,
+        payload: Some(b"{}".to_vec()),
+    };
+    assert_eq!(
+        code_of(device.seal(empty.clone(), None, Vec::new(), now())),
+        ErrorCode::BadFormat
+    );
+    // Nothing is filled in for a field a kind names: a version says whether it closes.
+    let version = Draft {
+        kind: DraftKind::NoteVersion,
+        object_id: Some(vec![1; 16]),
+        ..empty.clone()
+    };
+    assert_eq!(
+        code_of(device.seal(version, None, Vec::new(), now())),
+        ErrorCode::BadFormat
+    );
+    assert_eq!(format!("{empty:?}"), "Draft(<redacted>)");
+    let id = device.id().expect("an id");
+    assert_eq!(
+        device
+            .chain_head(room.clone(), id.clone())
+            .expect("a head")
+            .seq,
+        0
+    );
+    assert_eq!(device.cut_of(room.clone(), id).expect("a Cut").seq, 0);
+    assert!(device.objects(room.clone()).expect("objects").is_empty());
+    assert!(device.findings().expect("findings").is_empty());
+    assert!(device.commands_pending().expect("commands").is_empty());
+    // Bytes that are no envelope at all are refused, and the cursor stays.
+    assert_eq!(
+        code_of(device.receive_envelope(vec![1, 2, 3], 5, true, None, now())),
+        ErrorCode::BadFormat
+    );
+    assert_eq!(device.cursor().expect("a cursor"), 0);
+    assert_eq!(check_emoji().len(), 64);
+    assert_eq!(
+        code_of(hub_address("HTTPS://Hub.Example/".into())),
+        ErrorCode::BadFormat
+    );
+    assert_eq!(
+        code_of(invite_link_parse("https://app.example/join#v2.x".into())),
+        ErrorCode::BadFormat
+    );
+}
+
+#[test]
 fn the_sign_in_is_this_devices_and_verifies() {
     let (device, room) = founder(MemoryStorage::new());
     let signed = device
-        .hub_sign_in(room.clone(), "https://hub.example".into(), vec![5; 32])
+        .hub_sign_in("https://hub.example".into(), vec![5; 32])
         .expect("signed");
     let verified = hub_auth::verify(
         &hub_auth::SignedHubAuth {
@@ -134,23 +201,32 @@ fn the_sign_in_is_this_devices_and_verifies() {
 }
 
 #[test]
-fn only_a_refusal_for_good_undoes_an_outbox_entry() {
+fn a_refusal_that_judges_the_request_undoes_its_outbox_entry() {
     let (device, _) = founder(MemoryStorage::new());
     let entry = device.outbox().expect("the outbox").remove(0);
+    // No hub answers with these: nothing is changed.
     for code in [
-        ErrorCode::Internal,
-        ErrorCode::Overloaded,
-        ErrorCode::RateLimited,
-        ErrorCode::Unauthorised,
-        ErrorCode::QuotaExceeded,
-        ErrorCode::ClientTooOld,
         ErrorCode::Storage,
+        ErrorCode::Busy,
         ErrorCode::WeakPassword,
+        ErrorCode::NoKey,
+        ErrorCode::DecryptFailed,
+        ErrorCode::Withheld,
     ] {
         assert_eq!(
             code_of(device.outbox_refused(entry.id, code)),
             ErrorCode::BadFormat
         );
+    }
+    // These say nothing about the request: the entry stays and is sent again.
+    for code in [
+        ErrorCode::Internal,
+        ErrorCode::Overloaded,
+        ErrorCode::RateLimited,
+        ErrorCode::Unauthorised,
+        ErrorCode::ClientTooOld,
+    ] {
+        device.outbox_refused(entry.id, code).expect("taken");
         assert_eq!(device.outbox().expect("the outbox"), vec![entry.clone()]);
     }
     device
@@ -175,13 +251,15 @@ fn a_failed_write_changes_nothing_and_the_device_goes_on() {
 #[test]
 fn a_second_owner_is_found_out_and_the_first_signs_nothing_more() {
     let store = MemoryStorage::new();
-    let (first, room) = founder(store.handle());
+    let (first, _) = founder(store.handle());
     let second = CoreDevice::open_on(Box::new(store.handle())).expect("the same state once more");
     second.key_package(now()).expect("the second writes");
     assert_eq!(code_of(first.key_package(now())), ErrorCode::Storage);
     assert!(!first.is_owner().expect("asked"));
+    // What it is asked about keys is refused too, not answered with "none held".
+    assert_eq!(code_of(first.holds_key(vec![7; 32], 0)), ErrorCode::Storage);
     assert_eq!(
-        code_of(first.hub_sign_in(room, "https://hub.example".into(), vec![1; 32])),
+        code_of(first.hub_sign_in("https://hub.example".into(), vec![1; 32])),
         ErrorCode::Storage
     );
     assert!(first.outbox().expect("the outbox").is_empty());
@@ -350,12 +428,12 @@ fn a_store_that_calls_its_device_back_is_refused_not_waited_for() {
 
 #[test]
 fn a_closed_device_answers_nothing() {
-    let (device, room) = founder(MemoryStorage::new());
+    let (device, _) = founder(MemoryStorage::new());
     device.close();
     assert_eq!(code_of(device.id()), ErrorCode::Internal);
     assert_eq!(code_of(device.outbox()), ErrorCode::Internal);
     assert_eq!(
-        code_of(device.hub_sign_in(room, "https://hub.example".into(), vec![1; 32])),
+        code_of(device.hub_sign_in("https://hub.example".into(), vec![1; 32])),
         ErrorCode::Internal
     );
     device.close();

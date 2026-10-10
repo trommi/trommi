@@ -227,8 +227,10 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
         a.add_human_device(&x.id(), &package, now()),
         Err(Error::BadCommit)
     );
-    a.add_to_session(&group, &x.id(), &package, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.add_to_session(&group, &x.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
     assert!(!a.group(&group).unwrap().pending);
     assert_eq!(hub.epoch(&group), Some(2));
 }
@@ -282,86 +284,35 @@ fn a_removed_human_device_is_no_sender_of_a_work_trail() {
         .unwrap();
     post_ok(&mut hub, &mut a);
     assert_eq!(a.group(&group).unwrap().disallowed, [forger.id()]);
+    // The group is stale from the room Commit on: nobody writes into it (5.2.8), and what arrives in it
+    // all the same is dropped unopened, the removed device's step first of all.
     forger.post_message(&mut hub, &mut forged, &step(2));
-    assert_eq!(
-        last(&hub, &mut a),
-        Ok(Processed::Message(Received::Dropped))
-    );
-    // The agent device's steps are still taken.
+    assert_eq!(last(&hub, &mut a), Ok(Processed::Skipped));
+    // The agent device has not seen the removal yet and writes; that is dropped too.
     agent
         .send_work_trail(&group, &TurnId::new([7; 16]), 2, b"{}", now())
         .unwrap();
     post_ok(&mut hub, &mut agent);
+    assert_eq!(last(&hub, &mut a), Ok(Processed::Skipped));
+    // Once it saw the removal it writes nothing there, until the group is cleaned; then its steps are
+    // taken again.
+    settle(&hub, &mut agent);
+    assert_eq!(
+        agent.send_work_trail(&group, &TurnId::new([7; 16]), 3, b"{}", now()),
+        Err(Error::StaleSession)
+    );
+    a.clean_session(&group, &cuts_for(&a, &group), None, now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    settle(&hub, &mut agent);
+    agent
+        .send_work_trail(&group, &TurnId::new([7; 16]), 3, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut agent);
     assert!(matches!(
         last(&hub, &mut a),
-        Ok(Processed::Message(Received::WorkTrail { from, number: 2, .. })) if from == agent.id()
+        Ok(Processed::Message(Received::WorkTrail { from, number: 3, .. })) if from == agent.id()
     ));
-}
-
-#[test]
-fn a_hub_that_checks_nothing_does_not_keep_a_removed_device_in() {
-    let (mut a, mut b, mut x, mut agent) = (new_device(), new_device(), new_device(), new_device());
-    let mut hub = Hub::new(false);
-    let room_group = found_room_on(&mut hub, &mut a);
-    add_human(&mut hub, &mut a, &mut b);
-    add_human(&mut hub, &mut a, &mut x);
-    enrol(&mut hub, &mut a, &mut agent);
-    for device in [&mut b, &mut x, &mut agent] {
-        publish_some(&mut hub, device, 1);
-    }
-    let group = found_main(&mut hub, &mut a, &agent.id());
-    for device in [&mut b, &mut x] {
-        settle(&hub, device);
-    }
-    a.remove_human_devices(&[Cut::none(x.id())], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-
-    // The removed device has not seen its removal and commits in the session group, naming the room epoch
-    // it knows, where it was a human device. A checking hub answers `room-behind`; this one stores it. In the
-    // room group its Commit comes too late for the epoch.
-    x.update(&group, true, now()).unwrap().unwrap();
-    post_ok(&mut hub, &mut x);
-    x.update(&room_group, true, now()).unwrap().unwrap();
-    assert_eq!(post_refused(&mut hub, &mut x), [Error::EpochTaken]);
-
-    // The members judge the stored Commit against the room state it names (5.2.1) and follow it, but the
-    // group stays stale for them under the room state they hold: they write nothing into it.
-    for device in [&mut a, &mut b] {
-        let processed = settle(&hub, device);
-        assert!(matches!(
-            processed.last(),
-            Some(Processed::Commit { facts, removed: false, .. }) if facts.committer == x.id()
-        ));
-        let summary = device.group(&group).unwrap();
-        assert_eq!((summary.epoch, &summary.disallowed[..]), (2, &[x.id()][..]));
-        assert_eq!(device.update(&group, true, now()), Err(Error::StaleSession));
-        assert_eq!(
-            device.send_handover(&group, &agent.id()),
-            Err(Error::StaleSession)
-        );
-    }
-
-    // The cleaning removes the leaf all the same, and the removed device derives nothing after it.
-    b.clean_session(&group, &cuts_for(&b, &group), None, now())
-        .unwrap();
-    post_ok(&mut hub, &mut b);
-    sync_ok(&hub, &mut a);
-    let results = sync(&hub, &mut x);
-    assert!(matches!(
-        results[..2],
-        [
-            Ok(Processed::Commit { removed: true, .. }),
-            Ok(Processed::OwnCommit)
-        ]
-    ));
-    assert!(a.group(&group).unwrap().disallowed.is_empty());
-    assert_eq!(
-        a.content_key(&group, 3).unwrap(),
-        b.content_key(&group, 3).unwrap()
-    );
-    assert!(x.content_key(&group, 2).is_ok());
-    assert_eq!(x.content_key(&group, 3), Err(Error::NoKey));
-    assert_eq!(x.content_key(&room_group, 4), Err(Error::NoKey));
 }
 
 #[test]
@@ -447,9 +398,10 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
             .unwrap()
             .contains(&x.id()));
     }
-    b.add_to_session(&groups[0], &x.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut b), [Error::BadCommit]);
+    assert_eq!(
+        b.add_to_session(&groups[0], &x.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
 
     // The removing device restarts: its Commit is still in the outbox, the same bytes, and the hub answers
     // the repeated post like the first. It then finds every session cleaned by the other device.
