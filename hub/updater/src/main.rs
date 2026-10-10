@@ -1,6 +1,7 @@
-//! `trommi-hub-updater` serves the deploy endpoint on the tailnet address (under systemd).
-//! `trommi-hub-updater deploy hub-v123` and `trommi-hub-updater status` are for root on the server: the same steps,
-//! the same lock, the same checks of signature, content and version.
+//! `trommi-hub-updater` serves the deploy endpoint on the tailnet address (under systemd, as the unprivileged user
+//! `trommi-updater`). `trommi-hub-updater deploy hub-v123` and `trommi-hub-updater status` are for the owner on the
+//! server: the same steps, the same lock, the same checks of signature, content and version. The command in
+//! `/usr/local/bin` runs them as that same user, never as root.
 //!
 //! Configuration by environment (`/etc/trommi/updater.env`):
 //!
@@ -10,12 +11,10 @@
 //! | `UPDATER_REPOSITORY` | `trommi/trommi` | where releases come from |
 //! | `UPDATER_PUBLIC_KEY` | `/etc/trommi/release-public-key.pem` | the pinned public half of the release signing key |
 //! | `UPDATER_TARGET` | this machine's, `…-unknown-linux-musl` | which binary of a release is this server's |
-//! | `UPDATER_ROOT` | `/srv/trommi` | releases, links, state, backups |
-//! | `UPDATER_DATA` | `<root>/data` | the hub's data directory |
-//! | `UPDATER_UNIT` | `trommi-hub.service` | the unit that is stopped and started |
+//! | `UPDATER_ROOT` | `/srv/trommi/deploy` | releases, links, state: the one folder this program writes |
+//! | `UPDATER_CTL` | `/run/trommi-hub-ctl.sock` | the helper that starts and stops the hub's unit |
 //! | `UPDATER_HEALTH_URL` | `http://127.0.0.1:8790/healthz` | |
 //! | `UPDATER_HEALTH_SECONDS` | `60` | how long a new hub has to become well |
-//! | `UPDATER_UPDATER_UNIT` | `trommi-hub-updater.service` | this program's own unit (restarted after `deploy` on the command line brought a new updater) |
 //! | `UPDATER_CALLER_TAGS` | `tag:trommi-ci` | tailnet tags whose devices may call |
 //! | `UPDATER_CALLER_USERS` | none | tailnet logins whose own (untagged) devices may call: the owner |
 
@@ -27,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
-use trommi_hub_updater::{log, public_key, serve, Config, Systemd, Tailnet, Updater};
+use trommi_hub_updater::{log, public_key, serve, Config, HubCtl, Tailnet, Updater};
 
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
@@ -41,14 +40,13 @@ fn on_tailnet(ip: IpAddr) -> bool {
     }
 }
 
-fn config() -> Result<(Config, String), String> {
-    let root = PathBuf::from(env("UPDATER_ROOT").unwrap_or_else(|| "/srv/trommi".into()));
+fn config() -> Result<(Config, PathBuf), String> {
+    let root = PathBuf::from(env("UPDATER_ROOT").unwrap_or_else(|| "/srv/trommi/deploy".into()));
     let key_path =
         env("UPDATER_PUBLIC_KEY").unwrap_or_else(|| "/etc/trommi/release-public-key.pem".into());
-    let key = public_key(
-        &std::fs::read_to_string(&key_path).map_err(|e| format!("{key_path}: {e}"))?,
-    )
-    .map_err(|e| format!("{key_path}: {e}"))?;
+    let key =
+        public_key(&std::fs::read_to_string(&key_path).map_err(|e| format!("{key_path}: {e}"))?)
+            .map_err(|e| format!("{key_path}: {e}"))?;
     let seconds = env("UPDATER_HEALTH_SECONDS")
         .and_then(|v| v.parse().ok())
         .unwrap_or(60);
@@ -58,7 +56,6 @@ fn config() -> Result<(Config, String), String> {
         key,
         target: env("UPDATER_TARGET")
             .unwrap_or_else(|| format!("{}-unknown-linux-musl", std::env::consts::ARCH)),
-        data: env("UPDATER_DATA").map_or_else(|| root.join("data"), PathBuf::from),
         root,
         health_url: env("UPDATER_HEALTH_URL")
             .unwrap_or_else(|| "http://127.0.0.1:8790/healthz".into()),
@@ -66,20 +63,20 @@ fn config() -> Result<(Config, String), String> {
         health_every: Duration::from_secs(1),
         lock_wait: Duration::from_secs(600),
     };
-    let unit = env("UPDATER_UNIT").unwrap_or_else(|| "trommi-hub.service".into());
-    Ok((cfg, unit))
+    let socket = env("UPDATER_CTL").unwrap_or_else(|| "/run/trommi-hub-ctl.sock".into());
+    Ok((cfg, PathBuf::from(socket)))
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (cfg, unit) = match config() {
+    let (cfg, socket) = match config() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("cannot start: {e}");
             std::process::exit(1);
         }
     };
-    let updater = match Updater::new(cfg, Arc::new(Systemd { unit })) {
+    let updater = match Updater::new(cfg, Arc::new(HubCtl { socket })) {
         Ok(u) => u,
         Err(e) => {
             eprintln!("cannot start: {e}");
@@ -92,7 +89,12 @@ fn main() {
         .build()
         .expect("the runtime");
     let code = runtime.block_on(async {
-        match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        match args
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
             [] | ["serve"] => run(updater).await,
             ["status"] => {
                 println!("{:#}", updater.status().await);
@@ -101,20 +103,13 @@ fn main() {
             ["deploy", tag] => {
                 let outcome = updater.deploy(tag).await;
                 println!("{:#}", serde_json::to_value(&outcome).expect("an outcome"));
-                if updater.replaced() {
-                    // the serving updater is the old program: let systemd start the one now in place
-                    let unit = env("UPDATER_UPDATER_UNIT")
-                        .unwrap_or_else(|| "trommi-hub-updater.service".into());
-                    let restarted = trommi_hub_updater::run(
-                        "systemctl",
-                        &["try-restart", "--no-block", &unit],
-                        Duration::from_secs(30),
-                    );
-                    if let Err(e) = restarted {
-                        eprintln!("the new updater is in place but was not started: {e}");
-                    }
+                // 10 tells the command in /usr/local/bin that this deploy put another updater in place: it has
+                // the serving one started anew (this program cannot, and need not, do that itself)
+                match (outcome.ok, updater.replaced()) {
+                    (true, true) => 10,
+                    (true, false) => 0,
+                    (false, _) => 1,
                 }
-                i32::from(!outcome.ok)
             }
             _ => {
                 eprintln!("usage: trommi-hub-updater [serve | status | deploy hub-v<N>]");
@@ -131,7 +126,9 @@ async fn run(updater: Arc<Updater>) -> i32 {
         return 1;
     };
     if !on_tailnet(listen.ip()) {
-        eprintln!("cannot start: {listen} is not a tailnet address; the endpoint listens nowhere else");
+        eprintln!(
+            "cannot start: {listen} is not a tailnet address; the endpoint listens nowhere else"
+        );
         return 1;
     }
     // First of all, before the tailnet is needed: a deploy that was cut off is settled and the hub is started.
