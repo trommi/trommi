@@ -610,8 +610,9 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
         .items
         .iter()
         .any(|(_, _, payload)| payload["text"] == "from the second machine"));
-    // The hub only claimed the removal (it serves a removed device nothing to verify it by): the first
-    // machine stopped, and its state is still there.
+    // What becomes of the first machine's state depends on what it could verify. A hub that serves a removed
+    // device the Commits that removed it (`/v2/groups/{group}/removal`): the device checks them itself, says
+    // that it is retired, and its state is gone. A hub that only refuses it: it stopped, and its state stays.
     fn states(dir: &std::path::Path) -> usize {
         std::fs::read_dir(dir)
             .into_iter()
@@ -620,7 +621,11 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
             .map(|entry| entry.path())
             .map(|path| {
                 if path.extension().is_some_and(|ext| ext == "state") {
-                    usize::from(path.join("state.log").exists() || path.join("state.snap").exists())
+                    // (an empty journal is no state: a slot that is looked at gets one)
+                    let holds = |name: &str| {
+                        std::fs::metadata(path.join(name)).is_ok_and(|meta| meta.len() > 0)
+                    };
+                    usize::from(holds("state.log") || holds("state.snap"))
                 } else if path.is_dir() {
                     states(&path)
                 } else {
@@ -629,11 +634,27 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
             })
             .sum()
     }
-    assert_eq!(
-        states(&first_seat.home.path().join("keys")),
-        1,
-        "a removal the hub only claims wipes nothing"
-    );
+    let kept = states(&first_seat.home.path().join("keys"));
+    if said.contains("retired") {
+        assert_eq!(
+            kept, 0,
+            "a removal the device verified wipes its state: {said}"
+        );
+        assert!(
+            said.contains("another connector"),
+            "it knows it was a takeover: {said}"
+        );
+    } else {
+        assert_eq!(
+            kept, 1,
+            "a removal the hub only claims wipes nothing: {said}"
+        );
+        // Set where the hub under test serves the removal route: then nothing less than verified will do.
+        assert!(
+            std::env::var_os("TROMMI_HUB_SERVES_REMOVAL").is_none(),
+            "the hub serves the removing Commits, and the connector did not verify its removal: {said}"
+        );
+    }
     first.close().await;
     second.close().await;
 }
