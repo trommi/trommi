@@ -1074,6 +1074,26 @@ impl Dev {
     }
 }
 
+/// The body of `POST …/recovery-code` from a flat one: the Commit's fields go under `commit`.
+pub fn code_body(flat: &Value) -> Value {
+    let mut out = flat.clone();
+    let mut commit = json!({});
+    for field in [
+        "epoch",
+        "commit",
+        "group_info",
+        "welcome",
+        "sealed_key",
+        "recovery_auth",
+    ] {
+        if let Some(v) = out.as_object_mut().and_then(|o| o.remove(field)) {
+            commit[field] = v;
+        }
+    }
+    out["commit"] = commit;
+    out
+}
+
 pub fn commit_json(out: &Out, sealed_key: &[u8], recovery_auth: Option<&[u8]>) -> Value {
     json!({
         "epoch": out.epoch, "commit": b64(&out.commit), "group_info": b64(&out.group_info), "welcome": out.welcome.as_deref().map(b64),
