@@ -589,7 +589,9 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
     );
     let mut body = commit_json(&out, &key, None);
     body["recovery_link"] = json!(b64(&link(&room, &Recovery::new())));
-    w.ada.post(&w.hub, &path, &body).refused(400, "incomplete");
+    w.ada
+        .post(&w.hub, &path, &code_body(&body))
+        .refused(400, "incomplete");
     body["recovery_link"] = json!(b64(&link(&room, &new)));
     let old_key = w.ada.sealed_key(
         &room,
@@ -601,7 +603,9 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
     );
     let mut wrong = body.clone();
     wrong["sealed_key"] = json!(b64(&old_key));
-    w.ada.post(&w.hub, &path, &wrong).refused(400, "incomplete");
+    w.ada
+        .post(&w.hub, &path, &code_body(&wrong))
+        .refused(400, "incomplete");
     // 8.2: the row of the Commit that replaces the recovery keys names the new room epoch, whose state holds
     // the new keys; the epoch the Commit builds on is another row's
     let behind = w.ada.sealed_key(
@@ -613,13 +617,15 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
         true,
     );
     wrong["sealed_key"] = json!(b64(&behind));
-    w.ada.post(&w.hub, &path, &wrong).refused(400, "incomplete");
+    w.ada
+        .post(&w.hub, &path, &code_body(&wrong))
+        .refused(400, "incomplete");
     // a Commit that replaces nothing is not this route's
     let old_token = recovery_token(&w.hub, &room, &w.recovery);
-    let accepted = w.ada.post(&w.hub, &path, &body).ok();
+    let accepted = w.ada.post(&w.hub, &path, &code_body(&body)).ok();
     w.ada.merge(&room);
     // a lost answer is retried with the same bytes
-    assert_eq!(w.ada.post(&w.hub, &path, &body).ok(), accepted);
+    assert_eq!(w.ada.post(&w.hub, &path, &code_body(&body)).ok(), accepted);
     // the replaced recovery key's token ended at once; the new key signs in and finds the link
     old_token
         .get(&w.hub, "/v2/sealed-keys")
@@ -680,7 +686,9 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
             mac: vec![3; 32],
         }
         .bytes()));
-        w.ada.post(&w.hub, &path, &body).refused(400, "bad-commit");
+        w.ada
+            .post(&w.hub, &path, &code_body(&body))
+            .refused(400, "bad-commit");
         w.ada.clear(&room);
     }
 }
