@@ -600,14 +600,20 @@ export class Client {
   /**
    * Before this device writes a board's snapshot register: tells the hub what the snapshot will cover and which
    * files its shapes name (10.9), so that pruning is held back for it from now on. Returns false when the frontier
-   * cannot be declared (a head without its hash yet, the hub refused): then no snapshot is written.
+   * cannot be declared (a head without its hash yet, a frontier behind what the hub already pruned: `replay`): then no
+   * snapshot is written.
    * `frontier` in the model's ids (`{ <writer hex>: [seq, hash hex] }`), `shapes` the snapshot's (wire form).
    */
   async declareBoardFrontier(timeline_id: string, frontier: Record<string, [number, string | null]>, shapes: readonly Record<string, unknown>[]): Promise<boolean> {
     this.needHuman()
     const wire = frontierWire(frontier)
     if (!wire) return false
-    await this.hub.postBoardFrontier(boardOf(timeline_id), wire, snapshotFiles(shapes))
+    try { await this.hub.postBoardFrontier(boardOf(timeline_id), wire, snapshotFiles(shapes)) }
+    catch (e) {
+      // (`replay`: the board has items pruned beyond this frontier; a later capture, after the newest snapshot, covers them)
+      if ((e as { code?: string }).code === 'replay') return false
+      throw e
+    }
     return true
   }
 

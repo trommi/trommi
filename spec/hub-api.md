@@ -465,7 +465,8 @@ encrypted.
     a device of the room, a number lies beyond what the hub holds of that writer in the room group, a hash is
     not that envelope's, or `snapshot` is not a register value of the posting device the hub took; with
     `removed-sender` when a number lies beyond a removed writer's Cut; with `replay` when `snapshot` is not the
-    newest value of its register or older than the one the device's post is bound to; with `too-large` beyond
+    newest value of its register or older than the one the device's post is bound to, and when the frontier
+    leaves out an item of the board that is already pruned; with `too-large` beyond
     20 000 files or 1 000 writers. A ninth open declaration of one device and board folds the eight into one
     (per writer the smallest number, all their files).
     Declarations only hold pruning back, one row each until the bound post with the same frontier answers it or

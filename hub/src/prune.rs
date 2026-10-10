@@ -408,6 +408,43 @@ fn fold_declarations(
     Ok(())
 }
 
+/// A snapshot whose frontier leaves out an item of the board that is already pruned could never be loaded: the
+/// item after its frontier has no body. Such a frontier is `replay` (the device loads the newest snapshot and the
+/// tail, and captures again).
+fn behind_nothing_pruned(
+    c: &Connection,
+    room: &Room,
+    board: &[u8; 16],
+    frontier: &Frontier,
+) -> Res<()> {
+    let group: &[u8] = &room[..];
+    let pruned: Vec<(Vec<u8>, i64)> = {
+        let mut s = c.prepare_cached(
+            "SELECT sender, max(seq) FROM envelopes WHERE room_id = ?1 AND timeline = ?2 AND group_id = ?3
+               AND body IS NULL AND cut = 0 AND void_code IS NULL GROUP BY sender",
+        )?;
+        let rows = s
+            .query_map(params![&room[..], board_key(board), group], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (sender, seq) in pruned {
+        let covered = frontier
+            .iter()
+            .find(|(w, _)| w[..] == sender[..])
+            .map_or(0, |(_, s)| *s as i64);
+        if covered < seq {
+            return Err(refuse(
+                "replay",
+                "a frontier behind an item of the board that is already pruned",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `POST /v1/boards/{board}/frontier` (10.9), in two steps around a snapshot register value of `board`:
 ///
 /// - `{ frontier, files }` before the register is written: a declaration, one row per declared frontier (at most
@@ -433,6 +470,7 @@ pub fn post_frontier(
     let room = auth.room;
     let group: &[u8] = &room[..];
     let frontier = frontier_of(c, &room, body)?;
+    behind_nothing_pruned(c, &room, board, &frontier)?;
     let files = files_of(body)?;
     let encoded = encode_frontier(&frontier);
     let stored = || -> Res<Option<(Option<i64>, Option<Vec<u8>>)>> {

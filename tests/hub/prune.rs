@@ -299,18 +299,25 @@ fn a_board_is_pruned_behind_the_smallest_frontier_of_the_human_devices() {
     fetch(hub, &bea, &erased_pic).refused(404, "not-found");
     fetch(hub, &bea, &kept_pic).ok();
 
-    // bea's snapshot covers a1 and b2: per writer the smaller counts, nothing more goes
+    // a snapshot that leaves out an item already pruned (a2) could not be loaded: its declaration is `replay`
+    bea.post(
+        hub,
+        &path,
+        &frontier_post(&[(&ada, a1), (&bea_id, b2)], &[kept_pic]),
+    )
+    .refused(409, "replay");
+    // bea's snapshot covers a2 and b2: per writer the smaller counts, nothing more goes
     let r = write_snapshot(
         hub,
         &mut bea,
         &room,
         &board,
         &bea_reg,
-        &[(&ada, a1), (&bea_id, b2)],
+        &[(&ada, a2), (&bea_id, b2)],
         &[kept_pic],
     );
     assert_eq!(r["pruned"], 0);
-    // ada's next snapshot covers everything: bea's b2 goes (both cover it), ada's a3 stays (bea's covers a1 only)
+    // ada's next snapshot covers everything: bea's b2 goes (both cover it), ada's a3 stays (bea's covers a2 only)
     let r = write_snapshot(
         hub,
         &mut w.ada,
