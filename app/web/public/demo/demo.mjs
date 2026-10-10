@@ -247,7 +247,6 @@ export class MockClient {
   }
   // Storage use, handing a session to an agent: shaped like the core, nothing behind them.
   async usage() { return { bytes: 48_300_000, limit_bytes: 1_000_000_000 } }
-  async assignSession() {}
   async removeDevices(ids) {
     this.changed(c => {
       const entry = ++this.entries
