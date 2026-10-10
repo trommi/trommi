@@ -22,6 +22,27 @@ fn a_removed_device_fetches_the_commits_that_removed_it_and_nothing_else() {
     agent
         .send(&w.hub, &group, &chat(&session, agent.id(), "at work"))
         .ok();
+    let (step_epoch, step) = (
+        bea.epoch(&group),
+        bea.application_message(&group, b"a step"),
+    );
+    bea.post(
+        &w.hub,
+        &format!("/v2/groups/{}/messages", b64(&group)),
+        &json!({ "epoch": step_epoch, "message": b64(&step) }),
+    )
+    .ok();
+    // (a message lies in the session's log between its Commits: the proof holds Commits only, from any cursor)
+    let mixed = bea
+        .get(&w.hub, &format!("/v2/groups/{}/log", b64(&group)))
+        .ok();
+    let message_n = mixed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "message")
+        .map(|i| i["n"].as_i64().unwrap())
+        .expect("a message in the log");
     let removal = |dev: &Dev, hub: &TestHub, g: &[u8], after: i64| {
         dev.get(hub, &format!("/v2/groups/{}/removal?after={after}", b64(g)))
     };
@@ -139,6 +160,10 @@ fn a_removed_device_fetches_the_commits_that_removed_it_and_nothing_else() {
             unb64(items.last().unwrap()["bytes"].as_str().unwrap()).unwrap(),
             session_commit
         );
+        let rest = removal(agent, hub, &group, message_n).ok();
+        let rest_items = rest["items"].as_array().unwrap();
+        assert!(!rest_items.is_empty() && rest_items.iter().all(|item| item["kind"] == "commit" && item["n"].as_i64().unwrap() > message_n));
+        assert_eq!(rest_items.last().unwrap()["n"], answer["removed_at"]);
         assert!(items.iter().all(|item| item["kind"] == "commit"));
     };
     shown(&agent);
