@@ -456,8 +456,9 @@ impl<S: Storage> Device<S> {
     ///
     /// The walk is held in memory only and is no state of the device: nothing of it is written, and
     /// nothing the device answers reads it, before the finish has compared it with the device's own state.
-    /// A device that is opened again holds no walk: the caller starts again. A second start for a group
-    /// replaces the first.
+    /// A device that is opened again holds no walk: the caller starts again. The device holds one walk at
+    /// a time: a start replaces the walk held, of whatever group, and a slice or finish for another group
+    /// then finds none.
     ///
     /// Nothing to learn is no error: the progress then stands at its end and no walk is held. `bad-group`
     /// for a GroupInfo that is not the group's founding. `room-behind`: learn the room group's past first.
@@ -469,7 +470,7 @@ impl<S: Storage> Device<S> {
         founding: &[u8],
     ) -> Result<LearnProgress, Error> {
         self.owner()?;
-        self.walks.remove(group);
+        self.walks.clear();
         let room_id = self.memory.record.room.ok_or(Error::NoRoom)?;
         if group.room_id() != room_id {
             return Err(Error::WrongRoom);
@@ -616,6 +617,12 @@ impl<S: Storage> Device<S> {
             && self.origin(group)?.as_ref() == Some(&walk.origin);
         if !arrived {
             return Err(Error::BadGroup);
+        }
+        // 4.6, 5.2.1: a session Commit was judged at the room epoch its place named when its slice came;
+        // the device's own log may tell otherwise by now.
+        if walk.reading == Reading::Rules && walk.session.is_some() {
+            walk.walked
+                .still_placed(&|change| self.room_epoch_at(change))?;
         }
         match walk.reading {
             Reading::Rules => self.transact(|this, batch| {
@@ -854,8 +861,10 @@ impl<S: Storage> Device<S> {
             }
         }
         if member {
-            self.record_past(batch, group, past)?;
-            self.correct_first_epoch(batch, group, origin.epoch, arrived)?;
+            // The main sessions as the walk judged the Commits against them, archived ones included.
+            let sessions = self.past_sessions()?;
+            self.record_past(batch, group, past, &sessions)?;
+            self.correct_first_epoch(batch, group, origin.epoch, arrived, &sessions)?;
             // The Commit that led to the device's first epoch is the group's last one until the device
             // processes another.
             let stands_there = self.is_leaf_of(group)
@@ -910,23 +919,35 @@ impl<S: Storage> Device<S> {
 
     /// The record of one epoch as this device keeps it, from what a walk found: the leaves with the roles
     /// the Commit that began the epoch was judged with, and the seat.
-    fn facts_of(&self, group: &GroupId, epoch: &WalkedEpoch) -> Result<EpochFacts, Error> {
+    fn facts_of(
+        &self,
+        group: &GroupId,
+        epoch: &WalkedEpoch,
+        sessions: &dyn SessionsAt,
+    ) -> Result<EpochFacts, Error> {
         let leaves: Vec<(LeafNodeIndex, DeviceId)> = epoch
             .leaves
             .iter()
             .zip(0u32..)
             .map(|(device, index)| (LeafNodeIndex::new(index), *device))
             .collect();
-        self.roles(group, &leaves, epoch.room_epoch, Some(epoch.change))
+        self.roles(
+            group,
+            &leaves,
+            epoch.room_epoch,
+            Some((epoch.change, sessions)),
+        )
     }
 
     /// Records the epochs `past` of `group`, all of which ended, as learned, and ends the chains their
-    /// Commits cut. The room's roles and the sessions' seats of that time are in memory already.
+    /// Commits cut. The room's roles of that time are in memory already; `sessions` are the ones the walk
+    /// judged the Commits against.
     pub(super) fn record_past(
         &mut self,
         batch: &mut Batch,
         group: &GroupId,
         past: &[WalkedEpoch],
+        sessions: &dyn SessionsAt,
     ) -> Result<(), Error> {
         let mut cuts: Vec<(Cut, u64)> = Vec::new();
         for (number, epoch) in (0u64..).zip(past) {
@@ -934,7 +955,7 @@ impl<S: Storage> Device<S> {
                 .end
                 .as_ref()
                 .ok_or(Error::Internal("a past epoch without its end"))?;
-            let mut facts = self.facts_of(group, epoch)?;
+            let mut facts = self.facts_of(group, epoch, sessions)?;
             facts.learned = true;
             // The device did not process this Commit when it came: no clock of its own stands for it.
             facts.end = Some(EpochEnd {
@@ -947,15 +968,19 @@ impl<S: Storage> Device<S> {
                 codec::encode(&facts)?,
             );
             let began = number.saturating_add(1);
-            for cut in &end.cuts {
-                // The first Cut of a device stands (9.0.10).
-                if !cuts.iter().any(|(held, _)| held.device == cut.device) {
-                    cuts.push((*cut, began));
-                }
-            }
+            cuts.extend(end.cuts.iter().map(|cut| (*cut, began)));
         }
-        // A Cut of the past is earlier than any this device took from a Commit it processed itself.
+        // A Cut of the past is earlier than any this device took from a Commit it processed itself. They are
+        // taken in the order of their Commits, as a device that processed them did: the Cut of a key's last
+        // removal stands for its chain, its first removal for what it owned (9.0.10, 9.2).
         for (cut, began) in cuts {
+            // A removal this device processed itself is held already, with what it did to the chain.
+            if self
+                .removal(group, &cut.device)?
+                .is_some_and(|held| held.epoch >= began)
+            {
+                continue;
+            }
             self.end_chain(batch, group, &cut, began)?;
         }
         Ok(())
@@ -970,11 +995,12 @@ impl<S: Storage> Device<S> {
         group: &GroupId,
         epoch: u64,
         arrived: &WalkedEpoch,
+        sessions: &dyn SessionsAt,
     ) -> Result<(), Error> {
         let mut own = self
             .epoch_facts(group, epoch)?
             .ok_or_else(|| damaged("an epoch record"))?;
-        let judged = self.facts_of(group, arrived)?;
+        let judged = self.facts_of(group, arrived, sessions)?;
         let devices = |facts: &EpochFacts| -> BTreeSet<DeviceId> {
             facts.leaves.iter().map(|(device, _)| *device).collect()
         };
@@ -1015,15 +1041,27 @@ impl<S: Storage> Device<S> {
                 cuts: Vec::new(),
             });
         }
+        let join = u64::try_from(past.len()).map_err(|_| Error::Internal("epoch"))?;
         let mut origin = self
             .origin(group)?
             .ok_or_else(|| damaged("a group's origin"))?;
-        if u64::try_from(past.len()).ok() != Some(origin.epoch) {
+        if origin.epoch < join {
+            // A device that was removed from the group joins it again (5.2.7): its knowledge begins anew
+            // at the join, and the walk is the group's whole past before it, the epochs it held then
+            // included.
+            self.put_origin(batch, group, join)?;
+            origin = self
+                .origin(group)?
+                .ok_or_else(|| damaged("a group's origin"))?;
+        }
+        if origin.epoch != join {
             return Err(Error::Internal(
                 "a walk that does not end where the join begins",
             ));
         }
-        self.record_past(batch, group, &past)?;
+        // The sessions as the check of the group judged its Commits (`Device::join_session_with_code`).
+        let sessions = self.known().historical();
+        self.record_past(batch, group, &past, &sessions)?;
         origin.learned = true;
         self.put_stored(batch, origin_key(group), codec::encode(&origin)?);
         Ok(())

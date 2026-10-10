@@ -360,6 +360,24 @@ fn assert_same_view(w: &World, old: &TestDevice, new: &TestDevice, group: &Group
     assert_eq!(read(new), read(old));
 }
 
+/// Reads every chain of `group` from number 1 in pruned form.
+fn read_pruned(w: &World, device: &mut TestDevice, group: &GroupId) {
+    let served = served_of(&w.hub, group);
+    assert!(served.len() > 5);
+    for stored in &served {
+        let got = device
+            .receive_envelope(
+                &stored.pruned(),
+                stored.change,
+                true,
+                stored.void_code.as_ref(),
+                now(),
+            )
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Chained, "{:?}", got.code);
+    }
+}
+
 /// Reads every chain of `group` from number 1 in pruned form, then every body out of order.
 fn read_all(w: &World, device: &mut TestDevice, group: &GroupId) {
     let served = served_of(&w.hub, group);
@@ -1007,6 +1025,20 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
     let epoch = late.group(&group).unwrap().epoch;
     assert_eq!(epoch, hub.epoch(&group).unwrap());
     assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
+    drop(late);
+    let mut late = reopen(handle.reopened()).unwrap();
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
+    // Removed and let in again with a fresh KeyPackage (3.7), it joins from the Welcome a group whose
+    // leaves all belong: the session stays closed all the same (5.2.6).
+    let package = late.key_package(now()).unwrap();
+    b.readmit_human(&group, &late.id(), &package, now())
+        .unwrap();
+    post_ok(&mut hub, &mut b);
+    assert_eq!(settle_joining(&hub, &mut late).len(), 1);
+    let epoch = late.group(&group).unwrap().epoch;
+    assert_eq!(epoch, hub.epoch(&group).unwrap());
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
+    assert_eq!(late.findings().unwrap().len(), 1);
     drop(late);
     let late = reopen(handle.reopened()).unwrap();
     assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
@@ -1874,6 +1906,21 @@ fn recover_with(
     room: &GroupId,
     served: &[(Vec<u8>, u64)],
 ) -> Result<trommi_core::recovery::Replacement, Error> {
+    let marked: Vec<(Vec<u8>, u64, Option<Error>)> = served
+        .iter()
+        .map(|(bytes, change)| (bytes.clone(), *change, None))
+        .collect();
+    recover_marked(hub, device, keys, room, &marked)
+}
+
+/// [`recover_with`], each envelope with the void marker the hub serves it with.
+fn recover_marked(
+    hub: &mut Hub,
+    device: &mut TestDevice,
+    keys: &RecoveryKeys,
+    room: &GroupId,
+    served: &[(Vec<u8>, u64, Option<Error>)],
+) -> Result<trommi_core::recovery::Replacement, Error> {
     use trommi_core::device::ServedEnvelope;
     use trommi_core::recovery::check_room;
 
@@ -1889,10 +1936,10 @@ fn recover_with(
     })?;
     let chains: Vec<ServedEnvelope<'_>> = served
         .iter()
-        .map(|(bytes, change)| ServedEnvelope {
+        .map(|(bytes, change, void_code)| ServedEnvelope {
             bytes,
             change: *change,
-            void_code: None,
+            void_code: void_code.as_ref(),
         })
         .collect();
     let built = fetched
@@ -1949,6 +1996,25 @@ fn a_recovery_reads_the_chains_in_the_hubs_order_however_they_are_handed_in() {
         recover_with(&mut hub, &mut device, &keys, &room, &twice).err(),
         Some(Error::BadFormat)
     );
+    // One envelope handed twice, once as stored and once as a void record, in either order.
+    let once = [of(writer), of(follower)].concat();
+    for void_first in [false, true] {
+        let mut marked: Vec<(Vec<u8>, u64, Option<Error>)> = once
+            .iter()
+            .map(|(bytes, change)| (bytes.clone(), *change, None))
+            .collect();
+        let mut voided = marked[0].clone();
+        voided.2 = Some(Error::TooLarge);
+        if void_first {
+            marked.insert(0, voided);
+        } else {
+            marked.push(voided);
+        }
+        assert_eq!(
+            recover_marked(&mut hub, &mut device, &keys, &room, &marked).err(),
+            Some(Error::BadFormat)
+        );
+    }
     // Device after device, the follower's chain first, and one envelope handed twice.
     let mut by_device = [of(follower), of(writer)].concat();
     by_device.push(by_device[0].clone());
@@ -2089,6 +2155,17 @@ fn a_past_is_learned_in_slices_and_counts_only_when_it_is_finished() {
         hand(&mut other, &room, slice).unwrap();
     }
     assert_eq!(other.learn_finish(&room).unwrap().epochs, from);
+
+    // The device holds one walk at a time: a start for another group replaces the walk held.
+    let (mut third, _) = newcomer(&mut w);
+    let real = fetch_group(&w.hub, &room);
+    third.learn_start(&room, &real.founding).unwrap();
+    hand(&mut third, &room, &real.commits[..3]).unwrap();
+    assert!(third.learn_start(&w.main, &real.founding).is_err());
+    assert_eq!(
+        hand(&mut third, &room, &real.commits[3..6]),
+        Err(Error::NotFound)
+    );
 }
 
 #[test]
@@ -2121,4 +2198,83 @@ fn a_walk_in_slices_closes_a_session_only_by_its_own_history() {
     }
     assert!(late.learn_finish(&side).is_ok());
     assert_open(&late, &side);
+}
+
+#[test]
+fn a_helper_sessions_past_keeps_its_opener_when_the_main_session_is_archived() {
+    let mut w = world(1);
+    let (main, side) = (w.main, w.side);
+    let (mut late, _) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    // The main session is archived between the start of the helper session's walk and its finish.
+    late.learn_start(&side, &real.founding).unwrap();
+    for slice in real.commits.chunks(4) {
+        hand(&mut late, &side, slice).unwrap();
+    }
+    late.archive(&main).unwrap();
+    assert!(late.learn_finish(&side).unwrap().epochs > 2);
+    // Every envelope of the past is read as the old device read it: the opener's too.
+    read_pruned(&w, &mut late, &side);
+    assert_same_view(&w, &w.old, &late, &side);
+
+    // The same for a device on which the main session was archived before the walk began.
+    let (mut other, _) = late_in_both(&mut w);
+    other.archive(&main).unwrap();
+    assert!(learn(&w.hub, &mut other, &side).unwrap().epochs > 2);
+    read_pruned(&w, &mut other, &side);
+    assert_same_view(&w, &w.old, &other, &side);
+}
+
+#[test]
+fn a_walk_whose_places_the_devices_own_log_contradicts_by_its_finish_is_not_taken() {
+    let (mut a, mut b, mut agent) = (new_device(), new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    publish_some(&mut hub, &mut a, 4);
+    enrol(&mut hub, &mut a, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    add_human(&mut hub, &mut a, &mut b);
+    publish_some(&mut hub, &mut b, 4);
+    // A device that signed in with the code, which joins the session with it too.
+    let keys = trommi_tests::test_keys();
+    let mut c = new_device();
+    trommi_tests::join_room(&hub, &mut c, &keys).unwrap();
+    post_ok(&mut hub, &mut c);
+    publish_some(&mut hub, &mut c, 4);
+    sync_all(&hub, &mut a);
+    let main = found_main(&mut hub, &mut a, &agent.id());
+    assert_eq!(settle_joining(&hub, &mut b).len(), 1);
+    let log_of = |hub: &Hub, device: &mut TestDevice| {
+        for item in hub.log_after(device.cursor()) {
+            let _ = trommi_tests::process(device, &item);
+        }
+    };
+    log_of(&hub, &mut c);
+    learn(&hub, &mut b, &room).unwrap();
+    let real = fetch_group(&hub, &main);
+    assert_eq!(real.commits.len(), 1);
+
+    // The session's founding Commit is served under a change number far behind the log: the room epoch
+    // it names is the newest the device knows, so the slice passes.
+    let far = moved(&real, real.commits[0].0, hub.change() + 1_000);
+    b.learn_start(&main, &far.founding).unwrap();
+    hand(&mut b, &main, &far.commits).unwrap();
+    assert_eq!(c.session_check_start(&far.founding), Ok(main));
+    trommi_tests::served_commits(&far.commits, |slice| c.session_check_slice(&main, slice))
+        .unwrap();
+    // Before the finish the device processes a room Commit that lies before that number: there, the
+    // room stood in a later epoch than the one the Commit names.
+    a.update(&room, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut b);
+    log_of(&hub, &mut c);
+    assert_eq!(b.learn_finish(&main), Err(Error::BadGroup));
+    assert_eq!(
+        c.join_session_checked(&keys, &main, &far.current, now()),
+        Err(Error::BadGroup)
+    );
+    assert!(c.outbox().is_empty());
+    assert!(!b.group_past(&main).unwrap().unwrap().learned);
+    assert!(b.findings().unwrap().is_empty());
+    // The history at its true place is taken.
+    assert_eq!(learn(&hub, &mut b, &main).unwrap().epochs, 1);
 }
