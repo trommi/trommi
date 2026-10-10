@@ -276,6 +276,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
                 &conn,
                 &app,
                 bearer.as_deref(),
+                lease,
                 &query,
                 http::header(&parts.headers, "last-event-id"),
             )
@@ -1322,6 +1323,7 @@ async fn stream(
     conn: &Conn,
     app: &Arc<App>,
     bearer: Option<&str>,
+    lease: Option<u64>,
     query: &[(String, String)],
     last_event_id: Option<&str>,
 ) -> Res<Answer> {
@@ -1340,9 +1342,24 @@ async fn stream(
         .or(last_event_id)
         .and_then(|v| v.parse().ok())
         .filter(|v| *v >= 0);
+    // A new stream ends the device's older ones (a browser may never close the stream of a reloaded page).
+    // An agent device's processes overlap while one restarts: there only the lease holder's stream replaces
+    // the others, a stale holder is told `lease-lost`, and a stream opened without `Trommi-Lease` (a client
+    // before this rule) takes its place beside them, as before, within the limit.
+    let replace = match (auth.who, lease) {
+        (Who::Agent, Some(given)) => {
+            let a = app.clone();
+            blocking(move || a.read(|x| crate::app::check_lease(x.c, &auth, Some(given), x.now)))
+                .await?;
+            true
+        }
+        (Who::Agent, None) => false,
+        _ => true,
+    };
     // the stream lives as long as the token it was opened with; the device resumes with a new one
     let Some((s, rx)) = app.live.open(
         auth,
+        replace,
         app.cfg.streams_per_device,
         app.cfg.stream_buffer_bytes,
         until,

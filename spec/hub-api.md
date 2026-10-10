@@ -423,7 +423,10 @@ encrypted.
 44. **One stream per device** (10 October 2026). Opening `GET /v2/stream` ends the device's older streams at once
     (their connections are cut, their places freed): a browser that never closes the old stream of a page
     reloaded under a service worker would otherwise reach the limit of v2.md section 16 and get `too-many`. A
-    device runs one stream (the web app in its leader tab); the limit of 8 is thereby never reached.
+    device runs one stream (the web app in its leader tab). An agent device's processes overlap while one
+    restarts (13.7): its stream carries `Trommi-Lease`; only the lease holder's stream replaces the others, a
+    process that no longer holds the lease is answered `lease-lost` and ends nothing, and a stream opened without
+    `Trommi-Lease` (a client before this rule) is taken beside the others within the limit of 8.
 
 ## Known limits
 
