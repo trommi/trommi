@@ -1,5 +1,5 @@
 // hub.ts: the hub's routes (spec/hub-api.md) over fetch, for a human device, the recovery key's token and a device that
-// is not a member yet (account, invite and share routes). It signs in by a signed challenge (spec/v2.md 12.3), keeps
+// is not a member yet (account, invite and share routes). It signs in by a signed challenge (spec/v1.md 12.3), keeps
 // the token and renews it, posts the outbox, pages the catch-up and reads the live stream. It keeps no state about the
 // room beyond the token, and it runs wherever fetch and streams do: a Web Worker and Node.
 //
@@ -9,7 +9,7 @@
 // answer has a size limit, and a path is only ever built from ids this module checked itself.
 //
 // Three outcomes of a request must never be confused, because the engine voids an outbox entry only on the first:
-//   refused     the hub said `{ error, message }` with a code and its status of spec/v2.md 16 → HubError, `transient` false
+//   refused     the hub said `{ error, message }` with a code and its status of spec/v1.md 16 → HubError, `transient` false
 //   not reached no answer (after one more try at once, for a request that is safe to repeat: `REPEATABLE`), a
 //               broken answer, a deadline                                 → HubError `offline`, status 0
 //   not now     5xx (`overloaded`, `internal`), `rate-limited`, `too-many` (a limit that may free up), a proxy's own
@@ -32,12 +32,12 @@ const MIB = 1 << 20
 const CAP_SMALL = MIB
 const CAP_LIST = 16 * MIB
 const CAP_DESK = 32 * MIB
-/** spec/v2.md 16: a file is at most 64 MiB. */
+/** spec/v1.md 16: a file is at most 64 MiB. */
 const CAP_FILE = 64 * MIB
 const CAP_REFUSAL = 64 << 10
 /** One event of the stream: a Commit with its RecoveryAuth in base64url stays far below the hub's stream buffer. */
 const CAP_EVENT = 4 * MIB
-/** The sizes of what travels in an answer (v2.md 16): an envelope (padded body 64 KiB, 255 file ids), an entry of a
+/** The sizes of what travels in an answer (v1.md 16): an envelope (padded body 64 KiB, 255 file ids), an entry of a
  *  group's log, a GroupInfo or a Welcome (each within the 1 MiB of a Commit), a KeyPackage, the small structs. */
 const MAX_ENVELOPE = 128 << 10
 const MAX_MLS = MIB
@@ -46,14 +46,14 @@ const MAX_SMALL_STRUCT = 1024
 /** Most a room may weigh as it is served to a device that comes with the code (`servedRoom`): every Commit of the
  *  room group and of each live session group, their GroupInfos, every SealedKey and RecoveryLink. */
 const CAP_SERVED = 256 * MIB
-/** A signature or a MAC: 64 and 32 bytes in v2.md; their exact form is the core's to check, here only that they are small. */
+/** A signature or a MAC: 64 and 32 bytes in v1.md; their exact form is the core's to check, here only that they are small. */
 const MAX_TAG = 128
 /** hub-api.md "Decided for the first hub" 32: one catch-up answer looks at most so many change numbers ahead. */
 const CHANGES_WINDOW = 20_000
-/** v2.md 12.3.1: a token is for ten minutes. */
+/** v1.md 12.3.1: a token is for ten minutes. */
 const TOKEN_MS = 600_000
 const CODE = /^[a-z0-9-]{1,40}$/
-/** The codes a hub refuses with and the status each comes with (v2.md 16; hub-api.md "Decided" 28; hub/src/error.rs).
+/** The codes a hub refuses with and the status each comes with (v1.md 16; hub-api.md "Decided" 28; hub/src/error.rs).
  *  An answer that is not one of these with its own status is not taken for the hub's refusal. */
 const STATUS_OF: Record<string, number> = Object.fromEntries(Object.entries({
   400: 'bad-format newer-version bad-commit bad-signature bad-invite bad-key-package wrong-room incomplete chain-break bad-email bad-passkey',
@@ -88,14 +88,14 @@ const REPEATABLE = [
 ]
 const QUERY_VALUE = /^[A-Za-z0-9_.-]{0,512}$/
 
-/** A request that did not end in the answer the protocol promises. `code` is the hub's (v2.md 16) or one of this
+/** A request that did not end in the answer the protocol promises. `code` is the hub's (v1.md 16) or one of this
  *  module's: `offline` (not reached, status 0), `bad-answer` (reached, but the answer is not the protocol's),
  *  `http-<status>` (a status without a refusal this protocol knows: a proxy). `message` is this module's own text:
  *  what the hub wrote is in `hub_message`, which is not printed with the error (a hub could echo a secret there). */
 export class HubError extends Error {
   code: string
   status: number
-  /** The hub stored a void record for the envelope: its number is used up (v2.md 9.0.11). */
+  /** The hub stored a void record for the envelope: its number is used up (v1.md 9.0.11). */
   voided: boolean
   /** Seconds the hub asks to wait (`retry-after`), or null. */
   retry_after: number | null
@@ -156,7 +156,7 @@ export interface GroupRow {
   group: Uint8Array; kind: 'room' | 'main' | 'helper'; session_id: Uint8Array | null; parent: Uint8Array | null
   epoch: number; room_epoch: number; live: boolean; stale: boolean; leaves: Uint8Array[]
 }
-/** An open object of the Desk: `state` 1 open, 2 answered, 3 closed; `urgency` 0 to 3 (v2.md 9). */
+/** An open object of the Desk: `state` 1 open, 2 answered, 3 closed; `urgency` 0 to 3 (v1.md 9). */
 export interface DeskObject {
   object_id: Uint8Array; group: Uint8Array; state: number; urgency: number; answered_at: number; owner: Uint8Array
   first_change: number; head_change: number; version: EnvelopeItem | null
@@ -183,7 +183,7 @@ export interface CommitParts {
 /** The key derivation record: the hub stores and returns exactly the pinned one, as a JSON object. */
 export type Kdf = Record<string, string | number>
 export interface PasskeyRegistration { attestation_object: Uint8Array; client_data_json: Uint8Array; sealed_copy: Uint8Array; transports?: string[] }
-/** Which salt an Emergency Kit's keys have (v2.md 8.8.2). It follows from the account alone: its e-mail where it
+/** Which salt an Emergency Kit's keys have (v1.md 8.8.2). It follows from the account alone: its e-mail where it
  *  has one, else its id. The hub cannot check a kit; `kit_form` in its answers says which the account's kit has. */
 export type KitForm = 'email' | 'id'
 /** A kit's part of a body: its login key and the code sealed under its wrap key. */
@@ -197,7 +197,7 @@ export interface NewAccount {
   password?: { auth_key: Uint8Array; sealed_copy: Uint8Array; kdf: Kdf }
   passkey?: PasskeyRegistration
 }
-/** The account's new sealed copies that come with new recovery keys (v2.md 8.6, 8.7): a new kit and ONE way in;
+/** The account's new sealed copies that come with new recovery keys (v1.md 8.6, 8.7): a new kit and ONE way in;
  *  the hub removes every other. Either the way in used just now, with a new copy under it (`password: { sealed_copy }`,
  *  the login key stays; `passkey: { credential_id, sealed_copy }`), or one set anew, after a recovery with the kit's
  *  words or the bare code: a password with its login key and `kdf`, or a passkey registered as in sign-up (its
@@ -662,7 +662,7 @@ export class Hub {
     this.fetch = opts.fetch ?? ((input, init) => globalThis.fetch(input, init))
   }
 
-  // ---- signing in (v2.md 12.3)
+  // ---- signing in (v1.md 12.3)
 
   /** Token by signed challenge (12.3); kept and renewed before it runs out, and once after a 401. A Hub signs in to
    *  one room: called again it takes a new signer for the same room (the device was opened anew), never another room. */
@@ -1387,7 +1387,7 @@ export class Hub {
     return close
   }
 
-  // ---- files and Share links (v2.md 11)
+  // ---- files and Share links (v1.md 11)
 
   private async upload(path: string, data: Uint8Array | Blob, opts: Transfer, streamed: boolean): Promise<unknown> {
     const size = data instanceof Uint8Array ? data.length : data.size
@@ -1512,7 +1512,7 @@ export class Hub {
     return this.download(`/v2/shares/${own(share_id, 'share_id', 16)}`, { auth: false, headers: { 'x-share-secret': enc(secret) } }, opts)
   }
 
-  // ---- invites (v2.md 12.1): the three signed messages, by invite id
+  // ---- invites (v1.md 12.1): the three signed messages, by invite id
 
   /** `GET /v2/invites/{invite_id}`: the Offer; a human device of its room (signed in) also gets the Requests. */
   async getInvite(invite_id: Uint8Array): Promise<{ offer: Uint8Array; signature: Uint8Array; mac: Uint8Array; expires_at: number; requests: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }[] | null }> {
@@ -1612,7 +1612,7 @@ export class Hub {
     if (obj(await this.call('DELETE', `/v2/account/passkeys/${enc(credential_id)}`, { auth: true }), 'a deletion').deleted !== true) bad('deleted')
   }
 
-  // ---- push (v2.md 15), human devices
+  // ---- push (v1.md 15), human devices
 
   /** `POST /v2/push`: registers this device for Web Push or APNs at a level. */
   async pushRegister(r: PushRegistration): Promise<void> {

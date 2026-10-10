@@ -1,6 +1,6 @@
 // model.ts: the builder of the board model (core/README.md "The model" is the contract with the views; the shapes
 // are types.ts). No crypto, no I/O, no rules of its own: under protocol v2 the signature, the sender's chain, who may
-// write what, an object's state (spec/v2.md 9.2.1), which register value is the current one (9.3.2) and the command
+// write what, an object's state (spec/v1.md 9.2.1), which register value is the current one (9.3.2) and the command
 // gate are the Rust core's. This file PROJECTS what the core accepted into the one model the views read, and marks
 // in a `change` what it touched. The engine calls it in the hub's order:
 //

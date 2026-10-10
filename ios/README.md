@@ -1,7 +1,7 @@
 # Trommi for iOS
 
 A native iOS app in Swift and SwiftUI, no web view for the board: the same board as app.trommi.com, verified and
-decrypted on the phone. The protocol ([`spec/v2.md`](../spec/v2.md)) is not written a second time in Swift: the app
+decrypted on the phone. The protocol ([`spec/v1.md`](../spec/v1.md)) is not written a second time in Swift: the app
 links [`trommi-core`](../core/README.md) (Rust, OpenMLS) as a static library and talks to it through one Swift
 protocol. It is built, signed and shipped from Linux; no Mac is needed.
 
@@ -254,7 +254,7 @@ When the code starts or stops using one of these, change the manifest with it. T
 
 ## Account
 
-`Account.swift` speaks the account routes of the hub (`spec/hub-api.md` "The account", `spec/v2.md` 8.8). Every key
+`Account.swift` speaks the account routes of the hub (`spec/hub-api.md` "The account", `spec/v1.md` 8.8). Every key
 and every sealed copy is the core's; the client names routes and moves bytes.
 
 **How an account is named.** Every account has an account id, a UUID the hub mints; it is public and printed on the

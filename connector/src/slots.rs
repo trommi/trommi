@@ -533,7 +533,7 @@ pub fn slot_order(
 }
 /// Put a slot's key and everything stored with it aside: `replaced-<time>-<name>` in the same directory.
 /// Takes a slot's files out of the way: the state and the key marker are deleted (a device that is out keeps
-/// nothing of its session, spec/v2.md 13.5), what else belongs to the slot is renamed `replaced-<time>-…`.
+/// nothing of its session, spec/v1.md 13.5), what else belongs to the slot is renamed `replaced-<time>-…`.
 pub fn set_slot_aside(p: &SlotPaths, stamp: Option<String>) -> PathBuf {
     let stamp = stamp.unwrap_or_else(compact_stamp);
     let name = p

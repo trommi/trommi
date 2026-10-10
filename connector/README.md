@@ -1,7 +1,7 @@
 # trommi-connector
 
 The Trommi connector: one static binary through which a Claude Code session talks to the human's board. It is an
-**agent device** of a room on protocol v2 ([`spec/v2.md`](../spec/v2.md)): every key, every check and every byte on
+**agent device** of a room on protocol v2 ([`spec/v1.md`](../spec/v1.md)): every key, every check and every byte on
 the wire comes from [`trommi-core`](../core); nothing of the first protocol is in it.
 
 ```

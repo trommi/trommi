@@ -1,6 +1,6 @@
 // hub.mjs: a FAKE hub for tests, in this process, on Node's http. TEST ONLY: never shipped, never a hub.
 //
-// It follows spec/hub-api.md as the real hub (hub/src/*.rs) has it: the routes, the statuses of spec/v2.md section
+// It follows spec/hub-api.md as the real hub (hub/src/*.rs) has it: the routes, the statuses of spec/v1.md section
 // 16, the JSON shapes, the room's one `change` counter, each group's ordered log, envelopes filed by their header,
 // the Desk, pages, catch-up, the live stream as real server-sent events with resume by `after`, files with `Range`,
 // invites, shares, KeyPackages (single use, then the last-resort one), sealed keys, requests, the account, a recovery.
@@ -9,7 +9,7 @@
 // What it does NOT check, at all: cryptography. No signature (it takes any, on a sign-in, an Offer, a Reveal, a
 // passkey), no MLS (a Commit is accepted when it names the group's current epoch; who it adds or removes is what
 // `readers.commit` says), no GroupInfo or KeyPackage validation, no SealedKey or RecoveryLink parsing, no MAC, no
-// slow hash (a login key is compared as it is), no envelope rule of v2.md 9 beyond the sender's chain numbers, no
+// slow hash (a login key is compared as it is), no envelope rule of v1.md 9 beyond the sender's chain numbers, no
 // rate limit, no quota, no retention. It is no evidence that a client is safe against a hub; it is a stage for the
 // client's own logic.
 // What it also leaves out of the real hub's behaviour: who may see what below "a human device sees all, another
@@ -364,7 +364,7 @@ export async function startFakeHub(opts = {}) {
     const id = parseId(text)
     return id ? state.accounts.get(idText(id)) : undefined
   }
-  /** The kit's form follows from the account alone (v2.md 8.8.2): its e-mail where it has one, else its id. */
+  /** The kit's form follows from the account alone (v1.md 8.8.2): its e-mail where it has one, else its id. */
   const kitForm = (_kit, has_email) => (has_email ? 'email' : 'id')
   const needsEmail = account => { if (account.email === null) throw refuse('bad-email', 'a password signs in under an e-mail: this account has none') }
   function passkeyChallenge(scope) {

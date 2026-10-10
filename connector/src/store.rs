@@ -1,4 +1,4 @@
-//! The connector's state on disk (spec/v2.md 13.1 to 13.4): one directory per installation, room, folder and slot,
+//! The connector's state on disk (spec/v1.md 13.1 to 13.4): one directory per installation, room, folder and slot,
 //! mode 0700, files mode 0600, one process at a time.
 //!
 //! ```text

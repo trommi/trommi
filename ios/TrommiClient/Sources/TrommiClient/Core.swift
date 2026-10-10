@@ -21,10 +21,10 @@ public typealias BoardId = Bytes     // 16
 public typealias FileId = Bytes      // 16
 public typealias Hash32 = Bytes      // 32
 
-/** The board of "All desks" (spec/v2.md 10.1). */
+/** The board of "All desks" (spec/v1.md 10.1). */
 public let ALL_DESKS_BOARD: BoardId = (try? unhex("616c6c2d6465736b7300000000000009")) ?? []
 
-/** A refusal of the core: `code` is the stable code of spec/v2.md section 16 (core `Error::code()`). */
+/** A refusal of the core: `code` is the stable code of spec/v1.md section 16 (core `Error::code()`). */
 public typealias CoreError = TrommiError
 
 // ---- store (core `store`, section 13.2) ------------------------------------------------------------------
@@ -619,7 +619,7 @@ public struct PasswordKeys: Equatable {
   public init(authKey: String, wrapKey: Bytes) { self.authKey = authKey; self.wrapKey = wrapKey }
 }
 /**
- * What names an account where its Emergency Kit's keys are derived (spec/v2.md 8.8.2): its e-mail address, or, for an
+ * What names an account where its Emergency Kit's keys are derived (spec/v1.md 8.8.2): its e-mail address, or, for an
  * account without one, its account id in the canonical text. An account with an e-mail is always named by the e-mail
  * here, although its kit shows its id as well: the two give unrelated keys.
  */

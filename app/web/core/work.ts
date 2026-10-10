@@ -1,4 +1,4 @@
-// work.ts: a turn's work trail as a client shows it (spec/v2.md 7.3).
+// work.ts: a turn's work trail as a client shows it (spec/v1.md 7.3).
 //
 // While an agent works, its connector sends what it does between the human's prompt and the final answer as MLS
 // application messages in the session's group: one message per step, `{ text, tool? }`, numbered from 1 within the

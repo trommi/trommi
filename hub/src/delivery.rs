@@ -1,4 +1,4 @@
-//! The MLS delivery service (spec/v2.md sections 5, 8 and 14): founding, one Commit per group and epoch, Welcomes,
+//! The MLS delivery service (spec/v1.md sections 5, 8 and 14): founding, one Commit per group and epoch, Welcomes,
 //! GroupInfo, key packages, sealed keys, application messages, one order across the groups of a room. Every
 //! function here runs inside one database transaction that the caller opened; what must happen after it is
 //! collected in `Effects`.

@@ -1,4 +1,4 @@
-//! Recovery and signing in with the code (spec/v2.md section 8) against the real hub: the join from outside with
+//! Recovery and signing in with the code (spec/v1.md section 8) against the real hub: the join from outside with
 //! its RecoveryAuth, a recovery as a transaction of its own, replacing the code.
 
 mod common;

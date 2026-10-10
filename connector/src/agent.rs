@@ -1,6 +1,6 @@
 //! What an agent writes: Chat messages, cards and their versions, registers (profile, status lines, `heard`),
 //! permission requests, Artifacts with their files and Share links, the work trail, and helper sessions, which
-//! it founds and keeps itself (spec/v2.md 5.2.5, 5.3.5). Every write is an envelope sealed by the vault, or a
+//! it founds and keeps itself (spec/v1.md 5.2.5, 5.3.5). Every write is an envelope sealed by the vault, or a
 //! request of the core's device; this file only says what goes into it.
 use crate::client::{Client, Core, SentInfo, Spec};
 use crate::error::{Fault, Result};

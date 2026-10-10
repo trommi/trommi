@@ -90,7 +90,7 @@ pub fn generate() -> Result<Value, Error> {
         ("a byte of the HubAuth missing", &cut, room, &hub, ISSUED_AT),
     ];
     Ok(json!({
-        "about": "Signing in to the hub (spec/v2.md section 12.3): HubAuth = room_id, hub<V>, device, challenge, and SignWithLabel(device's key, \"TrommiHubAuth\", HubAuth). The hub handed the challenge out at issued_at, good until expires_at. cases: what the hub answers when the sign-in (auth, signature) is posted for room_id to the hub of that address at now: 'signed in: <device>' or the code, by the order of its checks.",
+        "about": "Signing in to the hub (spec/v1.md section 12.3): HubAuth = room_id, hub<V>, device, challenge, and SignWithLabel(device's key, \"TrommiHubAuth\", HubAuth). The hub handed the challenge out at issued_at, good until expires_at. cases: what the hub answers when the sign-in (auth, signature) is posted for room_id to the hub of that address at now: 'signed in: <device>' or the code, by the order of its checks.",
         "seed": hex(key.seed().expose()),
         "device": hex(device.as_bytes()),
         "room_id": hex(room.as_bytes()),

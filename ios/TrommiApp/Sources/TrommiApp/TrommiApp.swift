@@ -458,7 +458,7 @@ final class BoardModel: ObservableObject {
   }
 
   /**
-   * Every device is lost (spec/v2.md 8.7; he confirmed it on the reset screen): the Emergency Kit's words open the
+   * Every device is lost (spec/v1.md 8.7; he confirmed it on the reset screen): the Emergency Kit's words open the
    * account, this device removes every other device of his and sets the new password (or, for an account without
    * an email, a new passkey), and a new Emergency Kit is made. Its page comes next and stays until "Open Trommi",
    * as after "Create account" (the mark, as there, covers the moment before the register `kit` is out).
