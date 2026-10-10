@@ -39,6 +39,9 @@ public struct RoomRecord: Codable {
 /** `beforeJoining`: envelopes of an epoch before this device came into their group, which it cannot take until it learned that group's past (RoomPast.swift): passed over. */
 public struct SyncReport { public var envelopes = 0, opened = 0, headerOnly = 0, undecryptable = 0, voids = 0, refused = 0, beforeJoining = 0; public var warnings: [String] = [] }
 
+/** A mark set from the core's queue and read after it. */
+final class Flag: @unchecked Sendable { var on = false }
+
 /** The hub said this app is too old to be served. */
 public struct UpgradeNotice: Equatable { public var minimumVersion: String?; public var message: String }
 
@@ -178,6 +181,16 @@ public final class Room {
   var ownEchoes: [String: String] = [:]
   /** What the hub said to an envelope this device sealed, by outbox id. */
   var outcome: [UInt64: Result<Void, HubError>] = [:]
+  /** Own Commits (outbox ids) the core dropped because another device's Commit took their epoch. */
+  var supersededIds = Set<UInt64>()
+  /**
+   * The core dropped an own Commit of this device: another device's took the epoch first (`superseded`). What it
+   * was for did not happen: its caller is told so, whatever the hub answered (its answer may come later).
+   */
+  func lostToAnother(_ id: UInt64) {
+    supersededIds.insert(id)
+    outcome[id] = .failure(HubError(status: 409, code: "epoch-taken", message: "another device changed the group first: this change was not made"))
+  }
   var pumping = false
   /** The changes are being read again from the start (RoomPast.swift): an envelope below the core's cursor is handed in as the next of its chain. */
   var readingBack = false
@@ -574,7 +587,9 @@ public final class Room {
   enum Outcome {
     case processed(Processed)
     /** `heads`: for a `heads` register of another device, how its heads compare with this device's chains. */
-    case envelope(ReceivedEnvelope, heads: [(sender: DeviceId, standing: HeadStanding)])
+    /** `winner`: for a register write the core did not make current, the core's current value of its name (nil
+     *  inside: none, or deleted); nil for anything else. */
+    case envelope(ReceivedEnvelope, heads: [(sender: DeviceId, standing: HeadStanding)], winner: Bytes?? = nil)
     case refused(change: UInt64, code: String)
     /** The run ends before this item; the cursor stays in front of it. */
     case stopped(code: String)
@@ -588,9 +603,18 @@ public final class Room {
   func process(_ parsed: [Item], report: inout SyncReport, change: inout Change) async throws {
     guard !parsed.isEmpty else { return }
     let readingBack = self.readingBack
+    let cutDropped = Flag()
     let (outcomes, coreAt, findings): ([Outcome], UInt64, [ChainFinding]) = try await onCore { device in
       var out = [Outcome]()
       var commits = false
+      /// Per leaf of a group, the last envelope the core accepted of it: asked before and after a Commit, a number
+      /// that went down says the core dropped what lay beyond a removed device's Cut (9.0.10).
+      func heads(_ group: GroupId) -> [DeviceId: UInt64] {
+        guard let held = (try? device.groups())?.first(where: { $0.group == group }) else { return [:] }
+        var out = [DeviceId: UInt64]()
+        for leaf in held.leaves { if let cut = try? device.cutOf(group: group, device: leaf) { out[leaf] = cut.seq } }
+        return out
+      }
       /// The findings the core made while it processed Commits (a Cut that names another envelope than the one
       /// accepted): taken once, then cleared there.
       func done() -> ([Outcome], UInt64, [ChainFinding]) {
@@ -606,7 +630,12 @@ public final class Room {
           switch item {
           case .log(_, let entry):
             if entry.change <= before { out.append(.processed(.skipped)); continue }
+            let isCommit: Bool = { if case .commit = entry.kind { return true }; return false }()
+            let had = isCommit ? heads(entry.group) : [:]
             let p = try device.processLogEntry(entry)
+            for (leaf, seq) in had where seq > 0 {
+              if let now = try? device.cutOf(group: entry.group, device: leaf), now.seq < seq { cutDropped.on = true }
+            }
             if case .message = p {} else { commits = true }
             out.append(.processed(p))
           case .envelope(let c, let bytes, let void):
@@ -620,7 +649,9 @@ public final class Room {
             if e.outcome == .applied, e.register?.name == "heads", e.header.sender != device.id {
               heads = (try? device.compareHeads(group: e.header.group, writer: e.header.sender)) ?? []
             }
-            out.append(.envelope(e, heads: heads))
+            var winner: Bytes?? = nil
+            if e.outcome == .applied, let r = e.register, !r.current, r.of == nil { winner = .some(try? device.register(group: e.header.group, name: r.name)) }
+            out.append(.envelope(e, heads: heads, winner: winner))
           }
         } catch {
           // A local failure is not the item's fault: stop here, nothing after it is processed out of order.
@@ -642,6 +673,9 @@ public final class Room {
       return done()
     }
     coreCursor = coreAt
+    // (the core dropped what a removed device had signed beyond its Cut: what was shown of it goes, the board and
+    // its cache are built again from the hub's changes, which the core now judges without it: RoomPast.swift)
+    if cutDropped.on && !readingBack { notePast { $0.readBack = true }; pastDue = true }
     for f in findings { board.pushAlert(&change, code: f.code, message: "a removal names another last item of a device than the one this device holds", sender: hex(f.sender)) }
     // The groups are read again from the core after a Commit and before the next item is shown: an envelope right
     // behind the Commit that founded its session must find that session on the board.
@@ -655,19 +689,23 @@ public final class Room {
       switch o {
       case .processed(let p):
         switch p {
-        case .commit(let group, _, _, let removed):
+        case .commit(let group, _, let superseded, let removed):
           groupsStale = true
+          if let id = superseded { lostToAnother(id) }
           if removed && group == roomId { markRemoved(&change) }
           else if removed { board.pushAlert(&change, code: "removed", message: "this device was removed from a group") }
-        case .ownCommit, .observed, .joinSuperseded: groupsStale = true
+        case .joinSuperseded(_, _, let superseded):
+          groupsStale = true
+          if let id = superseded { lostToAnother(id) }
+        case .ownCommit, .observed: groupsStale = true
         case .message(let m):
           try await freshGroups()
           if case .log(_, let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
         case .skipped: break
         }
-      case .envelope(let e, let heads):
+      case .envelope(let e, let heads, let winner):
         try await freshGroups()
-        apply(e, report: &report, &change)
+        apply(e, report: &report, &change, winner: winner)
         for h in heads { applyHead(h.standing, of: h.sender, group: e.header.group, saidBy: e.header.sender, &change) }
       case .refused(let c, let code):
         report.refused += 1
@@ -733,7 +771,7 @@ public final class Room {
   }
 
   /** One received envelope into the board. */
-  func apply(_ e: ReceivedEnvelope, report: inout SyncReport, _ change: inout Change) {
+  func apply(_ e: ReceivedEnvelope, report: inout SyncReport, _ change: inout Change, winner: Bytes?? = nil) {
     let n = e.change, sender = hex(e.header.sender)
     report.envelopes += 1
     if let f = e.finding { board.pushAlert(&change, code: f, message: "the hub set an item of another device aside for a reason this device cannot check", envelopeNumber: Int(n), sender: sender) }
@@ -765,6 +803,17 @@ public final class Room {
     // `heads` is the devices' own bookkeeping (9.0.7), compared in the core: nothing of it is on the board.
     if e.header.kind == .register, e.register?.name == "heads" { return }
     guard var rec = Records.record(e, senderRole: roleOf(e.header.sender)) else { report.voids += 1; return }
+    // A register write: which value is in force is the core's word (9.3.2, `RegisterChange.current`), not the
+    // board's. Made current: it is shown as it is. Not made current: the board shows the core's current value of
+    // that name instead (an own echo that lost goes with it).
+    if e.header.kind == .register, let r = e.register {
+      rec.winner = true
+      if !r.current {
+        guard r.of == nil, let w = winner, let values = rec.content?["values"].object, values.count == 1, let key = values.keys.first else { return }
+        let current: JV = w.flatMap { JV.parse($0) }.map { Records.renameFiles($0, toWire: false, depth: 0) } ?? .null
+        rec.content = rec.content?.with("values", .obj([key: current]))
+      }
+    }
     // A lamport far above every one seen is not counted (9.3.2: the core counts it as 0; so does the board).
     if rec.causal.lamport > 0, !lamportAccepted(rec.causal.lamport, lamport) {
       board.pushAlert(&change, code: "lamport-inflated", message: "a write claims a lamport far above every one seen: counted as 0", envelopeNumber: Int(n), sender: rec.senderDeviceId)
@@ -936,8 +985,16 @@ public final class Room {
           if entry.kind == .keyPackages { keyPackagesAtHub = Wire.int(r["unused"]) }
           let commits = Self.carriesCommit(entry.kind)
           do { try await onCore { try $0.outboxAccepted(entry.id, change: answer) } }
-          catch let e as TrommiError where commits && e.code == "not-found" { _ = e }   // merged from the log before the answer came
+          catch let e as TrommiError where commits && e.code == "not-found" { _ = e }   // merged from the log before the answer came, or dropped
           if commits { await readOwnChanges() }
+          // A Commit counts as done only by the log: not dropped for another device's (superseded), and merged
+          // (the group has no own Commit waiting any more); otherwise its caller is told it did not happen.
+          if commits, supersededIds.remove(entry.id) != nil { backoff = 300_000_000; unknown = 0; continue }
+          if commits, let g = entry.group, (try? await onCore({ try $0.groups() }))?.first(where: { $0.group == g })?.pending == true,
+             !((try? await onCore({ $0.outbox() })) ?? []).contains(where: { $0.group == g && Self.carriesCommit($0.kind) }) {
+            outcome[entry.id] = .failure(HubError(status: 0, code: "pending", message: "the hub took the change and the log has not shown it yet"))
+            backoff = 300_000_000; unknown = 0; continue
+          }
           outcome[entry.id] = .success(())
           backoff = 300_000_000; unknown = 0
           if entry.kind != .envelope && entry.kind != .message && entry.kind != .relayMessage { var ch = Change(); try? await refreshGroups(&ch); emit(ch) }

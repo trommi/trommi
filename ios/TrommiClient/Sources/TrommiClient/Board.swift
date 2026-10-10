@@ -64,6 +64,8 @@ public struct Rec: Codable {
   public var objectIdOk: Bool?
   public var localId: String?
   public var pending = false
+  /** A register write whose value the core named the one in force (`RegisterChange.current`): taken as it is. */
+  public var winner = false
 }
 
 // ---- the parts of the board ------------------------------------------------------------------------------
@@ -1075,7 +1077,7 @@ public final class Board {
 
   public func setHumanRegister(_ key: String, _ value: JV, _ rec: Rec, _ change: inout Change) {
     let old = human.raw[key]
-    if !rec.pending, let old = old, !old.pending, let rc = old.causal, !causallyAfter(rec.causal, rc) { return }
+    if !rec.pending, !rec.winner, let old = old, !old.pending, let rc = old.causal, !causallyAfter(rec.causal, rc) { return }
     human.raw[key] = RegisterValue(value: value, envelopeNumber: rec.envelopeNumber, senderSequence: rec.senderSequence, byDeviceId: rec.senderDeviceId, pending: rec.pending, causal: rec.causal)
     showHumanValue(key, value, &change)
   }
@@ -1110,7 +1112,7 @@ public final class Board {
 
   private func setAgentRegister(_ sid: String, _ key: String, _ value: JV, _ rec: Rec, _ change: inout Change) {
     let s = sessionOf(sid)
-    if let old = s.registers[key] {
+    if !rec.winner, let old = s.registers[key] {
       if let oc = old.causal { if !causallyAfter(rec.causal, oc) { return } }
       else if let os = old.senderSequence, rec.senderSequence <= os { return }
     }
