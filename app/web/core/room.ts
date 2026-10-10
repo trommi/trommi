@@ -174,9 +174,9 @@ export function roomsOn(env: RoomEnv): Rooms {
         while (!reveal) {
           try { reveal = await hub.getReveal(link.inviteId) } catch (e) { if (!(e instanceof HubError) || (e.code !== 'not-found' && !e.transient)) throw e; await wait() }
         }
-        tellCode(codeText(await device.joinReveal(reveal)))
+        tellCode(codeText([...(await device.joinReveal(reveal)).numbers]))
         // Let in once the person confirmed on the inviter's side: from then on the hub knows this device's key.
-        hub.useSigner(link.roomId, (address, challenge) => device.hubSignIn(link.roomId, address, challenge))
+        hub.useSigner(link.roomId, (address, challenge) => device.hubSignIn(address, challenge))
         for (;;) {
           try { await hub.signIn(); break } catch (e) {
             if (!(e instanceof HubError) || (e.code !== 'not-member' && !e.transient)) throw e
@@ -188,7 +188,7 @@ export function roomsOn(env: RoomEnv): Rooms {
         if (request.role === 'agent') {
           // an agent device follows the room group from the epoch the Offer names (12.1.6)
           const info = await hub.groupInfo(core.roomGroupId(link.roomId), request.roomEpoch)
-          await device.observeRoom(info.group_info, request.roomState)
+          await device.joinObserve(info.group_info)
         }
         const cache = await env.cache(o.storage.name)
         await cache.set('client/room', { hub_url: hub.hub_url }, { durable: true })
@@ -231,7 +231,7 @@ export function roomsOn(env: RoomEnv): Rooms {
         try { copies = accountCopiesBytes(o.account ? await o.account(plan.newCode) as AccountCopies | null : null) } finally { plan.newCode.fill(0) }
         // A removed device's chain ends at its Cut for everyone (9.0.10): the last envelope of its chain as this
         // device VERIFIED it. A device that wrote nothing is cut at nothing; a chain is verified by the core
-        // (`chainCut`, provisional: the binding refuses with `core-missing`, and so does this recovery then, since
+        // (`servedChainCut`, provisional: the binding refuses with `core-missing`, and so does this recovery then, since
         // cutting a chain unseen would take a person's notes and answers away).
         const cuts = []
         for (const removal of plan.removals) {
@@ -244,7 +244,7 @@ export function roomsOn(env: RoomEnv): Rooms {
               more = page.more && page.items.length > 0
             }
             if (chain.length && !group) throw new ClientError('bad-answer', 'the hub names a group in a recovery that it did not serve')
-            cuts.push({ group: removal.group, cut: chain.length ? await held.chainCut(group!, gone, chain) : { device: gone, seq: 0, hash: new Uint8Array(32) } })
+            cuts.push({ group: removal.group, cut: chain.length ? await held.servedChainCut(group!, gone, chain) : { device: gone, seq: 0, hash: new Uint8Array(32) } })
           }
         }
         const recovery = await hub.openRecovery()
@@ -255,9 +255,7 @@ export function roomsOn(env: RoomEnv): Rooms {
         } catch (e) { await hub.dropRecovery(recovery.recovery_id).catch(() => {}); throw e }
       } else {
         const { served } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
-        // (the sessions are joined one by one below; handed over here as well, a room with sessions is deeper than
-        // the binding's copy of an argument goes, and it refuses the call with `bad-format`)
-        await held.joinRoomWithCode(code, { ...served, sessions: [] }, Date.now())
+        await held.joinRoomWithCode(code, served, Date.now())
         await postAll(engine)
         // every live session group, main sessions first (the order the hub client serves them in)
         for (const session of served.sessions) {

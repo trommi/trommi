@@ -389,7 +389,7 @@ const QUIET: readonly unknown[] = ['replay', 'pruned', 'no-key', 'newer-version'
 
 function finding(model: Model, change: Change, r: ReceivedEnvelope, ctx: ApplyContext, what: string): ApplyResult {
   const code = r.code ?? r.outcome
-  if (!QUIET.includes(code)) pushAlert(model, change, { code, message: what, envelope_number: r.header.change, sender_device_id: hex(r.header.sender), at: ctx.now })
+  if (!QUIET.includes(code)) pushAlert(model, change, { code, message: what, envelope_number: r.change, sender_device_id: hex(r.header.sender), at: ctx.now })
   return { applied: false, refused: code }
 }
 /** A body as the model reads it, or why it is not read. */
@@ -416,7 +416,7 @@ const refHex = (id: Uint8Array | null | undefined): string | null => { const h =
  */
 export function applyEnvelope(model: Model, r: ReceivedEnvelope, change: Change, ctx: ApplyContext = { now: Date.now() }): ApplyResult {
   const h = r.header
-  const hash = hex(h.envelopeHash)
+  const hash = hex(r.envelopeHash)
   const B = builder(model)
   const local_id = B.by_hash.get(hash) ?? null
   if (r.outcome === 'refused') return finding(model, change, r, ctx, `an envelope was refused (${r.code ?? 'no reason'})`)
@@ -429,7 +429,7 @@ export function applyEnvelope(model: Model, r: ReceivedEnvelope, change: Change,
     if (local_id) rollbackEcho(model, local_id, change)
     return finding(model, change, r, ctx, `envelope #${h.seq} of this sender does not count (${r.code ?? 'no reason'})`)
   }
-  if (r.code === 'newer-version') noteNewer(model, change, 'body format', { envelope_number: h.change })
+  if (r.code === 'newer-version') noteNewer(model, change, 'body format', { envelope_number: r.change })
   if (ordered && h.sessionId) {
     const s = sessionOf(model, hex(h.sessionId))
     s.last_activity_at = Math.max(s.last_activity_at, h.time)
@@ -438,7 +438,7 @@ export function applyEnvelope(model: Model, r: ReceivedEnvelope, change: Change,
   switch (h.kind) {
     case 'item': return applyItem(model, r, change, hash, local_id, ordered)
     case 'register': return applyRegister(model, r, change, ctx, hash, local_id, ordered)
-    case 'reserved': noteNewer(model, change, 'envelope kind', { envelope_number: h.change }); return { applied: false, refused: 'needs-update' }
+    case 'reserved': noteNewer(model, change, 'envelope kind', { envelope_number: r.change }); return { applied: false, refused: 'needs-update' }
     default: return applyObject(model, r, change, ctx, hash, local_id, ordered)
   }
 }
@@ -449,23 +449,24 @@ function applyItem(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
   const h = r.header, tl = h.timeline
   if (!tl) return { applied: false }
   const board = tl.kind === 'board'
-  const key = board ? timelineKey('scribble', `desk/${hex(tl.ref)}`) : timelineKey('chat', `${tl.scope}/${hex(tl.ref)}`)
+  const onCard = tl.kind === 'cardChat'
+  const key = board ? timelineKey('scribble', `desk/${hex(tl.id)}`) : timelineKey('chat', `${onCard ? 'card' : 'session'}/${hex(tl.id)}`)
   const sender = hex(h.sender), recipient = h.recipient ? hex(h.recipient) : null
   const { content, state } = bodyOf(r, board ? 'board_item' : 'message')
   const t = timelineOf(model, key)
-  if (ordered && h.change > t.newest_envelope_number) { t.item_count++; t.newest_envelope_number = h.change }
+  if (ordered && r.change > t.newest_envelope_number) { t.item_count++; t.newest_envelope_number = r.change }
   const B = builder(model)
   const item: TimelineItem = {
-    envelope_number: h.change, local_id, pending: false, envelope_hash: hash, sender_device_id: sender, sender_sequence: h.seq, recipient_device_id: recipient, sent_at: h.time,
+    envelope_number: r.change, local_id, pending: false, envelope_hash: hash, sender_device_id: sender, sender_sequence: h.seq, recipient_device_id: recipient, sent_at: h.time,
     item_state: itemStateOf(content, state), content_type: (content?.['content_type'] as string | undefined) ?? null, content, ...(ordered ? {} : { provisional: true }),
   }
-  if (item.item_state === 'unsupported') noteNewer(model, change, `content_type ${String(content?.['content_type'])}`, { envelope_number: h.change })
+  if (item.item_state === 'unsupported') noteNewer(model, change, `content_type ${String(content?.['content_type'])}`, { envelope_number: r.change })
   // The window holds what has a body, what an opened timeline counts, and an own echo's place: replaced in place.
   // A board's window holds every item: an open board has to learn of one it cannot read (it then writes no snapshot).
-  const had = t.items.get(h.change)
+  const had = t.items.get(r.change)
   if (local_id) { t.items.delete(local_id); B.echoes.delete(local_id); B.by_hash.delete(hash) }
   if ((content || t.window_open || had || local_id || board) && !(had && !had.provisional && !ordered && had.content)) {
-    t.items.set(h.change, item)
+    t.items.set(r.change, item)
     addItem(change, key, item)
   }
   change.timelines.add(key)
@@ -476,18 +477,18 @@ function applyItem(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
     return { applied: true }
   }
   const human = isHuman(model, sender, recipient)
-  if (tl.scope === 'card') {
-    const card = model.cards.get(hex(tl.ref))
+  if (onCard) {
+    const card = model.cards.get(hex(tl.id))
     if (card) {
       // In revision until the agent's next version or a message with present_card. Only an open card goes back to its
       // agent; an own answer still in flight (echo) does not count yet: the hub may order it after this message.
       if (content?.['present_card']) card.in_revision = null
-      else if (human && content && (content['hand_back'] || content['explain']) && (card.object_state === 'open' || card.answer?.pending)) card.in_revision = { by: content['hand_back'] ? 'hand_back' : 'explain', envelope_number: h.change }
+      else if (human && content && (content['hand_back'] || content['explain']) && (card.object_state === 'open' || card.answer?.pending)) card.in_revision = { by: content['hand_back'] ? 'hand_back' : 'explain', envelope_number: r.change }
       change.cards.add(card.object_id)
       if (card.session_id) change.sessions.add(card.session_id)
     }
   } else {
-    change.sessions.add(hex(tl.ref))
+    change.sessions.add(hex(tl.id))
     // The agent's final text of a turn ends the trail of what it did.
     if (!human && content?.['terminal'] === 'answer') endTurns(model, turn => turn.timeline_key === key && turn.sender === sender, h.time, change)
   }
@@ -509,7 +510,7 @@ function applyObject(model: Model, r: ReceivedEnvelope, change: Change, ctx: App
     case 'note': return applyNote(model, r, change, hash, local_id)
     case 'request': return applyRequest(model, r, change, hash)
     case 'artifact': return applyArtifact(model, r, change, hash)
-    default: noteNewer(model, change, `object type ${String(o.objectType)}`, { envelope_number: r.header.change }); return { applied: false, refused: 'needs-update' }
+    default: noteNewer(model, change, `object type ${String(o.objectType)}`, { envelope_number: r.change }); return { applied: false, refused: 'needs-update' }
   }
 }
 /** The state the envelope leaves its object in: the core's replay, else (out of order) the header's own word. */
@@ -520,7 +521,7 @@ function newCard(object_id: string, owner: string, r: ReceivedEnvelope): Card {
   return {
     object_id, agent_device_id: owner, object_state: 'open', urgency: 'normal', card_type: 'decision', title: '', teaser: null, body: null, options: [], sections: null, html: null,
     allows_multiple: false, recommended: null, urgency_reason: null, attachments: [], change_note: null, close_summary: null, withdraw_reason: null,
-    merged_into_object_id: null, merged_from_object_ids: null, object_version: 0, version_hash: null, envelope_number: 0, first_envelope_number: h.change, created_at: h.time,
+    merged_into_object_id: null, merged_from_object_ids: null, object_version: 0, version_hash: null, envelope_number: 0, first_envelope_number: r.change, created_at: h.time,
     session_id: h.sessionId ? hex(h.sessionId) : null, updated_at: h.time, versions: [], answer: null, answers: [], closed_how: null,
     in_revision: null, timeline_key: timelineKey('chat', `card/${object_id}`), content_state: 'header', state_envelope_number: 0,
   }
@@ -546,7 +547,7 @@ const answerClosedHow = (card: Card, a: Answer): Card['closed_how'] =>
   (a.answer_action === 'read' ? 'read' : a.answer_action === 'shred' ? 'shredded' : card.object_state === 'closed' ? (a.unsupported || a['no_body'] ? 'closed' : 'settled') : 'answered')
 
 function applyCard(model: Model, r: ReceivedEnvelope, change: Change, hash: string, local_id: string | null, ordered: boolean): ApplyResult {
-  const h = r.header, o = h.object!, n = h.change
+  const h = r.header, o = h.object!, n = r.change
   const object_id = hex(o.objectId)
   let card = model.cards.get(object_id)
   const touched = () => { change.cards.add(object_id); if (card?.session_id) change.sessions.add(card.session_id); change.stack = true }
@@ -605,7 +606,7 @@ function applyCard(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
     if (local_id) rollbackEcho(model, local_id, change)
     const { content, state: content_state } = bodyOf(r, 'answer')
     const bind = r.bind?.kind === 'answer' ? r.bind : null
-    const bound = bind ? hex(bind.versionHash) : refHex(o.objectRef)
+    const bound = bind?.versionHash ? hex(bind.versionHash) : refHex(o.objectRef)
     const action = typeof content?.['answer_action'] === 'string' ? content['answer_action'] : 'answer'
     const newer = content_state === 'newer_schema' || !ANSWER_ACTIONS.includes(action)
     if (content && !ANSWER_ACTIONS.includes(action)) noteNewer(model, change, `answer_action ${action}`, { envelope_number: n })
@@ -633,7 +634,7 @@ function applyCard(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
   }
   if (h.kind === 'takeBack') {
     // The bind names the answer taken back; where only the header is left, it was the one in force before.
-    const previous = r.bind?.kind === 'takeBack' ? hex(r.bind.previousHash) : null
+    const previous = r.bind?.kind === 'takeBack' && r.bind.previousHash ? hex(r.bind.previousHash) : null
     const a = (previous ? card.answers.find(x => x.envelope_hash === previous) : card.answers.findLast(x => (x.envelope_number ?? 0) < n && x.taken_back_at == null)) ?? null
     if (a && a.taken_back_at == null) { a.taken_back_at = n; a.taken_back_sent_at = h.time }
     if (n >= card.state_envelope_number) {
@@ -656,7 +657,7 @@ function noteOf(object_id: string, r: ReceivedEnvelope, hash: string, c: Obj | n
   const kept = c ? {} : Object.fromEntries(Object.entries(old ?? {}).filter(([k]) => !['pending', 'local_id', '_base'].includes(k)))    // a version that cannot be read keeps what was shown
   return { ...kept, ...extra, object_id, by_device_id: hex(h.sender), text: (c?.['text'] as string | undefined) ?? old?.text ?? '',
     object_version: Number.isInteger(c?.['object_version']) ? c!['object_version'] : (old?.object_version ?? 0) + 1, version_hash: hash,
-    version_hashes: [...(old?.version_hashes ?? []).filter(x => x !== hash), hash], causal: causalOf(r, c), envelope_number: h.change, object_state: stateAfter(r), pending: false, unsupported: content_state === 'newer_schema' }
+    version_hashes: [...(old?.version_hashes ?? []).filter(x => x !== hash), hash], causal: causalOf(r, c), envelope_number: r.change, object_state: stateAfter(r), pending: false, unsupported: content_state === 'newer_schema' }
 }
 const causalOf = (r: ReceivedEnvelope, c: Obj | null): Causal => ({ sender_device_id: hex(r.header.sender), sender_sequence: r.header.seq, sent_at: r.header.time, lamport: typeof c?.['lamport'] === 'number' ? c['lamport'] : 0 })
 
@@ -670,7 +671,7 @@ function applyNote(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
   const { content, state } = bodyOf(r, 'note')
   // Any human device writes a version on any other; which one is current is the core's word (9.2.1, 9.3.2). Out of
   // order, a version counts where the model holds none, or an older one.
-  const current = r.objectAfter ? hex(r.objectAfter.currentVersion) === hash : !old || h.change >= (old.envelope_number ?? 0)
+  const current = r.objectAfter ? hex(r.objectAfter.current) === hash : !old || r.change >= (old.envelope_number ?? 0)
   if (local_id) { B.echoes.delete(local_id); B.by_hash.delete(hash) }
   change.notes.add(object_id)
   if (!current) {
@@ -682,7 +683,7 @@ function applyNote(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
   if (again && !content) { if (mine) model.notes.set(object_id, old); return { applied: false } }
   const note = noteOf(object_id, r, hash, content, state, old)
   if (again && !Number.isInteger(content?.['object_version'])) note.object_version = old.object_version      // the same version, now with its body
-  if (state === 'newer_schema') noteNewer(model, change, 'note', { envelope_number: h.change })
+  if (state === 'newer_schema') noteNewer(model, change, 'note', { envelope_number: r.change })
   // An own newer echo stays in front until its version comes back; it keeps the confirmed note as its base.
   if (cur?.pending && !mine) cur._base = note
   else model.notes.set(object_id, note)
@@ -690,7 +691,7 @@ function applyNote(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
 }
 
 function applyRequest(model: Model, r: ReceivedEnvelope, change: Change, hash: string): ApplyResult {
-  const h = r.header, o = h.object!, n = h.change
+  const h = r.header, o = h.object!, n = r.change
   const object_id = hex(o.objectId)
   let p = model.permissions.get(object_id)
   const touched = () => { change.permissions.add(object_id); if (p?.session_id) change.sessions.add(p.session_id); change.stack = true }
@@ -719,7 +720,7 @@ function applyRequest(model: Model, r: ReceivedEnvelope, change: Change, hash: s
 }
 
 function applyArtifact(model: Model, r: ReceivedEnvelope, change: Change, hash: string): ApplyResult {
-  const h = r.header, o = h.object!, n = h.change
+  const h = r.header, o = h.object!, n = r.change
   const object_id = hex(o.objectId)
   const old = model.published.get(object_id)
   const { content, state } = bodyOf(r, 'artifact')
@@ -785,7 +786,7 @@ function setDeviceRegister(model: Model, device_id: string, value: unknown, chan
 /** A register of a session group: kept raw, and what the views read of it (profile, status lines, the receipt, alerts). */
 function setSessionRegister(model: Model, s: Session, key: string, value: any, r: ReceivedEnvelope, causal: Causal, change: Change, ctx: ApplyContext, ordered: boolean): void {
   const h = r.header
-  s.registers.set(key, { value: value ?? null, envelope_number: h.change, sender_sequence: h.seq, causal })
+  s.registers.set(key, { value: value ?? null, envelope_number: r.change, sender_sequence: h.seq, causal })
   if (key === 'profile') composeProfile(s)
   else if (key === 'heard') {
     // The mark only rises: a receipt is never taken back.
@@ -796,17 +797,17 @@ function setSessionRegister(model: Model, s: Session, key: string, value: any, r
     const at = s.status_lines.findIndex(l => l.id === id)
     if (value === null || value === undefined) { if (at >= 0) s.status_lines.splice(at, 1) }
     else {
-      const line = { id, label: value.label ?? id, state: value.state ?? null, detail: value.detail ?? null, object_id: value.object_id ?? null, envelope_number: h.change, updated_at: h.time }
+      const line = { id, label: value.label ?? id, state: value.state ?? null, detail: value.detail ?? null, object_id: value.object_id ?? null, envelope_number: r.change, updated_at: h.time }
       if (at >= 0) s.status_lines[at] = line; else s.status_lines.push(line)
     }
   } else if (key.startsWith('alert/')) {
     const at = s.agent_alerts.findIndex(a => a.key === key)
     if (value === null || value === undefined) { if (at >= 0) s.agent_alerts.splice(at, 1) }
     else {
-      const a = { key, value, envelope_number: h.change }
+      const a = { key, value, envelope_number: r.change }
       if (at >= 0) s.agent_alerts[at] = a; else s.agent_alerts.push(a)
       // (told once, when it arrives in the hub's order: not again with every Desk a start fetches)
-      if (ordered && at < 0) pushAlert(model, change, { code: value?.code ?? 'agent-alert', message: value?.message ?? '', envelope_number: h.change, sender_device_id: hex(h.sender), source: 'agent', at: ctx.now })
+      if (ordered && at < 0) pushAlert(model, change, { code: value?.code ?? 'agent-alert', message: value?.message ?? '', envelope_number: r.change, sender_device_id: hex(h.sender), source: 'agent', at: ctx.now })
     }
   }
   change.sessions.add(s.session_id)
@@ -837,12 +838,12 @@ function applyRegister(model: Model, r: ReceivedEnvelope, change: Change, ctx: A
     if (current) setSessionRegister(model, sessionOf(model, hex(h.sessionId)), key, value, r, causal, change, ctx, ordered)
     return { applied: current }
   }
-  const write: RegisterWrite = { envelope_number: h.change, sender_device_id: sender, causal }
+  const write: RegisterWrite = { envelope_number: r.change, sender_device_id: sender, causal }
   if (echo?.kind === 'registers' && echo.open.has(key)) {
     // The hub's copy of an own write: it stands if it is the current value, else what won comes back.
     const before = echo.before.get(key)
     const newer = [...B.echoes.values()].find(e => e !== echo && e.kind === 'registers' && e.open.has(key))
-    if (newer?.kind === 'registers') { if (current) newer.before.set(key, { value: value ?? null, envelope_number: h.change, by_device_id: sender, pending: false, causal }) }   // a later own echo stays in front
+    if (newer?.kind === 'registers') { if (current) newer.before.set(key, { value: value ?? null, envelope_number: r.change, by_device_id: sender, pending: false, causal }) }   // a later own echo stays in front
     else if (current) setHumanRegister(model, key, value, write, change)
     else setHumanRegister(model, key, before?.value ?? null, { envelope_number: before?.envelope_number ?? null, sender_device_id: before?.by_device_id ?? null, causal: before?.causal }, change)
     done()
@@ -851,7 +852,7 @@ function applyRegister(model: Model, r: ReceivedEnvelope, change: Change, ctx: A
   if (!current) return { applied: false }
   // Another device's write under an own echo still in flight: the echo stays in front, and falls back to this.
   if (model.human.raw.get(key)?.pending) {
-    for (const e of B.echoes.values()) if (e.kind === 'registers' && e.open.has(key)) { e.before.set(key, { value: value ?? null, envelope_number: h.change, by_device_id: sender, pending: false, causal }); return { applied: true } }
+    for (const e of B.echoes.values()) if (e.kind === 'registers' && e.open.has(key)) { e.before.set(key, { value: value ?? null, envelope_number: r.change, by_device_id: sender, pending: false, causal }); return { applied: true } }
   }
   setHumanRegister(model, key, value, write, change)
   return { applied: true }

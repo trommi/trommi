@@ -5,7 +5,7 @@
 // observes the room group, gets its main session by Welcome, sends the work trail with the binding's
 // `sendWorkTrail`). It runs on the same engine and room functions as the web app (app/web/core/room.ts joinRoom).
 // What is stand-in: every stored item it writes (card versions, permission requests, Artifacts, Chat messages,
-// registers) is a plain JSON envelope of the stand-in core (core.ts `sealAgent`, `seal`).
+// registers) is a plain JSON envelope of the stand-in core (core.ts `seal`).
 //
 // The command gate (spec/v2.md 9.0.9), as far as the stand-in core carries it: a command is handed to `onCommand`
 // only if its envelope was applied in the hub's order, its sender is a human device now, its recipient is this
@@ -20,12 +20,11 @@ import { getDecrypted, putEncrypted } from '../../../app/web/core/client.ts'
 import type { Client } from '../../../app/web/core/client.ts'
 import { attachmentRef, encodeBodyBytes, fileIdsOf, fileRefOf } from '../../../app/web/core/codec.ts'
 import type { Fields } from '../../../app/web/core/codec.ts'
-import type { Urgency } from '../../../app/web/core/core-api.ts'
+import type { Draft, Urgency } from '../../../app/web/core/core-api.ts'
 import { Hub } from '../../../app/web/core/hub.ts'
 import type { ChangeItem, StreamEvent } from '../../../app/web/core/hub.ts'
 import { hex, unhex } from '../../../app/web/core/ids.ts'
 import type { AttachmentRef } from '../../../app/web/core/types.ts'
-import type { AgentDraft, StandInDevice } from './core.ts'
 
 const utf8 = new TextEncoder()
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
@@ -85,16 +84,16 @@ export class AgentStandIn {
       const h = received.header
       if (how !== 'ordered' || received.outcome !== 'applied' || !h.recipient || hex(h.recipient) !== this.device_id) return
       if (!(client.engine.roles?.humans ?? []).some(d => same(d, h.sender))) return
-      const chat = h.kind === 'item' && h.timeline?.kind === 'chat'
+      const chat = h.kind === 'item' && h.timeline !== null && h.timeline.kind !== 'board'
       const bound = h.kind === 'answer' || h.kind === 'verdict' || h.kind === 'takeBack'
       if (!chat && !(bound && received.objectAfter && hex(received.objectAfter.owner) === this.device_id)) return
-      const envelope_hash = hex(h.envelopeHash)
+      const envelope_hash = hex(received.envelopeHash)
       if (this.acted.has(envelope_hash)) return
       this.acted.add(envelope_hash)
       const body = received.payload ? JSON.parse(new TextDecoder().decode(received.payload)) as Fields : null
       const command: Command = {
         kind: chat ? 'message' : h.kind as Command['kind'], envelope_hash, from: hex(h.sender),
-        object_id: h.object ? hex(h.object.objectId) : h.timeline?.scope === 'card' ? hex(h.timeline.ref) : null, body,
+        object_id: h.object ? hex(h.object.objectId) : h.timeline?.kind === 'cardChat' ? hex(h.timeline.id) : null, body,
         choices: received.bind?.kind === 'answer' ? received.bind.choices : [], allow: received.bind?.kind === 'verdict' ? received.bind.allow : null,
       }
       this.commands.push(command)
@@ -108,26 +107,23 @@ export class AgentStandIn {
     return hex(g.session.sessionId)
   }
   private get session(): Uint8Array { return unhex(this.session_id) }
-  private sealAgent(draft: AgentDraft, files: Uint8Array[] = []): Promise<string | null> {
-    return this.client.engine.do(async d => {
-      const sealed = await (d as StandInDevice).sealAgent(draft, files, Date.now())
-      const id = sealed.objectId ? hex(sealed.objectId) : null
-      return JSON.stringify([id, hex(sealed.envelopeHash)])
-    })
-  }
   private async first(kind: 'card' | 'artifact', fields: Fields, urgency: Urgency, push: boolean): Promise<string> {
-    const body = { ...fields, object_version: 1 }
-    const [id, hash] = JSON.parse((await this.sealAgent({ kind: 'objectFirst', session: this.session, objectType: kind, urgency, push, payload: encodeBodyBytes(kind, body) }, fileIdsOf(kind, body)))!) as [string, string]
-    this.objects.set(id, { version: 1, hash, kind, fields })
+    const body = { ...fields, object_version: 1 }, payload = encodeBodyBytes(kind, body)
+    const draft: Draft = kind === 'card' ? { kind: 'cardFirst', session: this.session, urgency, push, payload } : { kind: 'artifactFirst', session: this.session, payload }
+    const sealed = await this.client.engine.seal(draft, null, fileIdsOf(kind, body))
+    const id = hex(sealed.objectId!)
+    this.objects.set(id, { version: 1, hash: hex(sealed.envelopeHash), kind, fields })
     return id
   }
   private async next(object_id: string, fields: Fields, closed: boolean, urgency: Urgency = 'normal'): Promise<void> {
     const held = this.objects.get(object_id)
     if (!held) throw new Error('not an object of this agent')
     const merged = { ...held.fields, ...fields }
-    const body = { ...merged, object_version: held.version + 1, previous_version_hash: held.hash }
-    const [, hash] = JSON.parse((await this.sealAgent({ kind: 'objectVersion', session: this.session, objectId: unhex(object_id), closed, urgency, push: false, payload: encodeBodyBytes(held.kind, body) }, fileIdsOf(held.kind, body)))!) as [string, string]
-    this.objects.set(object_id, { ...held, version: held.version + 1, hash, fields: merged })
+    const body = { ...merged, object_version: held.version + 1, previous_version_hash: held.hash }, payload = encodeBodyBytes(held.kind, body)
+    const draft: Draft = held.kind === 'card' ? { kind: 'cardVersion', session: this.session, objectId: unhex(object_id), closed, urgency, push: false, payload }
+      : { kind: 'artifactVersion', session: this.session, objectId: unhex(object_id), closed, payload }
+    const sealed = await this.client.engine.seal(draft, null, fileIdsOf(held.kind, body))
+    this.objects.set(object_id, { ...held, version: held.version + 1, hash: hex(sealed.envelopeHash), fields: merged })
   }
 
   /** A decision or info card. Returns its object id. */
@@ -136,7 +132,8 @@ export class AgentStandIn {
   closeCard(object_id: string, fields: Fields = {}): Promise<void> { return this.next(object_id, fields, true) }
   /** A permission request. Returns its object id. */
   async askPermission(fields: { tool_name: string; description: string; input_preview: string }, expires_at = Date.now() + 600_000): Promise<string> {
-    const [id] = JSON.parse((await this.sealAgent({ kind: 'objectFirst', session: this.session, objectType: 'request', urgency: 'critical', push: true, expiresAt: expires_at, payload: encodeBodyBytes('request', fields) }))!) as [string, string]
+    const sealed = await this.client.engine.seal({ kind: 'permissionRequest', session: this.session, urgency: 'critical', push: true, expiresAt: expires_at, payload: encodeBodyBytes('request', fields) }, null, [])
+    const id = hex(sealed.objectId!)
     return id
   }
   /** An Artifact: version 1 publishes. Returns its object id. */
