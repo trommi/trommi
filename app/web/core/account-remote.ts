@@ -15,6 +15,7 @@ import type { AccountStatus, Kit, PasskeyRegistration, Unlock } from './account.
 import { PASSKEY_PRF_INPUT, passkeyChallenge as challengeFromHub } from './passkey.ts'
 
 export { PASSWORD_MIN, normaliseEmail, passwordProblem, generatePassword, parseRecoveryWords } from './passwords.ts'
+export { accountName, kitAddress, parseKitAddress } from './account-name.ts'
 
 type Args = Record<string, unknown> & { client?: string | null }
 type Opened = { client: RemoteClient }
@@ -42,7 +43,7 @@ export function recoverWithCode({ on_recovery_code, ...args }: Args & { on_recov
 }
 
 // The light parts of a passkey ceremony, on the page beside navigator.credentials (passkey.ts).
-export const passkeyChallenge = (args: { hub_url: string; client?: string | null }): Promise<string> => challengeFromHub(args)
+export const passkeyChallenge = (args: { hub_url: string; client?: string | null }): Promise<{ challenge: string; account: string; user_handle: string }> => challengeFromHub(args)
 export const passkeyPrfInput = async (): Promise<Uint8Array<ArrayBuffer>> => PASSKEY_PRF_INPUT
 
 /** A route of the signed-in device's account, in its worker (worker-protocol.ts ACCOUNT_CALLS). */
@@ -56,6 +57,7 @@ export const checkUnlock = (client: RemoteClient, args: Unlock) => onClient<void
 export const passkeyChallengeFor = (client: RemoteClient) => onClient<string>('passkeyChallengeFor', client)
 export const addPasskey = (client: RemoteClient, args: { unlock: Unlock; passkey: PasskeyRegistration }) => onClient<{ credential_id: string; kit: Kit | null }>('addPasskey', client, args)
 export const removePasskey = (client: RemoteClient, credential_id: string) => onClient<void>('removePasskey', client, credential_id)
+export const setEmail = (client: RemoteClient, args: { email: string; words: string }) => onClient<Kit>('setEmail', client, args)
 export const replaceRecoveryCode = (client: RemoteClient, args: Unlock) => onClient<Kit>('replaceRecoveryCode', client, args)
 
 /** Join with an invite link (room.ts joinRoom's shape), in a new core worker. */

@@ -1125,4 +1125,12 @@ html body .topbar #brand-doors .menu-desk-add.is-plus { position: absolute; z-in
 html body .topbar #brand-doors .menu-desk-add.is-plus:hover { background: var(--surface); color: var(--fg); }
 html body .topbar #brand-doors .menu-desk-add.is-plus svg { width: 18px; height: 18px; margin: 0; }
 html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-add.is-plus { top: 4px; }
+/* one desk (no All Desks row): the + stands at the right end of that desk's own row, so its count, its rename pen
+   (always shown without hover) and the rename field keep clear of it */
+html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-row:first-child .menu-desk { padding-right: 44px; }
+@media (hover: none) {
+  html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-row:first-child button.menu-desk-pen { right: 46px; }
+  html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-row:first-child .menu-desk { padding-right: 90px; }
+  html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-row:first-child .menu-desk-rename { right: 88px; }
+}
 @media (max-width: 860px) { html body .topbar #brand-doors .menu-desk-add.is-plus { width: 40px !important; height: 40px; top: 5px; } html body .topbar #brand-doors .menu-desk.is-all b { font-weight: 800 !important; } }

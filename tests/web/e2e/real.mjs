@@ -24,15 +24,16 @@ import zlib from 'node:zlib'
 import { buildApp, main, openProfile, run, serveApp, skip, sleep, TMP, watch } from './harness.mjs'
 import * as ui from './ui.mjs'
 
-async function startHub(publicUrl) {
+/** The hub's binary on a free port, its public address `publicUrl`; `env` adds to (or overrides) its settings. */
+export async function startHub(publicUrl, env = {}) {
   const probe = createServer()
   await new Promise(r => probe.listen(0, '127.0.0.1', r))
   const { port } = probe.address()
   await new Promise(r => probe.close(r))
   const url = `http://127.0.0.1:${port}`
   const data = fs.mkdtempSync(path.join(TMP, 'tmp', 'hub-'))
-  const env = { HUB_HOST: '127.0.0.1', HUB_PORT: String(port), HUB_URL: publicUrl, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_ORIGINS: publicUrl, PATH: process.env.PATH ?? '' }
-  const child = spawn(process.env.TROMMI_HUB_BIN, [], { env, stdio: ['ignore', 'ignore', 'pipe'] })
+  const settings = { HUB_HOST: '127.0.0.1', HUB_PORT: String(port), HUB_URL: publicUrl, HUB_DATA: data, HUB_QUIET: '1', HUB_LOGIN_THROTTLE: 'off', HUB_ORIGINS: publicUrl, PATH: process.env.PATH ?? '', ...env }
+  const child = spawn(process.env.TROMMI_HUB_BIN, [], { env: settings, stdio: ['ignore', 'ignore', 'pipe'] })
   let stderr = ''
   child.stderr.on('data', d => { stderr += d })
   const exited = new Promise(resolve => child.once('exit', resolve))
@@ -70,20 +71,20 @@ export async function tearDown(ctx) {
 }
 
 const q = s => JSON.stringify(s)
-const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
-const NOTE = '#corner-note-box .corner-note-field'
-const noteIs = text => `document.querySelector(${q(NOTE)})?.value === ${q(text)}`
-const openNote = async P => { if (!await P.js("return !!document.querySelector('#corner-note-box.is-open')")) await P.click('#corner-note-box .corner-note-head'); await P.until("document.querySelector('#corner-note-box.is-open')", `the note open on ${P.name}`) }
-const foldNote = async P => { await P.key('Escape', 27); await P.until("!document.querySelector('#corner-note-box.is-open')", `the note folded on ${P.name}`) }
-const appendNote = async (P, text) => { await P.click(NOTE); await P.key('End', 35, 2); await P.session.send('Input.insertText', { text }) }
+export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
+export const NOTE = '#corner-note-box .corner-note-field'
+export const noteIs = text => `document.querySelector(${q(NOTE)})?.value === ${q(text)}`
+export const openNote = async P => { if (!await P.js("return !!document.querySelector('#corner-note-box.is-open')")) await P.click('#corner-note-box .corner-note-head'); await P.until("document.querySelector('#corner-note-box.is-open')", `the note open on ${P.name}`) }
+export const foldNote = async P => { await P.key('Escape', 27); await P.until("!document.querySelector('#corner-note-box.is-open')", `the note folded on ${P.name}`) }
+export const appendNote = async (P, text) => { await P.click(NOTE); await P.key('End', 35, 2); await P.session.send('Input.insertText', { text }) }
 /** What a page holds when something does not arrive: for a failure's line. */
-const held = P => P.js("const m = window.trommi?.client?.model; return m ? { connection: m.room.connection, taken_up_to: m.room.last_envelope_number, outbox: m.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: m.room.outbox_blocked, alerts: m.alerts.map(a => a.code + ': ' + a.message.slice(0, 140)), notes: [...m.notes.values()].map(n => [n.text.slice(0, 40), n.object_state, n.content_state ?? null]) } : 'no room open'").catch(e => e.message.split('\n')[0])
+export const held = P => P.js("const m = window.trommi?.client?.model; return m ? { connection: m.room.connection, taken_up_to: m.room.last_envelope_number, outbox: m.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: m.room.outbox_blocked, alerts: m.alerts.map(a => a.code + ': ' + a.message.slice(0, 140)), notes: [...m.notes.values()].map(n => [n.text.slice(0, 40), n.object_state, n.content_state ?? null]) } : 'no room open'").catch(e => e.message.split('\n')[0])
 /** Waits for `code` on `P`; a timeout's error carries what the page holds. */
-async function arrives(P, code, what, ms = 30000) {
+export async function arrives(P, code, what, ms = 30000) {
   try { return await P.until(code, what, ms) } catch (err) { throw new Error(`${err.message} (${P.name} holds: ${JSON.stringify(await held(P))})`) }
 }
 /** A PNG of random pixels, stored without compression: width × height × 3 bytes and a little. */
-function picture(width, height) {
+export function picture(width, height) {
   const chunk = (type, data) => { const body = Buffer.concat([Buffer.from(type), data]), out = Buffer.alloc(body.length + 8); out.writeUInt32BE(data.length, 0); body.copy(out, 4); out.writeUInt32BE(zlib.crc32(body), out.length - 4); return out }
   const head = Buffer.alloc(13)
   head.writeUInt32BE(width, 0); head.writeUInt32BE(height, 4); head[8] = 8; head[9] = 2   // 8 bits, RGB
@@ -449,7 +450,7 @@ export const steps = [
       await E.until("document.querySelector('#way-forgot')", 'the login screen')
       await E.click('#way-forgot')
       await E.until("document.querySelector('#forgot-form')", 'the forgot password screen')
-      await E.type('#forgot-form input[name=email]', ctx.email)
+      await E.type('#forgot-form input[name=account]', ctx.email)
       await E.type('#forgot-form textarea[name=words]', ctx.words)
       await E.type('#forgot-form input[name=password]', next)
       await E.click('#forgot-form button[type=submit]')
@@ -480,6 +481,12 @@ export const steps = [
       check(out === (outcome === 'kit'), `${name} is ${outcome === 'kit' ? 'removed' : 'not removed'}`, await held(P))
       note(`${name} (removed) shows: ${await P.js("return document.body.innerText.replace(/\\s*\\n\\s*/g, ' | ').slice(0, 200)")}`)
       await P.shot(`real-18-removed-${name}`)
+      if (outcome === 'kit' && out) {
+        // only after the device processed its removal: the notice, and nothing of the app left in this profile
+        const screen = await P.until("document.querySelector('#removed-said')", `${name}'s removed screen`, 15000).then(() => true, () => false)
+        const left = await ui.storedCount(P).catch(() => null)
+        check(screen && left?.records === 0 && left?.local === 0, `${name} shows the removed screen and keeps nothing`, left)
+      }
     }
     // which password opens the account now, asked of the app on a fresh profile each
     const opens = {}

@@ -1976,9 +1976,13 @@ async function start(client, { fresh = false } = {}) {
   const merge = (a, c) => { for (const k of Object.keys(c)) { if (c[k] instanceof Set) for (const v of c[k]) a[k].add(v); else a[k] = a[k] || c[k] } return a }
   const conn = () => {
     const state = client.model.room.connection, el = document.getElementById('conn'), text = document.getElementById('conn-text')
-    const words = { live: ['online', 'Connected'], catching_up: ['connecting', 'Catching up'], connecting: ['connecting', 'Connecting'], offline: ['offline', 'No connection'] }[state] ?? ['connecting', 'Connecting']
+    const words = { live: ['online', 'Connected'], catching_up: ['connecting', 'Catching up'], connecting: ['connecting', 'Connecting'], offline: ['offline', 'No connection'], unreachable: ['offline', 'Can\'t reach your room'], removed: ['offline', 'Removed'] }[state] ?? ['connecting', 'Connecting']
     if (el) el.dataset.state = words[0]
     if (text) text.textContent = words[1]
+    // This device processed the Commit that took it out of the room: the notice, and every local trace goes
+    // (auth.mjs removedScreen). The hub's word alone is `unreachable`: said neutrally, everything kept.
+    if (state === 'removed' && !mock) view('auth').then(v => v.removedScreen(client)).catch(err => console.warn('removed', err))
+    if (state === 'unreachable') notice('Can\'t reach your room right now. Everything on this device is kept.', 'The hub no longer answers this device for this room, and nothing it showed says why.', false, 'unreachable')
     // The hub refused one of this device's envelopes without voiding it: sending stops until it goes through (the core
     // retries the same bytes every minute). Said once, calmly; gone when sending runs again.
     const blocked = client.model.room.outbox_blocked

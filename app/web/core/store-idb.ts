@@ -29,6 +29,7 @@
 //    (is anything stored? does another tab own it: StoreConflict), and once by `Device.open(store)`.
 //
 // Values may be private keys: nothing here logs a value or puts one into an error.
+import { spent, timed } from './spent.ts'
 import type { IdbStore } from '../../../core/wasm/js/idb-store.js'
 import type { Store, StoredState, StoreEntry, StoreWrite } from './core-api.ts'
 
@@ -39,6 +40,7 @@ export interface DeviceStore extends Store {
   /** Takes the owner lock (rejects with the binding's StoreConflict when another tab holds it, or waits for it with
    *  `wait`), reads and unwraps everything. A second call gives the same state. */
   load(): Promise<StoredState>
+  applyAll(writes: StoreWrite[]): Promise<void>
   /** Closes the database and frees the lock, for good; resolves once the lock is free. A `load()` that still waits
    *  for the lock is given up and rejects. */
   close(): Promise<void>
@@ -149,11 +151,20 @@ export function openDeviceStore({ name, wait = false, IdbStore }: { name: string
 
   return {
     load(): Promise<StoredState> { return closed ? Promise.reject(shut) : state ??= read() },
-    async apply(write: StoreWrite): Promise<void> {
+    apply(write: StoreWrite): Promise<void> { return this.applyAll([write]) },
+    /** The writes of one call of the device (a batch of a catch-up has hundreds), each value wrapped, in the
+     *  binding's ONE strict transaction: all of them or none. */
+    async applyAll(writes: StoreWrite[]): Promise<void> {
       const key = wrapKey
       if (closed || !key) throw fail('the device store is not open')
-      const put = await Promise.all(write.put.map(async (e): Promise<StoreEntry> => ({ key: e.key, value: await wrap(key, e.key, e.value) })))
-      await inner.apply({ expectedRevision: write.expectedRevision, put, delete: write.delete })
+      const t = performance.now()
+      const wrapped = await Promise.all(writes.map(async (write): Promise<StoreWrite> => ({
+        expectedRevision: write.expectedRevision, delete: write.delete,
+        put: await Promise.all(write.put.map(async (e): Promise<StoreEntry> => ({ key: e.key, value: await wrap(key, e.key, e.value) }))),
+      })))
+      const w = performance.now()
+      spent.wrap += w - t; spent.writes += writes.length
+      try { await inner.applyAll(wrapped) } finally { const d = performance.now(); spent.idb += d - w; spent.store += d - t }
     },
     async close(): Promise<void> {
       closed = true
@@ -170,7 +181,8 @@ export async function openCache(name: string): Promise<Cache> {
     try { return db.transaction(CACHE, mode, durable ? { durability: 'strict' } : undefined).objectStore(CACHE) } catch (e) { throw failed('the cache is not open', e) }
   }
   /** One write transaction: everything `fill` puts, or, when a value cannot be stored, nothing. */
-  const written = async (fill: (s: IDBObjectStore) => void, durable = false): Promise<void> => {
+  const written = (fill: (s: IDBObjectStore) => void, durable = false): Promise<void> => timed('cache', () => writeNow(fill, durable))
+  const writeNow = async (fill: (s: IDBObjectStore) => void, durable: boolean): Promise<void> => {
     const s = store('readwrite', durable)
     const done = completed(s.transaction)
     try { fill(s) } catch (e) { done.catch(() => {}); s.transaction.abort(); throw failed('a record cannot be stored in the cache', e) }
