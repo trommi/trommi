@@ -884,9 +884,10 @@ pub struct Device<S: Storage> {
     /// no state: nothing here is stored, and nothing the device answers reads it.
     walks: BTreeMap<GroupId, history::PastWalk>,
     /// The check of a served room that was started and not finished ([`Device::code_check_start`]), and
-    /// the checks of session groups ([`Device::session_check_start`]). The same holds for them.
+    /// the check of a session group ([`Device::session_check_start`]), one at a time. The same holds for
+    /// them.
     room_check: Option<recovery::RoomCheck>,
-    session_checks: BTreeMap<GroupId, recovery::SessionCheck>,
+    session_check: Option<recovery::SessionCheck>,
     /// Another owner wrote to the stored state: this object works on it no more.
     lost: bool,
 }
@@ -1223,7 +1224,7 @@ impl<S: Storage> Device<S> {
             },
             walks: BTreeMap::new(),
             room_check: None,
-            session_checks: BTreeMap::new(),
+            session_check: None,
             lost: false,
         })
     }
@@ -1251,7 +1252,7 @@ impl<S: Storage> Device<S> {
             memory,
             walks: BTreeMap::new(),
             room_check: None,
-            session_checks: BTreeMap::new(),
+            session_check: None,
             lost: false,
         };
         device.read_groups()?;
@@ -3996,16 +3997,18 @@ impl<S: Storage> Device<S> {
     /// room group with the code, will join with it (8.4), for a caller that cannot hand the group's whole
     /// history in one call: `founding` is its founding GroupInfo. Returns the group. Its Commits follow in
     /// slices ([`Device::session_check_slice`]), and [`Device::join_session_checked`] ends the check and
-    /// builds the join. The check is held as [`Device::code_check_start`] holds its own.
+    /// builds the join. The check is held as [`Device::code_check_start`] holds its own, one session at a
+    /// time: a second start replaces the first.
     pub fn session_check_start(&mut self, founding: &[u8]) -> Result<GroupId, Error> {
         self.owner()?;
         let room = self.memory.record.room.ok_or(Error::NoRoom)?;
         if !self.is_human() {
             return Err(Error::Forbidden);
         }
+        self.session_check = None;
         let check = recovery::SessionCheck::start(founding, &room)?;
         let group = check.group();
-        self.session_checks.insert(group, check);
+        self.session_check = Some(check);
         Ok(group)
     }
 
@@ -4023,12 +4026,12 @@ impl<S: Storage> Device<S> {
         if !recovery::fits_a_slice(commits.iter().map(|commit| commit.commit.len())) {
             return Err(Error::TooLarge);
         }
-        let mut check = self.session_checks.remove(group).ok_or(Error::NotFound)?;
+        let mut check = self.session_check_of(group)?;
         let known = self.known().historical();
         check.slice(commits, self.history()?, &known, &|change| {
             self.room_epoch_at(change)
         })?;
-        self.session_checks.insert(*group, check);
+        self.session_check = Some(check);
         Ok(())
     }
 
@@ -4043,12 +4046,24 @@ impl<S: Storage> Device<S> {
         now_ms: u64,
     ) -> Result<u64, Error> {
         self.owner()?;
-        let check = self.session_checks.remove(group).ok_or(Error::NotFound)?;
+        let check = self.session_check_of(group)?;
         if !self.is_human() {
             return Err(Error::Forbidden);
         }
         let checked = check.finish(current)?;
         self.join_session_from(keys, checked, current, now_ms)
+    }
+
+    /// Takes the check of the session `group` out of the device; `not-found` when the check held, if any,
+    /// is of another group, and that one stays.
+    fn session_check_of(&mut self, group: &GroupId) -> Result<recovery::SessionCheck, Error> {
+        match self.session_check.take() {
+            Some(check) if check.group() == *group => Ok(check),
+            other => {
+                self.session_check = other;
+                Err(Error::NotFound)
+            }
+        }
     }
 
     /// Builds the join of a session group that was verified from its founding.
