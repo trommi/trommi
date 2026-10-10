@@ -139,6 +139,7 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .clip-step-body { display: grid; gap: 9px; min-width: 0; }
 .clip-step b { font: 700 var(--t-md)/1.35 var(--font); }
 .clip-step small { color: var(--muted); font-size: var(--t-sm); }
+.clip-step small code { color: var(--fg); font: 500 var(--t-sm)/1.4 var(--mono); overflow-wrap: anywhere; }
 .clip-box { width: 28px; height: 28px; margin-top: -2px; fill: none; stroke: var(--fg); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
 .clip-box .clip-tick { stroke: var(--accent); stroke-width: 2.6; stroke-dasharray: 30; stroke-dashoffset: 30; }
 .clip-step.is-done .clip-tick { stroke-dashoffset: 0; transition: stroke-dashoffset 260ms ease-out; }
@@ -151,10 +152,10 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .room .clip button.clip-copy { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); width: 100%; min-height: 52px; padding: 0 var(--s-2) 0 14px; border: 1.5px solid var(--fg); border-radius: 8px 6px 9px 6px / 6px 9px 6px 8px; background: var(--sunken); color: var(--fg); text-align: left; cursor: pointer; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); transition: translate 90ms, box-shadow 90ms; }
 .room .clip button.clip-copy:hover { translate: -1px -1px; box-shadow: 3px 4px 0 color-mix(in srgb, var(--fg) 85%, transparent); }
 .room .clip button.clip-copy:active { translate: 2px 3px; box-shadow: none; }
-.clip-copy code { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 500 var(--t-sm)/1 var(--mono); }
+.clip-copy code { min-width: 0; padding: 9px 0; overflow-wrap: anywhere; font: 500 var(--t-sm)/1.45 var(--mono); }
+/* (the connect line carries the long invite link: two lines of it, the rest behind an ellipsis; Copy takes it all) */
+.clip-copy[data-line="connect"] code { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; padding: 0; margin: 9px 0; }
 .clip-copy-word { display: grid; place-items: center; min-width: 76px; height: 36px; padding: 0 var(--s-3); border-radius: 6px; background: var(--fg); color: var(--bg); font: 700 var(--t-sm)/1 var(--font); }
-.room .clip button.clip-copy.is-small { width: auto; justify-self: start; min-height: 40px; grid-template-columns: auto auto; box-shadow: none; background: none; border-style: dashed; }
-.clip-copy.is-small .clip-copy-word { min-width: 0; height: 26px; padding: 0 var(--s-2); background: none; color: var(--muted); font-weight: 600; }
 .clip-in { display: flex; align-items: center; gap: 10px; }
 .clip-ask { display: grid; gap: 9px; }
 .clip-ask small strong { color: var(--fg); font-weight: 700; }
@@ -165,7 +166,7 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .clip-again { margin: var(--s-1) 0 0 42px; }
 .room .clip .clip-again button { padding: 6px 0; border: 0; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; }
 .room .clip .clip-done { justify-self: start; margin: 6px 0 0 42px; text-decoration: none; }
-@media (max-width: 600px) { .room.room-clip { padding: 64px 22px 96px; } .clip { padding: 46px 18px var(--s-5); } .clip h2 { font-size: 1.55rem; } .clip-note, .clip-again, .room .clip .clip-done { margin-left: 0; } }
+@media (max-width: 600px) { .clip-copy[data-line="connect"] code { -webkit-line-clamp: 3; line-clamp: 3; } .room.room-clip { padding: 64px 22px 96px; } .clip { padding: 46px 18px var(--s-5); } .clip h2 { font-size: 1.55rem; } .clip-note, .clip-again, .room .clip .clip-done { margin-left: 0; } }
 
 /* ---- Settings · Devices: Push on this device (Yes / Only knocking / No) and the other devices' push, read only ---- */
 .push-level { display: inline-flex; gap: 0; margin: var(--s-2) 0 var(--s-3); padding: 3px; border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px 10px 13px 11px; }

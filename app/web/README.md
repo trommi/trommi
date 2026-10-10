@@ -52,7 +52,7 @@ repository yet; these scripts wait for them.
 ## Layout
 
 ```
-worker.js              http -> https, /connect (the connect script), the connector's release from R2, the universal links' file
+worker.js              http -> https, /connect (the one-line connect script), the universal links' file
 wrangler.jsonc  THIRD-PARTY.md   fonts, Argon2, the QR reader, the word list: whose they are
 core/                  the client core (TypeScript): the room, sync, crypto, storage, the worker. core/README.md
 dev/                   serve, build, check, verify; look, perf and the browser tests (cdp.mjs drives Chromium)
@@ -73,11 +73,13 @@ public/
                        vendor/tools-reference.mjs (for the help page), bundle.<hash>.css, build.txt, manifest.json
 ```
 
-`worker.js` also serves the connector's release from the R2 bucket bound as `RELEASES`:
-`/connector/<sha256>/trommi-connector-<target>`, `/connector/trommi-connector-<target>.sha256`,
-`/plugins/marketplace.json`, `/plugins/trommi-<version>.zip`. The connector is built and uploaded apart from the app;
-it is not in this repository yet. Two of its files are: `connector/tools.json` and `connector/prompt.md`, from
-which the build makes the help page's list of tools.
+**Inviting an agent.** The invite page (`auth.mjs` `clipboard()`) shows three commands to copy: once per machine
+`curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh` (the connector's signed release,
+`connector/README.md`), once per program `trommi-connector setup claude` (or `setup codex`), once per folder
+`trommi-connector connect '<link>'` with the invite's link. `public/connect.sh`, served by `worker.js` at `/connect`, is
+the older one-line way (`curl -fsSL https://app.trommi.com/connect | sh -s '<link>'`) that the iOS app and the website
+still show: it runs the same three. The app serves no connector binaries. Two of the connector's files feed the help
+page's list of tools: `connector/tools.json` and `connector/prompt.md`.
 
 ## Rules
 

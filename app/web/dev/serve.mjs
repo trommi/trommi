@@ -10,13 +10,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generate } from './build.mjs'
-import { releaseKey, releaseHeaders, SITE_ASSOCIATION, isFilePath, FAVICON } from '../worker.js'
+import { SITE_ASSOCIATION, isFilePath, FAVICON } from '../worker.js'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
-// The connector's release (worker.js: from R2), here from connector-rs/dist/ when a release was built there (the
-// connector is not in this repository yet: without it these addresses answer 404).
-const RELEASE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../connector-rs/dist')
 const port = Number(process.argv.slice(2).find(a => /^\d+$/.test(a)) || 8900)
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain', '.sh': 'text/plain; charset=utf-8', '.sha256': 'text/plain', '.webm': 'video/webm', '.zip': 'application/zip', '.wasm': 'application/wasm' }
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain', '.sh': 'text/plain; charset=utf-8', '.webm': 'video/webm', '.wasm': 'application/wasm' }
 // Read on every request: a dev server left running must not serve an old CSP.
 // (the build's _headers when it made one: the bundle's CSP names its import map)
 const readHeaders = () => { const headers = {}
@@ -55,12 +52,6 @@ async function serve(req, res) {
   // The connect script (curl -fsSL <app>/connect | sh -s '<link>'), as worker.js serves it.
   if (url.pathname === '/connect' || url.pathname === '/connect/') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, 'connect.sh'))) }
   if (url.pathname === SITE_ASSOCIATION.address) { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, SITE_ASSOCIATION.file))) }
-  const key = releaseKey(url.pathname)
-  if (key) {
-    const f = path.join(RELEASE, key)
-    if (!fs.existsSync(f)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found (no connector release in connector-rs/dist/)\n') }
-    res.writeHead(200, releaseHeaders(key)); return res.end(fs.readFileSync(f))
-  }
   let rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
   if (rel.split('/').includes('..')) { res.writeHead(403); return res.end() }
   const isFile = f => fs.existsSync(path.join(root, f)) && fs.statSync(path.join(root, f)).isFile()
