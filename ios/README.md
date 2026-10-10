@@ -47,7 +47,8 @@ core/swift/build.sh                                 # the Rust core: lib/linux a
 ```
 
 The tests are in the repository's one tests folder, `tests/ios` (one folder per test target). SwiftPM takes no
-target outside its package, so `ios/TrommiClient/Tests` is a link to it; `swift test` is run in `ios/TrommiClient`.
+target outside its package, so `ios/TrommiClient/Tests` is a symlink to `tests/ios`; `swift test` is run in
+`ios/TrommiClient`. CI's Linux and Mac runners check symlinks out as symlinks, so nothing is set up for it there.
 
 ### The Rust core
 
@@ -407,17 +408,25 @@ chrome; the minimum is iOS 27.
 
 ## Not there yet
 
-What the app cannot do until the core and its binding (`core/swift`) carry it; each is one stubbed line in
-`TrommiCoreLive` (its header lists real and stubbed calls) behind `Core.swift`:
+Nothing of `Core.swift` is stubbed: `TrommiCoreLive` binds every call to the core (`core/swift`, v2-bindings
+b2e5b98), and its header (`LiveCore.swift`) lists what is bound and what of the binding is left out. What the app
+still cannot do:
 
-- **Stored content on the device** (spec section 9): `sendEnvelope`, `receiveEnvelope`, `register`, `cut`. Without
-  them the app signs in and follows groups, and shows and writes no chat, card, register, Note or board item.
-- **Joining by link** (12.1): `openInvite`, `acceptInviteRequest`, `confirmInvite`, `burnInvite`, `parseInviteLink`,
-  `inviteRequest`, `inviteReveal`, `checkEmoji`.
-- **Live stroke pieces** of other devices (`processRelay`), and the **notification title** (`NotifyCoreLive`'s
-  `openEnvelope`): the extension shows the fixed text.
-- The Scribble Board still reads and writes the shapes of the Swift model (`Canvas.swift`); the core's reducer and
-  its whole-number format (`board_items`) replace it when they are bound.
+- **The notification title.** A content key never leaves the core, and the binding opens an envelope only on the
+  device that holds the group (`receiveEnvelope`), whose store the app owns. The Notification Service Extension
+  therefore opens the push itself (room, change, urgency) and shows the fixed text.
+- **Content from before a device came by link.** The core takes an envelope of an epoch before the device joined
+  only once it learned the group's past (`learnHistory`, bound and tested in `TrommiCoreLive`); the engine does not
+  fetch that history yet, so such items are passed over (`SyncReport.beforeJoining`). (A device that signs in with
+  the recovery code holds the keys back to the founding.)
+- **Recovery when every device is lost** (8.7) and **replacing the recovery code** (8.6) are bound and tested
+  (`prepareRecovery`, `recover`, `newRecoveryCode`, `replaceCode`); no screen and no call of `Room` leads there yet.
+- **Against a real hub** the engine was last run before this binding: `RealHubTests` (founding, signing in with
+  the password, a Commit, the whole recovery) are skipped without `TROMMI_HUB_BIN`, and joining by link through
+  `Room` has no test against a hub yet. Without a hub, the core's side of these paths is tested on the real core
+  (`PocketHub` keeps the hub's order) and the engine's on a core that seals nothing (`FakeCore`).
+- The Scribble Board still merges with the reducer of the Swift model (`Canvas.swift`); the core's reducer and its
+  check of a loaded board (`boardReduce`, `boardLoad`) are bound, and nothing calls them yet.
 - Passkeys are built and switched off (`Passkeys.available`) until `app.trommi.com` lists the app under
   `webcredentials` and the entitlement names it.
 - The first archive on the Mac runner ("TestFlight from CI") is unproven; licence notices for the Rust crates inside the app bundle

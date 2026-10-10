@@ -2,9 +2,12 @@
 // (core/swift, built by core/swift/build.sh). The app installs it once at launch: `Core.tools = LiveCore()`.
 // The device is LiveDevice.swift; the store, errors and bytes at the edge are LiveStore.swift.
 //
-// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src at v2-bindings 286f595. Nothing is stubbed:
-// every call of Core.swift is one call into the binding, with the shapes changed and nothing else.
+// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src at v2-bindings b2e5b98.
 //
+//   STUBBED      nothing. Every call of Core.swift is one call into the binding, with the shapes changed and
+//                nothing else; no call answers "not in this build".
+//
+//   REAL, Core.swift's calls:
 //   CoreTools    version, selfTest, createDevice, openDevice,
 //                normaliseEmail, checkPassword, passwordKeys, kitAuthKey, generateKitWords, parseKitWords,
 //                generateRecoveryCode, formatRecoveryCode, parseRecoveryCode, sealCode, openCode,
@@ -17,18 +20,35 @@
 //                outbox, outboxAccepted, outboxRefused, outboxVoided, envelopeAbandon, signHubAuth (`hub_sign_in`), close,
 //                seal, receiveEnvelope, register, cutOf, headsDue, compareHeads, findings, findingsRead, boardLoad,
 //                inviteOpen, inviteAccept, inviteConfirm, inviteSteps, inviteHandover, inviteRecommit, inviteForget,
-//                joinRequest, joinReveal, joinObserve, joinInvited,
+//                inviteChecked, joinRequest, joinReveal, joinObserve, joinInvited,
 //                holdsRecoveryMac, keyIsConfirmed, sendRecoveryAuth, newRecoveryCode, replaceCode
-//   real, beside Core.swift (the client has no call for them yet): LiveCore.recoveryAnchor; LiveDevice.joinRoomWithCode,
-//                joinSessionWithCode, prepareRecovery, recover, postSealedKey, verifyFounding, isHuman, disallowed,
-//                roomRoles.
-//   in the binding and bound nowhere here, because a human device never calls them: the command gate (command,
-//                commandFinished, commandsPending, commandsUncertain), an agent's drafts (cardFirst, cardVersion,
-//                permissionRequest, artifactFirst, artifactVersion), foundHelper, readmitHelper, observeRoom,
-//                observeSession, sendWorkTrail, handoversSent, handoverRead; and chainHead, chainCut, object, objects,
-//                objectOwner, registerOf, which the engine does not need: it reads each of them off the received
-//                envelope (`objectAfter`, `register`) or keeps it in the board's own reducer.
+//
+//   REAL, beside Core.swift (bound here and tested; the engine `Room` has no call for them yet):
+//                LiveCore.recoveryAnchor, buildVersions; LiveDevice.joinRoomWithCode and joinSessionWithCode (used
+//                by joinWithRecoveryCode), prepareRecovery, recover (with the removed devices' chains), learnHistory,
+//                postSealedKey, verifyFounding, isHuman, disallowed, roomRoles.
+//
+//   IN THE BINDING AND BOUND NOWHERE HERE:
+//     an agent's or helper device's, which a human device never calls: the command gate (command, commandFinished,
+//                commandsPending, commandsUncertain), an agent's drafts (the kinds cardFirst, cardVersion,
+//                permissionRequest, artifactFirst, artifactVersion of `seal`, and its urgency, push and expiresAt),
+//                foundHelper, readmitHelper, observeRoom, observeSession, sendWorkTrail, handoversSent, handoverRead;
+//     what the engine reads elsewhere: chainHead, chainCut, object, objects, objectOwner, registerOf (it takes each
+//                off the received envelope: `objectAfter`, `register`), roomGroupId, sessionGroupId (a group's id
+//                comes from `groups`), keyPackageInfo, kdfRecord;
+//     files in pieces and their links: fileLayout, fileChunk, openFileChunk (the whole file goes through
+//                FileEncryptor and FileDecryptor here), shareLinkParse, checkShareExpiry (the web app opens a link);
+//     passkeys: generateUserHandle, passkeyPrfInput (passkeyWrapKey is bound: `sealCode` and `openCode`);
+//     push: openApnsPush is bound by NotifyCoreLive, for the notification extension; readWebPush is the web's.
+//
+//   WHAT THE BINDING DOES NOT HAVE: a content key handed out, and a call that opens an envelope without a device.
+//                So the notification extension opens no envelope (NotifyCoreLive.swift).
 //   recoverySigner's id is real by a detour: the recovery key's public half is read out of a `HubAuth` it signed.
+//
+//   HOW AN OWN COMMIT TAKES EFFECT (b2e5b98): `outboxAccepted` merges none. A member's Commit is merged when
+//                `processLogEntry` is handed it from the hub's log, in the order of the change numbers across groups
+//                (`.ownCommit`); Room.swift reads the changes after such an answer. A join from outside
+//                (`externalCommit`, `recoveryCommit` with `recoveryFinish`) is in force with the answer.
 import Foundation
 import TrommiClient
 import TrommiCoreRust
