@@ -396,3 +396,17 @@ encrypted.
     `POST /v2/account/passkey/challenge` is bounded like every tokenless route (600 a minute per address, then
     `rate-limited`); the hub holds at most 10 000 open challenges of 32 bytes for two minutes each, the oldest
     going first.
+42. **A removed device can verify its removal** (owner, 10 October 2026; v2.md 13.5, 14.4). Its access ends at
+    once, as before: every route answers it `not-member`. One read stays, for thirty days from the Commit that
+    removed it: `GET /v2/groups/{group}/removal?after=<n>` → `{ items, more, removed_at }` gives the Commits of
+    that group (log entries as on the log route, `kind: "commit"` only) after `after`, up to and including the
+    removing one, whose log number is `removed_at`; at most 200 per answer. `group` is the room group (the
+    Commit that removed a human device's leaf, or took an agent device out of `agents`) or a session group the
+    device was a leaf of (the Commit that removed its leaf). The device checks those Commits itself, as an
+    observer of the room group and as the member it was of its session, and wipes its keys when they say what
+    the hub said. It authenticates as ever: the token it holds stays good for this route until it runs out, and
+    for those thirty days `POST /v2/rooms/{room}/tokens` gives a removed key a token (`role: "removed"`) that
+    is good for this route alone. One answer, `not-found`, for a key that was never there, one that was not
+    removed, and one removed longer ago; a key that was never in the room gets no token (`not-member`).
+    Nothing is shown that the device could not read while it was a member: Commits are public group state, and
+    none after its removal is given. No messages, envelopes, files, stream, KeyPackages or writes.
