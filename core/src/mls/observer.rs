@@ -635,6 +635,26 @@ impl Observer {
         ))
     }
 
+    /// Whether this session group is stale under `room`, and why (5.2.8).
+    pub fn staleness(
+        &self,
+        history: &RoomHistory,
+        room: &RoomState,
+        sessions: &dyn SessionFacts,
+    ) -> Result<rules::Staleness, Error> {
+        let Followed::Session(record) = &self.followed else {
+            return Ok(rules::Staleness::default());
+        };
+        let parent = parent_of(&record.session, sessions, room.epoch);
+        Ok(rules::staleness(
+            history,
+            room,
+            &record.session,
+            parent,
+            &self.leaves()?,
+        ))
+    }
+
     /// The hub's check of a Commit being posted (14.1), in one call: it parses and verifies against the public
     /// state, builds on the current epoch (`epoch-taken` otherwise), obeys sections 3 to 5 with the newest room
     /// epoch, comes with a GroupInfo signed by the committer whose group context, tree and confirmation tag are

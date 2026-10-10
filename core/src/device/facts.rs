@@ -1031,7 +1031,8 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// The leaves of `group` in its newest recorded epoch that the newest room state does not allow.
+    /// Whether `group`, with the leaves of its newest recorded epoch, is stale under the newest room state
+    /// (5.2.8).
     fn unfit_now(&self, group: &GroupId, meta: &GroupMeta) -> Result<bool, Error> {
         let Some(epoch) = self.newest_epoch(group) else {
             return Ok(false);
@@ -1040,7 +1041,7 @@ impl<S: Storage> Device<S> {
             .epoch_facts(group, epoch)?
             .map(|facts| facts.leaves.into_iter().map(|(device, _)| device).collect())
             .unwrap_or_default();
-        Ok(!self.disallowed(meta, &leaves, &self.known()).is_empty())
+        Ok(self.staleness(meta, &leaves, &self.known()).is_stale())
     }
 }
 

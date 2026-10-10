@@ -161,7 +161,7 @@ impl GroupFacts for Facts<'_> {
         if group.is_room() {
             return Ok(false);
         }
-        Ok(!self.0.stale_leaves(group)?.is_empty())
+        self.0.is_stale(group)
     }
 
     fn is_human_now(&self, device: &DeviceId) -> Result<bool, Error> {

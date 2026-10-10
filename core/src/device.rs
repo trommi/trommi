@@ -47,7 +47,7 @@ use crate::mls::profile::{
 use crate::mls::provider::{self, DeviceSigner, MlsEntries, Provider};
 use crate::mls::rules::{
     self, CommitFacts, Judged, Parent, RoomHistory, RoomState, SessionBefore, SessionFacts,
-    Verifier,
+    Staleness, Verifier,
 };
 use crate::recovery::{
     self, AuthMessage, CheckedRoom, KeyContext, MacKeys, PublicRules, RecoveryJoin, RecoveryKeys,
@@ -329,6 +329,9 @@ pub struct GroupSummary {
     pub leaves: BTreeSet<DeviceId>,
     /// The leaves the newest room state does not allow: not empty means stale (5.2.8).
     pub disallowed: Vec<DeviceId>,
+    /// The opener this helper session lacks although its main session has an agent leaf: the group is stale
+    /// (5.2.8) until a human device adds that device ([`Device::clean_session`]).
+    pub missing_opener: Option<DeviceId>,
     /// Whether it was archived (5.2.10).
     pub archived: bool,
     /// Whether a Commit of this device waits: for the hub's answer, or for its place in the log.
@@ -338,6 +341,13 @@ pub struct GroupSummary {
     /// Whether it holds the group's epochs before that one too ([`Device::learn_history`]). While false,
     /// an envelope of an earlier epoch is `group-behind`.
     pub past_learned: bool,
+}
+
+impl GroupSummary {
+    /// Whether the group is stale (5.2.8): it holds a leaf the room state does not allow, or lacks its opener.
+    pub fn is_stale(&self) -> bool {
+        !self.disallowed.is_empty() || self.missing_opener.is_some()
+    }
 }
 
 /// One envelope as the hub's chain route serves it.
@@ -1628,11 +1638,13 @@ impl<S: Storage> Device<S> {
                 .map(|(_, device)| device)
                 .collect();
             let past = self.group_past(id)?;
+            let stale = self.staleness(meta, &leaves, &known);
             summaries.push(GroupSummary {
                 group: *id,
                 session: meta.session,
                 epoch: group.epoch().as_u64(),
-                disallowed: self.disallowed(meta, &leaves, &known),
+                disallowed: stale.disallowed,
+                missing_opener: stale.missing_opener,
                 leaves,
                 archived: meta.archived,
                 pending: meta.pending.is_some(),
@@ -1658,8 +1670,13 @@ impl<S: Storage> Device<S> {
         leaves: &BTreeSet<DeviceId>,
         known: &Known,
     ) -> Vec<DeviceId> {
+        self.staleness(meta, leaves, known).disallowed
+    }
+
+    /// Whether a session group with these leaves is stale under the newest room state, and why (5.2.8).
+    fn staleness(&self, meta: &GroupMeta, leaves: &BTreeSet<DeviceId>, known: &Known) -> Staleness {
         let (Some(session), Some(history)) = (meta.session.as_ref(), self.room_history()) else {
-            return Vec::new();
+            return Staleness::default();
         };
         let room = history.newest();
         let parent = if session.parent.is_zero() {
@@ -1667,7 +1684,7 @@ impl<S: Storage> Device<S> {
         } else {
             known.main_session(&session.parent, room.epoch)
         };
-        rules::disallowed_leaves(history, room, session, parent, leaves)
+        rules::staleness(history, room, session, parent, leaves)
     }
 
     /// What first contact finds among a session group's leaves (5.2.6): the leaves the newest room state does
@@ -2995,15 +3012,20 @@ impl<S: Storage> Device<S> {
         cuts.sort_unstable_by_key(|cut| cut.device);
         let removes: Vec<DeviceId> = cuts.iter().map(|cut| cut.device).collect();
         let mut group = group::load(&self.provider, id)?;
-        // 5.2.8: nobody writes into a stale group but the Commit that removes every leaf the room disallows.
+        // 5.2.8: nobody writes into a stale group but the Commit that removes every leaf the room disallows
+        // and adds the opener a helper session lacks.
         let leaves: BTreeSet<DeviceId> = rules::leaves_of(group.members())?
             .into_iter()
             .map(|(_, device)| device)
             .collect();
         let known = self.known();
         self.knows_parent(&meta, &known)?;
-        let unfit = self.disallowed(&meta, &leaves, &known);
-        if !unfit.iter().all(|leaf| removes.contains(leaf)) {
+        let stale = self.staleness(&meta, &leaves, &known);
+        let opener_comes = stale.missing_opener.is_none_or(|opener| {
+            adds.iter()
+                .any(|add| key_package::info(add).is_ok_and(|info| info.device == opener))
+        });
+        if !stale.disallowed.iter().all(|leaf| removes.contains(leaf)) || !opener_comes {
             return Err(Error::StaleSession);
         }
         // 5.2.6: a group that failed its first contact takes only the Commit that removes leaves from it.
@@ -4089,7 +4111,7 @@ impl<S: Storage> Device<S> {
                 return Err(Error::Gone);
             }
             // 5.2.8: nothing is written for a stale group but the Commit that cleans it, with its own row.
-            if !this.group(group)?.disallowed.is_empty() {
+            if this.group(group)?.is_stale() {
                 return Err(Error::StaleSession);
             }
             let state = group::load(&this.provider, group)?;
@@ -4712,7 +4734,7 @@ impl<S: Storage> Device<S> {
         let known = self.known();
         let devices: BTreeSet<DeviceId> = leaves.iter().map(|(_, device)| *device).collect();
         if self.knows_parent(&meta, &known).is_err()
-            || !self.disallowed(&meta, &devices, &known).is_empty()
+            || self.staleness(&meta, &devices, &known).is_stale()
         {
             return Ok(Processed::Skipped);
         }
@@ -4907,7 +4929,7 @@ impl<S: Storage> Device<S> {
             .collect();
         let known = self.known();
         self.knows_parent(&meta, &known)?;
-        if !self.disallowed(&meta, &leaves, &known).is_empty() {
+        if self.staleness(&meta, &leaves, &known).is_stale() {
             return Err(Error::StaleSession);
         }
         // A message may carry keys: its plaintext is wiped.
