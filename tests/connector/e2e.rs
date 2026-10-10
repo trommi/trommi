@@ -434,10 +434,8 @@ async fn the_opener_admits_a_helper_device_and_lets_it_back_in_after_it_lost_its
     human.sync().await;
     assert!(human.findings.is_empty(), "{:?}", human.findings);
     let helper_group = human
-        .vault
-        .device
         .groups()
-        .expect("groups")
+        .await
         .into_iter()
         .find(|g| g.session.is_some_and(|s| !s.parent.is_zero()))
         .expect("the human device is in the helper session");

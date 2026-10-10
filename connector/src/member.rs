@@ -517,8 +517,13 @@ pub struct Member {
     moving: std::sync::atomic::AtomicBool,
     /// Whether the removal this process learned of was verified: it processed the Commit itself.
     verified: std::sync::atomic::AtomicBool,
+    /// When what answered was last found to be no hub of this protocol (ms; 0 for never).
+    no_hub_at: std::sync::atomic::AtomicU64,
     self_ref: Mutex<std::sync::Weak<Member>>,
 }
+
+/// How long a connector that found no hub of this protocol waits before it asks again.
+const NO_HUB_PAUSE_MS: u64 = 60_000;
 
 pub fn client_name() -> Option<String> {
     Some(crate::CLIENT.to_string())
@@ -545,6 +550,7 @@ impl Member {
             op: tokio::sync::Mutex::new(()),
             moving: std::sync::atomic::AtomicBool::new(false),
             verified: std::sync::atomic::AtomicBool::new(false),
+            no_hub_at: std::sync::atomic::AtomicU64::new(0),
             self_ref: Mutex::new(std::sync::Weak::new()),
         });
         *m.self_ref.lock().unwrap() = Arc::downgrade(&m);
@@ -669,9 +675,12 @@ impl Member {
         let is_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         // the client's events
         let me = self.clone();
-        let c2 = client.clone();
+        // Held weakly: these tasks live as long as the client's events come, and the client lives as long as
+        // someone else holds it. A client that was given up frees its state at once.
+        let c2 = Arc::downgrade(&client);
         tokio::spawn(async move {
             while let Some(e) = rx.recv().await {
+                let Some(c2) = c2.upgrade() else { break };
                 let current = me.client().is_some_and(|c| Arc::ptr_eq(&c, &c2));
                 if !current {
                     continue;
@@ -722,7 +731,8 @@ impl Member {
                             me.host().on_too_old().await;
                             continue;
                         }
-                        if err.code == "bad-group"
+                        if err.code == "hub-unusable"
+                            || err.code == "bad-group"
                             || err.code == "bad-invite"
                             || err.code == "state-too-old"
                         {
@@ -738,7 +748,7 @@ impl Member {
         });
         // commands, in order, once the host is ready; executed once (the ledger survives restarts)
         let me = self.clone();
-        let c3 = client.clone();
+        let c3 = Arc::downgrade(&client);
         let rd = ready.clone();
         let isr = is_ready.clone();
         tokio::spawn(async move {
@@ -747,9 +757,18 @@ impl Member {
                 if isr.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
                 }
-                n.await;
+                // (a client that was given up before it was ready ends this task too)
+                tokio::select! {
+                    _ = n => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                        if c3.strong_count() == 0 {
+                            return;
+                        }
+                    }
+                }
             }
             while let Some(cmd) = cmd_rx.recv().await {
+                let Some(c3) = c3.upgrade() else { break };
                 if !me.client().is_some_and(|c| Arc::ptr_eq(&c, &c3)) {
                     break;
                 }
@@ -1173,6 +1192,13 @@ impl Member {
         if phase == "retired" && refused {
             return;
         }
+        // What answered last was no hub of this protocol: it is not asked again with every call, only after
+        // a pause. The reason stays in `me.error`.
+        let since =
+            now_ms().saturating_sub(self.no_hub_at.load(std::sync::atomic::Ordering::SeqCst));
+        if phase == "asleep" && since < NO_HUB_PAUSE_MS {
+            return;
+        }
         {
             let mut me = self.me.lock().unwrap();
             if let Some(p) = me.paths.take() {
@@ -1183,6 +1209,10 @@ impl Member {
             me.phase = "starting".into();
         }
         if let Err(e) = self.open(ask).await {
+            if e.code == "hub-unusable" {
+                self.no_hub_at
+                    .store(now_ms(), std::sync::atomic::Ordering::SeqCst);
+            }
             if self.phase() == "retired" {
                 return;
             }
