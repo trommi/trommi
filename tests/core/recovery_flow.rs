@@ -1316,7 +1316,7 @@ fn a_recovery_cleans_a_session_that_an_interrupted_removal_left_stale() {
     w.a.remove_human_devices(&[Cut::none(w.b.id())], now())
         .unwrap();
     post_ok(&mut w.hub, &mut w.a);
-    w.a.change_agents(&[], &[w.agent.id()], now()).unwrap();
+    w.a.remove_agents(&[w.agent.id()], now()).unwrap();
     post_ok(&mut w.hub, &mut w.a);
     assert_eq!(w.hub.stale_leaves(&w.main).unwrap().len(), 2);
     assert!(!w.hub.stale_leaves(&w.side).unwrap().is_empty());
@@ -1489,7 +1489,7 @@ fn what_a_thief_of_recovery_mac_can_and_cannot_do() {
     assert_eq!(checked.anchor.epoch, w.hub.epoch(&w.room).unwrap());
 }
 
-// ---- what the second review found ----
+// ---- rows and states a hub makes up ----
 
 #[test]
 fn a_row_for_an_epoch_a_group_has_not_reached_poisons_no_key() {
