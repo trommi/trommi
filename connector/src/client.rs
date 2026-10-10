@@ -1885,6 +1885,9 @@ impl Client {
             }
             after = next;
         }
+        // One list, rising by the hub's change number across every sender: an envelope is handed after the
+        // ones it builds on (an answer after its card's version), whoever wrote them.
+        fetched.sort_by_key(|(change, _, _)| *change);
         for name in core.model.forget_session(&session) {
             core.journal.delete(side_key(TAG_MODEL, &[name.as_bytes()]));
         }
