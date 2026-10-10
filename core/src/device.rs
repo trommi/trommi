@@ -2393,10 +2393,13 @@ impl<S: Storage> Device<S> {
                         group::load(&device.provider, &group)
                             .is_ok_and(|held| held.epoch().as_u64() > entry.epoch)
                     });
+                    let stale = *code == Error::StaleSession;
                     for owed in device.take_handovers(batch, id) {
-                        if again && moved_on {
+                        // (a group the device already saw move on, by the Commit that ended the epoch or
+                        // the one that cleaned it, takes it now; otherwise it waits for that Commit)
+                        if (again || stale) && moved_on {
                             device.hand_over(batch, owed)?;
-                        } else if again || *code == Error::StaleSession {
+                        } else if again || stale {
                             device.put_handover(batch, PARKED, owed)?;
                         }
                     }

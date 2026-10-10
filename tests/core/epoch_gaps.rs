@@ -387,3 +387,51 @@ fn a_handover_owed_to_a_stale_session_goes_out_after_it_is_cleaned() {
     assert_eq!(no_key_left(&got), 0);
     assert!(reads(&phone, &r.agent, &main).0.unwrap().contains("build-bot"));
 }
+
+/// The same, when another human device cleans the session and this one processed that Commit before it
+/// reported the hub's `stale-session`: the handover goes out at once, it waits for no further Commit.
+#[test]
+fn a_handover_refused_as_stale_after_the_cleanup_was_seen_goes_out_at_once() {
+    let mut r = room();
+    let mut b = new_device();
+    add_human(&mut r.hub, &mut r.a, &mut b);
+    let main = r.main;
+    add_to_session(&mut r.hub, &mut r.a, &mut b, &main);
+    sync_all(&r.hub, &mut r.a);
+    settle_joining(&r.hub, &mut b);
+    let mut phone = new_device();
+    add_human(&mut r.hub, &mut r.a, &mut phone);
+    sync_all(&r.hub, &mut r.a);
+    let package = phone.key_package(now()).unwrap();
+    r.a.add_to_session(&main, &phone.id(), &package, now()).unwrap();
+    let add = r.a.outbox().remove(0);
+    let accepted = r.hub.post(&r.a.id(), &add).unwrap();
+    r.a.outbox_accepted(add.id, accepted).unwrap();
+    trommi_tests::process_up_to(&r.hub, &mut r.a, accepted.change.unwrap());
+    let owed = r.a.outbox().remove(0);
+    // b revokes the agent and cleans the session before a posts its handover. (It read the session from
+    // number 1 first, as the apps do: its Cut keeps what the agent wrote.)
+    sync_all(&r.hub, &mut b);
+    learn(&r.hub, &mut b, &r.room).unwrap();
+    learn(&r.hub, &mut b, &main).unwrap();
+    read_group(&r.hub, &mut b, &main);
+    b.remove_agents(&[r.agent.id()], now()).unwrap();
+    post_ok(&mut r.hub, &mut b);
+    let cut = b.cut_of(&main, &r.agent.id()).unwrap();
+    b.clean_session(&main, &[cut], None, now()).unwrap();
+    post_ok(&mut r.hub, &mut b);
+    let refused = r.hub.post(&r.a.id(), &owed).unwrap_err();
+    // a processes the revocation and the cleanup, then reports the refusal.
+    settle(&r.hub, &mut r.a);
+    r.a.outbox_refused(owed.id, &refused).unwrap();
+    assert_eq!(r.a.outbox().len(), 1, "made again in the cleaned session's epoch");
+    post_ok(&mut r.hub, &mut r.a);
+
+    settle_joining(&r.hub, &mut phone);
+    learn(&r.hub, &mut phone, &r.room).unwrap();
+    learn(&r.hub, &mut phone, &main).unwrap();
+    sync_all(&r.hub, &mut phone);
+    let got = read_group(&r.hub, &mut phone, &main);
+    assert_eq!(no_key_left(&got), 0);
+    assert!(reads(&phone, &r.agent, &main).0.unwrap().contains("build-bot"));
+}
