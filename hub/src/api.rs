@@ -519,10 +519,12 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let (auth, signature) = (rq.bytes("auth")?, rq.bytes("signature")?);
             let (token, expires_at, who) = app.read(|x| app.sessions.sign_in(x.c, x.obs, &app.cfg.url, &room, &auth, &signature, x.now))?;
             let role = match who {
-                Who::Human => "human",
-                Who::Agent => "agent",
-                Who::Helper => "helper",
-                Who::Recovery | Who::Spent => "recovery",
+                Some(Who::Human) => "human",
+                Some(Who::Agent) => "agent",
+                Some(Who::Helper) => "helper",
+                Some(Who::Recovery | Who::Spent) => "recovery",
+                // no standing: good for `GET /v2/groups/{group}/removal` only
+                None => "removed",
             };
             Ok(json!({ "token": token, "expires_at": expires_at, "role": role }))
         }
@@ -651,6 +653,14 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let group = group_id(group)?;
             let auth = read_auth()?;
             app.write_as(&auth, rq.lease, |x, fx| delivery::archive(x, &auth, &group, fx))
+        }
+        // 13.5: a removed device fetches the Commits that prove its removal; its token names it, it has no standing
+        ("GET", ["groups", group, "removal"]) => {
+            let group = group_id(group)?;
+            let after = rq.q_int("after")?.unwrap_or(0);
+            let (room, device) = app.sessions.bearer(rq.bearer.as_deref(), t).ok_or_else(|| refuse("unauthorised", "sign in"))?;
+            limited(app.limits.heavy.take(&[&room[..], &device[..]].concat(), 1.0, t))?;
+            app.read(|x| delivery::removal(x.c, &room, &device, &group, after, x.now))
         }
         ("GET", ["groups", group, "log"]) => {
             let group = group_id(group)?;

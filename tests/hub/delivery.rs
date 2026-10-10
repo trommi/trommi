@@ -1166,7 +1166,11 @@ fn removing_a_human_device_ends_its_access_at_once_and_leaves_its_sessions_stale
     // 14.4: its token and its stream end at once
     bea.get(&w.hub, "/v2/desk").refused(403, "not-member");
     assert!(bea_events.ended());
-    sign_in_with(&w.hub, &w.room, &bea.signer, None).refused(403, "not-member");
+    // (a token it gets still, for thirty days: good for the proof of its removal and nothing else, 13.5)
+    assert_eq!(
+        sign_in_with(&w.hub, &w.room, &bea.signer, None).ok()["role"],
+        "removed"
+    );
     // both sessions are stale: nobody writes into them
     let list = groups(&w, &w.ada);
     assert_eq!(
@@ -2252,7 +2256,11 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
 
     // in between: nothing from the removed device, nothing for it, nothing into what is still stale
     bea.get(&w.hub, "/v2/changes").refused(403, "not-member");
-    sign_in_with(&w.hub, &room, &bea.signer, None).refused(403, "not-member");
+    // (a token it gets still, for thirty days: good for the proof of its removal and nothing else, 13.5)
+    assert_eq!(
+        sign_in_with(&w.hub, &room, &bea.signer, None).ok()["role"],
+        "removed"
+    );
     let list = groups(&w, &cleo);
     assert_eq!(list.iter().filter(|g| g["stale"] == true).count(), 40);
     assert!(list.iter().all(|g| g["stale"] == true
