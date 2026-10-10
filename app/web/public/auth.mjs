@@ -727,7 +727,15 @@ export function kitGate(client, { fresh = false } = {}) {
   const close = () => { off?.(); gate = null; box.close(); box.remove() }
   // (saved on another device meanwhile: this one opens too)
   // (only on the register's own word: while its first write is on the way the register may be missing for a moment)
-  const watch = () => { const r = client.model.human?.raw?.get('kit'); if (r && !r.pending && r.value?.pending !== true && read(KIT_MARK) !== '1') close() }
+  // (and only after this gate saw the register say "pending": a device that catches up a history, as one does after
+  //  a recovery, meets the account's older value of the register before its own new one, and the kit it was just
+  //  shown must not close on that)
+  let seenPending = registered()
+  const watch = () => {
+    const r = client.model.human?.raw?.get('kit')
+    if (r?.value?.pending === true) { seenPending = true; return }
+    if (seenPending && r && !r.pending && read(KIT_MARK) !== '1') close()
+  }
   const off = (() => { const un = client.on?.('change', watch); return typeof un === 'function' ? un : () => client.off?.('change', watch) })()
   const kit = freshKit; freshKit = null
   // st: the account as the hub has it (which ways in it has); null when it could not be read: the password's form then
