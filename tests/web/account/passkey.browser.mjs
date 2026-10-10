@@ -348,12 +348,75 @@ export const steps = [
     await ctx.close('realm')
   }],
 
+  // (1Password as the browser's passkey provider: the answer's fields come whole only through toJSON(), base64url;
+  //  rawId, the response's getters and getClientExtensionResults() give nothing)
+  ['a passkey answered as 1Password does, every field only in toJSON(): the account is made, the kit shows', async ctx => {
+    const page = await ctx.profile('json')
+    await page.session.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const b64 = b => { const u = new Uint8Array(b); let s = ''; for (const x of u) s += String.fromCharCode(x); return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '') }
+      const shape = cred => {
+        const r = cred.response, ext = cred.getClientExtensionResults(), json = { id: cred.id, rawId: b64(cred.rawId), type: cred.type, response: {}, clientExtensionResults: {} }
+        for (const k of ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle']) if (r[k]) json.response[k] = b64(r[k])
+        if (r.getTransports) json.response.transports = r.getTransports()
+        if (ext.prf) json.clientExtensionResults.prf = { ...(ext.prf.enabled !== undefined ? { enabled: ext.prf.enabled } : {}), ...(ext.prf.results ? { results: { first: b64(ext.prf.results.first) } } : {}) }
+        return { id: cred.id, type: cred.type, rawId: undefined, response: { getTransports: () => undefined }, getClientExtensionResults: () => ({}), toJSON: () => json }
+      }
+      const create = navigator.credentials.create.bind(navigator.credentials), get = navigator.credentials.get.bind(navigator.credentials)
+      navigator.credentials.create = async o => shape(await create(o))
+      navigator.credentials.get = async o => shape(await get(o))
+    })()` })
+    await toCreate(ctx, page)
+    await page.type('#create-form input[name=email]', `json+${Date.now().toString(36)}@example.org`)
+    await page.click('#create-form button[type=submit]')
+    await page.until("document.querySelector('#kit-gate[open] #kit-done') || document.querySelector('#create-form #ob-error')?.textContent.trim() || document.querySelector('#passkey-note')", 'the Emergency Kit screen, or a word', 60000)
+    const said = await page.js("return (document.querySelector('#create-form #ob-error')?.textContent.trim() || document.querySelector('#passkey-note')?.textContent.trim()) ?? ''")
+    ctx.run.check(!said && await page.js("return !!document.querySelector('#kit-gate[open] #kit-done')"), 'the account is made: the kit screen, no error line', said)
+    await ctx.close('json')
+  }],
+
+  // (a provider that gives the prf output only at get(): create() says `prf: { enabled: true }` without results; the
+  //  page asks get() at once with the same input and that credential, and takes the key from there)
+  ['a passkey whose create() gives prf only as enabled, the key at get(): the account is made with one more prompt', async ctx => {
+    const page = await ctx.profile('later')
+    await page.session.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      window.__gets = []
+      const create = navigator.credentials.create.bind(navigator.credentials), get = navigator.credentials.get.bind(navigator.credentials)
+      navigator.credentials.create = async o => { const c = await create(o); const ext = c.getClientExtensionResults(); c.getClientExtensionResults = () => ({ ...ext, prf: { enabled: true } }); c.toJSON = undefined; return c }
+      navigator.credentials.get = async o => { window.__gets.push((o.publicKey.allowCredentials ?? []).length); return get(o) }
+    })()` })
+    await toCreate(ctx, page)
+    await page.type('#create-form input[name=email]', `later+${Date.now().toString(36)}@example.org`)
+    await page.click('#create-form button[type=submit]')
+    await page.until("document.querySelector('#kit-gate[open] #kit-done') || document.querySelector('#create-form #ob-error')?.textContent.trim() || document.querySelector('#passkey-note')", 'the Emergency Kit screen, or a word', 60000)
+    const said = await page.js("return (document.querySelector('#create-form #ob-error')?.textContent.trim() || document.querySelector('#passkey-note')?.textContent.trim()) ?? ''")
+    ctx.run.check(!said && await page.js("return !!document.querySelector('#kit-gate[open] #kit-done')"), 'the account is made: the kit screen, no error line', said)
+    ctx.run.check((await page.js('return window.__gets')).join() === '1', 'one get() right after create(), for that one credential', await page.js('return window.__gets'))
+    await ctx.close('later')
+  }],
+
+  ['the get() for the key after create() fails: nothing was sent but the challenge, no account, the screen says what to do', async ctx => {
+    const page = await ctx.profile('noget'), since = ctx.mark()
+    await page.session.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const create = navigator.credentials.create.bind(navigator.credentials)
+      navigator.credentials.create = async o => { const c = await create(o); const ext = c.getClientExtensionResults(); c.getClientExtensionResults = () => ({ ...ext, prf: { enabled: true } }); c.toJSON = undefined; return c }
+      navigator.credentials.get = async () => { throw new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError') }
+    })()` })
+    await toCreate(ctx, page)
+    await page.type('#create-form input[name=email]', `noget+${Date.now().toString(36)}@example.org`)
+    await page.click('#create-form button[type=submit]')
+    await page.until("document.querySelector('#passkey-note') || document.querySelector('#kit-gate[open]') || document.querySelector('#create-form #ob-error')?.textContent.trim()", 'a word, or (wrongly) an account', 60000)
+    ctx.run.check(await text(page, '#passkey-note') === 'The passkey was saved but cannot unlock Trommi. Delete it in your password manager and use a password.', 'the note says what to do', await text(page, '#passkey-note'))
+    const sent = since().filter(r => r.method !== 'GET' && r.path.startsWith('/v2/')).map(r => r.path)
+    ctx.run.check(sent.every(p => p === '/v2/account/passkey/challenge'), 'nothing reached the hub but the challenge: no room, no account', sent)
+    await ctx.close('noget')
+  }],
+
   ['a passkey without the prf extension: the screen says so and offers the password; no account is made', async ctx => {
     const page = await ctx.profile('noprf', { prf: false }), since = ctx.mark()
     await toCreate(ctx, page)
     await page.click('#create-form button[type=submit]')
     await page.until("document.querySelector('#passkey-note') || document.querySelector('#kit-gate[open]')", 'the note, or (wrongly) an account', 60000)
-    ctx.run.check(await text(page, '#passkey-note') === 'This passkey can\'t unlock Trommi. Use a password.' && await page.js("return !!document.querySelector('#create-form #ob-pw')"), 'the password\'s form with the note', await text(page, '#passkey-note'))
+    ctx.run.check(await text(page, '#passkey-note') === 'The passkey was saved but cannot unlock Trommi. Delete it in your password manager and use a password.' && await page.js("return !!document.querySelector('#create-form #ob-pw')"), 'the password\'s form with the note', await text(page, '#passkey-note'))
     ctx.run.check(!since().some(r => r.path === '/v2/rooms'), 'nothing was founded')
     await ctx.close('noprf')
   }],

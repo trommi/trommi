@@ -37,7 +37,31 @@ const pkRpId = () => location.hostname
 const pkError = (code, message) => Object.assign(new Error(message), { code })
 /** What a ceremony throws, in the app's codes (a DOMException's own code is a number): the prompt was closed (passkey-cancelled), this page ended it (passkey-aborted), the authenticator holds one already (passkey-exists). */
 const pkFail = err => (typeof err?.code === 'string' ? err : err?.name === 'AbortError' ? pkError('passkey-aborted', 'ended') : err?.name === 'InvalidStateError' ? pkError('passkey-exists', 'this passkey is here already') : err?.name === 'NotAllowedError' ? pkError('passkey-cancelled', 'no passkey was used') : pkError('passkey-failed', err?.message ?? 'the passkey did not work'))
-const pkPrf = cred => { const r = cred.getClientExtensionResults?.()?.prf?.results?.first; return r ? pkBytes(r) : null }
+/**
+ * A ceremony's answer read field by field: from its JSON form (`toJSON()`, WebAuthn level 3: base64url text, what
+ * Chrome and a passkey provider such as 1Password give whole) where it has one, else from the objects themselves
+ * (whose getters a provider may leave empty). A field that is in neither: `passkey-failed`, naming the field.
+ */
+function pkRead(cred) {
+  let json = null
+  try { json = typeof cred?.toJSON === 'function' ? cred.toJSON() : null } catch { json = null }
+  const raw = cred?.response ?? {}, jr = json?.response ?? {}
+  const pick = (name, fromJson, fromRaw, optional = false) => {
+    for (const v of [fromJson, fromRaw]) if (v != null && v !== '') try { return pkBytes(v) } catch { /* the other form */ }
+    if (optional) return null
+    throw pkError('passkey-failed', `the passkey answer lacks ${name}`)
+  }
+  let ext = null
+  try { ext = cred?.getClientExtensionResults?.() ?? null } catch { ext = null }
+  const prfOf = e => e?.prf?.results?.first
+  return {
+    field: (name, optional = false) => pick(name, jr[name], raw[name], optional),
+    id: () => pick('rawId', json?.rawId ?? json?.id, cred?.rawId),
+    transports: () => { try { return jr.transports ?? raw.getTransports?.() ?? [] } catch { return [] } },
+    prf: () => pick('prf result', prfOf(json?.clientExtensionResults), prfOf(ext), true),
+    prfEnabled: () => (json?.clientExtensionResults?.prf ?? ext?.prf)?.enabled,
+  }
+}
 const pkList = ids => ids.map(id => ({ type: 'public-key', id }))
 /** A passkey that came to nothing (no account, or it cannot unlock): tell its store to drop it, where the browser can. */
 /** Did the step certainly leave no passkey registered? Not when the hub was not reached or did not answer as it should, the worker went away, or the core says the passkey was kept: it may be a way in then, and stays in its store. */
@@ -66,8 +90,8 @@ async function passkeyGet({ challenge = null, allow = [], mediation, signal } = 
     cred = await navigator.credentials.get({ ...(mediation ? { mediation } : {}), ...(signal ? { signal } : {}),
       publicKey: { challenge: challenge ? unb64u(challenge) : crypto.getRandomValues(new Uint8Array(32)), rpId: pkRpId(), userVerification: 'required', allowCredentials: pkList(allow), extensions: { prf: { eval: { first: input } } } } })
   } catch (err) { throw pkFail(err) }
-  const r = cred.response
-  return { credential_id: pkBytes(cred.rawId), authenticator_data: pkBytes(r.authenticatorData), client_data_json: pkBytes(r.clientDataJSON), signature: pkBytes(r.signature), user_handle: r.userHandle?.byteLength ? pkBytes(r.userHandle) : null, prf: pkPrf(cred) }
+  const a = pkRead(cred), handle = a.field('userHandle', true)
+  return { credential_id: a.id(), authenticator_data: a.field('authenticatorData'), client_data_json: a.field('clientDataJSON'), signature: a.field('signature'), user_handle: handle?.length ? handle : null, prf: a.prf() }
 }
 /**
  * A new passkey with the 32 bytes that will seal the account's copy. create() (discoverable, user verification, prf
@@ -88,12 +112,14 @@ async function passkeyMake({ challenge, user_handle, name, exclude = [] }) {
       attestation: 'none', excludeCredentials: pkList(exclude), extensions: { prf: { eval: { first: input } } },
     } })
   } catch (err) { throw pkFail(err) }
-  const id = pkBytes(cred.rawId)
+  const a = pkRead(cred), id = a.id()
   try {
-    let prf = pkPrf(cred)
-    if (!prf && cred.getClientExtensionResults?.()?.prf?.enabled !== false) prf = (await passkeyGet({ allow: [id] })).prf
-    if (!prf) throw pkError('no-prf', 'this passkey gives no key')
-    return { credential_id: id, attestation_object: pkBytes(cred.response.attestationObject), client_data_json: pkBytes(cred.response.clientDataJSON), transports: cred.response.getTransports?.() ?? [], prf }
+    let prf = a.prf()
+    // (a provider that gives the prf output only at get(): asked at once, for this credential. Nothing has reached the
+    //  hub but the challenge: the account is made only with the key in hand, in one request with the room)
+    if (!prf && a.prfEnabled() !== false) prf = await passkeyGet({ allow: [id] }).then(got => got.prf, err => { if (err?.code === 'passkey-aborted') throw err; return null })
+    if (!prf) throw pkError('no-prf', 'the passkey answer lacks prf result')
+    return { credential_id: id, attestation_object: a.field('attestationObject'), client_data_json: a.field('clientDataJSON'), transports: a.transports(), prf }
   } catch (err) { passkeyForget(id); throw err }
 }
 /** A signed-in device opens the account with one of its passkeys (for a new kit, a password, another passkey): { credential_id, prf }. */
@@ -102,7 +128,7 @@ async function passkeyUnlock(st) {
   if (!got.prf) throw pkError('no-prf', 'this passkey gives no key here')
   return { credential_id: got.credential_id, prf: got.prf }
 }
-const NO_PRF = 'This passkey can\'t unlock Trommi. Use a password.'
+const NO_PRF = 'The passkey was saved but cannot unlock Trommi. Delete it in your password manager and use a password.'
 /** Said once, quietly, where a browser has no WebAuthn at all: the password is the way then. */
 const NO_PASSKEYS = html`<p class="ob-alt ob-way ob-none" id="no-passkeys">No passkeys in this browser. A password works everywhere.</p>`
 const NO_PRF_HERE = 'This passkey can\'t unlock Trommi here. Use your password.'
