@@ -663,6 +663,36 @@ fn lifetimes_and_retention() {
         1
     );
     assert!(!y1_body(&w.ada));
+    // a declaration never ends another post's count: 20 days on, bea's snapshot covers y2, ada's bound post
+    // holds y2 back (it names y1); 15 days later a declaration of bea alone is 35 days newer than ada's post,
+    // yet the 30 days run from the newest bound post (bea's): ada's still counts, y2 stays
+    hub.clock(20 * DAY);
+    again(&mut [&mut w.ada, &mut bea]);
+    bea.send(hub, &room, &board_item(&board)).ok();
+    let y2 = bea.chain(&room);
+    assert_eq!(
+        write_snapshot(
+            hub,
+            &mut bea,
+            &room,
+            &board,
+            &bea_reg,
+            &[(&ada_id, x1), (&bea_id, y2)],
+            &[],
+        )["pruned"],
+        0
+    );
+    hub.clock(15 * DAY);
+    again(&mut [&mut w.ada, &mut bea]);
+    assert_eq!(
+        bea.post(
+            hub,
+            &format!("/v1/boards/{}/frontier", hex(&board)),
+            &frontier_body(&[(&ada_id, x1), (&bea_id, y2)], &[], None),
+        )
+        .ok()["pruned"],
+        0
+    );
 
     // ---- a restart keeps everything but tokens: the same data directory under a new hub
     let room_before = w

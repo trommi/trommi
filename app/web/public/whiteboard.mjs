@@ -660,7 +660,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
   const lives = new Map()         // gesture -> { g, stroke: its id for the pieces (32 hex), number: pieces sent, sent: points sent }
   const liveOf = new Map()        // pad id -> the stroke id under which its pieces went out while it was drawn
   let queue = []                  // ops for the next flush: { add, ver, live? } | { move: [dx, dy], ver } | { gone, ver }
-  let flushing = null, flushTimer = 0, snapTimer = 0, error = null, mockSeq = 0, lastOp = 0, started = false
+  let flushing = null, flushTimer = 0, snapTimer = 0, snapping = false, error = null, mockSeq = 0, lastOp = 0, started = false
   let mode = real ? 'starting' : 'local'
   const state = () => ({ mode, pending: queue.length + lives.size + (flushing ? 1 : 0), error })
   const report = () => onState?.(state())
@@ -849,6 +849,9 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     // An item of this board could not be read here: what this device holds is not all of it, so it writes no snapshot.
     if (st.unread) return
     if (Date.now() - lastOp < SNAP_IDLE_MS || flushing || queue.length || lives.size || client.model?.outbox?.length || connection() !== 'online') return snapSoon()
+    // (one snapshot at a time, from its declaration to its bound post: a later one never overtakes an earlier one)
+    if (snapping) return snapSoon()
+    snapping = true
     try {
       const snap = st.snapshot(), applied = st.applied
       // (10.9: the hub hears first what the snapshot will cover, so that it holds pruning back for it; not heard: no snapshot)
@@ -857,11 +860,11 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
       const sent = await client.setRegisters({ [`scribble_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number, shapes: snap.shapes.length } })
       st.applied -= applied
       // (10.9: once the hub took the register, the declared frontier is bound to it and the hub prunes behind it)
-      if (sent && client.postBoardFrontier) client.postBoardFrontier(timeline_id, sent, snap.frontier, snap.shapes).catch(e => console.warn('canvas frontier', e))
+      if (sent && client.postBoardFrontier) await client.postBoardFrontier(timeline_id, sent, snap.frontier, snap.shapes).catch(e => console.warn('canvas frontier', e))
     } catch (e) {
       // (the canvas state refuses: an item without its hash yet, or one that could not be read: no snapshot now)
       if (!['newer-version', 'no-key', 'bad-format'].includes(e?.code)) console.warn('canvas snapshot', e)
-    }
+    } finally { snapping = false }
   }
 
   // ---- start: snapshot + tail, then live ----

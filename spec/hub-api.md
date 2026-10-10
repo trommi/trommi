@@ -75,7 +75,7 @@ written. Catch-up is "everything above N".
 | `cards`, `notes`, `permission_requests`, `artifacts` | `object_id`, `group_id`, `state`, `urgency`, `answered_at`, `owner`, `first_change`, `head_change`, `closed_at` | | **the Desk**: partial index on `state = open` by (`urgency` desc, `first_change`). Derived from `envelopes`, rebuildable |
 | `chats`, `boards` | `timeline`, `group_id`, `item_count`, `last_change` | | derived |
 | `registers` | `group_id`, `writer`, `register_id`, `head_change` | | **all current values**: (`group_id`); derived |
-| `board_frontiers` | `room_id`, `board`, `device`, `bound`, `frontier` (writer → `seq`), `files`, `at`, `snapshot_seq`, `register_id`, `counts` | | per human device and board its declaration and its bound post (v1.md 10.9) |
+| `board_frontiers` | `room_id`, `board`, `device`, `bound`, `frontier` (writer → `seq`), `files`, `at`, `snapshot_seq`, `register_id`, `counts` | | per human device and board its declarations and its bound post (v1.md 10.9) |
 | `files` | `file_id`, `room_id`, `uploader`, `group_id`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
 | `shares` | `share_id`, `file_id`, `secret_hash`, `expires_at`, `created_by` | | by id |
 | `invites`, `invite_requests` | signed Offer with its `offer_mac` (added to schema 5 in place), Requests, Reveal, `expires_at`, `used_at`, `burned_at` | | by `invite_id` |
@@ -466,8 +466,11 @@ encrypted.
     not that envelope's, or `snapshot` is not a register value of the posting device the hub took; with
     `removed-sender` when a number lies beyond a removed writer's Cut; with `replay` when `snapshot` is not the
     newest value of its register or older than the one the device's post is bound to; with `too-large` beyond
-    20 000 files or 1 000 writers. Declarations only hold pruning back; nothing of a board is pruned before a
-    bound post counts.
+    20 000 files or 1 000 writers; with `too-many` for a ninth open declaration of one device and board.
+    Declarations only hold pruning back, one row each until the bound post with the same frontier answers it or
+    the 30 days, counted from the newest bound post, end it; nothing of a board is pruned before a bound post
+    counts. A `board_frontiers` table of the first layout (one post per device) is rebuilt in place, its posts
+    kept as bound ones.
     A register value or Note version that a later Cut leaves beyond its writer's chain (9.0.10) has already
     pruned the ones before it: devices that come later find that writer's value unreadable.
 

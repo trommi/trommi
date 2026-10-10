@@ -285,6 +285,40 @@ mod db_tests {
     /// A database the hub wrote before Welcomes had their own ids: the counter starts above every id SQLite can
     /// have given, also one whose row was deleted, so `?after=` never hides a new Welcome.
     #[test]
+    fn board_frontiers_of_the_first_layout_are_rebuilt_as_bound_posts() {
+        let dir = std::env::temp_dir().join(format!(
+            "trommi-hub-frontiers-{}",
+            trommi_hub::util::hex(&trommi_hub::util::random::<8>())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hub.db");
+        {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            c.execute_batch(&format!(
+                "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION};
+                 CREATE TABLE board_frontiers (
+                   room_id BLOB NOT NULL, board BLOB NOT NULL, device BLOB NOT NULL, frontier BLOB NOT NULL,
+                   files BLOB NOT NULL, at INTEGER NOT NULL, counts INTEGER NOT NULL DEFAULT 1,
+                   PRIMARY KEY (room_id, board, device)) STRICT, WITHOUT ROWID;
+                 INSERT INTO board_frontiers VALUES (x'01', zeroblob(16), zeroblob(32), x'02', x'03', 5, 1);
+                 COMMIT;"
+            ))
+            .unwrap();
+        }
+        for _ in 0..2 {
+            let db = Db::open(&path).unwrap();
+            let row: (i64, Vec<u8>, i64) = db
+                .read(|c| {
+                    c.query_row("SELECT bound, frontier, at FROM board_frontiers", [], |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                    })
+                })
+                .unwrap();
+            assert_eq!(row, (1, vec![2], 5), "the post stays, as a bound one");
+        }
+    }
+
+    #[test]
     fn the_welcome_counter_starts_above_every_id_given_before() {
         let dir = std::env::temp_dir().join(format!(
             "trommi-hub-upgrade-{}",

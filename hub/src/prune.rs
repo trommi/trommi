@@ -17,6 +17,8 @@ pub const FRONTIER_WINDOW_MS: u64 = 30 * 86_400_000;
 pub const MAX_FRONTIER_FILES: usize = 20_000;
 /// The most writers one frontier names (the most human devices of a room).
 pub const MAX_FRONTIER_WRITERS: usize = 1_000;
+/// 10.9: the most declarations of one device and board that wait for their bound post.
+pub const MAX_DECLARED: i64 = 8;
 
 /// The 16-byte ids of a `file_ids` column.
 fn ids_of(blob: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -354,28 +356,12 @@ fn files_of(body: &Value) -> Res<Vec<u8>> {
     Ok(files)
 }
 
-/// Per writer the smaller number of both; a writer one of them lacks is left out (it counts 0).
-fn lower(a: &Frontier, b: &Frontier) -> Frontier {
-    a.iter()
-        .filter_map(|(w, s)| {
-            b.iter()
-                .find(|(v, _)| v == w)
-                .map(|(_, t)| (*w, (*s).min(*t)))
-        })
-        .collect()
-}
-
-/// Whether `a` reaches nowhere beyond `b`: every writer of `a` is in `b` with a number at least as high.
-fn within(a: &Frontier, b: &Frontier) -> bool {
-    a.iter()
-        .all(|(w, s)| b.iter().any(|(v, t)| v == w && t >= s))
-}
-
 /// `POST /v1/boards/{board}/frontier` (10.9), in two steps around a snapshot register value of `board`:
 ///
-/// - `{ frontier, files }` before the register is written: the declaration. It only holds pruning back (a
-///   declaration that is already there keeps, per writer, the smaller number of both), so that a snapshot that
-///   becomes current before its device binds it is covered from the start.
+/// - `{ frontier, files }` before the register is written: a declaration, one row per declared frontier (at most
+///   `MAX_DECLARED` open ones per device and board). It only holds pruning back, so that a snapshot that becomes
+///   current before its device binds it is covered from the start; its own bound post answers it, the 30 days of
+///   10.9 end it otherwise.
 /// - `{ frontier, files, snapshot: [seq, hash] }` once the hub took the register value: bound to that envelope
 ///   (the device's own, a register value, its newest of that register, not cut), it replaces the device's bound
 ///   post; a bound post of an older value is `replay`. Its time is the value's arrival, never the post's.
@@ -395,38 +381,36 @@ pub fn post_frontier(
     let group: &[u8] = &room[..];
     let frontier = frontier_of(c, &room, body)?;
     let files = files_of(body)?;
-    let key = params![&room[..], &board[..], &auth.device[..]];
-    let stored = |bound: i64| -> Res<Option<(Vec<u8>, Vec<u8>, Option<i64>, Option<Vec<u8>>)>> {
+    let encoded = encode_frontier(&frontier);
+    let stored = || -> Res<Option<(Option<i64>, Option<Vec<u8>>)>> {
         Ok(c.prepare_cached(
-            "SELECT frontier, files, snapshot_seq, register_id FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = ?4",
+            "SELECT snapshot_seq, register_id FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 1",
         )?
-        .query_row(params![&room[..], &board[..], &auth.device[..], bound], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        .query_row(params![&room[..], &board[..], &auth.device[..]], |r| {
+            Ok((r.get(0)?, r.get(1)?))
         })
         .optional()?)
     };
     if body.get("snapshot").is_none() {
-        // the declaration
-        let (frontier, files) = match stored(0)? {
-            Some((before, kept, _, _)) => {
-                // (both lists together: at most twice the files of one post)
-                let mut all = files;
-                let mut seen: std::collections::HashSet<Vec<u8>> =
-                    ids_of(&all).map(<[u8]>::to_vec).collect();
-                for id in ids_of(&kept) {
-                    if seen.insert(id.to_vec()) && all.len() < MAX_FRONTIER_FILES * 16 * 2 {
-                        all.extend_from_slice(id);
-                    }
-                }
-                (lower(&frontier, &decode_frontier(&before)), all)
-            }
-            None => (frontier, files),
-        };
+        // a declaration: its own row, until its bound post answers it
+        let (open, again): (i64, i64) = c
+            .prepare_cached(
+                "SELECT count(*), coalesce(sum(frontier = ?4), 0) FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0",
+            )?
+            .query_row(params![&room[..], &board[..], &auth.device[..], &encoded], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+        if again == 0 && open >= MAX_DECLARED {
+            return Err(refuse(
+                "too-many",
+                "a device has at most 8 declarations of a board that wait for their snapshot",
+            ));
+        }
         c.prepare_cached(
             "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1)
-             ON CONFLICT (room_id, board, device, bound) DO UPDATE SET frontier = excluded.frontier, files = excluded.files, at = excluded.at, counts = 1",
+             ON CONFLICT (room_id, board, device, bound, frontier) DO UPDATE SET files = excluded.files, at = excluded.at, counts = 1",
         )?
-        .execute(params![&room[..], &board[..], &auth.device[..], encode_frontier(&frontier), files, now as i64])?;
+        .execute(params![&room[..], &board[..], &auth.device[..], &encoded, files, now as i64])?;
     } else {
         // bound to the snapshot register value
         let (seq, hash) = head_of(&body["snapshot"])?;
@@ -456,7 +440,7 @@ pub fn post_frontier(
             )?
             .query_row(params![group, &auth.device[..], &register_id], |r| r.get(0))
             .optional()?;
-        if let Some((_, _, Some(before), Some(bound_register))) = stored(1)? {
+        if let Some((Some(before), Some(bound_register))) = stored()? {
             if !same(&bound_register, &register_id) {
                 return Err(refuse(
                     "bad-format",
@@ -482,17 +466,18 @@ pub fn post_frontier(
             ));
         }
         c.prepare_cached(
-            "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, 1)
-             ON CONFLICT (room_id, board, device, bound) DO UPDATE SET frontier = excluded.frontier, files = excluded.files, at = excluded.at, snapshot_seq = excluded.snapshot_seq, register_id = excluded.register_id, counts = 1",
+            "DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 1",
         )?
-        .execute(params![&room[..], &board[..], &auth.device[..], encode_frontier(&frontier), files, arrived, seq as i64, &register_id])?;
-        // the declaration of this snapshot is answered; a later one (a frontier beyond this) still holds back
-        if let Some((declared, _, _, _)) = stored(0)? {
-            if within(&decode_frontier(&declared), &frontier) {
-                c.prepare_cached("DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0")?
-                    .execute(key)?;
-            }
-        }
+        .execute(params![&room[..], &board[..], &auth.device[..]])?;
+        c.prepare_cached(
+            "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, 1)",
+        )?
+        .execute(params![&room[..], &board[..], &auth.device[..], &encoded, files, arrived, seq as i64, &register_id])?;
+        // the declaration of this very snapshot is answered; others (a snapshot still on its way) hold back on
+        c.prepare_cached(
+            "DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0 AND frontier = ?4",
+        )?
+        .execute(params![&room[..], &board[..], &auth.device[..], &encoded])?;
     }
     let pruned = apply_board(c, &room, board, now, fx)?;
     Ok(json!({ "pruned": pruned }))
@@ -530,7 +515,8 @@ fn standing(
 /// Marks which posts of `board` count, then prunes per writer up to the smallest number the counting posts give
 /// it. A post counts while it is at most 30 days older than the board's newest and nothing it names lies beyond a
 /// Cut; its device need not be a leaf any more: a removed device's snapshot value within its Cut can still be
-/// current. Declarations only hold back: without a counting bound post nothing is pruned.
+/// current. Declarations only hold back: without a standing bound post nothing is pruned, and the 30 days run from
+/// the newest bound one.
 pub fn apply_board(
     c: &Connection,
     room: &Room,
@@ -550,33 +536,32 @@ pub fn apply_board(
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
-    let mut live: Vec<(Vec<u8>, i64, Frontier, i64)> = Vec::new();
-    for (device, bound, frontier, at, snapshot) in posts {
-        let frontier = decode_frontier(&frontier);
+    let mark = |device: &[u8], bound: i64, stored: &[u8], counts: bool| -> Res<()> {
+        c.prepare_cached("UPDATE board_frontiers SET counts = ?1 WHERE room_id = ?2 AND board = ?3 AND device = ?4 AND bound = ?5 AND frontier = ?6")?
+            .execute(params![counts as i64, &room[..], &board[..], device, bound, stored])?;
+        Ok(())
+    };
+    let mut live: Vec<(Vec<u8>, i64, Vec<u8>, Frontier, i64)> = Vec::new();
+    for (device, bound, stored, at, snapshot) in posts {
+        let frontier = decode_frontier(&stored);
         if standing(c, room, &frontier, snapshot.map(|s| (&device[..], s)))? {
-            live.push((device, bound, frontier, at));
+            live.push((device, bound, stored, frontier, at));
         } else {
-            c.prepare_cached("UPDATE board_frontiers SET counts = 0 WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = ?4")?
-                .execute(params![&room[..], &board[..], &device, bound])?;
+            mark(&device, bound, &stored, false)?;
         }
     }
-    let Some(newest) = live.iter().map(|p| p.3).max() else {
+    // the 30 days run from the newest bound post: a declaration only holds back, it never ends another's count
+    let Some(newest) = live.iter().filter(|p| p.1 == 1).map(|p| p.4).max() else {
         return Ok(0);
     };
     let from = newest.saturating_sub(FRONTIER_WINDOW_MS as i64);
     let mut counting: Vec<Frontier> = Vec::new();
-    let mut any_bound = false;
-    for (device, bound, frontier, at) in live {
+    for (device, bound, stored, frontier, at) in live {
         let counts = at >= from;
-        c.prepare_cached("UPDATE board_frontiers SET counts = ?1 WHERE room_id = ?2 AND board = ?3 AND device = ?4 AND bound = ?5")?
-            .execute(params![counts as i64, &room[..], &board[..], &device, bound])?;
+        mark(&device, bound, &stored, counts)?;
         if counts {
-            any_bound |= bound == 1;
             counting.push(frontier);
         }
-    }
-    if !any_bound {
-        return Ok(0);
     }
     // per writer the smallest number among the counting posts; a post without that writer counts 0
     let Some(first) = counting.first() else {

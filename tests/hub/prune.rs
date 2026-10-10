@@ -389,6 +389,60 @@ fn a_snapshot_holds_pruning_back_from_its_declaration_on() {
     assert!(has_body(&bodies(hub, &bea), &a2.1));
 }
 
+/// 10.9: two snapshots of one device on their way at once: binding the later one does not answer the earlier
+/// one's declaration, which holds pruning back until its own post is bound; a device has at most 8 open
+/// declarations of a board.
+#[test]
+fn a_declaration_holds_back_until_its_own_snapshot_is_bound() {
+    let mut w = World::new();
+    let room = w.room;
+    let hub = &w.hub;
+    let board: [u8; 16] = random();
+    let path = board_path(&board);
+    let ada = w.ada.id();
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a1 = w.ada.chain(&room);
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let a2 = w.ada.chain(&room);
+    let reg: [u8; 16] = random();
+
+    // S1 (covers a1) is declared, then S2 (covers a2) is declared, written and bound: a2 stays for S1
+    w.ada
+        .post(hub, &path, &frontier_post(&[(&ada, a1)], &[]))
+        .ok();
+    let r = write_snapshot(hub, &mut w.ada, &room, &board, &reg, &[(&ada, a2)], &[]);
+    assert_eq!(r["pruned"], 1);
+    let all = bodies(hub, &w.ada);
+    assert!(!has_body(&all, &a1.1) && has_body(&all, &a2.1));
+    // S1's value comes after S2's and is bound: still nothing beyond a1 goes
+    w.ada.send(hub, &room, &register(&reg, "S1")).ok();
+    let s1 = w.ada.chain(&room);
+    assert_eq!(
+        w.ada
+            .post(hub, &path, &frontier_body(&[(&ada, a1)], &[], Some(s1)))
+            .ok()["pruned"],
+        0
+    );
+    assert!(has_body(&bodies(hub, &w.ada), &a2.1));
+
+    // at most 8 open declarations; the same one again is no new one
+    for n in 0..8u64 {
+        w.ada.send(hub, &room, &board_item(&board)).ok();
+        let head = w.ada.chain(&room);
+        w.ada
+            .post(hub, &path, &frontier_post(&[(&ada, head)], &[]))
+            .ok();
+        if n == 7 {
+            w.ada
+                .post(hub, &path, &frontier_post(&[(&ada, head)], &[]))
+                .ok();
+        }
+    }
+    w.ada
+        .post(hub, &path, &frontier_post(&[(&ada, a2)], &[]))
+        .refused(429, "too-many");
+}
+
 /// 10.9: a bound post names the device's own newest snapshot value; an older one is `replay`; posting the same
 /// value again changes nothing.
 #[test]
