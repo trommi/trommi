@@ -333,6 +333,18 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
             .ok(),
         welcomes
     );
+    // a row written before Welcomes were stored once (its own bytes, no epoch) still reads
+    {
+        let db = rusqlite::Connection::open(w.hub.dir.join("hub.db")).unwrap();
+        db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        db.execute(
+            "INSERT INTO welcomes (room_id, device, group_id, at, bytes) VALUES (?1, ?2, ?3, 1, x'0102')",
+            rusqlite::params![&room[..], &bea.id()[..], &room[..]],
+        )
+        .unwrap();
+    }
+    let old = bea.get(&w.hub, &format!("/v2/welcomes?after={last}")).ok();
+    assert_eq!(old[0]["welcome"], b64(&[1, 2]));
     bea.join(&unb64(welcomes[0]["welcome"].as_str().unwrap()).unwrap());
     assert_eq!(bea.members(&room).len(), 2);
     // the invite is used: the same KeyPackage does not get in twice, nor does the invite
@@ -344,6 +356,16 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
     // it writes in the group: the Welcome is no longer kept
     bea.send(&w.hub, &room, &register(&random(), "x")).ok();
     assert_eq!(bea.get(&w.hub, "/v2/welcomes").ok(), json!([]));
+    // an id is never given twice: the next Welcome comes after the last one the device saw, although every row
+    // up to it is gone
+    // (the row put in by hand above took its id outside the hub's counter; the hub's own last one counts)
+    let seen = last;
+    w.catch_up(&mut bea, &room);
+    bea.upload_key_packages(&w.hub, 1).ok();
+    let (_, group) = w.found_main(&mut [&mut bea], None);
+    let next = bea.get(&w.hub, &format!("/v2/welcomes?after={seen}")).ok();
+    assert_eq!(next.as_array().unwrap().len(), 1);
+    assert_eq!(next[0]["group_id"], b64(&group));
 }
 
 #[test]
@@ -1898,7 +1920,31 @@ fn an_archived_session_takes_nothing_more_and_a_reject_reaches_the_human_devices
             &json!({}),
         )
         .ok();
-    assert_eq!(group_of(&groups(&w, &w.ada), &group)["live"], false);
+    let list = groups(&w, &w.ada);
+    assert_eq!(group_of(&list, &group)["live"], false);
+    // an archived group is listed without its leaves; a live one with them
+    assert_eq!(group_of(&list, &group)["leaves"], json!([]));
+    assert!(!group_of(&list, &w.room)["leaves"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // the paged form gives the same rows, one at a time, in the order of founding
+    let (mut paged, mut after) = (vec![], 0);
+    loop {
+        let page = w
+            .ada
+            .get(
+                &w.hub,
+                &format!("/v2/rooms/{}/groups?after={after}&limit=1", b64(&w.room)),
+            )
+            .ok();
+        paged.extend(page["items"].as_array().unwrap().iter().cloned());
+        after = page["after"].as_i64().unwrap();
+        if page["more"] != true {
+            break;
+        }
+    }
+    assert_eq!(paged, list);
     update(&w.hub, &w.recovery, &mut w.ada, &group, now).refused(410, "gone");
     w.ada
         .send(&w.hub, &group, &chat(&session, agent.id(), "late"))

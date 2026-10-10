@@ -2437,12 +2437,15 @@ mod tree_size {
     use trommi_hub::observer::{MlsObserver, Observer, MAX_LEAVES};
     use trommi_hub::wire::Writer;
 
-    /// A GroupInfo whose tree is `nodes` blank nodes (one byte each), signed by nobody.
-    fn group_info(nodes: usize) -> Vec<u8> {
-        let mut tree = Writer::default();
-        tree.vec(&vec![0u8; nodes]);
+    /// A GroupInfo whose GroupInfo extensions hold a tree of each of `trees` blank nodes (one byte each), signed by
+    /// nobody.
+    fn group_infos(trees: &[usize]) -> Vec<u8> {
         let mut extensions = Writer::default();
-        extensions.raw(&[0, 2]).vec(&tree.0);
+        for nodes in trees {
+            let mut tree = Writer::default();
+            tree.vec(&vec![0u8; *nodes]);
+            extensions.raw(&[0, 2]).vec(&tree.0);
+        }
         let mut w = Writer::default();
         w.raw(&[0, 1, 0, 4])
             .raw(&[0, 1, 0, 3])
@@ -2456,6 +2459,21 @@ mod tree_size {
             .u32(0)
             .vec(&[5; 64]);
         w.0
+    }
+
+    fn group_info(nodes: usize) -> Vec<u8> {
+        group_infos(&[nodes])
+    }
+
+    #[test]
+    fn a_second_tree_is_refused_before_it_is_unpacked() {
+        let refused = format!(
+            "{:?}",
+            MlsObserver::default()
+                .open(&group_infos(&[1, 380_000]))
+                .unwrap_err()
+        );
+        assert!(refused.contains("an extension named twice"), "{refused}");
     }
 
     #[test]

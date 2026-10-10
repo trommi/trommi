@@ -144,6 +144,26 @@ pub fn groups_of_room(c: &Connection, room: &Room) -> Res<Vec<GroupRow>> {
     Ok(rows)
 }
 
+/// A page of a room's groups in the order they were founded, after the one founded at change `after`, with the
+/// change each was founded at (the cursor).
+pub fn groups_of_room_after(
+    c: &Connection,
+    room: &Room,
+    after: i64,
+    limit: i64,
+) -> Res<Vec<(i64, GroupRow)>> {
+    let mut s = c.prepare_cached(&format!(
+        "SELECT {GROUP_COLUMNS}, founded_change FROM groups WHERE room_id = ?1 AND founded_change > ?2
+         ORDER BY founded_change LIMIT ?3"
+    ))?;
+    let rows = s
+        .query_map(params![&room[..], after, limit], |r| {
+            Ok((r.get::<_, i64>(11)?, group_row(r)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 pub fn group_state(c: &Connection, group_id: &[u8]) -> Res<GroupState> {
     Ok(GroupState(
         c.prepare_cached("SELECT state FROM groups WHERE group_id = ?1")?
