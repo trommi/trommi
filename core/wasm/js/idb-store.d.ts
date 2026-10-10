@@ -10,6 +10,8 @@ export class IdbStore implements Store {
   constructor(name: string, options?: { wait?: boolean })
   load(): Promise<StoredState>
   apply(write: StoreWrite): Promise<void>
+  /** Several writes, in order, in one transaction: all of them or none. */
+  applyAll(writes: StoreWrite[]): Promise<void>
   /** Resolves once the lock is released: the state can be opened again without waiting. A `load` still waiting
    *  for the lock is given up. */
   close(): Promise<void>

@@ -171,7 +171,7 @@ const DEVICE_CALLS = [
   'outbox', 'outbox_accepted', 'outbox_refused', 'key_packages_to_upload', 'key_package',
   'found_room', 'found_session', 'found_helper', 'add_to_session', 'remove_agents',
   'remove_human_devices', 'clean_session', 'readmit_helper', 'update', 'archive',
-  'join_welcome', 'observe_room', 'observe_session', 'process_log_entry',
+  'join_welcome', 'observe_room', 'observe_session', 'process_log_entry', 'feed',
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
   'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
@@ -267,14 +267,14 @@ export class Device {
       throw error
     }
     try {
-      for (const write of writes) {
-        try {
-          await this.#store.apply(write)
-        } catch (error) {
-          const failure = storageError(error)
-          await this.#shut(failure)
-          throw failure
-        }
+      try {
+        // A call that wrote several times (feed) is stored in one step where the store can: all of it or none.
+        if (writes.length > 1 && typeof this.#store.applyAll === 'function') await this.#store.applyAll(writes)
+        else for (const write of writes) await this.#store.apply(write)
+      } catch (error) {
+        const failure = storageError(error)
+        await this.#shut(failure)
+        throw failure
       }
     } finally {
       // Stored or not, this side's copies of what was written go.
@@ -418,3 +418,6 @@ export const boardReduce = plain('board_reduce')
 export const inviteLinkParse = plain('invite_link_parse')
 export const checkEmoji = plain('check_emoji')
 export const hubAddress = plain('hub_address')
+export const kitKeysFor = plain('kit_keys_for')
+export const accountIdParse = plain('account_id_parse')
+export const envelopeHeader = plain('envelope_header')
