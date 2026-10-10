@@ -29,6 +29,10 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var loseAnswers: [String: Int] = [:]
   nonisolated(unsafe) static var takeLost = true
   nonisolated(unsafe) static var lostTaken: Set<Data> = []
+  /// Per board (hex) the change numbers of its items: what GET /boards/{board} serves (the test names them).
+  nonisolated(unsafe) static var boards: [String: [UInt64]] = [:]
+  /// The stored files, by their id as the route names it.
+  nonisolated(unsafe) static var files: [String: Data] = [:]
   /// The bodies of the requests `refuseOnce` refused, in order.
   nonisolated(unsafe) static var refused: [JSON] = []
   /// Devices the hub calls removed (hex of the key): their token names `role: "removed"`, and the removal route
@@ -38,7 +42,7 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
 
   /// Routes every hub client of the process here, over a fresh PocketHub.
   static func install(_ hub: PocketHub) {
-    self.hub = hub; account = nil; logins = [:]; asked = []; refuseOnce = [:]; refused = []; removed = [:]; loseAnswers = [:]; takeLost = true; lostTaken = []
+    self.hub = hub; account = nil; logins = [:]; asked = []; refuseOnce = [:]; refused = []; removed = [:]; loseAnswers = [:]; takeLost = true; lostTaken = []; boards = [:]; files = [:]
     HubClient.transportForTests = [PocketRoutes.self]
   }
 
@@ -128,6 +132,11 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
       _ = hub.take(kind: 5, group: id(path[1]), epoch: epoch, parts: [bytes("message")])
       return (200, ["n": 1])
     case ("POST", 1, "envelopes"): return (200, ["change": hub.take(kind: 7, group: [], epoch: 0, parts: [bytes("envelope")], sender: sender) ?? 0])
+    case ("GET", 2, "boards"):
+      let numbers = Set(boards[path[1]] ?? [])
+      let from = UInt64(query["after_change"] ?? "0") ?? 0
+      let items = hub.envelopes.filter { numbers.contains($0.change) && $0.change > from }.map { ["change": $0.change, "envelope": b64u($0.bytes)] as JSON }
+      return (200, ["items": items, "more": false])
     case ("GET", 1, "changes"):
       // The log's entries and the envelopes in one order, by change number.
       var items = [(change: UInt64, item: JSON)](), numbers: [GroupId: UInt64] = [:]
@@ -179,6 +188,17 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
     let body = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
     let token = request.value(forHTTPHeaderField: "authorization").map { String($0.dropFirst("Bearer ".count)) }
     let method = request.httpMethod ?? "GET", path = Array(url.path.split(separator: "/").map(String.init).dropFirst())
+    // (a file is bytes both ways, not JSON)
+    if path.count == 2, path[0] == "files" {
+      let stored: Data? = Self.hub.lock.withLock {
+        if method == "PUT" { Self.files[path[1]] = data; return Data() }
+        return Self.files[path[1]]
+      }
+      client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: stored == nil ? 404 : 200, httpVersion: "HTTP/1.1", headerFields: ["content-type": "application/octet-stream"])!, cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: stored ?? Data(#"{"error":"not-found"}"#.utf8))
+      client?.urlProtocolDidFinishLoading(self)
+      return
+    }
     let line = "\(method) /\(path.joined(separator: "/"))"
     let lose: Bool = Self.hub.lock.withLock {
       guard let n = Self.loseAnswers[line], n > 0 else { return false }
