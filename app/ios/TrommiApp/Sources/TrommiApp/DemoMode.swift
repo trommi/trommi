@@ -238,16 +238,16 @@ enum ChatListDemo {
     }
     desks["main"] = ["name": "Trommi App", "created_at": now - 9e8] as [String: Any]
     desks["web"] = ["name": "Website", "created_at": now - 5e8, "crown": ["agent_device_id": dev("web-lead")]] as [String: Any]
-    desks["game"] = ["name": "Privat", "created_at": now - 4e8] as [String: Any]
-    rename("web-app", "Trommi CTO", desk: "main", task: "Chat-Liste: Hierarchie neu")
-    rename("web-design", "Design-Review", desk: "main")
-    rename("web-copy", "Docs", desk: "main")
-    rename("game-art", "Krypto-Audit", desk: "main")
-    rename("game", "Steuer 2026", desk: "game", task: "Belege sortieren")
-    rename("game-sound", "Umzug", desk: "game", task: "Kartons und Termine")
-    edit("web-copy") { s, _ in s["is_online"] = true }
-    edit("game-art") { s, p in p["parent_session"] = "web-app"; s["status_lines"] = [Any]() }
-    edit("game-sound") { _, p in p["parent_session"] = NSNull() }
+    desks["platform"] = ["name": "Privat", "created_at": now - 4e8] as [String: Any]
+    rename("fernly-web", "Trommi CTO", desk: "main", task: "Chat-Liste: Hierarchie neu")
+    rename("landing-page", "Design-Review", desk: "main")
+    rename("copy", "Docs", desk: "main")
+    rename("widgets", "Krypto-Audit", desk: "main")
+    rename("payments-service", "Steuer 2026", desk: "platform", task: "Belege sortieren")
+    rename("cdn", "Umzug", desk: "platform", task: "Kartons und Termine")
+    edit("copy") { s, _ in s["is_online"] = true }
+    edit("widgets") { s, p in p["parent_session"] = "fernly-web"; s["status_lines"] = [Any]() }
+    edit("cdn") { _, p in p["parent_session"] = NSNull() }
     // the crowned session's helpers (Design-Review, Docs and Krypto-Audit are three of them): Design-Review and three
     // more at work, four offline, the rest idle
     let helpers: [(String, String, String?, Bool)] = [
@@ -257,7 +257,7 @@ enum ChatListDemo {
       ("Share", "draw:arrow", nil, true), ("Fuzz", "draw:bug", nil, true), ("Release", "draw:rocket", nil, true), ("Perf", "draw:flame", nil, true),
       ("Hub", "draw:database", nil, false), ("Notiz", "draw:leaf", nil, false), ("Tests", "draw:flask", nil, false), ("Onboarding", "draw:kite", nil, false)]
     for (i, h) in helpers.enumerated() {
-      add("h-\(i)", h.0, icon: h.1, parent: "web-app", desk: "main", task: h.2 ?? "\(h.0): fertig", online: h.3, working: h.2, ago: Double(30 + i * 40))
+      add("h-\(i)", h.0, icon: h.1, parent: "fernly-web", desk: "main", task: h.2 ?? "\(h.0): fertig", online: h.3, working: h.2, ago: Double(30 + i * 40))
     }
     add("web-lead", "Website", icon: "draw:browser", parent: nil, desk: "web", task: "trommi.com: die Startseite")
     add("web-blog", "Blog", icon: "draw:book", parent: "web-lead", desk: "web", task: "Launch-Artikel", working: "Launch-Artikel: zweiter Entwurf")

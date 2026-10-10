@@ -406,24 +406,24 @@ export function variantOf(f, kind) {
   return kind === 'side' ? crowded(f) : kind === 'link' ? linkDemo(f) : f
 }
 
-// ?mock=link: one session in each state of its link (app.mjs linkOf), and receipts. Design hears on its next step and is at
-// work, Copy the same but has done nothing for 46 minutes, Pixel art is cut off (its Claude Code runs, its Trommi tools
-// are gone), Docs is gone; the others hear at once. Every older answer reached its session; two were not picked up.
+// ?mock=link: one session in each state of its link (app.mjs linkOf), and receipts. landing-page hears on its next step and
+// is at work, copy the same but has done nothing for 46 minutes, widgets is cut off (its Claude Code runs, its Trommi tools
+// are gone), cdn is gone; the others hear at once. Every older answer reached its session; two were not picked up.
 function linkDemo(f) {
   const now = Date.now(), MIN = 60e3
   const by = id => f.sessions.find(s => s.agent_session_id === id)
   const report = (hears, min, more = {}) => ({ hears, attached: true, last_call_at: now - min * MIN, working: false, since: now - 300 * MIN, cut_since: null, exit: null, ...more })
   const LINK = {
-    'web-design': report('oncall', 1),
-    'web-copy': report('oncall', 46),
-    'game-art': report('live', 44),
-    game: report('oncall', 3),
+    'landing-page': report('oncall', 1),
+    copy: report('oncall', 46),
+    widgets: report('live', 44),
+    'payments-service': report('oncall', 3),
   }
   const HEARD = 1e9
   for (const s of f.sessions) { s.link = LINK[s.agent_session_id] ?? report('live', 2); s.heard_up_to = HEARD }
   const off = (id, min, exit) => { const s = by(id); if (s) { s.is_online = false; s.offline_since = now - min * MIN; s.link = { ...s.link, exit } } }
-  off('game-art', 38, { reason: 'stdin', claude: 'alive' })
-  off('game-sound', 131, { reason: 'stdin', claude: 'gone' })
+  off('widgets', 38, { reason: 'stdin', claude: 'alive' })
+  off('cdn', 131, { reason: 'stdin', claude: 'gone' })
   const answer = (title, ago, heard) => {
     const c = f.cards.find(c => c.title === title); if (!c) return
     if (!c.answer) {
@@ -438,7 +438,7 @@ function linkDemo(f) {
   answer('Send a weekly summary e-mail on Sundays?', 12, false)
   // (and one answer each that waits: in the session that is cut off, in one that hears on its next step, in one that hears at once)
   const waiting = (id, ago) => { const s = by(id), c = s && f.cards.find(c => c.agent_device_id === s.agent_device_id && c.object_state === 'open' && c.card_type !== 'info' && c.urgency === 'normal' && !c.in_revision); if (c) answer(c.title, ago, false) }
-  waiting('game-art', 6); waiting('web-design', 1); waiting('web-app', 9)
+  waiting('widgets', 6); waiting('landing-page', 1); waiting('fernly-web', 9)
   return f
 }
 

@@ -4,9 +4,15 @@ The room every Trommi client shows as its demo (`?mock=1` on the web), and the l
 app's review page `/screens` walks through. **All of it is made up**: no real room, account, person or address is in
 here, and none may be added.
 
-The room has two desks ("main" and "game"), six agent sessions with their conversations, eleven cards (five of them
-open on the Desk) and the seventeen pictures and pages they name. `/screens` lists the states of the account screens,
-the Desk, Settings and the Scribble Board.
+The room is a made-up plant-care company, Fernly, at the end of a launch week. It has two desks, "main" (Fernly: the
+web app, the iOS release, the design system) and "platform" (Platform: payments, the data pipeline, infrastructure,
+the docs site), each with its goals. On them work seven main sessions (two of them Codex) with 31 helpers, 2 to 8
+each; each session has its conversation, some with work trails, notes and artifacts in it. There are 49 cards: 28
+open (yes/no, two and three options with pictures, multiple choice, sections, a table, every urgency, two handed
+back to their agent), and answered, closed, settled, read, shredded, withdrawn and merged ones; 14 artifacts, two
+waiting permission requests, the corner note, a Scribble Board per desk and one for All desks, and the 33 pictures,
+pages and files they name. `/screens` lists the states of the account screens, the Desk on each desk, chats, cards,
+Settings and the Scribble Board.
 
 ```
 demo/

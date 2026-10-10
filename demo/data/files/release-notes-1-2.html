@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fernly for iPhone 1.2: release notes</title>
+<style>
+  :root { --forest: #1f4d3a; --leaf: #4c8f68; --clay: #d9683c; --paper: #f6f1e7; --linen: #efe3cf; --ink: #1d2a24; --soft: #5b6b62; --line: #e6dcc8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 40px 20px 64px; background: var(--paper); color: var(--ink); font: 17px/1.55 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; }
+  .eyebrow { margin: 0; color: var(--leaf); font-size: 13px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; }
+  h1 { margin: 6px 0 18px; color: var(--forest); font-size: 36px; line-height: 1.1; letter-spacing: -.02em; }
+  .item { display: flex; gap: 16px; padding: 16px 18px; margin-bottom: 10px; background: #fff; border: 1.5px solid var(--line); border-radius: 18px; }
+  .item i { flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--linen); display: grid; place-items: center; font-style: normal; font-size: 20px; }
+  .item b { display: block; color: var(--forest); } .item span { color: var(--soft); font-size: 15px; }
+  h2 { margin: 28px 0 8px; color: var(--forest); font-size: 15px; letter-spacing: .08em; text-transform: uppercase; }
+  ul { margin: 0; padding-left: 20px; color: var(--soft); }
+  .store { margin-top: 26px; padding: 14px 18px; border-radius: 14px; background: var(--forest); color: #fff; font-size: 15px; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #131a16; --ink: #e3ebe5; --soft: #9aaaa0; --line: #2b3832; --linen: #24302a; --forest: #9fd3b0; }
+    .item { background: #1b2420; } .store { background: #24302a; }
+  }
+</style>
+<main>
+  <p class="eyebrow">Fernly for iPhone · version 1.2</p>
+  <h1>Widgets, quieter reminders, and a dark mode</h1>
+  <div class="item"><i>▦</i><div><b>Home Screen widgets</b><span>See who is thirsty without opening the app. Small and medium sizes.</span></div></div>
+  <div class="item"><i>☾</i><div><b>Dark mode</b><span>Follows your iPhone. The plant pictures keep their colours.</span></div></div>
+  <div class="item"><i>⏰</i><div><b>One reminder a day</b><span>Plants that are due together now come in one notification, at the time you choose.</span></div></div>
+  <div class="item"><i>⇄</i><div><b>Share a plant</b><span>Invite someone at home; whoever waters first ticks it off for both.</span></div></div>
+  <h2>Fixed</h2>
+  <ul>
+    <li>Photos of plants no longer turn sideways after editing.</li>
+    <li>The Today list updates after midnight without a restart.</li>
+    <li>VoiceOver reads the watering date of every plant.</li>
+  </ul>
+  <div class="store">App Store text (170 characters): “Widgets for your Home Screen, a dark mode, and one calm reminder a day for all the plants that are due.”</div>
+</main>
+</html>

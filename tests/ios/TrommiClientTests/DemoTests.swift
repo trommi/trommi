@@ -28,9 +28,9 @@ final class DemoTests: XCTestCase {
     XCTAssertEqual(b.timelines.count, raw["timelines"].object!.count)
     let d = DeskModel(board: b)
     XCTAssertEqual(d.agents.count, raw["sessions"].array!.count)
-    XCTAssertEqual(Set(d.desks.map { $0.id }), ["main", "game"])
-    XCTAssertNotNil(d.byAgent["web-app"])
-    XCTAssertEqual(d.byAgent["web-design"]?.parent, "web-app", "a helper sits under its main session")
+    XCTAssertEqual(Set(d.desks.map { $0.id }), ["main", "platform"])
+    XCTAssertNotNil(d.byAgent["fernly-web"])
+    XCTAssertEqual(d.byAgent["landing-page"]?.parent, "fernly-web", "a helper sits under its main session")
     let desk = d.view(desk: "main", now: now)
     XCTAssertFalse(desk.fresh.isEmpty, "the Desk has open questions")
     XCTAssertFalse(desk.units.isEmpty, "the Desk shows the agents")
@@ -39,7 +39,7 @@ final class DemoTests: XCTestCase {
     let named = Set(String(decoding: data, as: UTF8.self).components(separatedBy: "/demo/files/").dropFirst().compactMap { $0.split(separator: "\"").first.map(String.init) })
     XCTAssertFalse(named.isEmpty)
     XCTAssertTrue(named.isSubset(of: Set(files)), "missing: \(named.subtracting(files))")
-    XCTAssertGreaterThan(d.messagesOf(agent: "web-app").filter { $0.from != "event" }.count, 5)
+    XCTAssertGreaterThan(d.messagesOf(agent: "fernly-web").filter { $0.from != "event" }.count, 5)
     // the times are now's: the newest card is minutes old, not days
     let newest = b.cards.values.map { $0.updatedAt }.max()!
     XCTAssertLessThan(now - min(now, newest), 24 * 3_600_000)

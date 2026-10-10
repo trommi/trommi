@@ -1,0 +1,37 @@
+Terraform will perform the following actions:
+
+  # module.us_east.aws_eks_cluster.main will be created
+  + resource "aws_eks_cluster" "main" {
+      + name     = "fernly-us-east"
+      + version  = "1.33"
+      + vpc_config { subnet_ids = (known after apply) }
+    }
+
+  # module.us_east.aws_eks_node_group.api will be created
+  + resource "aws_eks_node_group" "api" {
+      + instance_types = ["m7g.large"]
+      + scaling_config { desired_size = 3, max_size = 10, min_size = 3 }
+    }
+
+  # module.us_east.aws_db_instance.replica will be created
+  + resource "aws_db_instance" "replica" {
+      + instance_class      = "db.r7g.xlarge"
+      + replicate_source_db = "arn:aws:rds:eu-west-1:000000000000:db:fernly-primary"
+      + storage_encrypted   = true
+    }
+
+  # module.network.aws_nat_gateway.eu_west_b will be destroyed
+  - resource "aws_nat_gateway" "eu_west_b" {
+      - id = "nat-0a1b2c3d4e5f60718" -> null
+    }
+
+  # module.dns.aws_route53_record.api will be updated in-place
+  ~ resource "aws_route53_record" "api" {
+      ~ set_identifier = "eu-west" -> "latency-eu-west"
+      + latency_routing_policy { region = "eu-west-1" }
+    }
+
+Plan: 23 to add, 2 to change, 1 to destroy.
+
+Changes to Outputs:
+  + us_east_api_endpoint = (known after apply)
