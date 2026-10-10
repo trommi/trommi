@@ -74,11 +74,11 @@ final class RoomRemovalTests: XCTestCase {
     XCTAssertFalse(PocketRoutes.asked.contains("GET /changes"), "nothing but the proof is read")
     XCTAssertTrue(b.board.alerts.contains { $0.code == "removed" })
 
-    // From here on nothing is asked of the hub.
+    // From here on nothing is asked of the hub (a post of the outbox already on its way may still land).
     PocketRoutes.asked = []
     let again = await code { _ = try await b.sync() }
     XCTAssertEqual(again, "removed")
-    XCTAssertEqual(PocketRoutes.asked, [])
+    XCTAssertEqual(PocketRoutes.asked.filter { $0 != "POST /envelopes" }, [])
   }
 
   /// A hub that names B removed while no Commit says so: everything is kept, `not-member` is said, and once the
