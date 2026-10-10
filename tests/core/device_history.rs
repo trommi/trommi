@@ -458,6 +458,38 @@ fn a_device_that_joins_by_link_reads_everything_from_number_one() {
     }
     assert_same_view(&w, &w.old, &new, &room);
 
+    // Handed again, an envelope the chain holds says what it is, and nothing changes: a register names
+    // itself and says whether its value is the current one of its name now. A client that rebuilds what
+    // it shows from reading back alone learns every name and which value counts.
+    let mut current = Vec::new();
+    for stored in served_of(&w.hub, &room) {
+        let got = new
+            .receive_envelope(&stored.bytes, stored.change, false, None, now())
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+        let is_register = matches!(got.header.subject, envelope::Subject::Register(_));
+        assert_eq!(got.register.is_some(), is_register);
+        assert!(!got.replayed);
+        if let Some(register) = got.register.filter(|register| register.current) {
+            current.push((register.name, register.of, stored.hash));
+        }
+    }
+    let desks: Vec<_> = current.iter().filter(|(name, _, _)| name == DESK).collect();
+    assert_eq!(desks.len(), 1);
+    let newest_desk = served_of(&w.hub, &room)
+        .into_iter()
+        .rfind(|stored| {
+            matches!(stored.header.subject, envelope::Subject::Register(_))
+                && stored.header.sender == w.old.id()
+        })
+        .unwrap();
+    assert_eq!(desks[0].2, newest_desk.hash);
+    let mut names: Vec<_> = current.iter().map(|(name, of, _)| (name, of)).collect();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), current.len());
+    assert_same_view(&w, &w.old, &new, &room);
+
     // The sessions: a session's past needs the room's, a helper session's its main session's.
     for group in [main, side] {
         add_to_session(&mut w.hub, &mut w.old, &mut new, &group);
@@ -812,12 +844,39 @@ fn a_damaged_learned_record_does_not_open() {
     let mut batch = Batch::new();
     batch.put(origin.clone(), vec![0xFF; 12]);
     damages.push(("an origin that does not decode", batch));
+    // An origin whose context is no GroupContext, or the GroupContext of another epoch.
+    let held = store.get(&origin).unwrap();
+    let length = held.len();
+    let mut batch = Batch::new();
+    batch.put(
+        origin.clone(),
+        [&held[..8], &[1, 0x77], &held[length - 1..]].concat(),
+    );
+    damages.push(("an origin with a context of one byte", batch));
+    let mut batch = Batch::new();
+    let mut other_epoch = held.clone();
+    other_epoch[7] ^= 1;
+    batch.put(origin.clone(), other_epoch);
+    damages.push(("an origin with the context of another epoch", batch));
     for (what, batch) in damages {
         let mut damaged = store.reopened();
         let revision = damaged.revision();
         damaged.apply(revision, batch).unwrap();
         assert!(matches!(reopen(damaged), Err(Error::Storage(_))), "{what}");
     }
+    // A group the device follows as an observer, of which it keeps no epoch records, has its origin too.
+    let watching = MemoryStorage::new();
+    let handle = watching.handle();
+    let mut follower = new_device_on(watching);
+    observe(&w.hub, &mut follower);
+    drop(follower);
+    assert!(reopen(handle.reopened()).is_ok());
+    let mut damaged = handle.reopened();
+    let revision = damaged.revision();
+    let mut batch = Batch::new();
+    batch.delete(origin.clone());
+    damaged.apply(revision, batch).unwrap();
+    assert!(matches!(reopen(damaged), Err(Error::Storage(_))));
 }
 
 /// The epoch a stored origin names.
@@ -937,9 +996,20 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
         Err(Error::BadGroup)
     );
     drop(late);
-    let late = reopen(handle.reopened()).unwrap();
+    let mut late = reopen(handle.reopened()).unwrap();
     assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
     assert_eq!(late.findings().unwrap().len(), 1);
+    // The group's leaves all belong by now, and another device's update changes nothing about its past:
+    // the session stays closed.
+    b.update(&group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut b);
+    settle(&hub, &mut late);
+    let epoch = late.group(&group).unwrap().epoch;
+    assert_eq!(epoch, hub.epoch(&group).unwrap());
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
+    drop(late);
+    let late = reopen(handle.reopened()).unwrap();
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
 }
 
 fn erase() -> Draft {
@@ -1142,9 +1212,6 @@ fn a_frontier_that_the_chain_does_not_lead_to_is_a_finding() {
 
 #[test]
 fn a_recovery_cuts_every_chain_where_it_verified_it() {
-    use trommi_core::device::ServedEnvelope;
-    use trommi_core::recovery::check_room;
-
     // Two human devices and a member whose key the test holds write in the room; then every device is
     // lost.
     let (mut a, mut b) = (new_device(), new_device());
@@ -1190,31 +1257,7 @@ fn a_recovery_cuts_every_chain_where_it_verified_it() {
     let keys = test_keys();
     let stored = trommi_tests::served_chains(&hub);
     let recover = |hub: &mut Hub, device: &mut TestDevice, served: &[(Vec<u8>, u64)]| {
-        hub.open_recovery(&device.id()).unwrap();
-        let fetched = trommi_tests::fetch(hub, &keys);
-        let replacement = fetched.served(|served| {
-            let checked = check_room(&keys, served)?;
-            keys.replace(
-                &mut SystemEntropy,
-                &room.room_id(),
-                checked.observer.history().unwrap(),
-            )
-        })?;
-        let chains: Vec<ServedEnvelope<'_>> = served
-            .iter()
-            .map(|(bytes, change)| ServedEnvelope {
-                bytes,
-                change: *change,
-                void_code: None,
-            })
-            .collect();
-        let built = fetched.served(|served| {
-            device.recover(&keys, served, &replacement, &chains, b"copies", now())
-        });
-        if built.is_err() {
-            hub.drop_recovery();
-        }
-        built.map(|_| ())
+        recover_with(hub, device, &keys, &room, served).map(|_| ())
     };
     let honest: Vec<(Vec<u8>, u64)> = stored
         .iter()
@@ -1241,8 +1284,11 @@ fn a_recovery_cuts_every_chain_where_it_verified_it() {
         Err(Error::Equivocation)
     );
     let mut swapped = honest.clone();
+    // The hub says the second came first. In which order the caller hands them in decides nothing.
     let (first, second) = (at(one.hash().unwrap()), at(two.hash().unwrap()));
-    swapped.swap(first, second);
+    let (earlier, later) = (swapped[first].1, swapped[second].1);
+    swapped[first].1 = later;
+    swapped[second].1 = earlier;
     assert_eq!(recover(&mut hub, &mut device, &swapped), Err(Error::Gap));
     assert!(device.outbox().is_empty() && device.room().is_none());
 
@@ -1271,4 +1317,653 @@ fn a_recovery_cuts_every_chain_where_it_verified_it() {
         hub.post(&pen.id(), &trommi_tests::forge_content::posting(&three)),
         Err(Error::RemovedSender)
     );
+}
+
+/// A human device added to the room group and both sessions of `w`, which has learned the room's past and
+/// the main session's: the helper session's is still to learn.
+fn late_in_both(w: &mut World) -> (TestDevice, MemoryStorage) {
+    let (mut late, store) = newcomer(w);
+    publish_some(&mut w.hub, &mut late, 4);
+    for group in [w.main, w.side] {
+        add_to_session(&mut w.hub, &mut w.old, &mut late, &group);
+        w.sync();
+    }
+    assert_eq!(settle_joining(&w.hub, &mut late).len(), 2);
+    learn(&w.hub, &mut late, &w.room).unwrap();
+    learn(&w.hub, &mut late, &w.main).unwrap();
+    (late, store)
+}
+
+/// Whether `device` still holds `group` as a good session: it hands out the key and holds no finding.
+fn assert_open(device: &TestDevice, group: &GroupId) {
+    let epoch = device.group(group).unwrap().epoch;
+    assert!(device.content_key(group, epoch).is_ok());
+    assert!(device.findings().unwrap().is_empty());
+}
+
+#[test]
+fn a_later_group_info_served_as_the_founding_closes_nothing() {
+    let mut w = world(1);
+    let side = w.side;
+    let (mut late, store) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    let from = late.group(&side).unwrap().own_from;
+    let before = store.entries();
+
+    // The GroupInfo of the epoch the device joined at, with no Commit: it stands in the device's own state
+    // without any history.
+    let mut served = real.clone();
+    served.founding = w.hub.group_info_at(&side, from).unwrap().clone();
+    served.commits.clear();
+    assert_eq!(
+        served.served(|served| late.verify_founding(&side, served)),
+        Err(Error::BadGroup)
+    );
+    assert!(store.entries() == before);
+    assert_open(&late, &side);
+
+    // A later start with the Commits that follow it.
+    let mut served = real.clone();
+    served.founding = w.hub.group_info_at(&side, 1).unwrap().clone();
+    served.commits.remove(0);
+    assert_eq!(
+        served.served(|served| late.verify_founding(&side, served)),
+        Err(Error::BadGroup)
+    );
+    assert!(store.entries() == before);
+    assert_open(&late, &side);
+
+    assert!(real
+        .served(|served| late.verify_founding(&side, served))
+        .is_ok());
+}
+
+#[test]
+fn a_refused_board_load_starts_no_chain_at_a_frontier_the_cut_contradicts() {
+    use trommi_core::board::{self, Snapshot};
+
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    // The writer signs two envelopes under number 2. The remover accepted one of them: the Cut names it.
+    let mut pen = Pen::new(&forger.key);
+    let one = pen.sign(&claim, &item, &Objects::new(), now());
+    let mut branch = pen.fork();
+    let two = pen.sign(&claim, &item, &Objects::new(), now());
+    let other_two = branch.sign(&claim, &item, &Objects::new(), now() + 1);
+    let mut at = a.cursor();
+    for envelope in [&one, &two] {
+        at += 1;
+        let got = a
+            .receive_envelope(&envelope.encode().unwrap(), at, true, None, now())
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+    }
+    let cut = a.cut_of(&room, &forger.id()).unwrap();
+    assert_eq!((cut.seq, cut.hash), (2, two.hash().unwrap()));
+    a.remove_human_devices(&[cut], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut b);
+    assert_eq!(
+        b.chain_cut(&room, &pen.id()).unwrap().map(|cut| cut.seq),
+        Some(2)
+    );
+
+    // A snapshot whose frontier names the other envelope under the Cut's number.
+    let snapshot = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: vec![(
+            pen.id(),
+            trommi_core::chain::Head {
+                seq: 2,
+                hash: other_two.hash().unwrap(),
+            },
+        )],
+        change: a.cursor(),
+    };
+    write(
+        &mut hub,
+        &mut a,
+        &Draft::Register {
+            group: room,
+            name: board::snapshot_name(&BoardId::ALL_DESKS),
+            value: Some(json(&snapshot.value().unwrap())),
+        },
+    );
+    sync_all(&hub, &mut b);
+    assert_eq!(
+        b.board_load(&BoardId::ALL_DESKS, &[]).map(|_| ()),
+        Err(Error::Equivocation)
+    );
+    // The refused load began no chain there: the writer's chain is read from number 1 up to its Cut.
+    assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 0);
+    let mut at = b.cursor();
+    for envelope in [&one, &two] {
+        at += 1;
+        let got = b
+            .receive_envelope(&envelope.encode().unwrap(), at, true, None, now())
+            .unwrap();
+        assert_ne!(got.outcome, EnvelopeOutcome::Refused, "{:?}", got.code);
+    }
+    assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 2);
+}
+
+#[test]
+fn a_past_whose_places_contradict_the_devices_own_is_not_taken() {
+    let mut w = world(1);
+    let room = w.room;
+    let (mut new, store) = newcomer(&mut w);
+    // The device processes a room Commit itself: it knows where that room epoch began in the hub's order.
+    w.old.update(&room, true, now()).unwrap().unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    sync_all(&w.hub, &mut new);
+    let real = fetch_group(&w.hub, &room);
+    let before = store.entries();
+
+    // The group's own Commits under change numbers that ascend, and lie beyond that place.
+    let mut later = real.clone();
+    for (change, _, _) in &mut later.commits {
+        *change += 1_000_000;
+    }
+    assert_eq!(learn_from(&mut new, &room, &later), Err(Error::BadGroup));
+    assert!(store.entries() == before);
+    assert!(new.findings().unwrap().is_empty());
+
+    assert!(learn_from(&mut new, &room, &real).is_ok());
+    drop(new);
+    assert!(reopen(store.reopened()).is_ok());
+}
+
+/// `served` with the Commit at the change number `real` served under `claimed` instead.
+fn moved(served: &FetchedGroup, real: u64, claimed: u64) -> FetchedGroup {
+    let mut served = served.clone();
+    let at = served
+        .commits
+        .iter()
+        .position(|(change, _, _)| *change == real)
+        .unwrap();
+    served.commits[at].0 = claimed;
+    served
+}
+
+/// A takeover in `w` whose three Commits (room, main session, helper session) leave a free change number
+/// between the room's and the main session's. Returns that number and the places of the main session's
+/// and the helper session's Commit.
+fn takeover_with_a_gap(w: &mut World) -> (u64, u64, u64) {
+    let (room, main, side) = (w.room, w.main, w.side);
+    let mut next = new_device();
+    w.old
+        .change_agents(&[next.id()], &[w.agent.id()], now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    observe(&w.hub, &mut next);
+    let gone = std::mem::replace(&mut w.agent, next).id();
+    w.sync();
+    // Something else of the room takes the next number.
+    write(&mut w.hub, &mut w.old, &desk(&room, "between"));
+    let free = w.hub.change();
+    let mut places = Vec::new();
+    for group in [main, side] {
+        let cut = w.old.cut_of(&group, &gone).unwrap();
+        let package = w.agent.key_package(now()).unwrap();
+        let next = w.agent.id();
+        w.old
+            .clean_session(&group, &[cut], Some((&next, &package)), now())
+            .unwrap();
+        post_ok(&mut w.hub, &mut w.old);
+        places.push(w.hub.change());
+        w.sync();
+        w.old.send_handover(&group, &next).unwrap();
+        post_ok(&mut w.hub, &mut w.old);
+    }
+    w.sync();
+    (free, places[0], places[1])
+}
+
+#[test]
+fn a_helper_commit_is_judged_against_the_main_sessions_agent_leaf_at_its_place() {
+    use trommi_core::device::WelcomeExpectation;
+
+    let mut w = world(1);
+    let (room, main, side) = (w.room, w.main, w.side);
+    // A human device of the room and the main session, whose Welcome into the helper session waits.
+    let mut live = new_device();
+    add_human(&mut w.hub, &mut w.old, &mut live);
+    publish_some(&mut w.hub, &mut live, 4);
+    add_to_session(&mut w.hub, &mut w.old, &mut live, &main);
+    w.sync();
+    assert_eq!(settle_joining(&w.hub, &mut live).len(), 1);
+    add_to_session(&mut w.hub, &mut w.old, &mut live, &side);
+    let welcome_at = trommi_tests::added_at(&w.hub);
+    w.sync();
+
+    // The takeover. Within one room epoch the main session's agent leaf is the old device, then the new
+    // one; the helper session's Commit that makes the new device its opener stands behind that change.
+    let (free, main_at, side_at) = takeover_with_a_gap(&mut w);
+    assert!(free < main_at && main_at < side_at);
+
+    // A live member that is handed the helper session's Commits late: the Commit claims a place before
+    // the main session's change, where the main session's agent leaf was still the old device.
+    for item in w.hub.log_after(live.cursor()) {
+        let _ = trommi_tests::process(&mut live, &item);
+    }
+    let welcome = w
+        .hub
+        .welcomes
+        .iter()
+        .find(|welcome| welcome.change == welcome_at)
+        .unwrap();
+    let expected = WelcomeExpectation {
+        room: room.room_id(),
+        committer: None,
+    };
+    live.join_welcome(&welcome.bytes, &expected, now()).unwrap();
+    let log = w.hub.log_after(0);
+    let of_side = |change: u64| {
+        log.iter()
+            .find(|item| item.change == change && item.group == side)
+            .unwrap()
+            .clone()
+    };
+    trommi_tests::process(&mut live, &of_side(welcome_at)).unwrap();
+    let mut early = of_side(side_at);
+    early.change = free;
+    assert!(trommi_tests::process(&mut live, &early).is_err());
+    assert_eq!(
+        live.group(&side).unwrap().epoch,
+        w.hub.epoch(&side).unwrap() - 1
+    );
+    assert!(matches!(
+        trommi_tests::process(&mut live, &of_side(side_at)),
+        Ok(Processed::Commit { .. })
+    ));
+
+    // A device that learns the past.
+    let (mut late, _) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    assert_eq!(
+        learn_from(&mut late, &side, &moved(&real, side_at, free)),
+        Err(Error::BadGroup)
+    );
+    assert!(learn_from(&mut late, &side, &real).is_ok());
+
+    // A device that signs in with the code.
+    let keys = w.keys();
+    let mut signer = new_device();
+    trommi_tests::join_room(&w.hub, &mut signer, &keys).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    trommi_tests::join_session(&w.hub, &mut signer, &keys, &main).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    let real = fetch_group(&w.hub, &side);
+    let join = |device: &mut TestDevice, served: &FetchedGroup| {
+        served.served(|served| device.join_session_with_code(&keys, served, now()))
+    };
+    assert_eq!(
+        join(&mut signer, &moved(&real, side_at, free)).err(),
+        Some(Error::BadGroup)
+    );
+    assert!(join(&mut signer, &real).is_ok());
+}
+
+#[test]
+fn what_the_hub_says_beside_the_commits_closes_no_session() {
+    let mut w = world(1);
+    let (main, side) = (w.main, w.side);
+    let (free, _, side_at) = takeover_with_a_gap(&mut w);
+    // A device signs in with the code: its join of the helper session is a Commit with a `RecoveryAuth`.
+    let keys = w.keys();
+    let mut signer = new_device();
+    trommi_tests::join_room(&w.hub, &mut signer, &keys).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    for group in [main, side] {
+        trommi_tests::join_session(&w.hub, &mut signer, &keys, &group).unwrap();
+        post_ok(&mut w.hub, &mut signer);
+    }
+    w.sync();
+    let (mut late, store) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    let joined = real
+        .commits
+        .iter()
+        .position(|(_, _, auth)| auth.is_some())
+        .unwrap();
+
+    // Every Commit is the group's own. What is wrong is what the hub alone says.
+    let mut hostile: Vec<(&str, FetchedGroup)> = Vec::new();
+    let mut served = real.clone();
+    served.commits[3].0 = served.commits[2].0;
+    hostile.push(("one change number twice", served));
+    hostile.push((
+        "a Commit placed before its main session's change",
+        moved(&real, side_at, free),
+    ));
+    let mut served = real.clone();
+    served.commits[joined].2 = None;
+    hostile.push(("a join without its RecoveryAuth", served));
+    let mut served = real.clone();
+    served.commits[2].2 = real.commits[joined].2.clone();
+    hostile.push(("a RecoveryAuth beside an ordinary Commit", served));
+    let mut served = real.clone();
+    for (change, _, _) in &mut served.commits {
+        *change += 1_000_000;
+    }
+    hostile.push(("every Commit in a later room epoch", served));
+
+    let before = store.entries();
+    for (what, served) in &hostile {
+        assert_eq!(
+            served.served(|served| late.verify_founding(&side, served)),
+            Err(Error::BadGroup),
+            "{what}"
+        );
+        assert!(store.entries() == before, "{what}: nothing is written");
+        assert_open(&late, &side);
+    }
+    assert!(real
+        .served(|served| late.verify_founding(&side, served))
+        .is_ok());
+    assert_open(&late, &side);
+}
+
+#[test]
+fn a_revoked_key_has_no_role_in_an_epoch_that_kept_its_leaf() {
+    let mut w = world(1);
+    let (room, main, side) = (w.room, w.main, w.side);
+    // A human device whose key the test holds, a leaf of the helper session.
+    let forger = Forger::new();
+    add_forger(&mut w.hub, &mut w.old, &forger);
+    w.sync();
+    w.old
+        .add_to_session(&side, &forger.id(), &forger.key_package(), now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    w.sync();
+    // It is removed from the room. Before anyone cleans the helper session, a device signs in with the
+    // code: the stale group takes that join, and its new epoch still holds the revoked key's leaf.
+    let cut = w.old.cut_of(&room, &forger.id()).unwrap();
+    w.old.remove_human_devices(&[cut], now()).unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    w.sync();
+    let keys = w.keys();
+    let mut signer = new_device();
+    trommi_tests::join_room(&w.hub, &mut signer, &keys).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    for group in [main, side] {
+        trommi_tests::join_session(&w.hub, &mut signer, &keys, &group).unwrap();
+        post_ok(&mut w.hub, &mut signer);
+    }
+    w.sync();
+    let kept = w.hub.epoch(&side).unwrap();
+    assert!(w.old.group(&side).unwrap().leaves.contains(&forger.id()));
+
+    // The revoked key signs a card in that epoch, as a helper device would.
+    let claim = Claim {
+        group: side,
+        epoch: kept,
+        role: Role::Helper,
+        seat: Some(w.agent.id()),
+        key: w.old.content_key(&side, kept).unwrap(),
+    };
+    let draft = envelope::Draft::first_version(
+        envelope::ObjectType::Card,
+        Urgency::Normal,
+        format!(r#"{{"card_type":"info","title":"forged","previous_version_hash":"{ZERO_HASH}"}}"#)
+            .as_bytes(),
+    )
+    .unwrap();
+    let mut pen = Pen::new(&forger.key);
+    let forged = pen.sign(&claim, &draft, &Objects::new(), now());
+    let bytes = forged.encode().unwrap();
+    // It is handed behind the cursor, as an envelope read back along its chain is.
+    let at = w.old.cursor();
+    let got = w
+        .old
+        .receive_envelope(&bytes, at, true, None, now())
+        .unwrap();
+    assert_ne!(got.outcome, EnvelopeOutcome::Applied);
+    let objects = w.old.objects(&side).unwrap();
+
+    // The session is cleaned, and a device that comes later learns that epoch and reads it back.
+    let cut = w.old.cut_of(&side, &forger.id()).unwrap();
+    w.old.clean_session(&side, &[cut], None, now()).unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    w.sync();
+    let (mut late, _) = late_in_both(&mut w);
+    learn(&w.hub, &mut late, &side).unwrap();
+    for ordered in [true, false] {
+        let got = late
+            .receive_envelope(&bytes, at, ordered, None, now())
+            .unwrap();
+        assert_ne!(got.outcome, EnvelopeOutcome::Applied, "{:?}", got.code);
+    }
+    assert_eq!(late.objects(&side).unwrap(), objects);
+    assert_eq!(w.old.objects(&side).unwrap(), objects);
+}
+
+#[test]
+fn a_recovery_served_a_chain_cut_short_cuts_it_where_it_verified_it() {
+    use trommi_core::recovery::Replacement;
+
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    write(&mut hub, &mut a, &note(1));
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    // A lost device wrote three envelopes; the hub took them all.
+    let mut pen = Pen::new(&forger.key);
+    let written: Vec<envelope::Envelope> = (0..3)
+        .map(|_| pen.sign(&claim, &item, &Objects::new(), now()))
+        .collect();
+    for envelope in &written {
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(envelope))
+            .unwrap();
+    }
+    sync_all(&hub, &mut a);
+    assert_eq!(a.chain_head(&room, &pen.id()).unwrap().seq, 3);
+    drop((a, b));
+
+    let keys = test_keys();
+    let stored = trommi_tests::served_chains(&hub);
+    let recover = |hub: &mut Hub, device: &mut TestDevice, served: &[(Vec<u8>, u64)]| {
+        recover_with(hub, device, &keys, &room, served)
+    };
+    let honest: Vec<(Vec<u8>, u64)> = stored
+        .iter()
+        .map(|stored| (stored.pruned(), stored.change))
+        .collect();
+    let at = |envelope: &envelope::Envelope| {
+        let hash = envelope.hash().unwrap();
+        stored
+            .iter()
+            .position(|stored| stored.hash == hash)
+            .unwrap()
+    };
+    let hash_of = |envelope: &envelope::Envelope| envelope.hash().unwrap();
+    let mut device = new_device();
+
+    // The hub serves an envelope under number 2 that nobody signed: the bytes of the real one with
+    // another signature. No Cut is taken from an envelope that does not verify, and none beyond it.
+    let mut unsigned = written[1].prune().unwrap();
+    let mut other_pen = Pen::new(&Forger::new().key);
+    other_pen.resign(&mut unsigned);
+    let mut forged = honest.clone();
+    forged[at(&written[1])].0 = unsigned.encode().unwrap();
+    let refused: Result<Replacement, Error> = recover(&mut hub, &mut device, &forged);
+    assert_eq!(refused.err(), Some(Error::BadSignature));
+    assert!(device.outbox().is_empty() && device.room().is_none());
+
+    // The hub withholds the newest envelopes of that chain. What is left links from number 1 without a
+    // hole: the recovery cannot tell it from the whole chain, and cuts at the head it verified. This is
+    // the limit of section 17: a hub can withhold the newest envelopes of a sender, and a Cut is the
+    // remover's view.
+    let mut short = honest.clone();
+    short.remove(at(&written[2]));
+    short.remove(at(&written[1]));
+    let replacement = recover(&mut hub, &mut device, &short).unwrap();
+    post_ok(&mut hub, &mut device);
+    let cut = device.chain_cut(&room, &pen.id()).unwrap().unwrap();
+    assert_eq!((cut.seq, cut.hash), (1, hash_of(&written[0])));
+    assert_eq!(device.chain_head(&room, &pen.id()).unwrap(), cut);
+
+    // What lies beyond the Cut is refused from then on, though its writer signed it before the recovery:
+    // by the device that recovered, by the hub, and by a device that signs in later and learns the Cut
+    // from the room's Commits.
+    let new_keys = RecoveryKeys::from_code(replacement.code.duplicate()).unwrap();
+    let mut later = new_device();
+    trommi_tests::join_room(&hub, &mut later, &new_keys).unwrap();
+    post_ok(&mut hub, &mut later);
+    assert_eq!(later.chain_cut(&room, &pen.id()).unwrap(), Some(cut));
+    for reader in [&mut device, &mut later] {
+        for (ordered, envelope) in [(true, &written[1]), (false, &written[2])] {
+            let at = reader.cursor() + 1;
+            let got = reader
+                .receive_envelope(&envelope.encode().unwrap(), at, ordered, None, now())
+                .unwrap();
+            assert_eq!(
+                (got.outcome, got.code),
+                (EnvelopeOutcome::Refused, Some(Error::RemovedSender))
+            );
+        }
+        // The envelope at the Cut is the chain's own.
+        let at = reader.cursor() + 1;
+        let got = reader
+            .receive_envelope(&written[0].encode().unwrap(), at, true, None, now())
+            .unwrap();
+        assert_ne!(got.code, Some(Error::RemovedSender));
+    }
+    let next = pen.sign(&claim, &item, &Objects::new(), now());
+    assert_eq!(
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(&next)),
+        Err(Error::RemovedSender)
+    );
+}
+
+/// The whole recovery of 8.7 by `device` with the code `keys`, against the room as the hub holds it and
+/// the chains `served`: envelopes in pruned form, each with its change number. Returns the new code's keys.
+fn recover_with(
+    hub: &mut Hub,
+    device: &mut TestDevice,
+    keys: &RecoveryKeys,
+    room: &GroupId,
+    served: &[(Vec<u8>, u64)],
+) -> Result<trommi_core::recovery::Replacement, Error> {
+    use trommi_core::device::ServedEnvelope;
+    use trommi_core::recovery::check_room;
+
+    hub.open_recovery(&device.id()).unwrap();
+    let fetched = trommi_tests::fetch(hub, keys);
+    let replacement = fetched.served(|served| {
+        let checked = check_room(keys, served)?;
+        keys.replace(
+            &mut SystemEntropy,
+            &room.room_id(),
+            checked.observer.history().unwrap(),
+        )
+    })?;
+    let chains: Vec<ServedEnvelope<'_>> = served
+        .iter()
+        .map(|(bytes, change)| ServedEnvelope {
+            bytes,
+            change: *change,
+            void_code: None,
+        })
+        .collect();
+    let built = fetched
+        .served(|served| device.recover(keys, served, &replacement, &chains, b"copies", now()));
+    if built.is_err() {
+        hub.drop_recovery();
+    }
+    built.map(|_| replacement)
+}
+
+#[test]
+fn a_recovery_reads_the_chains_in_the_hubs_order_however_they_are_handed_in() {
+    // One lost device wrote a Note, the other a version that builds on it.
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let first = write(&mut hub, &mut a, &note(1));
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let id = first.object_id.unwrap();
+    let version = Draft::NoteVersion {
+        object_id: id,
+        closed: false,
+        payload: json(&format!(
+            r#"{{"text":"n","lamport":2,"previous_version_hash":"{}"}}"#,
+            first.envelope_hash.to_base64url()
+        )),
+    };
+    let second = write(&mut hub, &mut b, &version);
+    sync_all(&hub, &mut a);
+    assert_eq!(
+        a.object(&room, &id).unwrap().unwrap().current,
+        second.envelope_hash
+    );
+    let (writer, follower) = (a.id(), b.id());
+    drop((a, b));
+
+    let keys = test_keys();
+    let stored = trommi_tests::served_chains(&hub);
+    let of = |sender: DeviceId| -> Vec<(Vec<u8>, u64)> {
+        stored
+            .iter()
+            .filter(|stored| stored.header.sender == sender)
+            .map(|stored| (stored.pruned(), stored.change))
+            .collect()
+    };
+    let mut device = new_device();
+    // Two different envelopes under one change number: the hub gives every envelope its own.
+    let mut twice = [of(writer), of(follower)].concat();
+    twice[1].1 = twice[0].1;
+    assert_eq!(
+        recover_with(&mut hub, &mut device, &keys, &room, &twice).err(),
+        Some(Error::BadFormat)
+    );
+    // Device after device, the follower's chain first, and one envelope handed twice.
+    let mut by_device = [of(follower), of(writer)].concat();
+    by_device.push(by_device[0].clone());
+    recover_with(&mut hub, &mut device, &keys, &room, &by_device).unwrap();
+    post_ok(&mut hub, &mut device);
+    // The version found the Note it builds on: both were read where the hub's order has them.
+    assert_eq!(
+        device.object(&room, &id).unwrap().unwrap().current,
+        second.envelope_hash
+    );
+    for sender in [writer, follower] {
+        assert_eq!(device.chain_head(&room, &sender).unwrap().seq, 1);
+    }
 }

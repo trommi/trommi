@@ -429,7 +429,8 @@ struct GroupMeta {
     /// Read from the group's context when the device is opened; none for the room group.
     session: Option<TrommiSession>,
     previous_room_epoch: u64,
-    /// A main session's agent leaf over time.
+    /// A main session's agent leaf over time: the change number of the Commit that changed it, and the
+    /// leaf after it. The first entry of a device that joined later stands for the state it joined at.
     seats: Vec<(u64, Option<DeviceId>)>,
     /// When this device's leaf was last renewed: by an own Commit with a path, or when the group was founded
     /// or joined (a Welcome does not say when the KeyPackage it used was made, so the join counts). And when
@@ -441,6 +442,8 @@ struct GroupMeta {
     founding: bool,
     /// First contact found leaves that do not belong: no content key is handed out.
     distrusted: bool,
+    /// The group's own history broke the rules (5.2.6): it stays distrusted, whatever its leaves are now.
+    closed: bool,
     /// This device was removed: OpenMLS's state is gone, the keys stay.
     removed: bool,
     pending: Option<Pending>,
@@ -486,7 +489,8 @@ impl Encode for GroupMeta {
                 self.pending
                     .as_ref()
                     .is_some_and(|pending| pending.accepted),
-            ) << 6);
+            ) << 6)
+            | (u8::from(self.closed) << 7);
         writer.u8(flags);
         let pending = self.pending.as_ref();
         writer.u64(pending.map_or(0, |pending| pending.outbox));
@@ -515,7 +519,8 @@ impl Decode for GroupMeta {
         let own_leaf_ms = reader.u64()?;
         let last_update_ms = reader.u64()?;
         let flags = reader.u8()?;
-        if flags >= 1 << 7 {
+        // A group is closed only as a distrusted one.
+        if flags & (1 << 7) != 0 && flags & (1 << 2) == 0 {
             return Err(Error::BadFormat);
         }
         let outbox = reader.u64()?;
@@ -542,6 +547,7 @@ impl Decode for GroupMeta {
             archived: flags & 1 != 0,
             founding: flags & (1 << 1) != 0,
             distrusted: flags & (1 << 2) != 0,
+            closed: flags & (1 << 7) != 0,
             removed: flags & (1 << 3) != 0,
             pending,
             joined_epoch: reader.u64()?,
@@ -797,20 +803,36 @@ impl Known {
     }
 }
 
-impl SessionFacts for Known {
-    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+impl recovery::SessionsAt for Known {
+    fn main_session_at(&self, session: &SessionId, change: u64) -> Parent {
         if let Some(seats) = self.closed.get(session) {
             return if self.replay {
-                Parent::Seat(observer::seat_at(seats, room_epoch))
+                observer::parent_at(seats, change)
             } else {
                 Parent::NotAMainSession
             };
         }
         match self.seats.get(session) {
-            Some(seats) => Parent::Seat(observer::seat_at(seats, room_epoch)),
+            Some(seats) => observer::parent_at(seats, change),
             // Neither a leaf nor an observer of it: this device cannot tell who its agent leaf is.
             None => Parent::Unknown,
         }
+    }
+
+    fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
+        SessionFacts::main_session_of(self, agent)
+    }
+
+    fn live_helpers(&self, parent: &SessionId) -> usize {
+        SessionFacts::live_helpers(self, parent)
+    }
+}
+
+/// The sessions as they stand now. A Commit that is judged at a place behind what this device holds asks
+/// [`recovery::At`] instead.
+impl SessionFacts for Known {
+    fn main_session(&self, session: &SessionId, _: u64) -> Parent {
+        recovery::SessionsAt::main_session_at(self, session, u64::MAX)
     }
 
     fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
@@ -1384,6 +1406,9 @@ impl<S: Storage> Device<S> {
             {
                 return Err(contradicts("a room epoch's place"));
             }
+            if !history::ascending(&memory.room_places) {
+                return Err(contradicts("a room epoch's place"));
+            }
         } else if !memory.room_places.is_empty() {
             return Err(contradicts("a room epoch's place"));
         }
@@ -1773,8 +1798,24 @@ impl<S: Storage> Device<S> {
         batch.put(followed_key(group), value);
     }
 
-    /// Records that the room Commit at `change` led to the room epoch `epoch`.
+    /// Records that the room Commit at `change` led to the room epoch `epoch`. The places ascend with the
+    /// epochs (5.4.1): a place held for an earlier epoch that does not lie before this one, or for a later
+    /// epoch that does not lie behind it, was a hub's word that the hub's order contradicts, and goes; the
+    /// room epoch at such a place is then unknown (`room-behind`), never a wrong one.
     fn put_room_place(&mut self, batch: &mut Batch, epoch: u64, change: u64) {
+        let contradicted: Vec<u64> = self
+            .memory
+            .room_places
+            .iter()
+            .filter(|(held, place)| {
+                (**held < epoch && **place >= change) || (**held > epoch && **place <= change)
+            })
+            .map(|(held, _)| *held)
+            .collect();
+        for held in contradicted {
+            self.memory.room_places.remove(&held);
+            batch.delete(room_place_key(held));
+        }
         self.memory.room_places.insert(epoch, change);
         batch.put(room_place_key(epoch), change.to_be_bytes().to_vec());
     }
@@ -2309,9 +2350,22 @@ impl<S: Storage> Device<S> {
             meta.previous_room_epoch = room_epoch;
             if let (Some(session), Some(room)) = (meta.session, room) {
                 if session.parent.is_zero() {
+                    // The group's place is the place of the Commit that led here. A Commit of this
+                    // device that is merged before the log shows it (a join from outside, a Commit of
+                    // a recovery) has no place yet: the change it makes stands behind every place
+                    // (`u64::MAX`) until the group's next place is known, and takes that one.
+                    let place = match meta.place {
+                        0 => u64::MAX,
+                        place => place,
+                    };
+                    if let Some((unplaced, _)) = meta.seats.last_mut() {
+                        if *unplaced == u64::MAX {
+                            *unplaced = place;
+                        }
+                    }
                     let now = observer::seat(&session, &leaves, &room);
                     if meta.seats.last().map(|(_, seat)| *seat) != Some(now) {
-                        meta.seats.push((room_epoch, now));
+                        meta.seats.push((place, now));
                     }
                 }
             }
@@ -2945,6 +2999,8 @@ impl<S: Storage> Device<S> {
     ) -> Result<(Vec<u8>, Vec<Cut>), Error> {
         let (facts, leaves, after) = observer::read_commit(public, id, commit)?;
         let mut known = self.known();
+        // Where the log shows it, a helper session's opener is its main session's agent leaf there.
+        let stands = place.unwrap_or(u64::MAX);
         // Where the log shows it, the group it founds is among the groups this device holds: it is not
         // counted against itself (5.2.5: 32 live helper sessions).
         if let (Some(_), Some((session, _))) = (place, session) {
@@ -2955,7 +3011,7 @@ impl<S: Storage> Device<S> {
         let history = self.history()?;
         let verifier = Verifier {
             history,
-            sessions: &known,
+            sessions: &recovery::At(&known, stands),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
             // When built: on the newest room state this device holds, where alone it is taken.
@@ -3979,7 +4035,29 @@ impl<S: Storage> Device<S> {
         }
         Ok(new)
     }
+}
 
+/// Served envelopes in the hub's one order across senders and groups: ascending by change number, whatever
+/// order they were handed in. An envelope handed twice is kept once; two different envelopes under one
+/// change number are `bad-format`, since the hub gives every envelope a number of its own.
+fn in_the_hubs_order<'a>(served: &[ServedEnvelope<'a>]) -> Result<Vec<ServedEnvelope<'a>>, Error> {
+    let mut ordered: Vec<ServedEnvelope<'a>> = served.to_vec();
+    ordered.sort_by_key(|envelope| envelope.change);
+    let mut once: Vec<ServedEnvelope<'a>> = Vec::with_capacity(ordered.len());
+    for envelope in ordered {
+        match once.last() {
+            Some(last) if last.change == envelope.change => {
+                if last.bytes != envelope.bytes {
+                    return Err(Error::BadFormat);
+                }
+            }
+            _ => once.push(envelope),
+        }
+    }
+    Ok(once)
+}
+
+impl<S: Storage> Device<S> {
     /// The Cuts for the leaves `gone` of `group`: the head of each one's chain as this device accepted it
     /// (9.0.10), number 0 and zeros for a device of which it accepted nothing.
     fn cuts_of(&self, group: &GroupId, gone: &[DeviceId]) -> Result<Vec<Cut>, Error> {
@@ -4005,6 +4083,11 @@ impl<S: Storage> Device<S> {
     /// Cut is taken from a chain that does not hold. A device of which nothing is handed in is cut at
     /// nothing; what a hub withholds from the end of a chain cannot be seen here (section 17).
     ///
+    /// `chains` may be handed in any order, device after device or as they were fetched: this call reads
+    /// them in the hub's one order across devices and groups, ascending by their change numbers, which is
+    /// the order every envelope is judged in (a Note version builds on another device's). An envelope
+    /// handed twice is read once; two different envelopes under one change number are `bad-format`.
+    ///
     /// The outbox entries are the recovery's Commits in order and its finish. The device's state changes
     /// only when the hub accepted the finish; when the hub refuses any of them, or the recovery ran out,
     /// which the caller reports as a refusal, all of it goes and the state is as before.
@@ -4023,6 +4106,7 @@ impl<S: Storage> Device<S> {
         if !self.memory.staged.is_empty() {
             return Err(Error::Busy);
         }
+        let chains = in_the_hubs_order(chains)?;
         let mut checked = recovery::check_room(keys, served)?;
         let missing_link = checked.missing_link;
         // Every live session is joined and cleaned, or the hub publishes nothing.
@@ -4051,7 +4135,7 @@ impl<S: Storage> Device<S> {
                 postings.push(this.join_built(batch, keys, current, seats, walked, now_ms)?);
             }
             // The chains of the devices to go, read from number 1 on this copy.
-            for served in chains {
+            for served in &chains {
                 let read = this.receive_in(
                     batch,
                     served.bytes,
@@ -4482,7 +4566,7 @@ impl<S: Storage> Device<S> {
         };
         let context = Context {
             room: room.as_ref(),
-            sessions: &known,
+            sessions: &recovery::At(&known, entry.change),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
         };
@@ -4493,7 +4577,13 @@ impl<S: Storage> Device<S> {
             .ok_or(Error::NotFound)?;
         let followed = match room_epoch {
             None => observer.process_commit(commit, recovery_auth, &context),
-            Some(at) => observer.process_commit_at(commit, recovery_auth, &context, at),
+            Some(at) => {
+                let place = observer::Place {
+                    change: entry.change,
+                    room_epoch: observer::RoomEpochAt::Epoch(at),
+                };
+                observer.process_commit_at(commit, recovery_auth, &context, &place)
+            }
         };
         match followed {
             Ok(facts) => {
@@ -4602,6 +4692,7 @@ impl<S: Storage> Device<S> {
                     return Err(Error::BadGroup);
                 }
                 let (after, cuts) = self.judge_own(id, session, public, commit, Some(change))?;
+                self.meta(id)?.place = change;
                 self.merge_own(batch, id, &cuts)?;
                 // What OpenMLS held as the pending Commit is the Commit the log shows: merged, it leads
                 // to the group context that Commit leads to for everyone. Anything else is a stored
@@ -4638,7 +4729,8 @@ impl<S: Storage> Device<S> {
         let history = self.history()?;
         let verifier = Verifier {
             history,
-            sessions: &known,
+            // 5.2.1: a helper session's opener is its main session's agent leaf at the Commit's place.
+            sessions: &recovery::At(&known, change),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
             room_epoch: match meta.session {
@@ -4683,8 +4775,10 @@ impl<S: Storage> Device<S> {
             .merge_staged_commit(&self.provider, *staged)
             .map_err(|_| Error::BadGroup)?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
-        if self.meta(id)?.distrusted {
-            // The offending leaves of a first contact may be gone now.
+        let meta = self.meta(id)?;
+        if meta.distrusted && !meta.closed {
+            // The offending leaves of a first contact may be gone now. A group whose history broke the
+            // rules stays closed: no later Commit makes that history another one.
             let after: BTreeSet<DeviceId> = rules::leaves_of(group.members())?
                 .into_iter()
                 .map(|(_, device)| device)
