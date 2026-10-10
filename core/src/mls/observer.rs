@@ -63,7 +63,7 @@ pub struct Context<'a> {
     pub sessions: &'a dyn SessionFacts,
     /// The recovery construct's checks.
     pub recovery: &'a dyn RecoveryRules,
-    /// The most human devices the room may hold: 32, or 33 while a recovery runs.
+    /// The most human devices the room may hold: the limit of section 16, or one more while a recovery runs.
     pub max_human_devices: usize,
 }
 
@@ -650,6 +650,26 @@ impl Observer {
         };
         let parent = parent_of(&record.session, sessions, room.epoch);
         Ok(rules::disallowed_leaves(
+            history,
+            room,
+            &record.session,
+            parent,
+            &self.leaves()?,
+        ))
+    }
+
+    /// Whether this session group is stale under `room`, and why (5.2.8).
+    pub fn staleness(
+        &self,
+        history: &RoomHistory,
+        room: &RoomState,
+        sessions: &dyn SessionFacts,
+    ) -> Result<rules::Staleness, Error> {
+        let Followed::Session(record) = &self.followed else {
+            return Ok(rules::Staleness::default());
+        };
+        let parent = parent_of(&record.session, sessions, room.epoch);
+        Ok(rules::staleness(
             history,
             room,
             &record.session,

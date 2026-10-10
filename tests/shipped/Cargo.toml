@@ -1,0 +1,24 @@
+[package]
+name = "trommi-tests-shipped"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Tests of Trommi's protocol core as it ships: built without the cargo feature `vectors`."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Default features only. Run alone (`cargo test -p trommi-tests-shipped --locked`), nothing in this package's
+# graph turns `vectors` on; a build of the whole workspace unifies it on, and the tests hold there too.
+trommi-core = { path = "../../core" }
+# OpenMLS itself, for the member of `gate.rs` that builds what no device builds.
+openmls = { workspace = true }
+openmls_rust_crypto = { workspace = true }
+openmls_basic_credential = { workspace = true }
+openmls_traits = { workspace = true }
+tls_codec = "=0.5.0"
+
+[[test]]
+name = "shipped_gate"
+path = "gate.rs"

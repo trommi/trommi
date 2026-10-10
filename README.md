@@ -6,8 +6,8 @@ Chat and decision cards between a person and their Claude Code sessions, end-to-
 
 The protocol is version 2: MLS (RFC 9420) distributes the keys, content is Trommi's own signed envelope. The whole of
 it is [`spec/v2.md`](spec/v2.md); why it leaves the standard in five places is
-[`spec/v2-deviations.md`](spec/v2-deviations.md). The web app in `app/web` still speaks version 1
-([`spec/v1.md`](spec/v1.md)) until it has moved onto the shared core.
+[`spec/v2-deviations.md`](spec/v2-deviations.md). The web app in `app/web` still speaks the format before it
+until it has moved onto the shared core.
 
 **Content: what a person or an agent has.** Sorting is not encryption: which Desk an Agent is on, the order, the
 crown and which Helper hangs under which Agent are register values; moving changes no key and moves no data.

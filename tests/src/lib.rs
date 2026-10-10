@@ -15,13 +15,17 @@ use hub::{Hub, LogItem};
 use std::time::{SystemTime, UNIX_EPOCH};
 pub use store::MemoryStorage;
 use trommi_core::crypto::SecretBytes;
-use trommi_core::crypto::{Secret, SystemEntropy};
+use trommi_core::crypto::{Secret, SeededEntropy, SystemEntropy};
 use trommi_core::device::{
-    log_finding, Accepted, CodeJoin, Device, Joined, LogEntry, LogFinding, LogKind, Processed,
-    WelcomeExpectation,
+    log_finding, Accepted, CodeJoin, Device, InviteConfirmed, InviteStep, Joined, LogEntry,
+    LogFinding, LogKind, Processed, WelcomeExpectation,
 };
 use trommi_core::device::{Draft, ReceivedEnvelope, Sealed};
-use trommi_core::ids::{DeviceId, GroupId};
+use trommi_core::hub_auth::HubAddress;
+use trommi_core::ids::{DeviceId, GroupId, InviteId, SessionId};
+use trommi_core::invite::{
+    CheckCode, Offer, Request, Role, SignedOffer, SignedRequest, SignedReveal,
+};
 use trommi_core::mls::profile::Cut;
 use trommi_core::recovery::{select_anchor, RecoveryKeys, ServedCommit, ServedGroup, ServedRoom};
 use trommi_core::store::OutboxKind;
@@ -56,6 +60,16 @@ pub fn new_device() -> TestDevice {
 /// write, and to play a crash.
 pub fn new_device_on(store: MemoryStorage) -> TestDevice {
     Device::create(store, Box::new(SystemEntropy)).expect("a new device")
+}
+
+/// A new device in a new store whose key comes from `seed`. A second one from the same seed holds the same
+/// key and nothing else: the key of a device, in the hands of whoever asks to be let in with it.
+pub fn seeded_device(seed: u8) -> TestDevice {
+    Device::create(
+        MemoryStorage::new(),
+        Box::new(SeededEntropy::new([seed; 32])),
+    )
+    .expect("a new device")
 }
 
 /// The device a store holds: what a restart finds.
@@ -214,15 +228,13 @@ pub fn publish_key_packages(hub: &mut Hub, device: &mut TestDevice) {
     post_ok(hub, device);
 }
 
-/// `adder` adds `forger` to the room group as a human device. Returns the room group as the forger holds it.
+/// `adder` invites `forger` as a human device and commits it. Returns the room group as the forger holds it.
 pub fn add_forger(
     hub: &mut Hub,
     adder: &mut TestDevice,
     forger: &forge::Forger,
 ) -> openmls::group::MlsGroup {
-    adder
-        .add_human_device(&forger.id(), &forger.key_package(), now())
-        .expect("the Add is built");
+    try_invite(adder, &mut forger.invitee(), Role::Human, None).expect("the invite is confirmed");
     post_ok(hub, adder);
     forger.join(&hub.welcomes.last().expect("a Welcome").bytes)
 }
@@ -262,23 +274,139 @@ pub fn added_at(hub: &Hub) -> u64 {
     hub.welcomes.last().map_or(0, |welcome| welcome.change)
 }
 
-/// `adder` adds the new human device `newcomer` to the room group, and the newcomer joins from its Welcome.
+/// The app's origin in every invite of the tests.
+pub const APP: &str = "https://app.example";
+
+/// The hub every invite of the tests names.
+pub fn hub_address() -> HubAddress {
+    HubAddress::parse("https://hub.example").expect("a hub address")
+}
+
+/// The new device's side of an invite (12.1.2, 12.1.3): a device, or a member that obeys MLS only.
+pub trait Invitee {
+    /// Checks the Offer served for `link` and answers it with a Request.
+    fn request(
+        &mut self,
+        link: &str,
+        offer: &SignedOffer,
+        now_ms: u64,
+    ) -> Result<SignedRequest, Error>;
+
+    /// Checks the Reveal and returns the code it shows.
+    fn reveal(&mut self, reveal: &SignedReveal) -> Result<CheckCode, Error>;
+}
+
+impl Invitee for TestDevice {
+    fn request(
+        &mut self,
+        link: &str,
+        offer: &SignedOffer,
+        now_ms: u64,
+    ) -> Result<SignedRequest, Error> {
+        self.join_request(link, offer, now_ms)
+            .map(|request| request.signed_request)
+    }
+
+    fn reveal(&mut self, reveal: &SignedReveal) -> Result<CheckCode, Error> {
+        self.join_reveal(reveal)
+    }
+}
+
+/// A confirmed invite: the inviter's Commit is in its outbox.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invited {
+    pub invite_id: InviteId,
+    /// The room epoch the Offer names: where an agent device starts to follow the room group.
+    pub room_epoch: u64,
+    /// The KeyPackage of the confirmed Request.
+    pub key_package: Vec<u8>,
+    pub confirmed: InviteConfirmed,
+}
+
+/// One invite from its opening to the confirmation (12.1.2 to 12.1.4), at the tests' clock: `inviter` opens
+/// it for `role` (with `session`: an agent device that takes that main session over), `joiner` answers,
+/// the inviter accepts and reveals, the joiner shows its code, and the inviter confirms that code. Returns
+/// the first refusal. Nothing is posted: the Commit waits in the inviter's outbox.
+pub fn try_invite(
+    inviter: &mut TestDevice,
+    joiner: &mut impl Invitee,
+    role: Role,
+    session: Option<&SessionId>,
+) -> Result<Invited, Error> {
+    try_invite_at(inviter, joiner, role, session, now())
+}
+
+/// [`try_invite`] at the time `now_ms`.
+pub fn try_invite_at(
+    inviter: &mut TestDevice,
+    joiner: &mut impl Invitee,
+    role: Role,
+    session: Option<&SessionId>,
+    now_ms: u64,
+) -> Result<Invited, Error> {
+    try_invite_between(inviter, joiner, role, session, now_ms, now_ms)
+}
+
+/// [`try_invite`] where the inviter is told the time `now_ms` and the joiner, whose KeyPackage begins its
+/// lifetime at the time it is told, `joiner_ms`.
+pub fn try_invite_between(
+    inviter: &mut TestDevice,
+    joiner: &mut impl Invitee,
+    role: Role,
+    session: Option<&SessionId>,
+    now_ms: u64,
+    joiner_ms: u64,
+) -> Result<Invited, Error> {
+    let opened = inviter.invite_open(role, session, APP, &hub_address(), now_ms)?;
+    let link = String::from_utf8(opened.link.expose().to_vec()).expect("the link is text");
+    let request = joiner.request(&link, &opened.signed_offer, joiner_ms)?;
+    let accepted = inviter.invite_accept(&opened.invite_id, &request, now_ms)?;
+    // The person compares what the two devices show: the inviter confirms the new device's code.
+    let code = joiner.reveal(&accepted.signed_reveal)?;
+    let confirmed = inviter
+        .invite_confirm(
+            &opened.invite_id,
+            &code,
+            &accepted.request_hash,
+            true,
+            now_ms,
+        )?
+        .ok_or(Error::Internal("a confirmed invite commits"))?;
+    Ok(Invited {
+        invite_id: opened.invite_id,
+        room_epoch: Offer::decode(&opened.signed_offer.offer)?.room_epoch,
+        key_package: Request::decode(&request.request)?.key_package,
+        confirmed,
+    })
+}
+
+/// `adder` invites the new human device `newcomer`, the person confirms, and the newcomer joins the room
+/// group from its Welcome (12.1.5).
 pub fn add_human(hub: &mut Hub, adder: &mut TestDevice, newcomer: &mut TestDevice) {
-    let package = newcomer.key_package(now()).expect("a key package");
-    adder
-        .add_human_device(&newcomer.id(), &package, now())
-        .expect("the Add is built");
+    try_invite(adder, newcomer, Role::Human, None).expect("the invite is confirmed");
     // The Add, and behind it the recovery_mac the adder owes the newcomer (7.4).
     post_ok(hub, adder);
+    join_invited(hub, newcomer);
     let added = added_at(hub);
-    let joined = take_welcomes(hub, newcomer, added);
-    assert_eq!(joined.len(), 1, "the newcomer joins the room group");
     for item in hub.log_after(added) {
         if !item.commit && item.group.is_room() {
             process(newcomer, &item).expect("the recovery_mac is taken");
         }
     }
     assert!(newcomer.holds_recovery_mac());
+}
+
+/// The invited human device `newcomer` takes the newest Welcome, which answers its Request, and is handed
+/// the Commit that made it: that gives the join its place in the hub's order.
+pub fn join_invited(hub: &Hub, newcomer: &mut TestDevice) -> Joined {
+    let welcome = hub.welcomes.last().expect("a Welcome");
+    let joined = newcomer
+        .join_invited(&welcome.bytes, now())
+        .expect("the newcomer joins the room group");
+    for item in hub.log.iter().filter(|item| item.change == welcome.change) {
+        let _ = process(newcomer, item);
+    }
+    joined
 }
 
 /// `adder` adds the human device `newcomer` to the session group `group` (5.2.7); the newcomer joins when it
@@ -307,13 +435,87 @@ pub fn observe(hub: &Hub, device: &mut TestDevice) {
         .expect("the room is followed");
 }
 
-/// `human` enrols `agent` as an agent device; the agent then follows the room group from that epoch.
+/// `human` invites `agent` as an agent device and the person confirms. The Commit that enrols it is posted;
+/// the agent follows the room group from the state the Offer names and has seen its inviter enrol it
+/// (12.1.6).
 pub fn enrol(hub: &mut Hub, human: &mut TestDevice, agent: &mut TestDevice) {
-    human
-        .change_agents(&[agent.id()], &[], now())
-        .expect("the enrolment is built");
+    let invited = try_invite(human, agent, Role::Agent, None).expect("the invite is confirmed");
     post_ok(hub, human);
-    observe(hub, agent);
+    follow_enrolment(hub, agent, &invited);
+}
+
+/// `human` invites `agent` to take over the main session `main`, and the person confirms: one room Commit
+/// enrols the agent and takes the session's present agent device out of `agents` (5.3.1 (a)). It is posted,
+/// and the agent follows the room group as after [`enrol`]. The session groups are still to be taken over.
+pub fn enrol_over(
+    hub: &mut Hub,
+    human: &mut TestDevice,
+    agent: &mut TestDevice,
+    main: &GroupId,
+) -> Invited {
+    let session = main.session_id().expect("a session group");
+    let invited =
+        try_invite(human, agent, Role::Agent, Some(&session)).expect("the invite is confirmed");
+    post_ok(hub, human);
+    follow_enrolment(hub, agent, &invited);
+    invited
+}
+
+/// The invited agent device starts to follow the room group from the GroupInfo of the Offer's epoch and
+/// processes the room Commit that follows it: its enrolment, by its inviter.
+pub fn follow_enrolment(hub: &Hub, agent: &mut TestDevice, invited: &Invited) {
+    let room_group = GroupId::room(hub_room(hub));
+    let info = hub
+        .group_info_at(&room_group, invited.room_epoch)
+        .expect("the GroupInfo of the Offer's epoch");
+    agent.join_observe(info).expect("the room is followed");
+    let enrolment = hub
+        .log
+        .iter()
+        .find(|item| item.commit && item.group == room_group && item.epoch == invited.room_epoch)
+        .expect("the Commit that enrols the agent device");
+    process(agent, enrolment).expect("the enrolment is the inviter's");
+    assert!(agent
+        .room_history()
+        .expect("the room's roles")
+        .newest()
+        .is_agent(&agent.id()));
+}
+
+/// Ends what `inviter` still lists for the devices it committed by link, where a test did those steps by
+/// hand or leaves them out: no handover is sent for them (5.3.2), and a takeover is held against the helper
+/// sessions the hub lists (5.3.1 (c)). A takeover that is finished frees its session for the next one.
+pub fn close_invites(hub: &Hub, inviter: &mut TestDevice) {
+    for _ in 0..4 {
+        let steps = inviter.invite_steps().expect("the steps");
+        if steps.is_empty() {
+            return;
+        }
+        for (invite, step) in steps {
+            match step {
+                InviteStep::Handover { .. } => {
+                    inviter
+                        .invite_forget(&invite)
+                        .expect("the handover is dropped");
+                }
+                InviteStep::CheckHelpers { session } => {
+                    let helpers: Vec<GroupId> = hub
+                        .live_sessions()
+                        .into_iter()
+                        .filter(|group| {
+                            hub.observer(group)
+                                .and_then(|observer| observer.session())
+                                .is_some_and(|helper| helper.parent == session)
+                        })
+                        .collect();
+                    inviter
+                        .invite_checked(&invite, &helpers)
+                        .expect("the takeover is complete");
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 /// `founder` founds a main session for `agent` with a KeyPackage claimed for it and for every other human
