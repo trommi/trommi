@@ -31,8 +31,8 @@ use crate::records::{
     RoomRoles, SignedHubAuth,
 };
 use crate::recovery::{
-    self, with_chains, with_commits, with_group, with_room, CodeJoin, GroupPast, Learned, RecoveryPlan,
-    ServedCommit, ServedEnvelope, ServedGroup, ServedRoom,
+    self, with_chains, with_commits, with_group, with_room, CodeJoin, GroupPast, Learned,
+    RecoveryPlan, ServedCommit, ServedEnvelope, ServedGroup, ServedRoom,
 };
 use crate::store::AnyStore;
 use crate::{CoreError, ErrorCode};
@@ -823,10 +823,12 @@ impl CoreDevice {
     /// past is asked for.
     pub fn group_past(&self, group: Vec<u8>) -> Result<Option<GroupPast>, CoreError> {
         self.read(|device| {
-            Ok(device.group_past(&group_id(&group)?)?.map(|past| GroupPast {
-                from_epoch: past.from_epoch,
-                learned: past.learned,
-            }))
+            Ok(device
+                .group_past(&group_id(&group)?)?
+                .map(|past| GroupPast {
+                    from_epoch: past.from_epoch,
+                    learned: past.learned,
+                }))
         })
     }
 
