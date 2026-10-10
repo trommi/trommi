@@ -160,7 +160,7 @@ fn the_last_resort_key_package_serves_several_groups() {
     let (mut hub, _) = found_room(&mut a);
     add_human(&mut hub, &mut a, &mut b);
     publish_some(&mut hub, &mut b, 1);
-    let mut agents = [new_device(), new_device(), new_device()];
+    let mut agents: Vec<_> = (0..8).map(|_| new_device()).collect();
     for agent in &mut agents {
         enrol(&mut hub, &mut a, agent);
         publish_some(&mut hub, agent, 1);
@@ -186,7 +186,8 @@ fn the_last_resort_key_package_serves_several_groups() {
         post_ok(&mut hub, &mut a);
         groups.push(GroupId::session(a.room().unwrap(), session));
     }
-    // One last-resort KeyPackage opened the Welcomes of two groups.
+    // One last-resort KeyPackage opened the Welcomes of seven groups: a device added to more live sessions
+    // than it has single-use KeyPackages left is not left out of any (5.2.5, 5.2.7).
     settle(&hub, &mut b);
     for group in &groups {
         assert_eq!(
@@ -194,7 +195,7 @@ fn the_last_resort_key_package_serves_several_groups() {
             a.content_key(group, 1).unwrap()
         );
     }
-    assert_eq!(b.groups().unwrap().len(), 4);
+    assert_eq!(b.groups().unwrap().len(), 9);
 
     // `exhaust` plays a hub whose single-use ones were all claimed.
     publish_some(&mut hub, &mut b, 3);
