@@ -2,9 +2,8 @@
 //! Commits with OpenMLS's `PublicGroup` and reads from it who is in a group and what a Commit does. It holds no
 //! secret of any group: nothing in this module can derive or open one.
 //!
-//! Seam for the merge with `trommi-core`: the core does not export an observer yet. `Observer` is the small
-//! surface the hub needs from it; `MlsObserver` implements it the way `proofs/keys/src/hub.rs` does. Once the core
-//! has `observe`, `process` and the labelled helpers, `MlsObserver` becomes a thin call into it.
+//! Seam towards `trommi-core`: `Observer` is the small surface the hub needs; `MlsObserver` implements it on
+//! OpenMLS as the core's `mls::observer::Observer` does, and can become a thin call into that.
 
 use std::collections::HashMap;
 
