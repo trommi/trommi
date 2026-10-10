@@ -1493,10 +1493,12 @@ fn chain_state_round_trips_and_refuses_damage() {
     writer.u64(0);
     writer.vector(&twice).unwrap();
     writer.vector::<HeadEntry>(&[]).unwrap();
+    writer.vector::<HeadEntry>(&[]).unwrap();
     // With one of the two entries the same bytes are a chain state.
     let mut once = Writer::new();
     once.u64(0);
     once.vector(&twice[..1]).unwrap();
+    once.vector::<HeadEntry>(&[]).unwrap();
     once.vector::<HeadEntry>(&[]).unwrap();
     assert!(Chains::from_bytes(&once.into_bytes()).is_ok());
     assert!(matches!(
@@ -1528,7 +1530,7 @@ fn chain_state_round_trips_and_refuses_damage() {
 #[test]
 fn a_board_snapshots_frontier_starts_chains_beyond_number_one() {
     let mut writer = World::new();
-    writer.post(2, room(), &stroke());
+    let one = writer.post(2, room(), &stroke());
     let two = writer.post(2, room(), &stroke());
     let three = writer.sign(2, room(), &stroke());
     let four = writer.sign(2, room(), &stroke());
@@ -1548,8 +1550,36 @@ fn a_board_snapshots_frontier_starts_chains_beyond_number_one() {
         .unwrap();
     assert_eq!(taken(&receipt), &Err(Error::Pruned));
     reader.take(&four.envelope).unwrap();
-    // What lies at or before the frontier is not new.
+    let chains = reader.chains(&room());
+    assert_eq!(chains.started_at(&device(2)).map(|head| head.seq), Some(2));
+    assert_eq!(
+        Chains::from_bytes(&chains.to_bytes().unwrap()).unwrap(),
+        chains
+    );
+    // What lies up to the frontier is read from number 1 at any time later, in its order, and leads to
+    // the frontier's envelope; the chain's head stays where it is.
+    assert_eq!(reader.take(two.envelope()).err(), Some(Error::Gap));
+    reader.take(one.envelope()).unwrap();
+    assert_eq!(reader.take(one.envelope()).err(), Some(Error::Replay));
+    assert_eq!(reader.chains(&room()).head(&device(2)).seq, 4);
+    reader.take(two.envelope()).unwrap();
+    assert_eq!(reader.chains(&room()).started_at(&device(2)), None);
     assert_eq!(reader.take(two.envelope()).err(), Some(Error::Replay));
+    assert_eq!(reader.chains(&room()).head(&device(2)).seq, 4);
+
+    // A frontier that names another envelope than the chain holds under its number is found out there.
+    let mut other = World::new();
+    let wrong = Head {
+        seq: 2,
+        hash: Hash32::new([9; 32]),
+    };
+    let mut chains = Chains::new();
+    chains.start_at(device(2), wrong).unwrap();
+    assert!(chains.start_at(device(2), wrong).is_err());
+    other.chains.insert(room(), chains);
+    other.take(one.envelope()).unwrap();
+    assert_eq!(other.take(two.envelope()).err(), Some(Error::Equivocation));
+    assert_eq!(other.chains(&room()).started_at(&device(2)), Some(wrong));
 }
 
 #[test]

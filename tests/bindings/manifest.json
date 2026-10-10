@@ -997,8 +997,8 @@
             "type": "ServedRoom"
           },
           {
-            "name": "cuts",
-            "type": "list<GroupCut>"
+            "name": "chains",
+            "type": "list<ServedEnvelope>"
           },
           {
             "name": "account",
@@ -1010,6 +1010,23 @@
           }
         ],
         "returns": "CodeJoin"
+      },
+      "learnHistory": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "founding",
+            "type": "bytes"
+          },
+          {
+            "name": "commits",
+            "type": "list<ServedCommit>"
+          }
+        ],
+        "returns": "Learned"
       },
       "seal": {
         "arguments": [
@@ -1366,6 +1383,19 @@
         ],
         "returns": "list<number>"
       },
+      "inviteChecked": {
+        "arguments": [
+          {
+            "name": "inviteId",
+            "type": "bytes"
+          },
+          {
+            "name": "helpers",
+            "type": "list<bytes>"
+          }
+        ],
+        "returns": "void"
+      },
       "inviteForget": {
         "arguments": [
           {
@@ -1721,7 +1751,8 @@
       "group": "optional<bytes>",
       "device": "optional<bytes>",
       "keyPackage": "optional<bytes>",
-      "cuts": "list<Cut>"
+      "cuts": "list<Cut>",
+      "session": "optional<bytes>"
     },
     "JoinRequest": {
       "inviteId": "bytes",
@@ -1864,9 +1895,13 @@
       "missingLink": "optional<bytes>",
       "unverified": "list<UnverifiedSession>"
     },
-    "GroupCut": {
-      "group": "bytes",
-      "cut": "Cut"
+    "ServedEnvelope": {
+      "bytes": "bytes",
+      "change": "number",
+      "voidCode": "optional<ErrorCode>"
+    },
+    "Learned": {
+      "epochs": "number"
     },
     "Removals": {
       "group": "bytes",
@@ -2076,7 +2111,8 @@
       "handover": "handover",
       "addToSession": "addToSession",
       "foundSession": "foundSession",
-      "takeOver": "takeOver"
+      "takeOver": "takeOver",
+      "checkHelpers": "checkHelpers"
     },
     "OutboxKind": {
       "roomFounding": "roomFounding",

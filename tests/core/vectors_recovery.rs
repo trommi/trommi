@@ -251,7 +251,8 @@ fn the_recovery_removes_with_its_cuts_and_links_the_new_code_to_the_old() {
             hash: Hash32::new(array(&cut["hash"])),
         })
         .collect();
-    assert!(!cuts.is_empty() && cuts.iter().all(|cut| cut.seq > 0));
+    // No device of the vector's room wrote an envelope: every chain is cut at nothing.
+    assert!(!cuts.is_empty() && cuts.iter().all(|cut| *cut == Cut::none(cut.device)));
     assert_eq!(clean.note.as_ref().unwrap().cuts, cuts);
     assert_eq!(
         clean.removes,
