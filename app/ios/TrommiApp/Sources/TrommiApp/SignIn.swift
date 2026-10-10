@@ -236,11 +236,11 @@ func copySecret(_ s: String) {
 
 // ---- the screens ----------------------------------------------------------------------------------------------
 
-/** The start: "Agents ask. You decide." with Create account (primary) and Log in. */
+/** The start: "Your agents ring. You decide." with Create account (primary) and Log in. */
 struct StartView: View {
   @EnvironmentObject var model: BoardModel
   var body: some View {
-    ObShell(title: "Agents ask. You decide.", lead: "A desk for your Claude Code sessions, end-to-end encrypted.", home: false, underlined: true) {
+    ObShell(title: "Your agents ring. You decide.", lead: "Claude Code and Codex ask as cards on your phone. One tap, and they keep working. End-to-end encrypted.", home: false, underlined: true) {
       if model.loggedOut { Text("Logged out.").font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
       if model.removed { Text("This device was removed from your account by another device. Nothing of it is left here.").font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
       if let e = model.error { ObError(text: e) }

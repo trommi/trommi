@@ -1,6 +1,6 @@
 # Trommi
 
-**A board for you and your AI agents, end-to-end encrypted**
+**Your agents ring. You decide.**
 
 Your Claude Code and Codex sessions ask, you answer: chat, decision cards and a Scribble Board, on the web and on
 the iPhone. Everything is encrypted on the devices with MLS (RFC 9420); the server only passes sealed messages on.
