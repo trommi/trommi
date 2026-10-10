@@ -1,16 +1,20 @@
-// The outbox: written first, sent in order, each entry once, never dropped. STAND-IN core and FAKE hub; what is
+// The outbox: written first, sent in order, each entry once, never dropped. the REAL core (real envelopes) and the FAKE hub; what is
 // asserted on is the fake hub's request log.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { failWrite, scene, sleep, until } from './helpers.mjs'
+import { hubReaders } from '../stand-in/core.ts'
+
+/** An envelope's header as the fake hub reads it (real bytes: tests/web/stand-in/core.ts). */
+const header = envelope => hubReaders.envelope(Buffer.from(envelope, 'base64url'))
 
 /** The posts of Notes (other envelopes go out beside them: this device's own registers). */
-const isNote = envelope => JSON.parse(Buffer.from(envelope, 'base64url').toString()).object?.object_type === 'note'
+const isNote = envelope => header(envelope).object?.object_type === 'note'
 /** A fault for the next Notes only (a request the fake hub refuses by a fault is logged without its body). */
 const onNotes = { method: 'POST', path: '/v2/envelopes', when: rq => isNote(JSON.parse(rq.raw.toString()).envelope) }
 const sentBy = rq => rq.body?.envelope ?? null
 const posts = fake => fake.requests.filter(r => r.method === 'POST' && r.path === '/v2/envelopes' && (r.body === null || isNote(r.body.envelope)))
-const seqOf = r => JSON.parse(Buffer.from(r.body.envelope, 'base64url').toString()).seq
+const seqOf = r => header(r.body.envelope).seq
 const noteTexts = model => [...model.notes.values()].map(n => n.text).sort()
 
 test('sent while offline: delivered after the reconnect, exactly once, in order', async t => {
@@ -98,7 +102,7 @@ test('the client dies between sealing and posting: after the restart the envelop
   await again.start()
   await again.settle(); await b.settle()
   const mine = posts(fake).slice(from).filter(r => r.status === 200 && r.device === Buffer.from(a.my_device_id, 'hex').toString('base64url'))
-  assert.equal(mine.filter(r => JSON.parse(Buffer.from(r.body.envelope, 'base64url').toString()).object?.object_id === Buffer.from(note, 'hex').toString('base64url')).length, 1)
+  assert.equal(mine.filter(r => header(r.body.envelope).object?.object_id === Buffer.from(note, 'hex').toString('base64url')).length, 1)
   assert.equal(again.model.notes.get(note).text, 'sealed, not yet sent')
   assert.equal(b.model.notes.get(note).text, 'sealed, not yet sent')
 })
@@ -126,14 +130,14 @@ test('a store write fails in the middle of an action: the device is opened again
   await a.settle()
   let reopened = 0
   a.engine.on('reopened', () => { reopened++ })
-  // the stand-in's own store fails while an envelope is sealed
-  failWrite(`${name.name}:stand-in`)
+  // the store fails while an envelope is sealed
+  failWrite(name.name)
   await assert.rejects(a.saveNote({ text: 'never written' }), { code: 'storage' })
   assert.equal(reopened, 1)
   assert.deepEqual(noteTexts(a.model), ['before the failure'], 'the echo is gone: the envelope was not sealed')
   assert.equal(a.model.outbox.length, 0)
-  // the binding's store fails while a Commit is made
   const id = a.engine.groups.find(g => g.session === null).group, epoch = a.engine.groups.find(g => g.session === null).epoch
+  // the store fails while a Commit is made
   failWrite(name.name)
   await assert.rejects(a.engine.land(d => d.update(id, true, Date.now())), { code: 'storage' })
   assert.equal(reopened, 2)

@@ -156,7 +156,8 @@ export class Client {
   /** Who waits for an invite that was confirmed to be through. */
   private readonly finishing = new Map<string, { resolve(): void; reject(e: unknown): void }>()
   /** A note's newest version as THIS client sealed it (ahead of the model while versions are in flight). */
-  private readonly localHeads = new Map<string, { object_version: number; version_hash: string; content: Fields }>()
+  /** Notes with a version on its way to the hub and back: its hash and outbox entry, and the edit that waits behind it. */
+  private readonly noteBusy = new Map<string, { hash: string; outbox: number; next: { own: Fields; closed: boolean; local_id: string } | null }>()
   private lamport = 0
   private started = false
   private removed = false
@@ -257,7 +258,11 @@ export class Client {
   private listen(): void {
     const e = this.engine
     const on = <K extends keyof EngineEvents>(event: K, fn: (data: EngineEvents[K]) => void): void => { this.offs.push(e.on(event, fn)) }
-    on('envelope', ({ received }) => { M.applyEnvelope(this.model, received, this.change, { now: this.now() }) })
+    on('envelope', ({ received }) => {
+      M.applyEnvelope(this.model, received, this.change, { now: this.now() })
+      const o = received.header.object
+      if (o?.objectType === 'note' && this.noteBusy.get(hex(o.objectId))?.hash === hex(received.envelopeHash)) this.noteBack(hex(o.objectId))
+    })
     on('log', ({ item, done }) => {
       const room = item.group.length === 32
       if (done.commit) M.applyCommit(this.model, done.commit, this.change, { by_recovery: room && done.commit.external, removed_me: done.removed && room, now: this.now() })
@@ -318,8 +323,8 @@ export class Client {
     if (refusal) {
       // the views see the item `failed` in the change that takes the echo back
       sent.item.outbox_state = 'failed'; sent.item.error = refusal
-      // a refused Note version is no basis for the next one
-      if (sent.item.envelope_kind?.startsWith('note') && sent.item.object_id) this.localHeads.delete(sent.item.object_id)
+      // a refused Note version: the edit that waited behind it is tried on what stands
+      for (const [id, busy] of this.noteBusy) if (busy.outbox === entry.id) this.noteBack(id)
       M.rollbackEcho(this.model, sent.local_id, ch)
       M.pushAlert(this.model, ch, { code: refusal, message: `the hub refused an envelope (${refusal})`, at: this.now() })
       ch.outbox = true
@@ -518,34 +523,57 @@ export class Client {
   setCrown(value: unknown): Promise<Sent> { return this.setRegisters({ crown: value ?? null }) }
   setDesk(desk_id: string, value: unknown): Promise<Sent> { return this.setRegisters({ [`desk/${desk_id}`]: value ?? null }) }
 
+  /** A note's version this device confirmed last (what came back from the hub), under any echo in front of it. */
   private noteHead(object_id: string): { object_version: number; version_hash: string | null; content: Fields } | null {
-    const local = this.localHeads.get(object_id)
     const m = this.model.notes.get(object_id)
     const base = m?.pending ? m._base : m
-    if (local && (!base || local.object_version >= base.object_version)) return local
     return base ? { object_version: base.object_version, version_hash: base.version_hash, content: noteFields(base) } : null
   }
+  /**
+   * A note's version. The core takes a later version only on one it holds, and it holds an own version once that
+   * came back from the hub. So while a version of a note is on its way, a further edit is shown at once and kept
+   * here; only the newest is kept, and it is sealed when the one before it is back. (An edit that waits like that
+   * is in memory only: it is lost if the app ends before the earlier version returned.)
+   */
   private async writeNote(object_id: string | null, fields: Fields, closed: boolean): Promise<string> {
     this.needHuman()
     if (object_id && this.model.notes.get(object_id)?.unsupported) fail('needs-update', UPDATE_MESSAGE)
-    const head = object_id ? this.noteHead(object_id) : null
-    if (object_id && !head) fail('not-found', 'no such note')
+    if (object_id && !this.model.notes.get(object_id)) fail('not-found', 'no such note')
     const { object_state: _state, ...own } = fields
+    const local_id = `local-${randomHex(8)}`
+    const busy = object_id ? this.noteBusy.get(object_id) : undefined
+    if (busy) {
+      this.tell(ch => { if (busy.next) M.rollbackEcho(this.model, busy.next.local_id, ch); M.echoNote(this.model, { local_id, object_id, fields: closed ? {} : own, closed }, ch) })
+      busy.next = { own: { ...(busy.next?.own ?? {}), ...own }, closed, local_id }
+      return object_id!
+    }
+    this.tell(ch => { M.echoNote(this.model, { local_id, object_id, fields: closed ? {} : own, closed }, ch) })
+    return this.sealNote(object_id, own, closed, local_id)
+  }
+  private async sealNote(object_id: string | null, own: Fields, closed: boolean, local_id: string): Promise<string> {
+    const head = object_id ? this.noteHead(object_id) : null
     // one above every lamport this device has seen on a note (9.3.2 chooses the current version by it)
     for (const n of this.model.notes.values()) this.lamport = Math.max(this.lamport, n.causal?.lamport ?? 0, n._base?.causal?.lamport ?? 0)
     const content: Fields = { ...(head?.content ?? {}), ...own, object_version: (head?.object_version ?? 0) + 1, lamport: ++this.lamport }
-    if (head?.version_hash) content['previous_version_hash'] = head.version_hash
+    // every version names the one before it; a first version names zeros (spec 9, `object_ref`)
+    content['previous_version_hash'] = head?.version_hash ?? '0'.repeat(64)
     for (const k of Object.keys(content)) if (content[k] === undefined) delete content[k]
     const payload = encodeBodyBytes('note', content)
-    const local_id = `local-${randomHex(8)}`
     let id = object_id
-    this.tell(ch => { M.echoNote(this.model, { local_id, object_id, fields: closed ? {} : own, closed }, ch) })
     const draft: Draft = object_id ? { kind: 'noteVersion', objectId: unhex(object_id), closed, payload } : { kind: 'noteFirst', payload }
     await this.send(local_id, [{ draft, files: fileIdsOf('note', content), item: { object_id, content } }], sealed => {
       id = sealed.objectId ? hex(sealed.objectId) : id
-      this.localHeads.set(id!, { object_version: content['object_version'] as number, version_hash: hex(sealed.envelopeHash), content: noteFields(content) })
+      this.noteBusy.set(id!, { hash: hex(sealed.envelopeHash), outbox: sealed.outboxId, next: null })
     })
     return id!
+  }
+  /** A note's version is back from the hub, or was refused: the edit that waited behind it is sealed now. */
+  private noteBack(object_id: string): void {
+    const busy = this.noteBusy.get(object_id)
+    if (!busy) return
+    this.noteBusy.delete(object_id)
+    const next = busy.next
+    if (next) void this.sealNote(object_id, next.own, next.closed, next.local_id).catch(() => {})
   }
   /** A new note or a new version of one: in model.notes at once (a new one first under its local id). Resolves to its object id. */
   saveNote({ object_id = null, ...fields }: { object_id?: string | null; [field: string]: unknown }): Promise<string> {

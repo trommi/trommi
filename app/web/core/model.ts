@@ -571,7 +571,7 @@ function applyCard(model: Model, r: ReceivedEnvelope, change: Change, hash: stri
     if (first && (n < card.first_envelope_number || card.created_at !== h.time)) { card.first_envelope_number = Math.min(card.first_envelope_number, n); card.created_at = h.time; B.proj = null }
     let v = card.versions.find(x => x.version_hash === hash)
     if (!v) {
-      v = { object_version: 0, version_hash: hash, previous_version_hash: (content?.['previous_version_hash'] as string | undefined) ?? refHex(o.objectRef), envelope_number: n, sent_at: h.time, object_state: state, urgency: o.urgency, content: content as Body | null }
+      v = { object_version: 0, version_hash: hash, previous_version_hash: refHex(o.objectRef), envelope_number: n, sent_at: h.time, object_state: state, urgency: o.urgency, content: content as Body | null }
       insertByNumber(card.versions, v)
       v.object_version = Number.isInteger(content?.['object_version']) ? content!['object_version'] as number : card.versions.indexOf(v) + 1
     } else if (content && !v.content) {
