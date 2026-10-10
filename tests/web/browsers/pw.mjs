@@ -74,9 +74,13 @@ function driver(pw, name, seen, engine) {
     name, pw,
     /** Runs `code` (the body of an async function) in the page and returns its value. */
     async js(code) {
-      try { return await pw.evaluate(`(async () => { ${code} })()`) } catch (err) {
+      // (a page whose process is wedged never answers, not even a screenshot: after 60 s that is said, instead of
+      // the step waiting until the run's own timeout)
+      let timer
+      const wedged = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('the page did not answer within 60 s (its process is wedged)')), 60000) })
+      try { return await Promise.race([pw.evaluate(`(async () => { ${code} })()`), wedged]) } catch (err) {
         throw new Error(`${name}: ${String(err.message).split('\n')[0]}\n    in: ${code.trim().slice(0, 200)}`)
-      }
+      } finally { clearTimeout(timer) }
     },
     /** Waits until the expression `code` is truthy in the page; returns the milliseconds it took. */
     async until(code, what, ms = 15000) {
@@ -89,7 +93,7 @@ function driver(pw, name, seen, engine) {
     async reload() { await pw.reload({ waitUntil: 'load', timeout: 30000 }).catch(err => { if (!/Timeout/.test(err.message)) throw err }) },
     /** Where the middle of the element is, scrolled into view; fails when it is not there, has no box, or lies under
      *  something that is not its own (a person could not press it). */
-    async point(selector) {
+    async point(selector, waitedFor = 0) {
       const at = await page.js(`const el = document.querySelector(${JSON.stringify(selector)})
         if (!el) return { no: 'not in the page' }
         el.scrollIntoView({ block: 'center', inline: 'center' })
@@ -99,8 +103,16 @@ function driver(pw, name, seen, engine) {
         const x = r.left + r.width / 2, y = r.top + r.height / 2, hit = document.elementFromPoint(x, y)
         const own = hit && (el.contains(hit) || hit.contains(el) || (el.labels && [...el.labels].some(l => l.contains(hit))))
         return own ? { x, y } : { no: 'it lies under ' + (hit ? hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (hit.className && typeof hit.className === 'string' ? '.' + hit.className.split(' ').join('.') : '') : 'nothing') }`)
-      if (at.no) throw new Error(`${name}: cannot press ${selector}: ${at.no}`)
-      return at
+      if (!at.no) return at
+      // An element that is in the page but not laid out or still covered: a person waits a moment for it, and so
+      // does this (up to 3 s, counted in `seen.waited`); the Chromium harness presses at once and is never early.
+      if (waitedFor < 3000) {
+        await sleep(100)
+        const got = await page.point(selector, waitedFor + 100)
+        if (!waitedFor) (seen.waited ??= []).push(`${name}: ${selector} (${at.no})`)
+        return got
+      }
+      throw new Error(`${name}: cannot press ${selector}: ${at.no}`)
     },
     /** A click with the mouse on the element's middle. */
     async click(selector) {
@@ -116,8 +128,16 @@ function driver(pw, name, seen, engine) {
       if (await page.js(`return (document.activeElement?.value ?? '') !== ''`)) await pw.keyboard.press('Backspace')
       await pw.keyboard.insertText(text)
     },
-    /** (`code` and `modifiers` are the DevTools protocol's; here the key's name is enough) */
-    async key(key) { await pw.keyboard.press(key) },
+    /** (`code` is the DevTools protocol's and not needed here; of its `modifiers`, 2 is Control) */
+    async key(key, _code, modifiers = 0) { await pw.keyboard.press(`${modifiers & 2 ? 'Control+' : ''}${modifiers & 8 ? 'Shift+' : ''}${key}`) },
+    /** The mouse by the DevTools protocol's names, as tests/web/e2e/real.mjs draws a stroke with it. */
+    async mouse(type, x, y) {
+      if (type === 'mouseMoved') await pw.mouse.move(x, y)
+      else if (type === 'mousePressed') { await pw.mouse.move(x, y); await pw.mouse.down() }
+      else if (type === 'mouseReleased') { await pw.mouse.move(x, y); await pw.mouse.up() }
+    },
+    /** The one DevTools call the shared steps make themselves: text inserted as a keyboard inserts it. */
+    session: { async send(method, params) { if (method !== 'Input.insertText') throw new Error(`pw.mjs has no ${method}`); await pw.keyboard.insertText(params.text) } },
     async attach(selector, files) { await pw.setInputFiles(selector, files) },
     /** A screenshot into `seen.shots` (or OUT) as `<file>.png`; returns its path. */
     async shot(file, { full = false } = {}) {
@@ -127,7 +147,7 @@ function driver(pw, name, seen, engine) {
       // Playwright's screenshot puts a <style> of its own into the page; WebKit holds that one against the page's
       // policy (style-src) and reports a violation the app never made. Those, and only those, are taken out again.
       const before = { page: await page.js('return (window.__csp ?? []).length').catch(() => 0), seen: seen.csp.length }
-      await pw.screenshot({ path: to, fullPage: full })
+      await pw.screenshot({ path: to, fullPage: full, timeout: 20000 })
       if (engine === 'webkit') {
         await sleep(150)
         await page.js(`if (window.__csp) window.__csp = window.__csp.filter((v, i) => i < ${before.page} || !/^style-src(-elem)? inline/.test(v))`).catch(() => {})
@@ -150,7 +170,8 @@ export async function openProfile(engine, name, seen, { width = 1440, height = 9
   fs.mkdirSync(path.join(TMP, 'profiles'), { recursive: true })
   const dir = fs.mkdtempSync(path.join(TMP, 'profiles', `${engine}-${name.replace(/[^\w]+/g, '-')}-`))
   // (a phone's width: the layout's own breakpoints decide; `hasTouch` and `isMobile` are not all engines')
-  const view = { viewport: { width, height }, ...(phone && engine !== 'firefox' ? { hasTouch: true } : {}) }
+  // (TROMMI_BROWSERS_NO_SW=1, run.mjs --no-sw: the app's service worker is blocked, to tell its effects apart)
+  const view = { viewport: { width, height }, ...(process.env.TROMMI_BROWSERS_NO_SW === '1' ? { serviceWorkers: 'block' } : {}), ...(phone && engine !== 'firefox' ? { hasTouch: true } : {}) }
   let browser = null, context
   try {
     if (priv) { browser = await type.launch(); context = await browser.newContext(view) }
