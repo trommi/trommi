@@ -738,6 +738,27 @@
         ],
         "returns": "number"
       },
+      "readmitHuman": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "device",
+            "type": "bytes"
+          },
+          {
+            "name": "keyPackage",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
       "update": {
         "arguments": [
           {
@@ -1860,6 +1881,8 @@
       "epoch": "number",
       "leaves": "list<bytes>",
       "disallowed": "list<bytes>",
+      "missingOpener": "optional<bytes>",
+      "stale": "bool",
       "archived": "bool",
       "pending": "bool",
       "ownFrom": "number",
@@ -2157,6 +2180,9 @@
       "leaseLost": "lease-lost",
       "accountExists": "account-exists",
       "lastWayIn": "last-way-in",
+      "accountChanged": "account-changed",
+      "range": "range",
+      "badPasskey": "bad-passkey",
       "tooLarge": "too-large",
       "quotaExceeded": "quota-exceeded",
       "clientTooOld": "client-too-old",

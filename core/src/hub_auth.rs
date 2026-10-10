@@ -8,7 +8,7 @@
 //! `agents`, or the room's recovery signature key; anyone else is `not-member`) is looked up for the device
 //! [`verify`] returns.
 //!
-//! [`HubAddress`] is the canonical address of v1 section 8.1, which the sign-in, the invite link and the invite
+//! [`HubAddress`] is the canonical address of section 12.1.1, which the sign-in, the invite link and the invite
 //! Request all carry: an address in any other spelling is refused and never rewritten.
 
 use crate::codec::{self, Decode, Encode, Reader, Writer};
@@ -50,7 +50,7 @@ fn is_port(port: &[u8]) -> bool {
 
 /// Whether `text` is an origin in the one canonical spelling: `https://` and a lowercase host, or `http://` and
 /// `localhost` or `127.0.0.1`, then an optional `:port`; no path, no trailing slash, at most
-/// [`MAX_ADDRESS_LEN`] bytes. Exactly the pattern of v1 section 8.1.
+/// [`MAX_ADDRESS_LEN`] bytes. Exactly the pattern of section 12.1.1.
 pub(crate) fn is_canonical_origin(text: &str) -> bool {
     if text.len() > MAX_ADDRESS_LEN {
         return false;

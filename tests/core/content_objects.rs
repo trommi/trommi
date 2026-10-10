@@ -1145,12 +1145,85 @@ mod rules {
             .leaves
             .insert(device(3), Role::Agent);
         assert!(forbidden(&mut in_room, 1, room(), &chat(SESSION, Some(3))));
-        // While the session waits for a takeover a human device has nobody to address.
+        // While the session waits for a takeover a human device writes to nobody: `recipient` zeros, and no
+        // device, not the one that left and not another leaf.
         world.fake.commit(&session(), NOW, NOW, |leaves| {
             leaves.remove(&device(3));
         });
         assert!(forbidden(&mut world, 2, session(), &chat(SESSION, Some(3))));
+        assert!(forbidden(&mut world, 2, session(), &chat(SESSION, Some(1))));
+        assert!(!forbidden(&mut world, 2, session(), &chat(SESSION, None)));
+        // So in a helper session without its opener; its helper device is not addressed in the opener's place.
+        world.fake.commit(&helper_session(), NOW, NOW, |leaves| {
+            leaves.remove(&device(3));
+        });
+        assert!(forbidden(
+            &mut world,
+            1,
+            helper_session(),
+            &chat(HELPER_SESSION, Some(4))
+        ));
+        assert!(!forbidden(
+            &mut world,
+            1,
+            helper_session(),
+            &chat(HELPER_SESSION, None)
+        ));
+        // With a seat again the recipient is the seat.
+        world.fake.commit(&session(), NOW, NOW, |leaves| {
+            leaves.insert(device(5), Role::Agent);
+        });
         assert!(forbidden(&mut world, 2, session(), &chat(SESSION, None)));
+        assert!(!forbidden(
+            &mut world,
+            2,
+            session(),
+            &chat(SESSION, Some(5))
+        ));
+    }
+
+    #[test]
+    fn a_chat_message_to_an_empty_seat_is_no_command() {
+        let mut world = World::new();
+        world.fake.commit(&session(), NOW, NOW, |leaves| {
+            leaves.remove(&device(3));
+        });
+        let receipt = world.post(
+            2,
+            session(),
+            &Draft::session_chat(SESSION, DeviceId::ZERO, &payload("anyone?")),
+        );
+        // It is taken with its body, and the gate of every device refuses it: it names none of them.
+        let opened = receipt.opened().expect("the message is read");
+        for me in [1u8, 3, 4] {
+            let mut log = GateLog::new();
+            assert_eq!(
+                command_gate(
+                    &world.fake,
+                    &mut log,
+                    &device(me),
+                    &opened,
+                    &OwnRecord::None,
+                    world.now,
+                )
+                .unwrap(),
+                Decision::Refused(Refusal::NotAddressed)
+            );
+        }
+        // Not even a device whose id were zeros would act: zeros address nobody.
+        let mut log = GateLog::new();
+        assert_eq!(
+            command_gate(
+                &world.fake,
+                &mut log,
+                &DeviceId::ZERO,
+                &opened,
+                &OwnRecord::None,
+                world.now,
+            )
+            .unwrap(),
+            Decision::Refused(Refusal::NotAddressed)
+        );
     }
 
     #[test]

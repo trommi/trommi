@@ -199,3 +199,11 @@ path = "core/device_history.rs"
 [[test]]
 name = "bindings_facade"
 path = "bindings/facade.rs"
+
+[[test]]
+name = "core_device_readmit"
+path = "core/device_readmit.rs"
+
+[[test]]
+name = "core_groups_scale"
+path = "core/groups_scale.rs"

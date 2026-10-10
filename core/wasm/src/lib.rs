@@ -197,6 +197,7 @@ methods!(RawDevice {
     remove_agents(remove, now_ms);
     remove_human_devices(cuts, now_ms);
     clean_session(group, cuts, replacement, now_ms);
+    readmit_human(group, device, key_package, now_ms);
     readmit_helper(group, old, device, key_package, now_ms);
     update(group, forced, now_ms);
     archive(group);
