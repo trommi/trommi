@@ -1,6 +1,7 @@
-# The website trommi.com (site/), checked as files (tests/site/check.mjs) when site/ or its tests changed. It is
-# not a part of the release and has no place in build.yml: build.yml is an input of every part, and the site must
-# not make a release. Delivery: site/README.md.
+# The website trommi.com (site/), checked as files (tests/site/check.mjs) when site/ or its tests changed, and
+# delivered by deploy_site.yml after the checks: on a push to main that changed site/, or by hand (Run workflow on
+# main). It is not a part of the release and has no place in build.yml: build.yml is an input of every part, and the
+# site must not make a release.
 name: site
 
 on:
@@ -13,8 +14,10 @@ on:
 
 permissions: {}
 
+# A newer push cuts off an older check, but never a run on main: each push to main is asked on its own whether it
+# changed site/, so none may be dropped (deploy_site.yml keeps the deliveries in order).
 concurrency:
-  group: site-${{ github.ref }}
+  group: site-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,6 +27,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    outputs:
+      deliver: ${{ steps.changed.outputs.deliver }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,3 +42,35 @@ jobs:
           node-version-file: .node-version
       - name: The site's checks
         run: node tests/site/check.mjs
+      # Delivered: a push to main that changed site/ (asked of GitHub, the checkout is too shallow), or a run by hand on
+      # main. A push that changed only the tests or this file delivers nothing.
+      - name: Did site/ change
+        id: changed
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || ! printf '%s' "$BEFORE" | grep -Eq '^[0-9a-f]{40}$' || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
+            echo "deliver=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '(.files | length | tostring), (.files[].filename)')
+          count=$(printf '%s\n' "$files" | head -n 1)
+          # the compare lists at most 300 files: a list that long may hide a change of site/
+          if [ "$count" -ge 300 ] || printf '%s\n' "$files" | tail -n +2 | grep -q '^site/'; then
+            echo "deliver=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "site/ did not change: nothing to deliver"
+          fi
+
+  deploy:
+    name: Site (deliver)
+    needs: check
+    if: needs.check.outputs.deliver == 'true'
+    uses: ./.github/workflows/deploy_site.yml
+    with:
+      commit: ${{ github.sha }}
+    permissions:
+      contents: read
+    secrets: inherit
