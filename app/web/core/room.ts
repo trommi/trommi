@@ -253,6 +253,10 @@ export function roomsOn(env: RoomEnv): Rooms {
             more = page.more && page.items.length > 0
           }
         }
+        // In the hub's ONE order across the removed devices, not chain after chain: the core judges each envelope
+        // against what it was handed before, and a version one device wrote on another's needs that one first
+        // (handed over chain by chain, such a version was `forbidden` on the recovered device for good).
+        chains.sort((x, y) => x.change - y.change)
         const recovery = await hub.openRecovery()
         try {
           const done = await held.recover(code, served, chains, copies, Date.now())
