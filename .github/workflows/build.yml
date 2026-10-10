@@ -48,6 +48,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      core: ${{ steps.find.outputs.core }}
       web: ${{ steps.find.outputs.web }}
       connector: ${{ steps.find.outputs.connector }}
       ios: ${{ steps.find.outputs.ios }}
@@ -91,10 +92,48 @@ jobs:
             echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
           }
           # (connector/tools.json and prompt.md, demo/: the app's build reads them)
+          # the core itself: its sources (core/ is in `shared`), its tests, the test library, the vectors
+          part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$'
           part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
           part connector 'connector/|release/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
           part ios 'ios/|\.github/scripts/ios_testflight\.sh$|\.github/workflows/deploy_ios\.yml$'
           part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$|\.github/workflows/deploy_hub\.yml$'
+
+  # The shared core's own tests: the crates' unit tests and the scenario tests under tests/core and tests/bindings.
+  # Every other part builds on the core, and none of their jobs runs these. It builds and delivers nothing.
+  core:
+    name: Core (test)
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compiler (rust-toolchain.toml)
+        run: |
+          rustup toolchain install || rustup show
+          rustc --version
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: core-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - name: The crates' own tests
+        run: cargo test --locked -p trommi-core -p trommi-core-wasm -p trommi-core-swift
+      # One test that fails must not hide the others: every target runs, the step fails at the end.
+      - name: The scenario tests (tests/core, tests/bindings) and the test library
+        run: |
+          set -eu
+          tests=$(sed -n 's/^name = "\(\(core\|bindings\)_[a-z0-9_]*\)"$/--test \1/p' tests/Cargo.toml | tr '\n' ' ')
+          [ -n "$tests" ] || { echo "::error::tests/Cargo.toml names no core test"; exit 1; }
+          # shellcheck disable=SC2086
+          cargo test --locked -p trommi-tests --no-fail-fast --lib $tests
 
   web:
     name: Web app (test and build)
