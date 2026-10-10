@@ -357,6 +357,14 @@ struct ForgotView: View {
   @State private var words = ""
   @State private var password = ""
   @State private var bad = false
+  @State private var lostAll = false
+  /** The fields as the form checks them: the account's name, or nil with what is wrong said. */
+  @MainActor private func checked(byId: Bool) -> String? {
+    guard let a = checkedAccount(email, model) else { return nil }
+    if (try? parseRecoveryWords(words)) == nil { model.error = "Check the twelve words."; return nil }
+    if !byId && passwordProblem(password) != nil { model.error = nil; bad = true; return nil }
+    return a
+  }
   var body: some View {
     let byId = looksLikeAccountId(email)
     ObShell(title: "New password", lead: "With the words of your Emergency Kit.") {
@@ -371,15 +379,26 @@ struct ForgotView: View {
       if !byId { ObPassword(label: "New password", fresh: true, text: $password, bad: $bad) }
       ObError(text: model.error)
       Button(model.signing ? (byId ? "Logging in…" : "Setting…") : (byId ? "Log in" : "Set password")) {
-        guard let a = checkedAccount(email, model) else { return }
-        if (try? parseRecoveryWords(words)) == nil { model.error = "Check the twelve words."; return }
-        if !byId && passwordProblem(password) != nil { model.error = nil; bad = true; return }
+        guard let a = checked(byId: byId) else { return }
         Task { await model.forgot(account: a, words: words, password: byId ? nil : password) }
       }
       .buttonStyle(ObGo()).disabled(model.signing)
       Button("Back to log in") { model.go(.email) }.buttonStyle(ObLink()).frame(maxWidth: .infinity)
+      // (spec/v2.md 8.7: every device is lost. An account without an email gets a new passkey for it, where passkeys are on.)
+      if !byId || Passkeys.available {
+        Button("All my devices are lost") { if checked(byId: byId) != nil { lostAll = true } }
+          .buttonStyle(ObLink()).frame(maxWidth: .infinity).disabled(model.signing)
+      }
     }
     .onAppear { if email.isEmpty { email = model.lastEmail } }
+    .confirmationDialog("Remove All Other Devices?", isPresented: $lostAll, titleVisibility: .visible) {
+      Button("Remove Devices and Recover", role: .destructive) {
+        guard let a = checked(byId: byId) else { return }
+        Task { await model.recoverAll(account: a, words: words, password: byId ? nil : password) }
+      }
+    } message: {
+      Text("Only if every device of yours is lost. All your other devices are removed from your account and can open nothing new. You get a new Emergency Kit; the one you hold stops working.")
+    }
   }
 }
 
