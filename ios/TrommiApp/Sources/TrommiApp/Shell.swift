@@ -565,8 +565,7 @@ struct ToastHost: View {
     HStack(spacing: 10) {
       HStack(spacing: 8) {
         if t.alert { Image(systemName: "exclamationmark.circle").foregroundStyle(Ink.urgCritical) }
-        (Text(t.head).font(Face.text(15, .semibold)).foregroundColor(t.alert ? Ink.urgCritical : Ink.fg)
-          + Text(t.line.isEmpty ? "" : "  \(t.line)").font(Face.text(14)).foregroundColor(Ink.muted))
+        Text("\(Text(t.head).font(Face.text(15, .semibold)).foregroundColor(t.alert ? Ink.urgCritical : Ink.fg))\(Text(t.line.isEmpty ? "" : "  \(t.line)").font(Face.text(14)).foregroundColor(Ink.muted))")
           .lineLimit(1).truncationMode(.tail)
       }
       .frame(minHeight: 44)
@@ -697,7 +696,7 @@ struct NotePanel: ViewModifier {
     #if canImport(UIKit)
     .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
       guard let f = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-      keyboardTop = NotePanel.keyboardTop(frame: f, screen: UIScreen.main.bounds.height)
+      keyboardTop = NotePanel.keyboardTop(frame: f, screen: (n.object as? UIScreen)?.bounds.height ?? f.maxY)
     }
     .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardTop = nil }
     #endif
