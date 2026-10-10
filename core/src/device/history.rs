@@ -42,11 +42,11 @@ use crate::mls::provider::{MlsEntries, Provider};
 use crate::mls::rules::{self, Parent, RoomHistory, SessionFacts};
 use crate::recovery::{PublicRules, ServedCommit, ServedGroup, Walked, WalkedEnd, WalkedEpoch};
 use crate::store::{table, Batch, Storage};
-use openmls::group::{ProposalStore, PublicGroup};
+use openmls::group::{GroupContext, ProposalStore, PublicGroup};
 use openmls::prelude::{LeafNodeIndex, ProcessedMessageContent};
 use openmls_traits::OpenMlsProvider as _;
 use std::collections::{BTreeMap, BTreeSet};
-use tls_codec::Serialize as _;
+use tls_codec::{Deserialize as _, Serialize as _};
 
 /// The largest stored GroupContext this module reads: a room's holds up to 256 agent devices.
 const MAX_CONTEXT_LEN: usize = 1 << 16;
@@ -74,19 +74,33 @@ impl Encode for Origin {
 impl Decode for Origin {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
         let epoch = reader.u64()?;
-        let context = reader.opaque()?.to_vec();
+        let context = reader.opaque()?;
+        if context.is_empty() || context.len() > MAX_CONTEXT_LEN {
+            return Err(Error::BadFormat);
+        }
         let learned = match reader.u8()? {
             0 => false,
             1 => true,
             _ => return Err(Error::BadFormat),
         };
-        if context.is_empty() || context.len() > MAX_CONTEXT_LEN || (epoch == 0 && !learned) {
+        if epoch == 0 && !learned {
             return Err(Error::BadFormat);
         }
         Ok(Self {
             epoch,
-            context,
+            context: context.to_vec(),
             learned,
+        })
+    }
+}
+
+impl Origin {
+    /// Whether the context written down is a GroupContext of `group` at the origin's epoch: what a walk
+    /// of that group can arrive at.
+    fn is_of(&self, group: &GroupId) -> bool {
+        GroupContext::tls_deserialize_exact(&self.context).is_ok_and(|context| {
+            context.group_id().as_slice() == group.as_bytes()
+                && context.epoch().as_u64() == self.epoch
         })
     }
 }
@@ -722,10 +736,30 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
-    /// Whether the records of every group's epochs fit together: they run without a hole from the first
-    /// to the newest, those before the group's origin are learned and reach back to epoch 0, and no other
-    /// is. `Error::Storage` otherwise. For the device being opened.
+    /// Whether the records of every group's epochs fit together: every group the device holds or follows
+    /// has its origin, an origin's context is a GroupContext of its group at its epoch, the records run
+    /// without a hole from the first to the newest, those before the group's origin are learned and reach
+    /// back to epoch 0, and no other is. `Error::Storage` otherwise. For the device being opened.
     pub(super) fn check_past(&self) -> Result<(), Error> {
+        let origins = [table::CHAIN, SUB_ORIGIN];
+        for (key, _) in self.stored_under(&origins) {
+            let mut rest = Reader::new(key.get(origins.len()..).unwrap_or_default());
+            let group = super::group_after(&mut rest)
+                .and_then(|group| rest.finish().map(|()| group))
+                .map_err(|_| damaged("a group's origin"))?;
+            if !self
+                .origin(&group)?
+                .is_some_and(|origin| origin.is_of(&group))
+            {
+                return Err(damaged("a group's origin"));
+            }
+        }
+        let held = self.memory.groups.keys();
+        for group in held.chain(self.memory.observers.keys()) {
+            if self.origin(group)?.is_none() {
+                return Err(damaged("a group's origin"));
+            }
+        }
         let prefix = [table::CHAIN, SUB_EPOCH];
         let mut epochs: BTreeMap<GroupId, Vec<(u64, bool)>> = BTreeMap::new();
         for (key, value) in self.stored_under(&prefix) {

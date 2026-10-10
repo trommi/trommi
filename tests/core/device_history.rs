@@ -818,12 +818,39 @@ fn a_damaged_learned_record_does_not_open() {
     let mut batch = Batch::new();
     batch.put(origin.clone(), vec![0xFF; 12]);
     damages.push(("an origin that does not decode", batch));
+    // An origin whose context is no GroupContext, or the GroupContext of another epoch.
+    let held = store.get(&origin).unwrap();
+    let length = held.len();
+    let mut batch = Batch::new();
+    batch.put(
+        origin.clone(),
+        [&held[..8], &[1, 0x77], &held[length - 1..]].concat(),
+    );
+    damages.push(("an origin with a context of one byte", batch));
+    let mut batch = Batch::new();
+    let mut other_epoch = held.clone();
+    other_epoch[7] ^= 1;
+    batch.put(origin.clone(), other_epoch);
+    damages.push(("an origin with the context of another epoch", batch));
     for (what, batch) in damages {
         let mut damaged = store.reopened();
         let revision = damaged.revision();
         damaged.apply(revision, batch).unwrap();
         assert!(matches!(reopen(damaged), Err(Error::Storage(_))), "{what}");
     }
+    // A group the device follows as an observer, of which it keeps no epoch records, has its origin too.
+    let watching = MemoryStorage::new();
+    let handle = watching.handle();
+    let mut follower = new_device_on(watching);
+    observe(&w.hub, &mut follower);
+    drop(follower);
+    assert!(reopen(handle.reopened()).is_ok());
+    let mut damaged = handle.reopened();
+    let revision = damaged.revision();
+    let mut batch = Batch::new();
+    batch.delete(origin.clone());
+    damaged.apply(revision, batch).unwrap();
+    assert!(matches!(reopen(damaged), Err(Error::Storage(_))));
 }
 
 /// The epoch a stored origin names.
