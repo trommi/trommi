@@ -674,6 +674,15 @@ final class ScenarioTests: XCTestCase {
     try check((try JSONSerialization.jsonObject(with: merged)) is [String: Any], "the board did not reduce to a snapshot file")
     let cut = try reader.cutOf(group: roomGroup, device: writerId)
     try check(cut.seq == second.seq && cut.hash == second.envelopeHash, "the Cut is not the last accepted envelope")
+    // The same snapshot loads again at any time: at once, and after more items were added (it was 'replay' once).
+    let again = try reader.boardLoad(board: allDesks, served: [ServedItem(sender: writerId, seq: second.seq, hash: second.envelopeHash)])
+    try check(again.frontier.first?.seq == second.seq && again.fresh.count == 1, "the same snapshot did not load again")
+    let third = try writer.seal(draft: item, recipient: nil, fileIds: [], nowMs: now())
+    try hub.post(writer)
+    let later = try hub.sync(reader, room: room).envelopes
+    try check(later.count == 1 && later[0].outcome == .applied, "the added item was not applied")
+    let grown = try reader.boardLoad(board: allDesks, served: [ServedItem(sender: writerId, seq: third.seq, hash: third.envelopeHash)])
+    try check(grown.frontier.first?.seq == third.seq && grown.fresh.count == 2, "the same snapshot did not load again after items were added")
   }
 
   func file(bytes: Int, pieces: Int) throws {
