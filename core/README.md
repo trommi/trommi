@@ -27,7 +27,7 @@ adding; what exists is kept.
 | `files` | chunked file encryption (`Encryptor`, `Decryptor`, `encrypt_file`, `decrypt_file`, `open_chunk`, `Layout`), `FileRef`, `ShareLink` | 11 | built |
 | `invite` | joining by link: `InviteLink`, `Inviter`, `Joiner`, `CheckCode`, `ConfirmedInvite`, the hub's checks | 12.1 | built |
 | `hub_auth`, `push` | `HubAddress`, `HubAuth`, `sign`, `verify`; `ApnsPush`, `WebPush`, `seal`, `open` | 12.3, 15.2 | built |
-| `account` | the account's sealed copies of the recovery code (password, Emergency Kit words, passkey), the code's display form | 8.8 | built |
+| `account` | the account's sealed copies of the recovery code (password, Emergency Kit words, passkey), the code's display form; `AccountId` and its text, the kit's keys for an account with or without an e-mail (`AccountName`, `kit_keys_for`) | 8.8 | built |
 
 **How a client uses it.** Open the device over its store (`Device::open`, one owner per stored state). Every
 operation writes its new state and everything to send in one batch; nothing is handed back for sending except
@@ -104,6 +104,11 @@ assumptions have to take in.
   invite of its own. A `clean_session` that only removes the outdated opener while the main session already
   has its new agent leaf is `stale-session`. One predicate decides for the hub, members and observers:
   `mls::rules::staleness` (→ `Staleness { disallowed, missing_opener }`), `Observer::staleness`.
+- The Emergency Kit of an account without an e-mail (spec 8.8). `kit_keys_for(AccountName::Id(&id), words)`
+  derives the kit's keys from the account id; `kit_keys(email, words)` is
+  `kit_keys_for(AccountName::Email(email), words)` and gives the bytes it always gave. `AccountId::parse` reads
+  the id's text as a kit prints it (`bad-format` for any other spelling), `to_string` writes it: print it on
+  every kit.
 - The past of a group (spec 4.6). `learn_history(&group, founding_group_info, &[ServedCommit]) -> Learned`: after
   a Welcome, fetch each group's founding GroupInfo (`info?epoch=0`) and its Commits from the log with their
   change numbers, and call it for the room group first, then each main session, then each helper session
