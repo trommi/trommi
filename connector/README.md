@@ -22,7 +22,7 @@ trommi-connector whoami | allow-tools | --version
 Once per machine, then once per program, then once per project folder:
 
 ```
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh
 trommi-connector setup claude          # or: trommi-connector setup codex
 trommi-connector connect '<invite link>'
 ```
