@@ -13,8 +13,17 @@
 //! **Time** is the host's: every call that needs it takes `now_ms`, milliseconds since 1970. **Randomness** is
 //! the system's source, read inside the core.
 
+use crate::content::{
+    self, BoardLoaded, ChainHead, CommandDecision, Draft, Finding, HeadStanding, ObjectView,
+    ReceivedEnvelope, Sealed, ServedItem,
+};
 use crate::error::core_error;
 use crate::guard::{Guarded, Quiet};
+use crate::invite::{
+    check_code, CheckCode, InviteAccepted, InviteConfirmed, InviteOpened, InviteRole, InviteStep,
+    JoinRequest, SignedOffer, SignedRequest, SignedReveal,
+};
+use crate::records::ReceivedMessage;
 use crate::records::{
     board_id, device_id, group_id, hash32, room_id, session_id, turn_id, Cut, GroupSummary,
     HandoverSent, Joined, LogEntry, LogEntryKind, LogFinding, OutboxEntry, Processed, Replacement,
@@ -24,20 +33,22 @@ use crate::recovery::{
     self, group_cuts, with_group, with_room, CodeJoin, GroupCut, RecoveryPlan, ServedGroup,
     ServedRoom,
 };
-use crate::store::{AnyStore, Seed};
+use crate::store::AnyStore;
 use crate::{CoreError, ErrorCode};
+#[cfg(feature = "js")]
 use std::sync::PoisonError;
-use trommi_core::crypto::{SigningKey, SystemEntropy};
+use trommi_core::crypto::SystemEntropy;
 use trommi_core::device::{self as core, Accepted, Device, LogKind, WelcomeExpectation};
-use trommi_core::hub_auth::{self, HubAddress, CHALLENGE_LEN};
+use trommi_core::hub_auth::{HubAddress, CHALLENGE_LEN};
+use trommi_core::ids::InviteId;
+use trommi_core::invite;
 use trommi_core::recovery::{self as construct, Replacement as NewCode};
 use trommi_core::store::Storage;
 
-/// The core's device over any store, where its store noted the seed of its signature key, and a new recovery
-/// code between its making and the Commit that puts it in force.
+/// The core's device over any store, and a new recovery code between its making and the Commit that puts it in
+/// force.
 struct Inner {
     device: Device<AnyStore>,
-    seed: Seed,
     replacement: Option<NewCode>,
 }
 
@@ -53,7 +64,7 @@ pub struct CoreDevice {
 impl CoreDevice {
     /// The core's device over `store`, new or as stored.
     fn build(store: Box<dyn Storage + Send>, create: bool) -> Result<Guarded<Inner>, CoreError> {
-        let (store, seed) = AnyStore::new(store);
+        let store = AnyStore(store);
         let _quiet = Quiet::enter();
         let device = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if create {
@@ -65,7 +76,6 @@ impl CoreDevice {
         .map_err(|_| CoreError::internal("the device failed to open inside the core"))??;
         Ok(Guarded::new(Inner {
             device,
-            seed,
             replacement: None,
         }))
     }
@@ -212,14 +222,17 @@ impl CoreDevice {
         self.read(|device| Ok(device.group(&group_id(&group)?)?.into()))
     }
 
-    /// The content key of `group` at `epoch`, 32 bytes; `no-key` when it is not held, or the group failed its
-    /// first contact. The key opens and seals everything stored for that group and epoch: it is handed to the
-    /// code that does that and to nothing else, and never logged or stored outside the device's store.
-    pub fn content_key(&self, group: Vec<u8>, epoch: u64) -> Result<Vec<u8>, CoreError> {
-        self.read(|device| {
-            let key = device.content_key(&group_id(&group)?, epoch)?;
-            Ok(key.expose().to_vec())
-        })
+    /// Whether this device holds the content key of `group` at `epoch`. The key itself is not handed out: what
+    /// it seals is written with [`CoreDevice::seal`] and opened by [`CoreDevice::receive_envelope`], after the
+    /// checks of the sender's chain.
+    pub fn holds_key(&self, group: Vec<u8>, epoch: u64) -> Result<bool, CoreError> {
+        self.read(
+            |device| match device.content_key(&group_id(&group)?, epoch) {
+                Ok(_) => Ok(true),
+                Err(trommi_core::Error::NoKey) => Ok(false),
+                Err(error) => Err(error.into()),
+            },
+        )
     }
 
     /// Everything waiting to be sent, in the order to send it. An entry stays until the hub's answer was
@@ -234,21 +247,19 @@ impl CoreDevice {
         self.write(|device| Ok(device.outbox_accepted(id, Accepted { change })?))
     }
 
-    /// The hub refused the outbox entry `id` with `code`, for good. `epoch-taken` for a Commit: it is held back,
-    /// and the caller processes the log, which decides it. Any other refusal undoes what the entry was for: the
-    /// pending Commit is cleared, a founding's group is dropped, the KeyPackages' private parts go.
+    /// The hub refused the outbox entry `id` with `code`.
     ///
-    /// Only a refusal that will not change is reported here. When the hub could not answer (`internal`,
-    /// `overloaded`, `rate-limited`), asks to sign in again (`unauthorised`, `bad-challenge`), refuses for a
-    /// reason that passes while the request stays the same (`quota-exceeded`, `too-many`, `client-too-old`,
-    /// `gap`), answered with a code this version does not know, or did not answer at all, the entry stays and
-    /// is sent again unchanged. Those codes, and the ones that are no hub's answer, are `bad-format` here and
-    /// change nothing.
+    /// A refusal that says nothing about the request (`internal`, `overloaded`, `rate-limited`,
+    /// `unauthorised`, `bad-challenge`, `client-too-old`, `lease-lost`) changes nothing: the entry stays and
+    /// the same bytes are sent again. `epoch-taken` for a Commit: it is held back, and the caller processes the
+    /// log, which decides it. Any other refusal undoes what the entry was for: the pending Commit is cleared,
+    /// a founding's group is dropped, the KeyPackages' private parts go.
+    ///
+    /// A code this version does not know, and no answer at all, are not reported here: the entry is sent
+    /// again. A code that no hub answers with is `bad-format`.
     pub fn outbox_refused(&self, id: u64, code: ErrorCode) -> Result<(), CoreError> {
-        if !is_refusal(code) {
-            return Err(CoreError::bad_format(
-                "not a refusal for good: send the entry again",
-            ));
+        if !is_hub_code(code) {
+            return Err(CoreError::bad_format("not a code a hub answers with"));
         }
         self.write(|device| Ok(device.outbox_refused(id, &core_error(code))?))
     }
@@ -306,20 +317,6 @@ impl CoreDevice {
         })
     }
 
-    /// Adds the human device `device` to the room group with its KeyPackage. The caller then hands the history
-    /// over ([`CoreDevice::send_handover`]) and adds it to every live session group
-    /// ([`CoreDevice::add_to_session`]). Returns the outbox entry's id.
-    pub fn add_human_device(
-        &self,
-        device: Vec<u8>,
-        key_package: Vec<u8>,
-        now_ms: u64,
-    ) -> Result<u64, CoreError> {
-        self.write(|inner| {
-            Ok(inner.add_human_device(&device_id(&device)?, &key_package, now_ms)?)
-        })
-    }
-
     /// Adds `device` to the session group `group` with its KeyPackage: a human device missing from a live
     /// session, or a helper device, by the opener. Returns the outbox entry's id.
     pub fn add_to_session(
@@ -339,24 +336,16 @@ impl CoreDevice {
         })
     }
 
-    /// Changes the room's enrolled agent devices: `enrol` are added, `remove` taken out. Removing one makes
-    /// its main session and the helper sessions it opened stale. Returns the outbox entry's id.
-    pub fn change_agents(
-        &self,
-        enrol: Vec<Vec<u8>>,
-        remove: Vec<Vec<u8>>,
-        now_ms: u64,
-    ) -> Result<u64, CoreError> {
+    /// Takes agent devices out of the room's enrolled agent devices. Removing one makes its main session and
+    /// the helper sessions it opened stale. An agent device is enrolled by an invite alone
+    /// ([`CoreDevice::invite_confirm`]). Returns the outbox entry's id.
+    pub fn remove_agents(&self, remove: Vec<Vec<u8>>, now_ms: u64) -> Result<u64, CoreError> {
         self.write(|device| {
-            let enrol = enrol
-                .iter()
-                .map(|id| device_id(id))
-                .collect::<Result<Vec<_>, _>>()?;
             let remove = remove
                 .iter()
                 .map(|id| device_id(id))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(device.change_agents(&enrol, &remove, now_ms)?)
+            Ok(device.remove_agents(&remove, now_ms)?)
         })
     }
 
@@ -490,7 +479,10 @@ impl CoreDevice {
     /// Processes one entry of the hub's ordered log: the group state after it, the content key of a new epoch
     /// and the cursor are written together. Entries are handed in the hub's order across groups. A refusal
     /// changes nothing; [`crate::log_finding`] says what its code means for the caller.
-    pub fn process_log_entry(&self, entry: LogEntry) -> Result<Processed, CoreError> {
+    ///
+    /// `now_ms` is this device's clock: when it processed the Commit that ended an epoch decides how long an
+    /// envelope of that epoch is still taken.
+    pub fn process_log_entry(&self, entry: LogEntry, now_ms: u64) -> Result<Processed, CoreError> {
         self.write(|device| {
             let kind = match entry.kind {
                 LogEntryKind::Commit => LogKind::Commit {
@@ -501,11 +493,14 @@ impl CoreDevice {
                     bytes: &entry.bytes,
                 },
             };
-            let processed = device.process_log_entry(&core::LogEntry {
-                change: entry.change,
-                group: group_id(&entry.group)?,
-                kind,
-            })?;
+            let processed = device.process_log_entry(
+                &core::LogEntry {
+                    change: entry.change,
+                    group: group_id(&entry.group)?,
+                    kind,
+                },
+                now_ms,
+            )?;
             Ok(processed.into())
         })
     }
@@ -744,31 +739,447 @@ impl CoreDevice {
         })
     }
 
-    /// Signs the hub's sign-in challenge (32 bytes) for the room `room` at the hub `hub`, which must be the
-    /// hub's canonical address. The result is posted as it is; the token the hub answers with is the host's.
-    pub fn hub_sign_in(
+    /// Seals one item as this device's next envelope in its group and puts it in the outbox. The number is used
+    /// for good, and after a crash the same bytes are sent again.
+    ///
+    /// `recipient`: none lets the device address the item as the rules ask (a human's Chat message to the
+    /// session's agent device or opener; an answer, take back or verdict to the object's owner; nobody
+    /// otherwise). `file_ids` are the files the payload refers to, 16 bytes each.
+    ///
+    /// Refused before anything is signed, and without using a number: what the hub would refuse, `busy` while
+    /// a Commit of this device in the group waits for the hub, `gone` in an archived session, `bad-group` in a
+    /// group that failed its first contact, `not-found` for an object this device does not know.
+    pub fn seal(
         &self,
-        room: Vec<u8>,
+        draft: Draft,
+        recipient: Option<Vec<u8>>,
+        file_ids: Vec<Vec<u8>>,
+        now_ms: u64,
+    ) -> Result<Sealed, CoreError> {
+        self.write(|device| {
+            let recipient = recipient.as_deref().map(device_id).transpose()?;
+            let files = content::file_ids(&file_ids)?;
+            let sealed = device.seal(&draft.into_core()?, recipient.as_ref(), &files, now_ms)?;
+            Ok(sealed.into())
+        })
+    }
+
+    /// The hub refused the envelope of the outbox entry `id` and keeps its number as a void record. The entry
+    /// goes; the number stays used.
+    pub fn outbox_voided(&self, id: u64) -> Result<(), CoreError> {
+        self.write(|device| Ok(device.outbox_voided(id)?))
+    }
+
+    /// Gives up on the envelope of the outbox entry `id`, which the hub refused without taking its number: for
+    /// a device that is out of the group (`not-member`, `removed-sender`). The number stays used.
+    pub fn envelope_abandon(&self, id: u64) -> Result<(), CoreError> {
+        self.write(|device| Ok(device.envelope_abandon(id)?))
+    }
+
+    /// Takes one envelope from the hub and writes what follows from it in one write.
+    ///
+    /// `ordered`: the envelope comes at its place, by the changes route or the stream, or along its sender's
+    /// chain. With `change` above the cursor it moves the cursor to `change`; the caller hands the entries of
+    /// the log and the envelopes in one order, by change number. At or below the cursor it is read back. Not
+    /// `ordered`: the envelope was fetched out of order (a page of a Chat, an object) and is at most
+    /// provisional; the chain is not touched. `void_code`: the hub served it as a void record with this code.
+    ///
+    /// The result says what became of it. A refusal with `group-behind` for a group this device is a leaf of
+    /// leaves the cursor: the caller processes the log first. The call itself fails only for a failure of this
+    /// device, or for bytes that are no envelope at all (`bad-format`, `too-large`, `newer-version`).
+    pub fn receive_envelope(
+        &self,
+        envelope: Vec<u8>,
+        change: u64,
+        ordered: bool,
+        void_code: Option<ErrorCode>,
+        now_ms: u64,
+    ) -> Result<ReceivedEnvelope, CoreError> {
+        self.write(|device| {
+            let void = content::void_code(void_code)?;
+            Ok(device
+                .receive_envelope(&envelope, change, ordered, void.as_ref(), now_ms)?
+                .into())
+        })
+    }
+
+    /// Takes a stroke piece the hub only passed on: it is in no log and has no change number, so the cursor
+    /// stays. None for a message this device cannot open, or of a group it is no leaf of. `bad-format`, with
+    /// nothing consumed, for a message that opens to anything but a stroke piece; `group-behind` for a message
+    /// of an epoch the device has not reached.
+    pub fn receive_relay(
+        &self,
+        group: Vec<u8>,
+        message: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<Option<ReceivedMessage>, CoreError> {
+        self.write(|device| {
+            Ok(device
+                .receive_relay(&group_id(&group)?, &message, now_ms)?
+                .map(Into::into))
+        })
+    }
+
+    /// The value of the register `heads` to write in `group` now, as JSON; none when nothing is due. The
+    /// caller seals it as a register under the name `heads`, which records the writing.
+    pub fn heads_due(&self, group: Vec<u8>, now_ms: u64) -> Result<Option<Vec<u8>>, CoreError> {
+        self.write(|device| Ok(device.heads_due(&group_id(&group)?, now_ms)?))
+    }
+
+    /// Compares the `heads` that `writer` wrote in `group` with this device's own chains there: per named
+    /// sender whether this device holds the named envelope, holds less, or holds another under the number.
+    pub fn compare_heads(
+        &self,
+        group: Vec<u8>,
+        writer: Vec<u8>,
+    ) -> Result<Vec<HeadStanding>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .compare_heads(&group_id(&group)?, &device_id(&writer)?)?
+                .into_iter()
+                .map(|(sender, standing)| HeadStanding::of(&sender, standing))
+                .collect())
+        })
+    }
+
+    /// The Cut of `device` in `group` for a Commit that removes it: the last envelope of that device this
+    /// device accepted there, number 0 and zeros if none.
+    pub fn cut_of(&self, group: Vec<u8>, device: Vec<u8>) -> Result<Cut, CoreError> {
+        self.read(|inner| {
+            Ok(content::cut(
+                &inner.cut_of(&group_id(&group)?, &device_id(&device)?)?,
+            ))
+        })
+    }
+
+    /// The last envelope of `sender` this device accepted in `group`; number 0 and zeros if none.
+    pub fn chain_head(&self, group: Vec<u8>, sender: Vec<u8>) -> Result<ChainHead, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .chain_head(&group_id(&group)?, &device_id(&sender)?)?
+                .into())
+        })
+    }
+
+    /// The Cut that ended the chain of `device` in `group`, once this device processed the Commit that removed
+    /// it. Whatever was shown of that device beyond it is dropped.
+    pub fn chain_cut(
+        &self,
+        group: Vec<u8>,
+        device: Vec<u8>,
+    ) -> Result<Option<ChainHead>, CoreError> {
+        self.read(|inner| {
+            Ok(inner
+                .chain_cut(&group_id(&group)?, &device_id(&device)?)?
+                .map(Into::into))
+        })
+    }
+
+    /// The state of the object `object_id` of `group`, as the envelopes accepted so far leave it.
+    pub fn object(
+        &self,
+        group: Vec<u8>,
+        object_id: Vec<u8>,
+    ) -> Result<Option<ObjectView>, CoreError> {
+        self.read(|device| {
+            let id = trommi_core::ids::ObjectId::from_slice(&object_id)?;
+            Ok(device
+                .object(&group_id(&group)?, &id)?
+                .map(|object| ObjectView::of(&id, &object)))
+        })
+    }
+
+    /// Every object of `group` with its state, ascending by id.
+    pub fn objects(&self, group: Vec<u8>) -> Result<Vec<ObjectView>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .objects(&group_id(&group)?)?
+                .iter()
+                .map(|(id, object)| ObjectView::of(id, object))
+                .collect())
+        })
+    }
+
+    /// The device that owns `object_id` now: the writer of its newest version while it is a leaf, then the
+    /// session's agent device or opener.
+    pub fn object_owner(
+        &self,
+        group: Vec<u8>,
+        object_id: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, CoreError> {
+        self.read(|device| {
+            let id = trommi_core::ids::ObjectId::from_slice(&object_id)?;
+            Ok(device
+                .object_owner(&group_id(&group)?, &id)?
+                .map(|owner| owner.as_bytes().to_vec()))
+        })
+    }
+
+    /// The current value of the shared register `name` in `group`, as JSON text; none if it was never written
+    /// or is deleted.
+    pub fn register(&self, group: Vec<u8>, name: String) -> Result<Option<Vec<u8>>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .register(&group_id(&group)?, &name)?
+                .map(|value| value.expose().to_vec()))
+        })
+    }
+
+    /// The current value that `sender` wrote under a name each device writes for itself (`heads`,
+    /// `device/<id>`).
+    pub fn register_of(
+        &self,
+        group: Vec<u8>,
+        name: String,
+        sender: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .register_of(&group_id(&group)?, &name, &device_id(&sender)?)?
+                .map(|value| value.expose().to_vec()))
+        })
+    }
+
+    /// Loads `board` from what this device holds: the newest snapshot, the Cuts of the room group, and every
+    /// writer's chain after the snapshot's frontier. `served` are the board's items the hub gave. The result
+    /// says which served items the snapshot covers and which are to be added to it ([`crate::board_reduce`]).
+    /// Refused: `withheld`, `hash-mismatch`, `equivocation`, `replay`, `removed-sender`, `gap`, `chain-break`,
+    /// `forbidden`; `not-found` without a snapshot.
+    pub fn board_load(
+        &self,
+        board: Vec<u8>,
+        served: Vec<ServedItem>,
+    ) -> Result<BoardLoaded, CoreError> {
+        self.write(|device| {
+            let served = served
+                .iter()
+                .map(|item| {
+                    Ok(trommi_core::board::ServedItem {
+                        sender: device_id(&item.sender)?,
+                        seq: item.seq,
+                        hash: hash32(&item.hash)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, CoreError>>()?;
+            Ok(device.board_load(&board_id(&board)?, &served)?.into())
+        })
+    }
+
+    /// The command gate, for an agent or helper device: whether to act on the envelope with this hash. Only an
+    /// envelope that came through its sender's chain, passed every check and is addressed to this device can
+    /// be asked about (`not-found` for any other). `act` is answered once per envelope, after the command was
+    /// recorded as started: the caller acts, then calls [`CoreDevice::command_finished`].
+    pub fn command(
+        &self,
+        envelope_hash: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<CommandDecision, CoreError> {
+        self.write(|device| Ok(device.command(&hash32(&envelope_hash)?, now_ms)?.into()))
+    }
+
+    /// The effect of the command the gate let through is complete.
+    pub fn command_finished(&self, envelope_hash: Vec<u8>) -> Result<(), CoreError> {
+        self.write(|device| Ok(device.command_finished(&hash32(&envelope_hash)?)?))
+    }
+
+    /// The envelopes the gate was not asked about yet, by hash: after a restart, what arrived and was stored
+    /// before the caller could decide on it.
+    pub fn commands_pending(&self) -> Result<Vec<Vec<u8>>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .commands_pending()?
+                .iter()
+                .map(|hash| hash.as_bytes().to_vec())
+                .collect())
+        })
+    }
+
+    /// The commands the gate let through that were never reported as finished: their effect is uncertain. They
+    /// are reported to the human, not repeated.
+    pub fn commands_uncertain(&self) -> Result<Vec<Vec<u8>>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .commands_uncertain()?
+                .iter()
+                .map(|hash| hash.as_bytes().to_vec())
+                .collect())
+        })
+    }
+
+    /// The findings made while Commits were processed, until [`CoreDevice::findings_read`] clears them.
+    pub fn findings(&self) -> Result<Vec<Finding>, CoreError> {
+        self.read(|device| Ok(device.findings()?.into_iter().map(Into::into).collect()))
+    }
+
+    /// The client has shown the findings: they go.
+    pub fn findings_read(&self) -> Result<(), CoreError> {
+        self.write(|device| Ok(device.findings_read()?))
+    }
+
+    /// Opens an invite: for a human device, or for an agent device, which founds a new main session or, with
+    /// `session_id`, takes that one over. `app` is the app's origin for the link, `hub` the canonical address
+    /// of the hub the room lives on. Only a human device invites; at most 16 invites are open at once. The
+    /// invite lives ten minutes from `now_ms`.
+    pub fn invite_open(
+        &self,
+        role: InviteRole,
+        session_id: Option<Vec<u8>>,
+        app: String,
         hub: String,
-        challenge: Vec<u8>,
-    ) -> Result<SignedHubAuth, CoreError> {
+        now_ms: u64,
+    ) -> Result<InviteOpened, CoreError> {
+        self.write(|device| {
+            let session = session_id
+                .as_deref()
+                .map(crate::records::session_id)
+                .transpose()?;
+            let opened = device.invite_open(
+                role.into(),
+                session.as_ref(),
+                &app,
+                &HubAddress::parse(&hub)?,
+                now_ms,
+            )?;
+            Ok(InviteOpened {
+                invite_id: opened.invite_id.as_bytes().to_vec(),
+                link: String::from_utf8(opened.link.expose().to_vec())
+                    .map_err(|_| CoreError::internal("the link is not text"))?,
+                expires_at: opened.expires_at,
+                offer: opened.signed_offer.offer.clone(),
+                signature: opened.signed_offer.signature.clone(),
+            })
+        })
+    }
+
+    /// Accepts a Request for the invite: the first one with the link's MAC that matches the invite and is
+    /// signed by the key of the KeyPackage it carries. Returns what to publish and the code to show; asked
+    /// again with the same Request, the same is returned. A refused Request leaves the invite as it was.
+    pub fn invite_accept(
+        &self,
+        invite_id: Vec<u8>,
+        request: SignedRequest,
+        now_ms: u64,
+    ) -> Result<InviteAccepted, CoreError> {
+        self.write(|device| {
+            let request = invite::SignedRequest {
+                request: request.request,
+                mac: request.mac,
+                signature: request.signature,
+            };
+            Ok(device
+                .invite_accept(&InviteId::from_slice(&invite_id)?, &request, now_ms)?
+                .into())
+        })
+    }
+
+    /// The person compared the six emoji. `matches` false: the invite is burned, and none is returned. True:
+    /// `code` (the six numbers) and `request_hash` are what this device showed them for; both are computed
+    /// again, and only if they are the same (`code-not-confirmed` otherwise) is the new device committed. The
+    /// Commit is put in the outbox; [`CoreDevice::invite_steps`] says what follows.
+    pub fn invite_confirm(
+        &self,
+        invite_id: Vec<u8>,
+        code: Vec<u8>,
+        request_hash: Vec<u8>,
+        matches: bool,
+        now_ms: u64,
+    ) -> Result<Option<InviteConfirmed>, CoreError> {
+        self.write(|device| {
+            let confirmed = device.invite_confirm(
+                &InviteId::from_slice(&invite_id)?,
+                &check_code(&code)?,
+                &hash32(&request_hash)?,
+                matches,
+                now_ms,
+            )?;
+            Ok(confirmed.map(Into::into))
+        })
+    }
+
+    /// Builds the Commit of a confirmed invite again, after another Commit took its epoch. Returns the outbox
+    /// entry's id.
+    pub fn invite_recommit(&self, invite_id: Vec<u8>, now_ms: u64) -> Result<u64, CoreError> {
+        self.write(|device| Ok(device.invite_recommit(&InviteId::from_slice(&invite_id)?, now_ms)?))
+    }
+
+    /// What is to do next for every device this one committed by link, until all of it is done. A step that
+    /// was taken is not named again.
+    pub fn invite_steps(&self) -> Result<Vec<InviteStep>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .invite_steps()?
+                .into_iter()
+                .map(|(invite_id, step)| InviteStep::of(&invite_id, step))
+                .collect())
+        })
+    }
+
+    /// Sends the key handover that a step of the kind `handover` names. Returns the outbox entries' ids.
+    pub fn invite_handover(&self, invite_id: Vec<u8>) -> Result<Vec<u64>, CoreError> {
+        self.write(|device| Ok(device.invite_handover(&InviteId::from_slice(&invite_id)?)?))
+    }
+
+    /// Drops what was left to do for an invite: a takeover without history sends no handover.
+    pub fn invite_forget(&self, invite_id: Vec<u8>) -> Result<(), CoreError> {
+        self.write(|device| Ok(device.invite_forget(&InviteId::from_slice(&invite_id)?)?))
+    }
+
+    /// As the new device: checks the Offer served for `link` and answers it with a fresh KeyPackage of this
+    /// device, stored before the Request is returned. A device joins one room, once (`room-exists`).
+    pub fn join_request(
+        &self,
+        link: String,
+        offer: SignedOffer,
+        now_ms: u64,
+    ) -> Result<JoinRequest, CoreError> {
+        self.write(|device| {
+            let offer = invite::SignedOffer {
+                offer: offer.offer,
+                signature: offer.signature,
+            };
+            let request = device.join_request(&link, &offer, now_ms)?;
+            Ok(JoinRequest::of(
+                request,
+                &invite::Offer::decode(&offer.offer)?,
+            ))
+        })
+    }
+
+    /// As the new device: checks the Reveal and returns the code to show.
+    pub fn join_reveal(&self, reveal: SignedReveal) -> Result<CheckCode, CoreError> {
+        self.write(|device| {
+            let reveal = invite::SignedReveal {
+                reveal: reveal.reveal,
+                signature: reveal.signature,
+            };
+            Ok(CheckCode::from(&device.join_reveal(&reveal)?))
+        })
+    }
+
+    /// As an invited agent device: starts following the room group from the GroupInfo of the room epoch its
+    /// Offer names, which must hash to the room state the Offer names. It takes itself for enrolled only by
+    /// its inviter's Commit.
+    pub fn join_observe(&self, group_info: Vec<u8>) -> Result<(), CoreError> {
+        self.write(|device| Ok(device.join_observe(&group_info)?))
+    }
+
+    /// As an invited human device: joins the room group from the Welcome that answers its Request. What the
+    /// Welcome must be (the Offer's room, committed by the inviter, for the Request's KeyPackage) is read from
+    /// the stored invite, not given by the caller.
+    pub fn join_invited(&self, welcome: Vec<u8>, now_ms: u64) -> Result<Joined, CoreError> {
+        self.write(|device| Ok(device.join_invited(&welcome, now_ms)?.into()))
+    }
+
+    /// Signs the hub's sign-in challenge (32 bytes) with this device's key, for the room it belongs to at the
+    /// hub `hub`, which must be the hub's canonical address. `no-room` for a device without a room. The result
+    /// is posted as it is; the token the hub answers with is the host's.
+    pub fn hub_sign_in(&self, hub: String, challenge: Vec<u8>) -> Result<SignedHubAuth, CoreError> {
         let challenge: [u8; CHALLENGE_LEN] = challenge
             .as_slice()
             .try_into()
             .map_err(|_| CoreError::bad_format("the challenge is not 32 bytes"))?;
-        // Inside the device's lock: a closed or failed device signs nothing, and neither does one that another
-        // owner wrote behind.
-        self.device.run(|inner| {
-            if !inner.device.is_owner() {
-                return Err(CoreError::storage("another owner wrote to this state"));
-            }
-            let seed = inner.seed.lock().unwrap_or_else(PoisonError::into_inner);
-            let seed = seed
-                .as_ref()
-                .ok_or_else(|| CoreError::internal("the device's key is not in its store"))?;
-            let key = SigningKey::from_seed(seed.duplicate());
-            let signed =
-                hub_auth::sign(&key, room_id(&room)?, &HubAddress::parse(&hub)?, challenge)?;
+        self.read(|device| {
+            let signed = device.hub_sign_in(&HubAddress::parse(&hub)?, challenge)?;
             Ok(SignedHubAuth {
                 auth: signed.auth,
                 signature: signed.signature,
@@ -777,29 +1188,23 @@ impl CoreDevice {
     }
 }
 
-/// Whether `code` is a hub's refusal that will not change when the same request is sent again.
-fn is_refusal(code: ErrorCode) -> bool {
-    !matches!(
-        code,
-        ErrorCode::Internal
-            | ErrorCode::Overloaded
-            | ErrorCode::RateLimited
-            | ErrorCode::Unauthorised
-            | ErrorCode::BadChallenge
-            | ErrorCode::QuotaExceeded
-            | ErrorCode::TooMany
-            | ErrorCode::ClientTooOld
-            | ErrorCode::Gap
-            | ErrorCode::Storage
-            | ErrorCode::Entropy
-            | ErrorCode::Busy
-            | ErrorCode::BadEmail
-            | ErrorCode::WeakPassword
-            | ErrorCode::BadKdf
-            | ErrorCode::BadRecoveryWords
-            | ErrorCode::BadRecoveryCode
-            | ErrorCode::NoPrf
-    )
+/// Whether `code` can be a hub's answer to a request (the table of section 16). What only a client finds
+/// (`withheld`, `no-key`, `decrypt-failed` and the like), the account's own checks and what a device says only of
+/// itself are no hub's answer; `equivocation` and `newer-version` are both.
+fn is_hub_code(code: ErrorCode) -> bool {
+    crate::error::is_core_code(code)
+        && !matches!(
+            code,
+            ErrorCode::Withheld
+                | ErrorCode::HubVoidedOther
+                | ErrorCode::BadGroup
+                | ErrorCode::NoKey
+                | ErrorCode::Pruned
+                | ErrorCode::DecryptFailed
+                | ErrorCode::CodeNotConfirmed
+                | ErrorCode::HashMismatch
+                | ErrorCode::Cut
+        )
 }
 
 /// What a refusal of [`CoreDevice::process_log_entry`] with `code` means for the caller.
