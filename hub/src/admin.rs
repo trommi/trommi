@@ -427,7 +427,7 @@ fn overview(app: &App) -> Result<String, Refused> {
 <th class=\"n\">Changes</th><th class=\"n\">Envelopes</th><th class=\"n\">Files</th><th class=\"n\">of quota</th><th class=\"n\">Push</th><th>Last write</th></tr>");
         let mut s = c.prepare(
             "SELECT r.room_id, r.founded_at, r.change, r.file_bytes,
-               (SELECT a.email FROM account_rooms ar JOIN accounts a ON a.account_id = ar.account_id WHERE ar.room_id = r.room_id),
+               (SELECT coalesce(a.email, '') FROM account_rooms ar JOIN accounts a ON a.account_id = ar.account_id WHERE ar.room_id = r.room_id),
                (SELECT count(*) FROM devices d WHERE d.room_id = r.room_id AND d.removed_epoch IS NULL AND d.role = 'human'),
                (SELECT count(*) FROM devices d WHERE d.room_id = r.room_id AND d.removed_epoch IS NULL AND d.role = 'agent'),
                (SELECT count(*) FROM devices d WHERE d.room_id = r.room_id AND d.removed_epoch IS NULL AND d.role = 'helper'),
@@ -448,7 +448,11 @@ fn overview(app: &App) -> Result<String, Refused> {
                 "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td>\
 <td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{:.1} %</td><td class=\"n\">{}</td><td>{}</td></tr>",
                 esc(&crate::util::short(&room)),
-                email.as_deref().map(esc).unwrap_or_else(|| "<span class=\"muted\">none</span>".into()),
+                match email.as_deref() {
+                    None => "<span class=\"muted\">none</span>".to_string(),
+                    Some("") => "<span class=\"muted\">without e-mail</span>".to_string(),
+                    Some(email) => esc(email),
+                },
                 when(r.get(1)?),
                 r.get::<_, i64>(5)?,
                 r.get::<_, i64>(6)?,

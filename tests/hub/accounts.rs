@@ -6,7 +6,7 @@ mod common;
 use common::passkey::{Authenticator, ORIGIN, RP, UP_UV};
 use common::*;
 use serde_json::{json, Value};
-use trommi_hub::util::{b64, random, unb64};
+use trommi_hub::util::{b64, hex, random, unb64};
 use trommi_hub::wire;
 
 fn copy(mark: u8) -> String {
@@ -387,20 +387,17 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     let sealed = ada.sealed_key(&room, 0, &info, 0, &recovery.hpke_public, true);
     // an account with a passkey as its only way in, made with the room
     let key = Authenticator::new();
-    let challenge = unb64(
-        hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
+    let start = hub.post("/v2/account/passkey/challenge", &json!({})).ok();
+    let challenge = unb64(start["challenge"].as_str().unwrap()).unwrap();
+    // the account's id, named with the challenge: the passkey's user handle
+    let handle = unb64(start["user_handle"].as_str().unwrap()).unwrap();
     let passkey = |a: &Authenticator, challenge: &[u8], origin: &str, rp: &str| {
         json!({
             "attestation_object": b64(&a.attestation(rp, UP_UV)), "client_data_json": b64(&Authenticator::client_data("webauthn.create", challenge, origin)),
             "sealed_copy": copy(3), "transports": ["internal"],
         })
     };
-    let handle: [u8; 32] = random();
-    let account = json!({ "email": "ada@example.org", "user_handle": b64(&handle), "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": passkey(&key, &challenge, ORIGIN, RP) });
+    let account = json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": passkey(&key, &challenge, ORIGIN, RP) });
     hub.post(
         "/v2/rooms",
         &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed), "account": account }),
@@ -486,7 +483,7 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
         hub.post("/v2/account/passkey/login", &json!({ "credential_id": b64(&key.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature), "user_handle": b64(handle) }))
     };
     with_handle(&handle).ok();
-    with_handle(&[7; 32]).refused(401, "wrong-login");
+    with_handle(&[7; 16]).refused(401, "wrong-login");
     with_handle(b"short").refused(401, "wrong-login");
 
     // a second passkey, added by a human device of the room with a challenge for that account
@@ -768,4 +765,338 @@ fn one_ipv6_network_is_one_source() {
         &random(),
     )
     .refused(401, "wrong-login");
+}
+
+#[test]
+fn an_account_with_a_passkey_needs_no_e_mail() {
+    let mut w = World::new();
+    let room = w.room;
+    let challenge = |hub: &TestHub| {
+        unb64(
+            hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let registration = |a: &Authenticator, challenge: &[u8], mark: u8| {
+        json!({
+            "attestation_object": b64(&a.attestation(RP, UP_UV)),
+            "client_data_json": b64(&Authenticator::client_data("webauthn.create", challenge, ORIGIN)),
+            "sealed_copy": copy(mark), "transports": ["internal"],
+        })
+    };
+    let sign_in = |hub: &TestHub, a: &Authenticator, handle: Option<&[u8]>| {
+        let client = Authenticator::client_data("webauthn.get", &challenge(hub), ORIGIN);
+        let (data, signature) = a.assertion(RP, UP_UV, &client);
+        let mut body = json!({ "credential_id": b64(&a.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature) });
+        if let Some(handle) = handle {
+            body["user_handle"] = json!(b64(handle));
+        }
+        hub.post("/v2/account/passkey/login", &body)
+    };
+    let recover_by_id = |hub: &TestHub, id: &str, kit: &[u8; 32]| {
+        request(
+            hub.port,
+            "POST",
+            "/v2/account/recover",
+            &[("cf-connecting-ip", fresh_source())],
+            json!({ "account": id, "auth_key": b64(kit) })
+                .to_string()
+                .as_bytes(),
+        )
+    };
+
+    // sign-up: a passkey, a kit, the account's random id (the passkey's user handle), and no e-mail
+    let (key, kit): (Authenticator, [u8; 32]) = (Authenticator::new(), random());
+    let hub = &w.hub;
+    // the hub names the account's id with the challenge: the device needs it before the account exists (it is
+    // the passkey's user handle and the salt of the kit)
+    let start = hub.post("/v2/account/passkey/challenge", &json!({})).ok();
+    let first = unb64(start["challenge"].as_str().unwrap()).unwrap();
+    let handle = unb64(start["user_handle"].as_str().unwrap()).unwrap();
+    let id = start["account"].as_str().unwrap().to_string();
+    assert_eq!(handle.len(), 16);
+    assert_eq!(id.len(), 36);
+    assert_eq!(id.replace('-', ""), hex(&handle));
+    assert_eq!(
+        (&id[14..15], handle[8] & 0xc0),
+        ("4", 0x80),
+        "a UUID of version 4"
+    );
+    // (a password signs in under an e-mail: without one it is no way in)
+    w.ada.post(hub, "/v2/account", &json!({ "kit": { "auth_key": b64(&kit), "sealed_copy": copy(9) }, "password": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(7), "kdf": kdf() } }))
+        .refused(400, "bad-email");
+    let made = w
+        .ada
+        .post(
+            hub,
+            "/v2/account",
+            &json!({
+                "kit": { "auth_key": b64(&kit), "sealed_copy": copy(9) },
+                "passkey": registration(&key, &first, 3),
+            }),
+        )
+        .ok();
+    assert_eq!(
+        (&made["email"], &made["account"], &made["has_password"]),
+        (&Value::Null, &json!(id), &json!(false))
+    );
+    assert_eq!(made["kit_form"], "id");
+    assert_eq!(w.ada.get(hub, "/v2/account").ok()["email"], Value::Null);
+
+    // log-in without a name: the hub finds the account by the credential; the handle, if sent, must be its id
+    let answer = sign_in(hub, &key, None).ok();
+    assert_eq!(answer["rooms"][0]["room_id"], b64(&room));
+    assert_eq!(answer["rooms"][0]["sealed_copy"], copy(3));
+    assert_eq!(
+        (&answer["account"], &answer["email"]),
+        (&json!(id), &Value::Null)
+    );
+    sign_in(hub, &key, Some(&handle)).ok();
+    sign_in(hub, &key, Some(&random::<16>())).refused(401, "wrong-login");
+
+    // another room, another account: with an e-mail beside its passkey; its kit is then under the e-mail's salt
+    // unless it says otherwise
+    let (_, _, other) = found_room(hub);
+    let other_key = Authenticator::new();
+    let made = other.post(hub, "/v2/account", &json!({ "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": registration(&other_key, &challenge(hub), 3), "email": "other@example.org" })).ok();
+    assert_eq!(made["kit_form"], "email");
+    assert_ne!(made["account"], id);
+    assert_eq!(
+        sign_in(hub, &other_key, None).ok()["email"],
+        "other@example.org"
+    );
+
+    // a second passkey; the last way in stays
+    let second = Authenticator::new();
+    let scoped = unb64(
+        w.ada
+            .post(hub, "/v2/account/passkeys/challenge", &json!({}))
+            .ok()["challenge"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    w.ada
+        .post(
+            hub,
+            "/v2/account/passkeys",
+            &registration(&second, &scoped, 4),
+        )
+        .ok();
+    assert_eq!(
+        sign_in(hub, &second, None).ok()["rooms"][0]["sealed_copy"],
+        copy(4)
+    );
+    w.ada
+        .call(
+            hub,
+            "DELETE",
+            &format!("/v2/account/passkeys/{}", b64(&key.credential_id)),
+            &Value::Null,
+        )
+        .ok();
+    w.ada
+        .call(
+            hub,
+            "DELETE",
+            &format!("/v2/account/passkeys/{}", b64(&second.credential_id)),
+            &Value::Null,
+        )
+        .refused(409, "last-way-in");
+    sign_in(hub, &key, None).refused(401, "wrong-login");
+
+    // the Emergency Kit names the account by its id; an id nobody has and a wrong kit are one answer, and the
+    // throttle counts under the id as it does under an e-mail
+    assert_eq!(
+        recover_by_id(hub, &id, &kit).ok()["rooms"][0]["sealed_copy"],
+        copy(9)
+    );
+    let wrong = recover_by_id(hub, &id, &random());
+    let nobody = recover_by_id(
+        hub,
+        &trommi_hub::accounts::id_text(&trommi_hub::accounts::new_id()),
+        &kit,
+    );
+    wrong.refused(401, "wrong-recovery");
+    nobody.refused(401, "wrong-recovery");
+    assert_eq!(wrong.body, nobody.body);
+    let guesser = fresh_source();
+    let guess = |kit: &[u8; 32]| {
+        request(
+            hub.port,
+            "POST",
+            "/v2/account/recover",
+            &[("cf-connecting-ip", guesser.clone())],
+            json!({ "account": id, "auth_key": b64(kit) })
+                .to_string()
+                .as_bytes(),
+        )
+    };
+    guess(&random()).refused(401, "wrong-recovery");
+    guess(&kit).refused(429, "rate-limited");
+    // by an e-mail it has none to be found under; the id opens no password login
+    recover(hub, "ada@example.org", &kit).refused(401, "wrong-recovery");
+    request(
+        hub.port,
+        "POST",
+        "/v2/account/login",
+        &[("cf-connecting-ip", fresh_source())],
+        json!({ "account": id, "auth_key": b64(&kit) })
+            .to_string()
+            .as_bytes(),
+    )
+    .refused(401, "wrong-login");
+
+    // 8.6 for such an account: new recovery keys bring a new kit and a new copy under the passkey used just now
+    let new = Recovery::new();
+    let now = w.ada.room_now();
+    let out = w.ada.commit(
+        &room,
+        &Change {
+            room: Some(new.room_ext(&[])),
+            ..Default::default()
+        },
+        now,
+    );
+    let key_row = w.ada.sealed_key(
+        &room,
+        out.epoch + 1,
+        &out.group_info,
+        out.epoch + 1,
+        &new.hpke_public,
+        true,
+    );
+    let next_kit: [u8; 32] = random();
+    w.ada.post(&w.hub, &format!("/v2/rooms/{}/recovery-code", b64(&room)), &json!({
+        "commit": commit_json(&out, &key_row, None),
+        "recovery_link": b64(&wire::RecoveryLink { room_id: room, new_recovery_hpke_key: new.hpke_public.to_vec(), kem_output: vec![1; 32], ciphertext: vec![2; 80], mac: vec![3; 32] }.bytes()),
+        "account": { "kit": { "auth_key": b64(&next_kit), "sealed_copy": copy(5) }, "passkey": { "credential_id": b64(&second.credential_id), "sealed_copy": copy(6) } },
+    })).ok();
+    w.ada.merge(&room);
+    let hub = &w.hub;
+    assert_eq!(
+        sign_in(hub, &second, None).ok()["rooms"][0]["sealed_copy"],
+        copy(6)
+    );
+    assert_eq!(
+        recover_by_id(hub, &id, &next_kit).ok()["rooms"][0]["sealed_copy"],
+        copy(5)
+    );
+    recover_by_id(hub, &id, &kit).refused(401, "wrong-recovery");
+
+    // an e-mail and a password later: the password needs the e-mail first; an address another account holds is
+    // answered as signing up with it is; the e-mail is set once
+    let revision = |w: &World| {
+        w.ada.get(&w.hub, "/v2/account").ok()["revision"]
+            .as_i64()
+            .unwrap()
+    };
+    let auth: [u8; 32] = random();
+    let password = |w: &World| json!({ "auth_key": b64(&auth), "sealed_copy": copy(8), "kdf": kdf(), "revision": revision(w) });
+    w.ada
+        .call(hub, "PUT", "/v2/account/password", &password(&w))
+        .refused(400, "bad-email");
+    w.ada
+        .call(
+            hub,
+            "PUT",
+            "/v2/account/email",
+            &json!({ "email": "other@example.org", "revision": revision(&w) }),
+        )
+        .refused(409, "account-exists");
+    w.ada
+        .call(
+            hub,
+            "PUT",
+            "/v2/account/email",
+            &json!({ "email": "not an address", "revision": revision(&w) }),
+        )
+        .refused(400, "bad-email");
+    w.ada
+        .call(
+            hub,
+            "PUT",
+            "/v2/account/email",
+            &json!({ "email": "Ada@Example.org", "revision": revision(&w) }),
+        )
+        .ok();
+    w.ada
+        .call(
+            hub,
+            "PUT",
+            "/v2/account/email",
+            &json!({ "email": "ada2@example.org", "revision": revision(&w) }),
+        )
+        .refused(403, "forbidden");
+    w.ada
+        .call(hub, "PUT", "/v2/account/password", &password(&w))
+        .ok();
+    assert_eq!(login(hub, "ada@example.org", &auth).ok()["account"], id);
+    // the kit is still the one made under the id
+    assert_eq!(
+        recover_by_id(hub, &id, &next_kit).ok()["email"],
+        "ada@example.org"
+    );
+    // the kit keeps the salt it was made with: the e-mail given later changes nothing about it
+    assert_eq!(w.ada.get(hub, "/v2/account").ok()["kit_form"], "id");
+    // one field names the account, by e-mail or by id, for the password as for the kit; the id as a person
+    // types it: case, spaces and dashes do not matter, anything else is no id
+    let by = |route: &str, name: &str, key: &[u8; 32]| {
+        request(
+            hub.port,
+            "POST",
+            &format!("/v2/account/{route}"),
+            &[("cf-connecting-ip", fresh_source())],
+            json!({ "account": name, "auth_key": b64(key) })
+                .to_string()
+                .as_bytes(),
+        )
+    };
+    let typed = format!(" {} ", id.to_uppercase().replace('-', " "));
+    for name in [id.as_str(), typed.as_str(), "ada@example.org"] {
+        assert_eq!(
+            by("login", name, &auth).ok()["rooms"][0]["sealed_copy"],
+            copy(8),
+            "{name}"
+        );
+        assert_eq!(
+            by("recover", name, &next_kit).ok()["rooms"][0]["sealed_copy"],
+            copy(5),
+            "{name}"
+        );
+    }
+    // an id nobody has, an e-mail nobody has, something that is neither, and a wrong key: one answer
+    let unknown = trommi_hub::accounts::id_text(&trommi_hub::accounts::new_id());
+    let answers: Vec<Reply> = vec![
+        by("login", &id, &random()),
+        by("login", &unknown, &auth),
+        by("login", "nobody@example.org", &auth),
+        by("login", &id[..35], &auth),
+        by("login", &format!("{id}0"), &auth),
+    ];
+    for reply in &answers {
+        reply.refused(401, "wrong-login");
+        assert_eq!(reply.body, answers[0].body);
+    }
+    // guessing under the id is slowed like guessing under the e-mail: per source, 1 s after the first failure
+    let guesser = fresh_source();
+    let guess = |key: &[u8; 32]| {
+        request(
+            hub.port,
+            "POST",
+            "/v2/account/login",
+            &[("cf-connecting-ip", guesser.clone())],
+            json!({ "account": unknown, "auth_key": b64(key) })
+                .to_string()
+                .as_bytes(),
+        )
+    };
+    guess(&random()).refused(401, "wrong-login");
+    let slowed = guess(&random());
+    assert_eq!(
+        (slowed.status, slowed.header("retry-after")),
+        (429, Some("1"))
+    );
 }

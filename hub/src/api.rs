@@ -445,7 +445,10 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("POST", ["account", "recover"]) => login(app, rq, true),
         ("POST", ["account", "passkey", "challenge"]) => {
             open_limit()?;
-            Ok(json!({ "challenge": b64(&app.accounts.challenge(None, t)) }))
+            // with it the id an account gets that is made with a passkey registered on this challenge
+            let challenge = app.accounts.challenge(None, t);
+            let id = accounts::id_of_challenge(&challenge);
+            Ok(json!({ "challenge": b64(&challenge), "account": accounts::id_text(&id), "user_handle": b64(&id) }))
         }
         ("POST", ["account", "passkey", "login"]) => {
             limited(app.limits.logins.check(rq.ip.as_bytes(), t, true))?;
@@ -502,6 +505,13 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let room = id::<32>(room)?;
             // a challenge is handed out for any room id: whether a room exists is not told here
             Ok(json!({ "challenge": b64(&app.sessions.challenge(&room, t)) }))
+        }
+        // signing out: the token ends at once, and the device's streams with it
+        ("DELETE", ["token"]) => {
+            let auth = read_auth()?;
+            app.sessions.revoke(rq.bearer.as_deref());
+            app.live.end_where(&auth.room, |a| a.device == auth.device);
+            Ok(json!({}))
         }
         ("POST", ["rooms", room, "tokens"]) => {
             open_limit()?;
@@ -574,6 +584,12 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                 "password" => accounts::put_password(x.c, &auth.room, &rq.body, x.now, &pre),
                 _ => accounts::put_kit(x.c, &auth.room, &rq.body, x.now, &pre),
             })
+        }
+        ("PUT", ["account", "email"]) => {
+            let auth = read_auth()?;
+            auth.human()?;
+            heavy_limit(&auth)?;
+            app.write_as(&auth, rq.lease, |x, _| accounts::put_email(x.c, &auth.room, &rq.body, x.now))
         }
         ("POST", ["account", "passkeys", "challenge"]) => app.read(|x| {
             let auth = rq.auth(app, x.c)?;
@@ -976,11 +992,9 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     let arrived = now();
     limited(app.limits.logins.check(rq.ip.as_bytes(), arrived, true))?;
     // the password and the Emergency Kit are throttled apart
-    let account_key = format!(
-        "{}:{}",
-        if kit { "kit" } else { "password" },
-        accounts::normalise_email(rq.body["email"].as_str().unwrap_or("")).unwrap_or_default()
-    );
+    // (an account is named by its e-mail; a kit also by the account's id, and that is then its key here)
+    let named = accounts::name_of(&rq.body).key();
+    let account_key = format!("{}:{named}", if kit { "kit" } else { "password" });
     let account_key = account_key.as_bytes();
     // the source as the account knows it: a keyed hash of the address
     let source = crate::push::source_hash(&app.ticket_key, &rq.ip);
@@ -1081,16 +1095,19 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
 /// The rooms of an account (one for now), each with the sealed copy and a sign-in challenge for the recovery key.
 fn login_answer(app: &Arc<App>, c: &rusqlite::Connection, account: i64, copy: &[u8]) -> Res<Value> {
     let t = now();
-    let kdf: Option<String> = c.query_row(
-        "SELECT kdf FROM accounts WHERE account_id = ?1",
+    let (kdf, email, handle): (Option<String>, Option<String>, Vec<u8>) = c.query_row(
+        "SELECT kdf, email, user_handle FROM accounts WHERE account_id = ?1",
         [account],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     let rooms: Vec<Value> = accounts::rooms_of(c, account)?
         .iter()
         .map(|room| json!({ "room_id": b64(room), "sealed_copy": b64(copy), "challenge": b64(&app.sessions.challenge(room, t)) }))
         .collect();
-    Ok(json!({ "rooms": rooms, "kdf": kdf.and_then(|k| serde_json::from_str::<Value>(&k).ok()) }))
+    // (who signed in is told which account it is: its id, and its e-mail if it has one)
+    Ok(
+        json!({ "rooms": rooms, "kdf": kdf.and_then(|k| serde_json::from_str::<Value>(&k).ok()), "account": accounts::id_text(&handle), "email": email }),
+    )
 }
 
 fn push_register(app: &Arc<App>, x: &delivery::Ctx, auth: &Auth, v: &Value) -> Res<Value> {

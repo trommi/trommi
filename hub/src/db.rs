@@ -11,13 +11,14 @@ use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub const SCHEMA: &str = r#"
 -- ---- accounts: a way into a room. The hub checks the login; the sealed copies of the recovery code are opaque.
 CREATE TABLE accounts (
   account_id     INTEGER PRIMARY KEY,
-  email          TEXT NOT NULL UNIQUE,
+    -- none: an account whose way in is a passkey needs no e-mail
+  email          TEXT UNIQUE,
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
   revision       INTEGER NOT NULL DEFAULT 1,
@@ -29,8 +30,11 @@ CREATE TABLE accounts (
   -- Emergency Kit: a slow hash of the kit's login key; the sealed copy
   kit_salt       BLOB NOT NULL,
   kit_hash       BLOB NOT NULL,
-  kit_copy       BLOB NOT NULL,
-  user_handle    BLOB NOT NULL
+    kit_copy       BLOB NOT NULL,
+  -- which salt the kit's keys were derived with: the e-mail's or the account id's
+  kit_form       TEXT NOT NULL CHECK (kit_form IN ('email', 'id')),
+    -- the account's id: a UUID the hub mints; the passkeys' user handle
+  user_handle    BLOB NOT NULL CHECK (length(user_handle) = 16)
 ) STRICT;
 
 CREATE TABLE passkeys (
@@ -45,6 +49,8 @@ CREATE TABLE passkeys (
   last_used_at   INTEGER
 ) STRICT;
 CREATE INDEX passkeys_by_account ON passkeys(account_id, created_at);
+-- the account's random id: what names an account that has no e-mail
+CREATE UNIQUE INDEX accounts_by_handle ON accounts(user_handle);
 
 -- The places an account was signed in to from (a keyed hash of the address, never the address): a failed-login
 -- slow-down for sources an account does not know leaves these alone. The newest 16 are kept.
