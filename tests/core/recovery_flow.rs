@@ -1316,7 +1316,7 @@ fn a_recovery_cleans_a_session_that_an_interrupted_removal_left_stale() {
     w.a.remove_human_devices(&[Cut::none(w.b.id())], now())
         .unwrap();
     post_ok(&mut w.hub, &mut w.a);
-    w.a.change_agents(&[], &[w.agent.id()], now()).unwrap();
+    w.a.remove_agents(&[w.agent.id()], now()).unwrap();
     post_ok(&mut w.hub, &mut w.a);
     assert_eq!(w.hub.stale_leaves(&w.main).unwrap().len(), 2);
     assert!(!w.hub.stale_leaves(&w.side).unwrap().is_empty());
@@ -1489,7 +1489,7 @@ fn what_a_thief_of_recovery_mac_can_and_cannot_do() {
     assert_eq!(checked.anchor.epoch, w.hub.epoch(&w.room).unwrap());
 }
 
-// ---- what the second review found ----
+// ---- rows and states a hub makes up ----
 
 #[test]
 fn a_row_for_an_epoch_a_group_has_not_reached_poisons_no_key() {
@@ -1805,4 +1805,77 @@ fn first_contact_verifies_a_helper_session_from_its_founding() {
         served.served(|served| late.verify_founding(&w.room, served)),
         Err(Error::NotFound)
     );
+}
+
+#[test]
+fn a_founding_that_breaks_the_rules_is_no_room_to_join() {
+    // Whoever holds the recovery_mac (a copied human device, section 17) can authenticate a row for a room
+    // of its own making. The mac says who wrote the row; whether the founding obeys 5.1.1 and 8.1 is
+    // checked on the founding itself.
+    let keys = test_keys();
+    let mut founder = new_device();
+    let (hub, room) = trommi_tests::found_room(&mut founder);
+    let honest = fetch(&hub, &keys);
+    let check = |fetched: &Fetched| fetched.served(|served| check_room(&keys, served));
+    assert!(check(&honest).is_ok());
+
+    let rogue = Forger::new();
+    let mut state = hub.history().unwrap().newest().room.clone();
+    // The founder enrols itself as an agent device: no device is both (4.2).
+    state.agents = vec![rogue.id()];
+    let forged = rogue.found_room(&room, &state);
+    let info = rogue.group_info(&forged);
+    let row = SealedKey::seal(
+        &mut SystemEntropy,
+        &Sealing {
+            context: KeyContext::of(&room, 0, &info).unwrap(),
+            room_epoch: 0,
+            recovery_hpke_key: &state.recovery_hpke_key,
+            writer: rogue.id(),
+            content_key: &Secret::new([0x66; 32]),
+        },
+        Some(&keys.mac_key().key),
+    )
+    .unwrap()
+    .to_bytes()
+    .unwrap();
+    let mut own = honest.clone();
+    own.room.founding = info.clone();
+    own.room.current = info.clone();
+    own.room.commits.clear();
+    own.anchor = info;
+    own.sessions.clear();
+    own.rows = vec![row];
+    assert_eq!(check(&own).err(), Some(Error::BadGroup));
+}
+
+#[test]
+fn a_session_whose_commits_are_served_out_of_the_hubs_order_is_not_joined() {
+    let mut w = world(true);
+    let main = w.main;
+    // Two Commits of the main session within one room epoch.
+    for _ in 0..2 {
+        w.a.update(&main, true, now()).unwrap().unwrap();
+        post_ok(&mut w.hub, &mut w.a);
+        w.settle_all();
+    }
+    let keys = test_keys();
+    let mut new = new_device();
+    join_room(&w.hub, &mut new, &keys).unwrap();
+    post_ok(&mut w.hub, &mut new);
+    let honest = trommi_tests::fetch_group(&w.hub, &main);
+    let last = honest.commits.len() - 1;
+    let join = |device: &mut TestDevice, served: &trommi_tests::FetchedGroup| {
+        served.served(|served| device.join_session_with_code(&keys, served, now()))
+    };
+    // The same Commits under change numbers that do not ascend: one number twice, two exchanged.
+    let mut twice = honest.clone();
+    twice.commits[last].0 = twice.commits[last - 1].0;
+    let mut exchanged = honest.clone();
+    exchanged.commits[last].0 = honest.commits[last - 1].0;
+    exchanged.commits[last - 1].0 = honest.commits[last].0;
+    for served in [&twice, &exchanged] {
+        assert_eq!(join(&mut new, served).err(), Some(Error::BadGroup));
+    }
+    assert!(join(&mut new, &honest).is_ok());
 }

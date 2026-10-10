@@ -33,7 +33,7 @@ key package (RFC 9420 allows the reuse, the draft defines the mark).
 - **Need.** You lose every device and still read everything; and you sign in on a new laptop with password or passkey
   and see the whole history.
 - **The vanilla way.** A "recovery device" that is a real member of every group, with keys that follow from the
-  code, and that replays every group change ever made when it is needed. The proof built it and it works (202 room
+  code, and that replays every group change ever made when it is needed. A feasibility study built it and it works (202 room
   and 20 session changes replayed in about 50 ms). Its price: recovery then depends on replaying years of group
   history through the library without one missing or unreadable step (one lost step loses everything after it); the
   hub may never drop a group's history; the library's random source has to be replaced to make keys from a code;
@@ -45,7 +45,7 @@ key package (RFC 9420 allows the reuse, the draft defines the mark).
   joins the room and its live sessions by MLS's own "external commit", which the others accept because it carries a
   signature of the recovery key. Each sealed row carries an authentication tag under a third key that
   follows from the code and that only your own devices hold, so that a hub cannot hand a device that signs in a room
-  or a history of its own making (added 9 October after the proof; HPKE sealing alone is anonymous). The sealed
+  or a history of its own making (added after that study; HPKE sealing alone is anonymous). The sealed
   copies of the code in the account stay as in v1 (its labels already read `trommi/v1/…`).
 - **Cost and risk.** One small sealed row per group and key period (about 150 bytes), each readable on its own.
   Whoever has the code reads everything: that is its purpose. Non-MLS pieces: the sealed rows with their tag, the recovery
