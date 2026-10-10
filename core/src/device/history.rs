@@ -42,17 +42,16 @@ use crate::ids::{DeviceId, GroupId, SessionId};
 use crate::mls::group;
 use crate::mls::observer::{self, Context, Observer, Place, RoomEpochAt};
 use crate::mls::profile::{Cut, TrommiSession, MAX_HUMAN_DEVICES_IN_RECOVERY};
-use crate::mls::provider::{MlsEntries, Provider};
 use crate::mls::rules::{
     self, JoinClaim, Parent, RecoveryRules, RoomHistory, SealedKeyClaim, SessionFacts,
 };
 use crate::recovery::{
-    At, PublicRules, ServedCommit, ServedGroup, SessionsAt, Walked, WalkedEnd, WalkedEpoch,
+    fits_a_slice, slice_of, At, PublicRules, ServedCommit, ServedGroup, SessionsAt, Walked,
+    WalkedEnd, WalkedEpoch, MAX_WALK_COMMITS,
 };
 use crate::store::{table, Batch, Storage};
-use openmls::group::{GroupContext, ProposalStore, PublicGroup};
-use openmls::prelude::{LeafNodeIndex, ProcessedMessageContent};
-use openmls_traits::OpenMlsProvider as _;
+use openmls::group::GroupContext;
+use openmls::prelude::LeafNodeIndex;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use tls_codec::{Deserialize as _, Serialize as _};
@@ -130,20 +129,6 @@ pub struct GroupPast {
 pub struct Learned {
     /// How many epochs it recorded; 0 when there was nothing to learn.
     pub epochs: u64,
-}
-
-/// Why a served history is not taken.
-enum Refusal {
-    /// It did not verify, did not obey the rules, or did not arrive at the device's state.
-    BadGroup,
-    /// Anything else: it came too early, or the device itself failed.
-    Other(Error),
-}
-
-impl From<Error> for Refusal {
-    fn from(error: Error) -> Self {
-        Self::Other(error)
-    }
 }
 
 /// The room's main sessions as a walk of the past asks about them: only those whose whole past the device
@@ -238,6 +223,98 @@ impl RecoveryRules for DetachedAuth {
     }
 }
 
+/// Where a walk of a group's past stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LearnProgress {
+    /// The epoch the walk has reached: the next Commit it takes builds on it.
+    pub epoch: u64,
+    /// The epoch the walk ends at: the one this device's own knowledge of the group begins at.
+    pub upto: u64,
+}
+
+/// How a walk reads the Commits it is handed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// As every verifier judges them, each at the place the hub names. Only such a walk is taken.
+    Rules,
+    /// A Commit failed that reading. The rest is read by the group's own word, without the hub's: the
+    /// walk is not taken, and is read on only to learn whether the group itself broke the rules.
+    OwnWord,
+    /// As MLS alone, to learn whether the history is the group's own. `broke`: a Commit broke the rules by
+    /// the group's own word; otherwise one could not be judged, or only the hub's word failed.
+    Mls { broke: bool },
+}
+
+/// A walk of a group's past between its start and its finish. It is held in memory beside the device's
+/// state and is none of it: built from what a hub served, and compared with the device's own state only
+/// at the finish.
+pub(super) struct PastWalk {
+    /// Where the device's own knowledge of the group begins, as it stood when the walk began.
+    origin: Origin,
+    session: Option<TrommiSession>,
+    observer: Observer,
+    walked: Walked,
+    /// Per epoch the walk reached, the change number of the Commit that led to it.
+    places: Vec<(u64, u64)>,
+    reading: Reading,
+}
+
+impl PastWalk {
+    fn progress(&self) -> Result<LearnProgress, Error> {
+        Ok(LearnProgress {
+            epoch: self.observer.epoch()?.min(self.origin.epoch),
+            upto: self.origin.epoch,
+        })
+    }
+}
+
+/// Follows a Commit of a session group by the group's own word (5.2.6), whatever the hub says beside it:
+/// against the room epoch its signed note names, a helper session's against every agent leaf its main
+/// session had in that room epoch, and without its `RecoveryAuth`. Whether it obeys section 5 so; an error
+/// when this device cannot judge it (`room-behind`, a newer version).
+fn follow_by_its_own_word(
+    walk: &mut PastWalk,
+    commit: &ServedCommit<'_>,
+    room: Option<&RoomHistory>,
+    sessions: &PastSessions,
+    places: &BTreeMap<u64, u64>,
+) -> Result<bool, Error> {
+    let any = AnyPlace {
+        sessions,
+        places,
+        pick: Cell::new(0),
+        offered: Cell::new(1),
+    };
+    let context = Context {
+        room,
+        sessions: &any,
+        recovery: &DetachedAuth,
+        max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+    };
+    let place = Place {
+        change: commit.change,
+        room_epoch: RoomEpochAt::Named,
+    };
+    loop {
+        any.offered.set(1);
+        match walk
+            .observer
+            .process_commit_at(commit.commit, None, &context, &place)
+        {
+            Ok(_) => return Ok(true),
+            Err(fault) if is_fault(&fault) => return Err(fault),
+            Err(unjudged @ (Error::RoomBehind | Error::NewerVersion)) => return Err(unjudged),
+            Err(_) => {
+                let next = any.pick.get().saturating_add(1);
+                if next >= any.offered.get() {
+                    return Ok(false);
+                }
+                any.pick.set(next);
+            }
+        }
+    }
+}
+
 fn damaged(what: &'static str) -> Error {
     Error::Storage(format!("{what} does not decode"))
 }
@@ -275,60 +352,6 @@ fn joined_seats(
         }
     }
     seats
-}
-
-/// Whether the served history, read as MLS alone without Trommi's rules, arrives at `origin`: it begins at
-/// the founding GroupInfo of `group` (epoch 0), every Commit verifies against the state before it, and at
-/// the origin's epoch the GroupContext is the origin's. Then the Commits served are the group's own,
-/// whatever they did. A later GroupInfo as the start shows no history, and so nothing about one.
-fn arrives(
-    group: &GroupId,
-    founding: &[u8],
-    commits: &[ServedCommit<'_>],
-    origin: &Origin,
-) -> bool {
-    let replay = || -> Result<Vec<u8>, Error> {
-        let verifiable = observer::parse_group_info(founding)?;
-        let tree = verifiable
-            .extensions()
-            .ratchet_tree()
-            .ok_or(Error::BadFormat)?
-            .ratchet_tree()
-            .clone();
-        let provider = Provider::without_entropy(MlsEntries::new())?;
-        let (mut public, _) = PublicGroup::from_external(
-            provider.crypto(),
-            provider.storage(),
-            tree,
-            verifiable,
-            ProposalStore::new(),
-        )
-        .map_err(|_| Error::BadSignature)?;
-        let context = public.group_context();
-        if context.group_id().as_slice() != group.as_bytes() || context.epoch().as_u64() != 0 {
-            return Err(Error::BadGroup);
-        }
-        let mut served = commits.iter();
-        while public.group_context().epoch().as_u64() < origin.epoch {
-            let commit = served.next().ok_or(Error::BadGroup)?;
-            let message = rules::parse_commit(commit.commit)?;
-            let processed = public
-                .process_message(provider.crypto(), message)
-                .map_err(|_| Error::BadCommit)?;
-            let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content()
-            else {
-                return Err(Error::BadCommit);
-            };
-            public
-                .merge_commit(provider.storage(), *staged)
-                .map_err(|_| Error::BadCommit)?;
-        }
-        public
-            .group_context()
-            .tls_serialize_detached()
-            .map_err(|_| Error::Internal("group context encoding"))
-    };
-    replay().is_ok_and(|context| context == origin.context)
 }
 
 impl<S: Storage> Device<S> {
@@ -393,70 +416,343 @@ impl<S: Storage> Device<S> {
         }))
     }
 
-    /// Learns the past of `group` from its public history (4.4, 9.0.6): `founding` is its founding GroupInfo
-    /// (epoch 0), `commits` its Commits from the first on, in order, as the hub's log serves them; what lies
-    /// beyond the epoch this device's own knowledge begins at is not read. The group is one this device is
-    /// a leaf of, or follows as an observer (`not-found` otherwise).
-    ///
-    /// Each Commit is judged as every verifier judges it, a session's against the room states this device
-    /// holds, and the history is taken only if it arrives at this device's own state: the GroupContext it
-    /// reaches at that epoch is byte for byte the one this device's state had there. Then every earlier
-    /// epoch is recorded as the device records its own, with the Cuts of the Commits on the way, in one
-    /// write; envelopes of those epochs are checked from then on, with the freshness of reading back (9.0.5,
-    /// check 8). For a group it follows as an observer the device takes the room's roles of the earlier
-    /// epochs, or a main session's agent leaf over that time.
+    /// Learns the past of `group` from its public history (4.6, 9.0.6) in one call: `founding` is its
+    /// founding GroupInfo (epoch 0), `commits` its Commits from the first on, in order, as the hub's log
+    /// serves them; what lies beyond the epoch this device's own knowledge begins at is not read. This is
+    /// [`Device::learn_start`], the Commits in slices, and [`Device::learn_finish`]: a caller that cannot
+    /// hold a group's whole history in one call makes those calls itself.
     ///
     /// Nothing to learn (the device founded the group, or learned its past before) is no error. `bad-group`
     /// for a history that does not verify, does not obey section 5, ends before the device's epoch or does
     /// not arrive at its state: nothing is written. If such a history of a session group is the group's own
-    /// and broke the rules, the group is closed as after a failed first contact (5.2.6) and the finding is
-    /// kept ([`Device::findings`]). `room-behind`: learn the room group's past first, or process its log
-    /// further. `group-behind`: learn the main session's past first.
+    /// and broke the rules by its own word, the group is closed as after a failed first contact (5.2.6) and
+    /// the finding is kept ([`Device::findings`]). `room-behind`: learn the room group's past first, or
+    /// process its log further. `group-behind`: learn the main session's past first.
     pub fn learn_history(
         &mut self,
         group: &GroupId,
         founding: &[u8],
         commits: &[ServedCommit<'_>],
     ) -> Result<Learned, Error> {
-        let learned = self.transact(|this, batch| {
-            this.begin(0);
-            match this.learn(batch, group, founding, commits) {
-                Ok(learned) => Ok(learned),
-                Err(Refusal::BadGroup) => Err(Error::BadGroup),
-                Err(Refusal::Other(error)) => Err(error),
+        self.learn_start(group, founding)?;
+        let mut rest = commits;
+        while !rest.is_empty() && self.walks.contains_key(group) {
+            let count = slice_of(rest.iter().map(|commit| commit.commit.len()));
+            let (slice, later) = rest
+                .split_at_checked(count)
+                .ok_or(Error::Internal("a slice of a history"))?;
+            let progress = self.learn_slice(group, slice)?;
+            if progress.epoch >= progress.upto {
+                break;
             }
-        });
-        match learned {
-            Ok(learned) => Ok(learned),
-            Err(Error::BadGroup) => {
-                // The hub's word decides nothing about the group: only a history that is the group's own
-                // and that broke the rules by its own word closes it.
-                let own = match self.origin(group)? {
-                    Some(origin) if !group.is_room() && self.is_leaf_of(group) => {
-                        arrives(group, founding, commits, &origin)
-                            && self.broke_the_rules(group, founding, commits, origin.epoch)?
-                    }
-                    _ => false,
-                };
-                if own {
-                    self.transact(|this, batch| {
-                        this.begin(0);
-                        let meta = this.meta(group)?;
-                        meta.distrusted = true;
-                        meta.closed = true;
-                        this.put_group(batch, group)?;
-                        this.put_stored(
-                            batch,
-                            group_key(table::CHAIN, SUB_FINDING, group, DeviceId::ZERO.as_bytes()),
-                            Error::BadGroup.code().as_bytes().to_vec(),
-                        );
-                        Ok(())
-                    })?;
-                }
+            rest = later;
+        }
+        self.learn_finish(group)
+    }
+
+    /// Begins a walk of the past of `group` (4.6) at its founding GroupInfo (epoch 0). The group is one this
+    /// device is a leaf of, or follows as an observer (`not-found` otherwise). The Commits follow in
+    /// slices ([`Device::learn_slice`]), and [`Device::learn_finish`] takes the walk or refuses it.
+    ///
+    /// The walk is held in memory only and is no state of the device: nothing of it is written, and
+    /// nothing the device answers reads it, before the finish has compared it with the device's own state.
+    /// A device that is opened again holds no walk: the caller starts again. The device holds one walk at
+    /// a time: a start replaces the walk held, of whatever group, and a slice or finish for another group
+    /// then finds none.
+    ///
+    /// Nothing to learn is no error: the progress then stands at its end and no walk is held. `bad-group`
+    /// for a GroupInfo that is not the group's founding. `room-behind`: learn the room group's past first.
+    /// `group-behind`: learn the main session's past first. `too-large`: the device's first epoch lies
+    /// beyond [`MAX_WALK_COMMITS`].
+    pub fn learn_start(
+        &mut self,
+        group: &GroupId,
+        founding: &[u8],
+    ) -> Result<LearnProgress, Error> {
+        self.owner()?;
+        self.walks.clear();
+        let room_id = self.memory.record.room.ok_or(Error::NoRoom)?;
+        if group.room_id() != room_id {
+            return Err(Error::WrongRoom);
+        }
+        let member = self.memory.groups.contains_key(group);
+        if !member && !self.memory.observers.contains_key(group) {
+            return Err(Error::NotFound);
+        }
+        let origin = self
+            .origin(group)?
+            .ok_or_else(|| damaged("a group's origin"))?;
+        if origin.learned {
+            return Ok(LearnProgress {
+                epoch: origin.epoch,
+                upto: origin.epoch,
+            });
+        }
+        if origin.epoch > MAX_WALK_COMMITS {
+            return Err(Error::TooLarge);
+        }
+        let session: Option<TrommiSession> = if group.is_room() {
+            None
+        } else {
+            let held = self.memory.groups.get(group).and_then(|meta| meta.session);
+            let followed = self
+                .memory
+                .observers
+                .get(group)
+                .and_then(|observer| observer.session().copied());
+            Some(
+                held.or(followed)
+                    .ok_or(Error::Internal("a session group without its extension"))?,
+            )
+        };
+        if session.is_some() {
+            // A session's Commits name room states from the room's founding on.
+            let room_learned = self
+                .origin(&GroupId::room(room_id))?
+                .is_some_and(|origin| origin.learned);
+            if !room_learned {
+                return Err(Error::RoomBehind);
+            }
+        }
+        if let Some(session) = session.filter(|session| !session.parent.is_zero()) {
+            // 5.2.6: a helper session is judged against its main session's agent leaf of the time,
+            // which only a device that holds that session's whole past can tell.
+            if !self.past_sessions()?.seats.contains_key(&session.parent) {
+                return Err(Error::GroupBehind);
+            }
+        }
+        let started = if group.is_room() {
+            Observer::follow_room(founding, None)
+        } else {
+            Observer::follow_founding(founding)
+        };
+        let observer = started.map_err(|_| Error::BadGroup)?;
+        if observer.group() != *group || observer.epoch()? != 0 {
+            return Err(Error::BadGroup);
+        }
+        if let Some(history) = observer.history() {
+            rules::check_room_founding(history.newest()).map_err(|_| Error::BadGroup)?;
+        }
+        let walk = PastWalk {
+            walked: Walked::begin(&observer)?,
+            origin,
+            session,
+            observer,
+            places: Vec::new(),
+            reading: Reading::Rules,
+        };
+        let progress = walk.progress()?;
+        self.walks.insert(*group, walk);
+        Ok(progress)
+    }
+
+    /// Hands the walk of `group` the next Commits of the group's log, in order, as the hub serves them: at
+    /// most [`crate::recovery::MAX_SLICE_COMMITS`] of them, of at most [`crate::recovery::MAX_SLICE_LEN`] bytes together (`too-large`
+    /// otherwise, and the walk stands where it was). Each Commit is judged as every verifier judges it, a
+    /// session's against the room state, and a helper session's against its main session's agent leaf, at
+    /// the place its change number names. What lies beyond the epoch this device's own knowledge begins at
+    /// is not read. Nothing is written.
+    ///
+    /// A slice follows the one before it: the walk takes each Commit only on the state the Commits before
+    /// it led to, so a slice handed twice, out of turn or from another history does not verify there. A
+    /// Commit that does not verify or obey the rules ends the walk (`bad-group`), and the caller starts
+    /// again; so do `room-behind` (process the room's log further) and every other failure. For a session
+    /// group this device is a leaf of, the walk goes on after a Commit that broke the rules, reading the
+    /// rest only to learn whether that history is the group's own (5.2.6): [`Device::learn_finish`] says so.
+    /// `not-found` without a walk.
+    pub fn learn_slice(
+        &mut self,
+        group: &GroupId,
+        commits: &[ServedCommit<'_>],
+    ) -> Result<LearnProgress, Error> {
+        self.owner()?;
+        let Some(mut walk) = self.walks.remove(group) else {
+            return self.nothing_to_learn(group).map(|origin| LearnProgress {
+                epoch: origin.epoch,
+                upto: origin.epoch,
+            });
+        };
+        if !fits_a_slice(commits.iter().map(|commit| commit.commit.len())) {
+            self.walks.insert(*group, walk);
+            return Err(Error::TooLarge);
+        }
+        let room = match walk.session {
+            Some(_) => Some(self.history()?.clone()),
+            None => None,
+        };
+        let sessions = self.past_sessions()?;
+        let closable = walk.session.is_some() && self.is_leaf_of(group);
+        for commit in commits {
+            if walk.observer.epoch()? >= walk.origin.epoch {
+                break;
+            }
+            self.walk_on(&mut walk, commit, room.as_ref(), &sessions, closable)?;
+        }
+        let progress = walk.progress()?;
+        self.walks.insert(*group, walk);
+        Ok(progress)
+    }
+
+    /// Ends the walk of `group` and takes it, if it arrived at this device's own state: the GroupContext
+    /// it reached at the epoch this device's knowledge begins at is byte for byte the one this device's
+    /// state had there (4.6). Only then every earlier epoch is recorded as the device records its own, with
+    /// the Cuts of the Commits on the way, in one write; envelopes of those epochs are checked from then
+    /// on, with the freshness of reading back (9.0.5, check 8). For a group it follows as an observer the
+    /// device takes the room's roles of the earlier epochs, or a main session's agent leaf over that time.
+    ///
+    /// `bad-group` for a walk that was not handed every Commit up to that epoch, that arrives elsewhere, or
+    /// that read a Commit which broke the rules: nothing is written, but for a session group whose own
+    /// history broke the rules by its own word, which is closed (5.2.6) with its finding
+    /// ([`Device::findings`]). Whatever the answer, the walk is gone. Nothing to learn is no error;
+    /// `not-found` without a walk.
+    pub fn learn_finish(&mut self, group: &GroupId) -> Result<Learned, Error> {
+        self.owner()?;
+        let Some(walk) = self.walks.remove(group) else {
+            return self.nothing_to_learn(group).map(|_| Learned { epochs: 0 });
+        };
+        // The one test that authenticates all of it. The device's own state is the one the walk began
+        // for.
+        let arrived = walk.observer.epoch()? == walk.origin.epoch
+            && walk.observer.group_context()? == walk.origin.context
+            && self.origin(group)?.as_ref() == Some(&walk.origin);
+        if !arrived {
+            return Err(Error::BadGroup);
+        }
+        // 4.6, 5.2.1: a session Commit was judged at the room epoch its place named when its slice came;
+        // the device's own log may tell otherwise by now.
+        if walk.reading == Reading::Rules && walk.session.is_some() {
+            walk.walked
+                .still_placed(&|change| self.room_epoch_at(change))?;
+        }
+        match walk.reading {
+            Reading::Rules => self.transact(|this, batch| {
+                this.begin(0);
+                this.take_walk(batch, group, walk)
+            }),
+            Reading::Mls { broke: true } if self.is_leaf_of(group) => {
+                // The history is the group's own, and it broke the rules by its own word.
+                self.transact(|this, batch| {
+                    this.begin(0);
+                    let meta = this.meta(group)?;
+                    meta.distrusted = true;
+                    meta.closed = true;
+                    this.put_group(batch, group)?;
+                    this.put_stored(
+                        batch,
+                        group_key(table::CHAIN, SUB_FINDING, group, DeviceId::ZERO.as_bytes()),
+                        Error::BadGroup.code().as_bytes().to_vec(),
+                    );
+                    Ok(())
+                })?;
                 Err(Error::BadGroup)
             }
-            Err(error) => Err(error),
+            // What failed was the hub's word, or cannot be judged: it says nothing about the group.
+            Reading::OwnWord | Reading::Mls { .. } => Err(Error::BadGroup),
         }
+    }
+
+    /// Gives up the walk of `group`, if one is held.
+    pub fn learn_abandon(&mut self, group: &GroupId) {
+        self.walks.remove(group);
+    }
+
+    /// The origin of a group whose past this device holds already; `not-found` for any other group, of
+    /// which a walk would have to be started first.
+    fn nothing_to_learn(&self, group: &GroupId) -> Result<Origin, Error> {
+        self.origin(group)?
+            .filter(|origin| origin.learned)
+            .ok_or(Error::NotFound)
+    }
+
+    /// Reads the next Commit of a walk, by the reading the walk is in. A Commit that the rules refuse
+    /// ends the walk, unless the group is `closable` (a session group this device is a leaf of): then the
+    /// walk reads on, first by the group's own word, then as MLS alone, to learn at the finish whether
+    /// the history is the group's own.
+    fn walk_on(
+        &self,
+        walk: &mut PastWalk,
+        commit: &ServedCommit<'_>,
+        room: Option<&RoomHistory>,
+        sessions: &PastSessions,
+        closable: bool,
+    ) -> Result<(), Error> {
+        loop {
+            match walk.reading {
+                Reading::Rules => {
+                    // A group's Commits stand in the hub's order.
+                    let ordered = walk
+                        .places
+                        .last()
+                        .is_none_or(|(_, last)| *last < commit.change);
+                    let followed = if ordered {
+                        self.follow_by_the_rules(walk, commit, room, sessions)
+                    } else {
+                        Err(Error::BadGroup)
+                    };
+                    match followed {
+                        Ok(()) => {
+                            walk.places.push((walk.observer.epoch()?, commit.change));
+                            return Ok(());
+                        }
+                        Err(fault) if is_fault(&fault) => return Err(fault),
+                        Err(early @ (Error::RoomBehind | Error::NewerVersion)) => {
+                            return Err(early)
+                        }
+                        Err(_) if closable => walk.reading = Reading::OwnWord,
+                        Err(_) => return Err(Error::BadGroup),
+                    }
+                }
+                Reading::OwnWord => match follow_by_its_own_word(
+                    walk,
+                    commit,
+                    room,
+                    sessions,
+                    &self.memory.room_places,
+                ) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => walk.reading = Reading::Mls { broke: true },
+                    Err(fault) if is_fault(&fault) => return Err(fault),
+                    Err(_) => walk.reading = Reading::Mls { broke: false },
+                },
+                Reading::Mls { .. } => {
+                    return walk
+                        .observer
+                        .follow_unjudged(commit.commit)
+                        .map_err(|error| {
+                            if is_fault(&error) {
+                                error
+                            } else {
+                                Error::BadGroup
+                            }
+                        });
+                }
+            }
+        }
+    }
+
+    /// Follows a Commit as every verifier judges it, at the place its change number names.
+    fn follow_by_the_rules(
+        &self,
+        walk: &mut PastWalk,
+        commit: &ServedCommit<'_>,
+        room: Option<&RoomHistory>,
+        sessions: &PastSessions,
+    ) -> Result<(), Error> {
+        // 5.2.1: a session Commit names the room epoch that was current at its place, and a helper
+        // session's is judged against its main session's agent leaf there.
+        let at = match walk.session {
+            Some(_) => RoomEpochAt::Epoch(self.room_epoch_at(commit.change)?),
+            None => RoomEpochAt::Newest,
+        };
+        let context = Context {
+            room,
+            sessions: &At(sessions, commit.change),
+            recovery: &PublicRules,
+            max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+        };
+        walk.walked
+            .follow(&mut walk.observer, commit, &context, at)
+            .map(|_| ())
     }
 
     /// First contact with a session group this device joined by Welcome (5.2.6): learns the group's past
@@ -477,68 +773,6 @@ impl<S: Storage> Device<S> {
         }
         self.learn_history(group, served.founding, served.commits)
             .map(|_| ())
-    }
-
-    /// Whether the history of the session `group`, which is the group's own ([`arrives`]), breaks section 5
-    /// by its own word, whatever the hub says beside it: each Commit is read against the room epoch its
-    /// signed note names, a helper session's against every agent leaf its main session had in that room
-    /// epoch, and without its `RecoveryAuth`. Change numbers, their order and the attachments are the
-    /// hub's word, and a history that fails only by them says nothing about the group. A Commit this device
-    /// cannot judge (`room-behind`, a newer version) says nothing either.
-    fn broke_the_rules(
-        &self,
-        group: &GroupId,
-        founding: &[u8],
-        commits: &[ServedCommit<'_>],
-        upto: u64,
-    ) -> Result<bool, Error> {
-        let room = self.history()?.clone();
-        let sessions = self.past_sessions()?;
-        let any = AnyPlace {
-            sessions: &sessions,
-            places: &self.memory.room_places,
-            pick: Cell::new(0),
-            offered: Cell::new(1),
-        };
-        let context = Context {
-            room: Some(&room),
-            sessions: &any,
-            recovery: &DetachedAuth,
-            max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
-        };
-        let Ok(mut observer) = Observer::follow_founding(founding) else {
-            return Ok(false);
-        };
-        if observer.group() != *group {
-            return Ok(false);
-        }
-        let mut served = commits.iter();
-        while observer.epoch()? < upto {
-            let Some(commit) = served.next() else {
-                return Ok(false);
-            };
-            let place = Place {
-                change: commit.change,
-                room_epoch: RoomEpochAt::Named,
-            };
-            any.pick.set(0);
-            loop {
-                any.offered.set(1);
-                match observer.process_commit_at(commit.commit, None, &context, &place) {
-                    Ok(_) => break,
-                    Err(fault) if is_fault(&fault) => return Err(fault),
-                    Err(Error::RoomBehind | Error::NewerVersion) => return Ok(false),
-                    Err(_) => {
-                        let next = any.pick.get().saturating_add(1);
-                        if next >= any.offered.get() {
-                            return Ok(true);
-                        }
-                        any.pick.set(next);
-                    }
-                }
-            }
-        }
-        Ok(false)
     }
 
     /// The main sessions whose agent leaf over the whole time this device holds.
@@ -568,111 +802,24 @@ impl<S: Storage> Device<S> {
         Ok(PastSessions { seats })
     }
 
-    fn learn(
+    /// Writes what a walk found, which arrived at this device's own state by the rules: the learned
+    /// records, the Cuts, the room's roles or a main session's agent leaf of the earlier time, and the
+    /// origin as learned, all in `batch`.
+    fn take_walk(
         &mut self,
         batch: &mut Batch,
         group: &GroupId,
-        founding: &[u8],
-        commits: &[ServedCommit<'_>],
-    ) -> Result<Learned, Refusal> {
-        let room_id = self.memory.record.room.ok_or(Error::NoRoom)?;
-        if group.room_id() != room_id {
-            return Err(Error::WrongRoom.into());
-        }
+        walk: PastWalk,
+    ) -> Result<Learned, Error> {
+        let PastWalk {
+            mut origin,
+            session,
+            observer,
+            walked,
+            places,
+            ..
+        } = walk;
         let member = self.memory.groups.contains_key(group);
-        if !member && !self.memory.observers.contains_key(group) {
-            return Err(Error::NotFound.into());
-        }
-        let mut origin = self
-            .origin(group)?
-            .ok_or_else(|| damaged("a group's origin"))?;
-        if origin.learned {
-            return Ok(Learned { epochs: 0 });
-        }
-        let session: Option<TrommiSession> = if group.is_room() {
-            None
-        } else {
-            let held = self.memory.groups.get(group).and_then(|meta| meta.session);
-            let followed = self
-                .memory
-                .observers
-                .get(group)
-                .and_then(|observer| observer.session().copied());
-            Some(
-                held.or(followed)
-                    .ok_or(Error::Internal("a session group without its extension"))?,
-            )
-        };
-        // A session's Commits name room states from the room's founding on.
-        let room_history = match session {
-            None => None,
-            Some(_) => {
-                let room_learned = self
-                    .origin(&GroupId::room(room_id))?
-                    .is_some_and(|origin| origin.learned);
-                if !room_learned {
-                    return Err(Error::RoomBehind.into());
-                }
-                Some(self.history()?.clone())
-            }
-        };
-        let sessions = self.past_sessions()?;
-        if let Some(session) = session.filter(|session| !session.parent.is_zero()) {
-            // 5.2.6: a helper session is judged against its main session's agent leaf of the time,
-            // which only a device that holds that session's whole past can tell.
-            if !sessions.seats.contains_key(&session.parent) {
-                return Err(Error::GroupBehind.into());
-            }
-        }
-
-        let started = if group.is_room() {
-            Observer::follow_room(founding, None)
-        } else {
-            Observer::follow_founding(founding)
-        };
-        let mut observer = started.map_err(|_| Refusal::BadGroup)?;
-        if observer.group() != *group || observer.epoch()? != 0 {
-            return Err(Refusal::BadGroup);
-        }
-        if let Some(history) = observer.history() {
-            rules::check_room_founding(history.newest()).map_err(|_| Refusal::BadGroup)?;
-        }
-        let mut walked = Walked::begin(&observer)?;
-        let mut served = commits.iter();
-        let mut places: Vec<(u64, u64)> = Vec::new();
-        while observer.epoch()? < origin.epoch {
-            // A history that ends before the device's own epoch is cut short.
-            let commit = served.next().ok_or(Refusal::BadGroup)?;
-            // A group's Commits stand in the hub's order.
-            if places
-                .last()
-                .is_some_and(|(_, last)| *last >= commit.change)
-            {
-                return Err(Refusal::BadGroup);
-            }
-            // 5.2.1: a session Commit names the room epoch that was current at its place, and a helper
-            // session's is judged against its main session's agent leaf there.
-            let at = match session {
-                Some(_) => RoomEpochAt::Epoch(self.room_epoch_at(commit.change)?),
-                None => RoomEpochAt::Newest,
-            };
-            let context = Context {
-                room: room_history.as_ref(),
-                sessions: &At(&sessions, commit.change),
-                recovery: &PublicRules,
-                max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
-            };
-            match walked.follow(&mut observer, commit, &context, at) {
-                Ok(_) => places.push((observer.epoch()?, commit.change)),
-                Err(fault) if is_fault(&fault) => return Err(fault.into()),
-                Err(early @ (Error::RoomBehind | Error::NewerVersion)) => return Err(early.into()),
-                Err(_) => return Err(Refusal::BadGroup),
-            }
-        }
-        // The one test that authenticates all of it.
-        if observer.group_context()? != origin.context {
-            return Err(Refusal::BadGroup);
-        }
         let upto = usize::try_from(origin.epoch).map_err(|_| Error::Internal("epoch"))?;
         let (past, arrived) = walked
             .epochs
@@ -688,11 +835,11 @@ impl<S: Storage> Device<S> {
             let mut whole = self.memory.room_places.clone();
             for (epoch, change) in &places {
                 if *whole.entry(*epoch).or_insert(*change) != *change {
-                    return Err(Refusal::BadGroup);
+                    return Err(Error::BadGroup);
                 }
             }
             if !ascending(&whole) {
-                return Err(Refusal::BadGroup);
+                return Err(Error::BadGroup);
             }
             self.take_room_past(batch, group, earlier)?;
             for (epoch, change) in places {
@@ -714,8 +861,10 @@ impl<S: Storage> Device<S> {
             }
         }
         if member {
-            self.record_past(batch, group, past)?;
-            self.correct_first_epoch(batch, group, origin.epoch, arrived)?;
+            // The main sessions as the walk judged the Commits against them, archived ones included.
+            let sessions = self.past_sessions()?;
+            self.record_past(batch, group, past, &sessions)?;
+            self.correct_first_epoch(batch, group, origin.epoch, arrived, &sessions)?;
             // The Commit that led to the device's first epoch is the group's last one until the device
             // processes another.
             let stands_there = self.is_leaf_of(group)
@@ -739,7 +888,7 @@ impl<S: Storage> Device<S> {
         batch: &mut Batch,
         group: &GroupId,
         earlier: &RoomHistory,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Error> {
         let held = self.history()?.clone();
         let reached = earlier.newest().epoch;
         let agrees = held
@@ -747,7 +896,7 @@ impl<S: Storage> Device<S> {
             .filter(|state| state.epoch <= reached)
             .all(|state| earlier.at(state.epoch) == Some(state));
         if !agrees || held.at(reached).is_none() {
-            return Err(Refusal::BadGroup);
+            return Err(Error::BadGroup);
         }
         if self.memory.history.is_some() {
             let mut whole = earlier.clone();
@@ -770,31 +919,45 @@ impl<S: Storage> Device<S> {
 
     /// The record of one epoch as this device keeps it, from what a walk found: the leaves with the roles
     /// the Commit that began the epoch was judged with, and the seat.
-    fn facts_of(&self, group: &GroupId, epoch: &WalkedEpoch) -> Result<EpochFacts, Error> {
+    fn facts_of(
+        &self,
+        group: &GroupId,
+        epoch: &WalkedEpoch,
+        sessions: &dyn SessionsAt,
+    ) -> Result<EpochFacts, Error> {
         let leaves: Vec<(LeafNodeIndex, DeviceId)> = epoch
             .leaves
             .iter()
             .zip(0u32..)
             .map(|(device, index)| (LeafNodeIndex::new(index), *device))
             .collect();
-        self.roles(group, &leaves, epoch.room_epoch, Some(epoch.change))
+        self.roles(
+            group,
+            &leaves,
+            epoch.room_epoch,
+            Some((epoch.change, sessions)),
+        )
     }
 
     /// Records the epochs `past` of `group`, all of which ended, as learned, and ends the chains their
-    /// Commits cut. The room's roles and the sessions' seats of that time are in memory already.
+    /// Commits cut. The room's roles of that time are in memory already; `sessions` are the ones the walk
+    /// judged the Commits against.
     pub(super) fn record_past(
         &mut self,
         batch: &mut Batch,
         group: &GroupId,
         past: &[WalkedEpoch],
+        sessions: &dyn SessionsAt,
     ) -> Result<(), Error> {
-        let mut cuts: Vec<(Cut, u64)> = Vec::new();
+        // Per key, the Cut of its last removal in the past with the epoch that began, and the epoch its
+        // first removal began.
+        let mut cuts: BTreeMap<DeviceId, (Cut, u64, u64)> = BTreeMap::new();
         for (number, epoch) in (0u64..).zip(past) {
             let end = epoch
                 .end
                 .as_ref()
                 .ok_or(Error::Internal("a past epoch without its end"))?;
-            let mut facts = self.facts_of(group, epoch)?;
+            let mut facts = self.facts_of(group, epoch, sessions)?;
             facts.learned = true;
             // The device did not process this Commit when it came: no clock of its own stands for it.
             facts.end = Some(EpochEnd {
@@ -808,15 +971,23 @@ impl<S: Storage> Device<S> {
             );
             let began = number.saturating_add(1);
             for cut in &end.cuts {
-                // The first Cut of a device stands (9.0.10).
-                if !cuts.iter().any(|(held, _)| held.device == cut.device) {
-                    cuts.push((*cut, began));
-                }
+                let first = cuts.get(&cut.device).map_or(began, |held| held.2);
+                cuts.insert(cut.device, (*cut, began, first));
             }
         }
-        // A Cut of the past is earlier than any this device took from a Commit it processed itself.
-        for (cut, began) in cuts {
-            self.end_chain(batch, group, &cut, began)?;
+        // The Cut of a key's last removal stands for its chain, its first removal for what it owned (9.0.10,
+        // 9.2): an earlier Cut of the same key names a part of the chain the later one names too, and is not
+        // applied on its own, which would drop what the key signed after it came back.
+        for (device, (cut, began, first)) in cuts {
+            // A later removal this device processed itself is held already, with what it did to the chain.
+            if self
+                .removal(group, &device)?
+                .is_some_and(|held| held.epoch >= began)
+            {
+                self.removed_first(batch, group, &device, first)?;
+                continue;
+            }
+            self.end_chain(batch, group, &cut, began, first)?;
         }
         Ok(())
     }
@@ -830,16 +1001,17 @@ impl<S: Storage> Device<S> {
         group: &GroupId,
         epoch: u64,
         arrived: &WalkedEpoch,
-    ) -> Result<(), Refusal> {
+        sessions: &dyn SessionsAt,
+    ) -> Result<(), Error> {
         let mut own = self
             .epoch_facts(group, epoch)?
             .ok_or_else(|| damaged("an epoch record"))?;
-        let judged = self.facts_of(group, arrived)?;
+        let judged = self.facts_of(group, arrived, sessions)?;
         let devices = |facts: &EpochFacts| -> BTreeSet<DeviceId> {
             facts.leaves.iter().map(|(device, _)| *device).collect()
         };
         if devices(&own) != devices(&judged) {
-            return Err(Refusal::BadGroup);
+            return Err(Error::BadGroup);
         }
         let corrected = own.leaves != judged.leaves || own.seat != judged.seat;
         own.leaves = judged.leaves;
@@ -875,15 +1047,30 @@ impl<S: Storage> Device<S> {
                 cuts: Vec::new(),
             });
         }
+        let join = u64::try_from(past.len()).map_err(|_| Error::Internal("epoch"))?;
         let mut origin = self
             .origin(group)?
             .ok_or_else(|| damaged("a group's origin"))?;
-        if u64::try_from(past.len()).ok() != Some(origin.epoch) {
+        if origin.epoch < join {
+            // A device that was removed from the group joins it again (5.2.7): its knowledge begins anew
+            // at the join, and the walk is the group's whole past before it, the epochs it held then
+            // included. A join into a state older than one it held is no join of this group's present.
+            if self.newest_epoch(group) != Some(join) {
+                return Err(Error::WrongEpoch);
+            }
+            self.put_origin(batch, group, join)?;
+            origin = self
+                .origin(group)?
+                .ok_or_else(|| damaged("a group's origin"))?;
+        }
+        if origin.epoch != join {
             return Err(Error::Internal(
                 "a walk that does not end where the join begins",
             ));
         }
-        self.record_past(batch, group, &past)?;
+        // The sessions as the check of the group judged its Commits (`Device::join_session_with_code`).
+        let sessions = self.known().historical();
+        self.record_past(batch, group, &past, &sessions)?;
         origin.learned = true;
         self.put_stored(batch, origin_key(group), codec::encode(&origin)?);
         Ok(())

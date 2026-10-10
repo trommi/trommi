@@ -213,8 +213,9 @@ pub struct ServedItem {
 /// A board that loaded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Loaded {
-    /// The frontier now applied: per writer the last envelope of its verified chain, ascending by writer. The
-    /// next snapshot must stand at or beyond it.
+    /// The frontier now applied: per writer the last envelope of its verified chain, ascending by writer: the
+    /// snapshot's frontier with the items after it. A device keeps the snapshot's own frontier, which the next
+    /// snapshot must stand at or beyond.
     pub frontier: Vec<(DeviceId, Head)>,
     /// The served items (by their index in `served`) that lie after the snapshot's frontier and were found
     /// in their writer's chain: the device adds them to the shapes of the snapshot.
@@ -225,14 +226,14 @@ pub struct Loaded {
 
 /// The loading rule of section 10.3, as a check of what the hub served.
 ///
-/// `applied` is the frontier this device applied last for the board ([`Loaded::frontier`] of its last load;
-/// empty the first time), `cuts` the Cut in the room group of every removed device that the frontiers or
+/// `applied` is the frontier of the snapshot this device loaded last for the board (empty the first time):
+/// the same snapshot loads again, an older one does not, `cuts` the Cut in the room group of every removed device that the frontiers or
 /// `chains` name ([`crate::chain::GroupFacts::cut`]), `snapshot` the newest snapshot (the current value of the
 /// register by 9.3.2), `served` the board's items the hub gave from [`Snapshot::items_after_change`] on, and
 /// `chains` per writer its envelopes in ascending order, each verified by the receiver's checks 1 to 5 before
 /// it is handed in here ([`Link::of`]).
 ///
-/// A writer's chain starts after the last envelope of it that this device holds: after its head in `applied`
+/// A writer's chain starts after the last envelope of it that this device holds: after its frontier in `applied`
 /// (taken back to its Cut), and only for a writer the device holds nothing of, after the snapshot's frontier,
 /// the one shortcut of 9.0.6. So where the snapshot's frontier lies beyond the applied head, the chain is the
 /// bridge between the two: it must reach the frontier's number (`withheld`) with the frontier's envelope
