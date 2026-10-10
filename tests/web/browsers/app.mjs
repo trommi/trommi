@@ -106,7 +106,9 @@ const SCREENS = [
 /** What the layout obviously breaks on, as a page can measure it: the page scrolls sideways, or a button or field
  *  that is shown reaches out of the window. */
 const overflow = P => P.js(`const w = document.documentElement.clientWidth
-  const out = [...document.querySelectorAll('button, a, input, textarea, h1, h2')].filter(e => { const r = e.getBoundingClientRect(); return r.width && r.height && getComputedStyle(e).visibility !== 'hidden' && (r.right > w + 1 || r.left < -1) && r.left < w && r.right > 0 }).slice(0, 5).map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + ' ' + Math.round(e.getBoundingClientRect().left) + '…' + Math.round(e.getBoundingClientRect().right))
+  // (an element inside a box that scrolls and clips it, itself within the window, is reached by scrolling that box)
+  const clipped = e => { for (let p = e.parentElement; p && p !== document.body; p = p.parentElement) { const s = getComputedStyle(p); if (/(auto|scroll|hidden|clip)/.test(s.overflowX)) { const b = p.getBoundingClientRect(); return b.left >= -1 && b.right <= w + 1 } } return false }
+  const out = [...document.querySelectorAll('button, a, input, textarea, h1, h2')].filter(e => { const r = e.getBoundingClientRect(); return r.width && r.height && getComputedStyle(e).visibility !== 'hidden' && (r.right > w + 1 || r.left < -1) && r.left < w && r.right > 0 && !clipped(e) }).slice(0, 5).map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + ' ' + Math.round(e.getBoundingClientRect().left) + '…' + Math.round(e.getBoundingClientRect().right))
   return { sideways: document.documentElement.scrollWidth > w + 1 ? document.documentElement.scrollWidth + ' > ' + w : null, out }`).catch(e => ({ error: e.message.split('\\n')[0] }))
 
 const extra = [
