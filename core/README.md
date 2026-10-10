@@ -102,6 +102,12 @@ assumptions have to take in.
   by the Commit of `invite_confirm`; `remove_agents` takes agent devices out. A device without a stored
   invite refuses a Welcome into the room group, and a Commit or a state that enrols it, with `bad-invite`;
   the cargo feature `vectors` changes the source of randomness and nothing of that.
+- A room holds 1000 human devices, 1001 while a recovery runs (spec section 16; it was 32 and 33):
+  `mls::profile::MAX_HUMAN_DEVICES`, `MAX_HUMAN_DEVICES_IN_RECOVERY`, and `MAX_NOTE_LEN`, which follows from
+  them (a note carries a Cut for every leaf a Commit removes: 72 712 bytes now). No stored format changed.
+  A hub passes `MAX_HUMAN_DEVICES` to `Observer::check_posted_commit` outside a recovery and the larger number
+  inside one, as before. What grows with the number of devices is in spec section 17; `tests/core/groups_scale.rs`
+  measures it (`-- --ignored --nocapture` for the run to 1000).
 - Four more codes a hub answers with (spec section 16): `Error::AccountChanged` (`account-changed`, 409),
   `Error::BadEmail` (`bad-email`, 400), `Error::BadPasskey` (`bad-passkey`, 400), `Error::Range` (`range`,
   416); `Error::from_code` reads them. An exhaustive `match` on `Error` takes them in. `bad-email` is also a
