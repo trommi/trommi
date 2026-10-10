@@ -7,15 +7,15 @@ import { rooms, scene, sleep, storage, until } from './helpers.mjs'
 
 const headOf = fake => [...fake.state.rooms.values()][0].change
 
-test('a first catch-up on a slow disk: the position moves while the page is taken, not only at its end', async t => {
+test('a first catch-up on a slow disk: the position moves while a page is taken, batch by batch, not only at its end', async t => {
   const { fake, a, agent, recovery_code } = await scene(t, { agent: true })
-  for (let i = 0; i < 20; i++) { await a.saveNote({ text: `note ${i}` }); await agent.say({ text: `said ${i}` }); await a.sendMessage({ session_id: agent.session_id, text: `asked ${i}` }) }
+  for (let i = 0; i < 150; i++) { await a.saveNote({ text: `note ${i}` }); await agent.say({ text: `said ${i}` }); await a.sendMessage({ session_id: agent.session_id, text: `asked ${i}` }) }
   await a.settle(); await agent.settle()
   const head = headOf(fake)
-  assert.ok(head >= 60, `the room holds ${head} changes`)
-  // every write of the new device's store takes 4 ms (in a browser each is one strict transaction: 10 ms, under
-  // load a hundred times that), and a page is reported at least every 20 ms
-  const R = await rooms({ slow_store_ms: 4, timing: { progress: 20 } })
+  assert.ok(head >= 450, `the room holds ${head} changes: one page, more than two batches of it`)
+  // every durable step of the new device's store takes 40 ms (in a browser it is one strict transaction: 10 ms
+  // on a quiet disk, far more on a loaded one), and a page is reported at least every 20 ms
+  const R = await rooms({ slow_store_ms: 40, timing: { progress: 20 } })
   const { client: c } = await R.joinWithCode({ storage: storage('c'), hub_url: fake.url, room_id: a.model.room.room_id, code: recovery_code, device_name: 'c' })
   t.after(() => c.stop().catch(() => {}))
   const seen = []
@@ -26,7 +26,7 @@ test('a first catch-up on a slow disk: the position moves while the page is take
   assert.equal(fake.requests.slice(pages).filter(r => r.method === 'GET' && r.path === '/v2/changes' && Number(r.query.after) < head).length >= 1, true, 'it asked for the page')
   const steps = [...new Set(seen)]
   assert.deepEqual(steps, [...steps].sort((x, y) => x - y), 'the position only moves upwards')
-  assert.ok(steps.filter(n => n < head).length >= 4, `the position was told at ${steps.length} places while the page was taken (${steps.join(', ')}): a page of ${head} changes must not stand at its start until it is through`)
+  assert.ok(steps.filter(n => n < head).length >= 3, `the position was told at ${steps.length} places while the page was taken (${steps.join(', ')}): a page of ${head} changes must not stand at its start until it is through`)
   assert.ok(c.engine.position >= head)
 })
 

@@ -28,13 +28,19 @@ export class MemoryStore {
       return { revision: state.revision, entries: [...state.entries.values()].map(({ key, value }) => ({ key: key.slice(), value: value.slice() })) }
     })()
   }
-  async apply(write) {
+  apply(write) { return this.applyAll([write]) }
+  /** The writes of one call of the device, in order, all of them or none (as the browser's store does in one
+   *  transaction). `steps` counts these steps: what a browser pays one durable transaction each for. */
+  async applyAll(writes) {
     const state = this.#state
-    if (!state || state.revision !== write.expectedRevision) throw Object.assign(new Error('another owner wrote to this state'), { name: 'StoreConflict' })
+    if (!state || state.revision !== writes[0].expectedRevision) throw Object.assign(new Error('another owner wrote to this state'), { name: 'StoreConflict' })
     if (failing.has(this.name)) { const left = failing.get(this.name) - 1; if (left <= 0) { failing.delete(this.name); throw new Error('the disk is full') } failing.set(this.name, left) }
-    for (const key of write.delete) state.entries.delete(keyOf(key))
-    for (const { key, value } of write.put) state.entries.set(keyOf(key), { key: key.slice(), value: value.slice() })
-    state.revision += 1
+    steps.set(this.name, (steps.get(this.name) ?? 0) + 1)
+    for (const write of writes) {
+      for (const key of write.delete) state.entries.delete(keyOf(key))
+      for (const { key, value } of write.put) state.entries.set(keyOf(key), { key: key.slice(), value: value.slice() })
+      state.revision += 1
+    }
   }
   close() { if (this.#state) this.#state.owned = false; this.#state = null; this.#loaded = null }
 }
@@ -42,9 +48,12 @@ export class MemoryStore {
 class SlowStore extends MemoryStore {
   #ms
   constructor(name, ms) { super(name); this.#ms = ms }
-  async apply(write) { await sleep(this.#ms); return super.apply(write) }
+  async applyAll(writes) { await sleep(this.#ms); return super.applyAll(writes) }
 }
 const failing = new Map()
+const steps = new Map()
+/** How many durable steps the store `name` has written so far (one per call of a device that wrote). */
+export const storeSteps = name => steps.get(name) ?? 0
 /** The `nth` write from now to the store `name` fails, writing nothing (1: the next one). */
 export const failWrite = (name, nth = 1) => failing.set(name, nth)
 export const stored = name => disk.get(name)

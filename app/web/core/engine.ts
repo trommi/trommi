@@ -5,7 +5,8 @@
 // What it does (spec/v2.md 5, 7, 9, 13.2 to 13.4; core/README.md "How a client uses it"):
 //   write, then send   an action seals into the core's outbox and returns; the PUMP posts the outbox, strictly in its
 //                      order, one entry in flight, and tells the core the hub's answer
-//   catch-up           pages of `GET /v2/changes` after the cursor, each item to the core in the hub's order
+//   catch-up           pages of `GET /v2/changes` after the cursor, to the core in the hub's order: a page in batches
+//                      (`feed`: the store writes a batch in one step), each item's outcome told as if it came alone
 //   the live stream    the same items as they happen, the relayed stroke pieces, Welcomes, wishes of other devices
 //   upkeep             joining by Welcome, the steps of the invites this device confirmed (`inviteSteps`), adding a
 //                      human device a live session lacks (5.2.7), cleaning stale sessions (5.2.8), the own-leaf
@@ -29,8 +30,8 @@
 //    halts on it (`blocked`), keeps the bytes and tries them again now and then.
 // 5. `epoch-taken`, `room-behind`, `wrong-epoch` and `stale-session` mean the group moved on: the refusal is
 //    reported, the log is processed, and whoever asked for the Commit or message (`land`) builds it again.
-// 6. The position in the hub's order (`position`, the model's last_envelope_number) moves only in `take`, item by
-//    item, upwards. Both sources are gap-free from a point at or below the position when their first item is
+// 6. The position in the hub's order (`position`, the model's last_envelope_number) moves only in `ingest`, item by
+//    item as each one's outcome is told, upwards. Both sources are gap-free from a point at or below the position when their first item is
 //    taken (a page starts after the cursor it was asked with; hub.ts's stream resumes after the last change it
 //    handed over), so an item at or below the position is one already taken and is skipped. Change numbers are not
 //    consecutive for one device (SealedKeys take numbers, other groups' items are not served), so "the next
@@ -46,7 +47,7 @@
 //   in the hub's order. The engine then reads the room's changes once more from the start (`rescan`): what the
 //   chain could not take is taken, what it holds is read back (`receiveEnvelope(…, ordered = false)`).
 import type {
-  Core, Cut, Device, Draft, ErrorCode, GroupSummary, InviteStep, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, Store,
+  Core, Cut, Device, Draft, ErrorCode, Fed, FeedItem, FeedOutcome, GroupSummary, InviteStep, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, Store,
 } from './core-api.ts'
 import { HubError, logEntry } from './hub.ts'
 import type { ChangeItem, EnvelopeItem, Hub, LogItem, NewAccount, OutboxAnswer, StreamEvent } from './hub.ts'
@@ -134,6 +135,8 @@ const DEAD: readonly string[] = ['gone', 'not-member', 'removed-sender', 'no-roo
 /** Refusals that mean "the group moved on under this Commit or message": process the log and build again. */
 const MOVED: readonly string[] = ['epoch-taken', 'room-behind', 'wrong-epoch', 'stale-session', 'group-behind']
 const PAGE = 500
+/** How many items of a page the core is handed in one call (`feed`): one write of the store for all of them. */
+const FEED = 200
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 
 /** JSON with its keys in order: two values are the same value exactly when these texts are equal. */
@@ -184,6 +187,8 @@ export class Engine {
   /** Per group, the log number up to which `handLog` handed the log to the device. */
   private readonly logRead = new Map<string, number>()
   private rescanDue = false
+  /** How often an envelope of the hub's order was repaired (a Welcome joined for it, its sender's chain fetched). */
+  private repairs = 0
   /** The change after which the next rescan reads (0: everything). */
   private rescanFrom = 0
   private learnDue = false
@@ -500,18 +505,56 @@ export class Engine {
 
   // ---- taking the hub's order
 
-  /** Takes items in the hub's order, inside a job. `upTo`: the hub's cursor after them. */
+  /**
+   * Takes items in the hub's order, inside a job. `upTo`: the hub's cursor after them.
+   *
+   * One item (a live event) is one call into the device. Several (a page) go to the core in batches (`feed`): it
+   * takes them in order and stops at the first it refuses, and the store writes the whole batch in one durable
+   * step instead of one per item, which is what a long catch-up otherwise spends its time on. Each outcome is then
+   * told exactly as if its item had come alone, in order; the item the core refused is taken as a single item (its
+   * repair, or the halt of invariant 7), and what follows it is fed after that.
+   */
   private async ingest(items: readonly ChangeItem[], upTo: number): Promise<void> {
     let changed = false, told = this.now()
+    const step = (item: ChangeItem, moved: boolean): void => {
+      if (moved) changed = true
+      this.position = this.cursor = item.change
+      // A page holds hundreds of items, and on a slow disk it takes seconds. What is taken so far is reported
+      // while it goes on, so the position on screen moves and a slow catch-up is not mistaken for one that stands.
+      if (this.now() - told >= this.timing.progress) { told = this.now(); this.emit('batch', null) }
+    }
     try {
-      for (const item of items) {
-        if (item.change <= this.position) continue
-        if (await this.take(item)) changed = true
-        this.position = this.cursor = item.change
-        // Every item is one durable write of the device's store, and a page holds hundreds: on a slow disk a page
-        // takes many seconds. What is taken so far is reported while it goes on, so the position on screen moves
-        // and a slow catch-up cannot be mistaken for one that stands.
-        if (this.now() - told >= this.timing.progress) { told = this.now(); this.emit('batch', null) }
+      const due = items.filter(item => item.change > this.position)
+      if (due.length === 1) step(due[0]!, await this.take(due[0]!))
+      else for (let at = 0; at < due.length;) {
+        const batch = due.slice(at, at + FEED)
+        const fed = await this.feed(batch)
+        if (!fed) { for (const item of batch) step(item, await this.take(item)); at += batch.length; continue }
+        const outcomes = [...fed.outcomes]
+        // An envelope the core could not take for want of a Welcome or of a stretch of its sender's chain is
+        // repaired when its turn comes. The ones after it in the batch were refused before that repair: they are
+        // fed once more, together, and each is told at its place with the outcome it has then.
+        const waits = (i: number): boolean => { const r = outcomes[i]!.envelope; return r?.outcome === 'refused' && (r.code === 'group-behind' || r.code === 'gap') }
+        let repaired = false
+        try {
+          for (let i = 0; i < outcomes.length; i++) {
+            if (repaired && waits(i)) {
+              const late = outcomes.map((_, j) => j).filter(j => j >= i && waits(j))
+              const again = await this.feed(late.map(j => batch[j]!))
+              for (const [k, outcome] of (again?.outcomes ?? []).entries()) outcomes[late[k]!] = outcome
+              repaired = false
+            }
+            const was = this.repairs
+            step(batch[i]!, await this.told(batch[i]!, outcomes[i]!))
+            if (this.repairs !== was) repaired = true
+          }
+        } catch (e) {
+          // the device holds the whole batch, the model only what was told of it: the rest is read once more
+          await this.wantRescan(this.position)
+          throw e
+        }
+        at += fed.outcomes.length
+        if (fed.refusedAt !== null) { const refused = batch[fed.refusedAt]!; step(refused, await this.take(refused)); at++ }
       }
       this.position = Math.max(this.position, upTo)
     } finally {
@@ -529,19 +572,45 @@ export class Engine {
       this.settleEntry(id, 'accepted')
     }
   }
+  /** Hands the core a batch of a page. Null: the core did not take the call as a whole (nothing of it was taken),
+   *  and the items go one by one. A device that closed itself is opened again, and the failure handed on. */
+  private async feed(items: readonly ChangeItem[]): Promise<Fed | null> {
+    const fed = items.map((item): FeedItem => (item.kind === 'envelope' ? { envelope: { bytes: item.envelope, change: item.change, voidCode: this.voidCode(item) } } : { entry: logEntry(item) }))
+    try { return await this.call(d => d.feed(fed, this.now())) } catch (e) {
+      if (this.isLocal(e)) throw e
+      return null
+    }
+  }
+  /** What follows from one outcome of a batch: the same as if its item had been taken alone. Returns whether the
+   *  device's groups may have changed. */
+  private async told(item: ChangeItem, outcome: FeedOutcome): Promise<boolean> {
+    if (item.kind === 'envelope') { await this.received(item, outcome.envelope, true); return false }
+    if (!outcome.processed) return false
+    await this.processed(item, outcome.processed)
+    return outcome.processed.kind !== 'message' && outcome.processed.kind !== 'skipped'
+  }
+  /**
+   * What follows from an envelope the core was handed in the hub's order: a Welcome or a missing stretch of its
+   * sender's chain is fetched and the envelope tried again; then it is told. `batched`: the core took what followed
+   * it in the same call already, before that repair. Those items were judged without the repaired one, so after
+   * a repair they are read once more (a rescan from this envelope on).
+   */
+  private async received(item: Extract<ChangeItem, { kind: 'envelope' }>, first: ReceivedEnvelope | null, batched: boolean): Promise<void> {
+    let received = first
+    const behind = (): boolean => received?.outcome === 'refused' && received.code === 'group-behind'
+    const was = this.repairs
+    if (behind()) {
+      // a Welcome this device has not taken yet may be what it lacks
+      if (await this.joinWelcomes(null)) { this.repairs++; received = await this.receive(item, true) }
+      if (behind()) { await this.wantRescan(); return }
+    }
+    if (received?.outcome === 'refused' && received.code === 'gap') { this.repairs++; received = await this.fillGap(item, received) }
+    if (batched && this.repairs !== was) await this.wantRescan(item.change)
+    if (received) this.emit('envelope', { received, how: 'ordered' })
+  }
   /** One item. Returns whether the device's groups may have changed. Throws Halt when it does not process. */
   private async take(item: ChangeItem): Promise<boolean> {
-    if (item.kind === 'envelope') {
-      let received = await this.receive(item, true)
-      if (received?.outcome === 'refused' && received.code === 'group-behind') {
-        // a Welcome this device has not taken yet may be what it lacks
-        if (await this.joinWelcomes(null)) received = await this.receive(item, true)
-        if (received?.outcome === 'refused' && received.code === 'group-behind') { await this.wantRescan(); return false }
-      }
-      if (received?.outcome === 'refused' && received.code === 'gap') received = await this.fillGap(item, received)
-      if (received) this.emit('envelope', { received, how: 'ordered' })
-      return false
-    }
+    if (item.kind === 'envelope') { await this.received(item, await this.receive(item, true), false); return false }
     let done: Processed | null
     try { done = await this.process(item) } catch (e) {
       if (!(e instanceof Halt) || e.code !== 'early') throw e
@@ -603,8 +672,12 @@ export class Engine {
       throw new Halt('bad-group', `an entry of a group's log does not process (${code})`)
     }
   }
+  /** The hub's void record of an envelope, as the core names it. */
+  private voidCode(item: { void_code: string | null }): ErrorCode | null {
+    return item.void_code === null ? null : this.core.errorCodeFromText(item.void_code) ?? 'hub-voided-other'
+  }
   private async receive(item: { envelope: Uint8Array; change: number; void_code: string | null }, ordered: boolean): Promise<ReceivedEnvelope | null> {
-    const voided = item.void_code === null ? null : this.core.errorCodeFromText(item.void_code) ?? 'hub-voided-other'
+    const voided = this.voidCode(item)
     try { return await this.call(d => d.receiveEnvelope(item.envelope, item.change, ordered, voided, this.now())) } catch (e) {
       if (this.isLocal(e) || this.core.errorCode(e) === 'core-missing') throw e
       // not an envelope at all: nothing of it is taken
@@ -718,11 +791,21 @@ export class Engine {
     for (let after = this.rescanFrom; after < upTo;) {
       const page = await this.hub.changes(after, PAGE)
       await this.serial(async () => {
-        for (const item of page.items) {
-          if (item.kind !== 'envelope' || item.change > upTo) continue
-          let received = await this.receive(item, true)
+        // (what the chain could not take before is written now: in batches, like a page of a catch-up)
+        const due = page.items.filter((item): item is Extract<ChangeItem, { kind: 'envelope' }> => item.kind === 'envelope' && item.change <= upTo)
+        const again = async (item: Extract<ChangeItem, { kind: 'envelope' }>, first: ReceivedEnvelope | null): Promise<void> => {
+          let received = first
           if (received?.outcome === 'refused' && received.code === 'replay') { received = await this.receive(item, false); if (received) received = await this.readBack(received) }
           if (received && received.outcome !== 'refused') this.emit('envelope', { received, how: 'again' })
+        }
+        for (let at = 0; at < due.length;) {
+          const batch = due.slice(at, at + FEED)
+          const fed = await this.feed(batch)
+          const outcomes = fed?.outcomes ?? []
+          for (const [i, outcome] of outcomes.entries()) await again(batch[i]!, outcome.envelope)
+          at += outcomes.length
+          // the one the core did not take in the batch (or the first of a batch it did not take): alone
+          if (!fed || fed.refusedAt !== null) { await again(batch[outcomes.length]!, await this.receive(batch[outcomes.length]!, true)); at++ }
         }
         this.emit('batch', null)
       })
