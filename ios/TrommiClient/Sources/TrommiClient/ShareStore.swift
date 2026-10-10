@@ -4,7 +4,7 @@
 // under the room's cache key (the Keychain on the phone), written with the phone's file protection.
 import Foundation
 
-/** One link this device made: `<app>/a/<share_id>#<secret>.<file_key>.<sha256>` and until when the hub answers it. */
+/** One link this device made: `<app>/artifact/<share_id>#<secret>.<file_key>.<sha256>` and until when the hub answers it. */
 public struct SharedLink: Codable, Equatable, Sendable {
   public let shareId: String
   public let attachmentId: String

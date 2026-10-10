@@ -13,7 +13,7 @@ function row(u, base, current) {
   const lie = u.subs ? (u.subs.length > EDGES ? [...u.subs].sort((x, y) => Boolean(y.blocked) - Boolean(x.blocked)).slice(0, EDGES) : u.subs) : []
   const cls = ['agent-row', u.parent && 'is-sub', (a.main || u.subs) && 'is-main', shown.open || shown.blocked ? 'has-badge' : '', !u.online && 'is-offline', current === u.id && 'is-active', ['asleep', 'cut', 'gone'].includes(u.parent?.link?.state) && 'is-hushed', u.subs?.some(x => x.id === current) && 'has-active'].filter(Boolean).join(' ')
   return html`<div class="${cls}" id="agent-${a.id}" data-folds-target="row" data-unit="${a.id}" data-members="${a.id}"${u.parent ? html` data-parent="${u.parent.id}" hidden` : ''}${u.subs ? html` data-fold="shut" style="--ghue:${a.hue};--n:${lie.length}" data-controller="lean" data-action="pointermove->lean#follow pointerleave->lean#rest"` : ''}>
-<a class="agent-entry" data-nav href="${base}/s/${encodeURIComponent(a.id)}" draggable="false" title="${shown.online && shown.running ? `Working${a.task ? `: ${a.task}` : ''}` : a.task ?? ''}"${current === u.id ? raw(' aria-current="page"') : ''}>${avatar(a, { crown: !u.subs, working: Boolean(shown.online && shown.running) })}<span class="agent-text"><strong>${a.name}</strong>${shown.online && shown.running ? html`<span class="sr-only"> (working)</span>` : ''}${linkCap(shown.link, shown.unheard)}</span></a>
+<a class="agent-entry" data-nav href="${base}/chat/${encodeURIComponent(a.id)}" draggable="false" title="${shown.online && shown.running ? `Working${a.task ? `: ${a.task}` : ''}` : a.task ?? ''}"${current === u.id ? raw(' aria-current="page"') : ''}>${avatar(a, { crown: !u.subs, working: Boolean(shown.online && shown.running) })}<span class="agent-text"><strong>${a.name}</strong>${shown.online && shown.running ? html`<span class="sr-only"> (working)</span>` : ''}${linkCap(shown.link, shown.unheard)}</span></a>
 ${u.subs ? html`<button class="crown-fold${a.starred ? '' : ' is-plain'}" type="button" aria-expanded="false" title="${tip}" aria-label="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${a.starred ? raw(crownSvg()) : ''}</button>
 <svg class="crown-bracket" aria-hidden="true" data-folds-target="bracket"><path/><path class="crown-bracket-hit" data-action="click->folds#toggle" data-folds-id-param="${a.id}"><title>Fold ${a.name}'s subs</title></path></svg>
 <span class="crown-edges" title="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${lie.map((s, i) => { const q = edgeQuirk(s.id); return html`<i${s.blocked ? raw(' class="is-knock"') : ''} style="--i:${i};--hue:${s.agent.hue};--tilt:${q.tilt}deg;--dx:${q.dx}px">${raw(q.svg)}</i>` })}</span>` : ''}
@@ -455,7 +455,7 @@ export function tabBar(model, base, view) {
   // (in a chat the capsule stays; the composer waits folded into a round glass pen beside it)
   const pen = view === 'session' ? html`<button type="button" class="compose-fab" id="compose-fab" aria-label="Write a message" title="Write a message">${sk('pen')}</button>` : ''
   return html`${pen}<nav class="tabbar" id="tabbar" aria-label="Chat, Desk, Note"${['card', 'picture', 'whiteboard'].includes(view) ? raw(' hidden') : ''}>
-<a class="tab" data-tab="chat" data-nav draggable="false" href="${chat ? `${base}/s/${encodeURIComponent(chat)}` : `${base}/chats`}"${view === 'chats' ? raw(' aria-current="page"') : ''}>${sk('bubble')}<span>Chat</span><i class="tab-badge" id="chat-badge"${unread ? '' : raw(' hidden')}>${unread}</i></a>
+<a class="tab" data-tab="chat" data-nav draggable="false" href="${chat ? `${base}/chat/${encodeURIComponent(chat)}` : `${base}/chats`}"${view === 'chats' ? raw(' aria-current="page"') : ''}>${sk('bubble')}<span>Chat</span><i class="tab-badge" id="chat-badge"${unread ? '' : raw(' hidden')}>${unread}</i></a>
 <a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}>${sk('desk')}<span>Desk</span>${waitingBadge(fresh.length, knocks)}</a>
 <button type="button" class="tab" data-tab="note" aria-controls="corner-note-box" aria-expanded="false">${noteGlyph(model)}<span>Note</span></button>
 </nav>`
@@ -627,7 +627,7 @@ function chatSwitch(model, base, current) {
   const deskId = model.deskOf?.(s)
   const mates = model.agents.filter(a => !a.archived && (model.deskOf?.(a) ?? null) === (deskId ?? null))
   return html`<button type="button" class="phone-pill chat-title" id="phone-pill" aria-haspopup="menu" aria-controls="phone-menu" aria-expanded="false" aria-label="${s.name}: switch to another agent">${avatar(s, { crown: false })}<b>${s.name}</b>${sk('unfold')}</button>
-<div class="phone-menu" id="phone-menu" role="menu" aria-label="Agents of this desk" data-controller="phone-menu" hidden><p class="pm-h">${model.desks?.find(d => d.id === deskId)?.name ?? 'This desk'}</p>${mates.map(a => { const n = fresh.filter(c => c.agent === a.id).length; return html`<a role="menuitem" class="pm-row" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}"${a.id === s.id ? raw(' aria-current="true"') : ''}>${avatar(a, { crown: false })}<b>${a.name}</b>${n ? html`<i class="pm-n">${n}</i>` : ''}${a.id === s.id ? html`<span class="pm-check">${sk('tick')}</span>` : ''}</a>` })}</div>`
+<div class="phone-menu" id="phone-menu" role="menu" aria-label="Agents of this desk" data-controller="phone-menu" hidden><p class="pm-h">${model.desks?.find(d => d.id === deskId)?.name ?? 'This desk'}</p>${mates.map(a => { const n = fresh.filter(c => c.agent === a.id).length; return html`<a role="menuitem" class="pm-row" data-nav draggable="false" href="${base}/chat/${encodeURIComponent(a.id)}"${a.id === s.id ? raw(' aria-current="true"') : ''}>${avatar(a, { crown: false })}<b>${a.name}</b>${n ? html`<i class="pm-n">${n}</i>` : ''}${a.id === s.id ? html`<span class="pm-check">${sk('tick')}</span>` : ''}</a>` })}</div>`
 }
 
 // The chats (a phone's Chat tab): the last chat opened (the crowned session's at first); what is new since.
@@ -640,7 +640,7 @@ const unreadChats = model => { const m = readMap(); return model.agents.filter(a
 export function chatsMain(model, base) {
   const fresh = model.allFresh ?? model.fresh, m = readMap()
   const list = [...model.agents.filter(a => !a.archived)].sort((x, y) => (Number(y.seen) || 0) - (Number(x.seen) || 0))
-  return html`<main id="chats" class="chats-page" aria-label="Chats"><h1 class="chats-h">Chats</h1><ul class="chats-list">${list.map(a => { const n = fresh.filter(c => c.agent === a.id).length, nw = Number(a.seen) > (m[a.id] ?? 0); return html`<li><a class="chats-row${nw ? ' is-new' : ''}" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}">${avatar(a, { crown: false })}<span class="chats-words"><b>${a.name}</b><small>${a.task || a.model || ''}</small></span><span class="chats-side">${a.seen ? agoSpan(Number(a.seen), 'ago') : ''}${n ? html`<i class="pm-n">${n}</i>` : ''}</span></a></li>` })}</ul></main>`
+  return html`<main id="chats" class="chats-page" aria-label="Chats"><h1 class="chats-h">Chats</h1><ul class="chats-list">${list.map(a => { const n = fresh.filter(c => c.agent === a.id).length, nw = Number(a.seen) > (m[a.id] ?? 0); return html`<li><a class="chats-row${nw ? ' is-new' : ''}" data-nav draggable="false" href="${base}/chat/${encodeURIComponent(a.id)}">${avatar(a, { crown: false })}<span class="chats-words"><b>${a.name}</b><small>${a.task || a.model || ''}</small></span><span class="chats-side">${a.seen ? agoSpan(Number(a.seen), 'ago') : ''}${n ? html`<i class="pm-n">${n}</i>` : ''}</span></a></li>` })}</ul></main>`
 }
 
 export function phoneBar(model, base, { view = '', current = null, title = '' } = {}) {
@@ -1010,7 +1010,7 @@ controller('lean', class extends Controller {
 export function register(t) {
   const { BASE, stream } = t
   t.get(/^\/chats$/, ({ req, res }) => { const m = t.model(); t.page(req, res, { model: m, title: 'Chats · Trommi', view: 'chats', main: chatsMain(m, BASE) }) })
-  document.addEventListener('turbo:load', () => { const m = /^\/s\/([^/?#]+)$/.exec(location.pathname); if (m) chatOpened(decodeURIComponent(m[1])) })
+  document.addEventListener('turbo:load', () => { const m = /^\/chat\/([^/?#]+)$/.exec(location.pathname); if (m) chatOpened(decodeURIComponent(m[1])) })
   // The Trommi menu opens and closes (its button, a click beside it, Escape); the theme switch.
   const shut = () => { const doors = $('#brand-doors'); if (doors && !doors.hidden) { doors.hidden = true; $('#brand-menu')?.setAttribute('aria-expanded', 'false'); delete doors.dataset.from } }
   document.addEventListener('click', e => {

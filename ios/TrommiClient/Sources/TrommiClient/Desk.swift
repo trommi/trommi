@@ -24,7 +24,7 @@ public enum Words {
 // ---- a session as the board shows it ----------------------------------------------------------------
 
 public struct Agent: Identifiable, Equatable {
-  public var id: String                 // the board id (address /s/<id>)
+  public var id: String                 // the board id (address /chat/<id>)
   public var deviceId: String           // the session's key in the model (its session_id)
   public var sessionId: String?
   public var agentDeviceId: String?

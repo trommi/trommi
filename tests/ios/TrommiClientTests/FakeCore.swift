@@ -287,7 +287,7 @@ final class FakeTools: CoreTools {
   func boardReduce(snapshot: Bytes?, snapshotFrontier: [WriterHead], items: [BoardItemBody], frontier: [WriterHead]) throws -> Bytes { throw TrommiError("not-built") }
   func encryptFile(_ plain: Bytes) throws -> SealedFile { SealedFile(fileId: systemRandom(16), fileKey: [1], sha256: [2], stored: plain.reversed()) }
   func decryptFile(fileId: FileId, fileKey: Bytes, sha256: Bytes, stored: Bytes) throws -> Bytes { stored.reversed() }
-  func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts { ShareLinkParts(link: app + "/a/x", shareId: systemRandom(16), secretHash: [3]) }
+  func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts { ShareLinkParts(link: app + "/artifact/x", shareId: systemRandom(16), secretHash: [3]) }
   func generatePushKey() throws -> Bytes { systemRandom(32) }
   func recoverySigner(code: Bytes) throws -> CoreSigner { throw TrommiError("not-built") }
   func joinRoomWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> Bytes? { throw TrommiError("not-built") }

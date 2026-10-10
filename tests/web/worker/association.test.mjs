@@ -46,7 +46,22 @@ test('both blocks list the same apps; applinks keeps its paths', async () => {
   const linked = json.applinks.details.flatMap(d => d.appIDs)
   assert.deepEqual(json.webcredentials, { apps: ['NL9YA3V25N.com.trommi.ios', 'NL9YA3V25N.XTL-70CB783D.com.trommi.ios'] })
   assert.deepEqual([...json.webcredentials.apps].sort(), [...linked].sort())
-  assert.deepEqual(json.applinks.details[0].components.map(c => c['/']), ['/card/*', '/s/*', '/settings', '/settings/*'])
+  assert.deepEqual(json.applinks.details[0].components.map(c => c['/']), ['/card/*', '/chat/*', '/s/*', '/settings', '/settings/*'])
+})
+
+test('an address of before moves to its word with a 301: /s/… to /chat/…, /a/… to /artifact/…', async () => {
+  for (const [old, now] of [
+    ['/s/agent-1', '/chat/agent-1'],
+    ['/s/agent-1/files/2?x=1', '/chat/agent-1/files/2?x=1'],
+    ['/s/agent-1/card/7', '/chat/agent-1/card/7'],
+    ['/s/agent-1/a/0123abcd', '/chat/agent-1/artifact/0123abcd'],
+    ['/a/8fHx8fHx8fHx8fHx8fHx8Q', '/artifact/8fHx8fHx8fHx8fHx8fHx8Q'],
+  ]) {
+    const res = await ask(old)
+    assert.equal(res.status, 301, old)
+    assert.equal(res.headers.get('location'), `https://app.trommi.com${now}`, old)
+  }
+  for (const page of ['/chats', '/chat/agent-1', '/artifacts', '/artifact/8fHx8fHx8fHx8fHx8fHx8Q', '/settings']) assert.equal((await ask(page)).status, 200, page)
 })
 
 test('the stand-in does fall back to the app\'s page for another address: the check above is not empty', async () => {

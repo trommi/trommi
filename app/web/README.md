@@ -65,6 +65,7 @@ public/
                        rich text, agent layouts, keys, a card's row, a session's mark, the room's frame
   auth.mjs/.css        account screens, passkeys, password, Emergency Kit, recovery, pairing, devices, settings, log out
   desk  card  session  sidebar  notes  media  agents  whiteboard   (.mjs + .css each)
+  paths.mjs            the addresses of before (/s/…, /a/…) and their new form; shared by app.mjs and worker.js
   demo/                the demo room's code (demo.mjs, screens.css); its data is the repository's demo/data/, which
                        the build copies here as fixture.json and files/ (not in git)
   fonts/  icons/  drawings.json
@@ -249,7 +250,7 @@ The app says **account**, never "room" (inside, the core founds and joins a room
 
 ### Addresses
 
-`/` the Desk · `/desk/:id` switch desk · `/blitz` Blitz · `/artifacts` Artifacts (`?kind=media`, `?kind=pages`) · `/scribble-board` the Scribble Board · `/card/:nr` a card (`?v=n` an older version, `/picture/:n` a picture) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/card/:nr` a card from its session · `/settings` Settings: one list (Invite a Device with its code in place, `?pair=<invite>`; Invite Agent…; a row per page) · `/settings/sessions` the sessions by desk · `/settings/devices` the devices and Push · `/settings/account` the account · `/settings/theme` · `/settings/keys` · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
+`/` the Desk · `/desk/:id` switch desk · `/blitz` Blitz · `/artifacts` Artifacts (`?kind=media`, `?kind=pages`) · `/scribble-board` the Scribble Board · `/card/:nr` a card (`?v=n` an older version, `/picture/:n` a picture) · `/chat/:session` a session (`/files`, `/files/:n`, `/artifact/:id` one of its Artifacts) · `/chat/:session/card/:nr` a card from its session · `/chats` the list of chats · `/artifact/:share` a Share link's page · `/settings` Settings: one list (Invite a Device with its code in place, `?pair=<invite>`; Invite Agent…; a row per page) · `/settings/sessions` the sessions by desk · `/settings/devices` the devices and Push · `/settings/account` the account · `/settings/theme` · `/settings/keys` · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read). The addresses of before, `/s/…` and `/a/…`, move to `/chat/…` and `/artifact/…` (a 301 of `worker.js`, and the router in the page: `public/paths.mjs`).
 
 ### IndexedDB
 

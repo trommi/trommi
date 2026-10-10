@@ -113,7 +113,7 @@ Close a child session when its helper (subagent) is done: its status lines are c
 
 ## share_asset
 
-Release one of your assets for someone outside the board, or take the release back. A released asset gets a Share link, /a/<id>#<secret>.<key>.<hash>, that lasts at most 180 days, with a plain page for the recipient that shows nothing of the board. Release only what the human asked to be passed on. Returns the link.
+Release one of your assets for someone outside the board, or take the release back. A released asset gets a Share link, /artifact/<id>#<secret>.<key>.<hash>, that lasts at most 180 days, with a plain page for the recipient that shows nothing of the board. Release only what the human asked to be passed on. Returns the link.
 
 ## reload_connector
 

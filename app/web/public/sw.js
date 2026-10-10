@@ -70,7 +70,7 @@ self.addEventListener('fetch', event => {
     return
   }
   // (The sandboxed frame keeps its own CSP: it never comes from the shell cache.)
-  if (DEV || url.pathname.startsWith('/demo/') || url.pathname.startsWith('/a/') || url.pathname === '/frame') return
+  if (DEV || url.pathname.startsWith('/demo/') || url.pathname.startsWith('/artifact/') || url.pathname.startsWith('/a/') || url.pathname === '/frame') return
   // Only the app's own files and its pages: anything else on this origin goes to the network untouched.
   if (event.request.mode !== 'navigate' && !SHELL.includes(url.pathname)) return
   // Network first, the cache when offline: a phone that is online never runs yesterday's code. A navigation inside the

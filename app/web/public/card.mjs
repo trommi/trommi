@@ -184,7 +184,7 @@ function cardLead(card, model, base, { version = null } = {}) {
   return html`<div class="tc-lead focus-lead" id="card-lead-${card.id}">
 ${isKnock(card) && card.status === 'open' ? html`<span class="inbox-tab tc-knock">${sk('knock')}${knockWord(card)}</span>` : ''}
 <h1 class="tc-title" id="card-title-${card.id}">${shown.title}</h1>
-<p class="tc-meta">${from ? html`<a class="tc-from" data-nav href="${base}/s/${encodeURIComponent(from.id)}" style="--hue:${from.hue}">${raw(doodleSvg(from.mark))}${from.name}</a><span aria-hidden="true">·</span>` : ''}${agoSpan(card.revised ?? card.created, 'tc-ago')}<span aria-hidden="true">·</span><span>${cardNr(card)}</span>${place ? html`<span aria-hidden="true">·</span><span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>` : ''}${notes.length ? html`<span aria-hidden="true">·</span><a href="#card-thread-${card.id}">${notes.join(' · ')}</a>` : ''}</p>
+<p class="tc-meta">${from ? html`<a class="tc-from" data-nav href="${base}/chat/${encodeURIComponent(from.id)}" style="--hue:${from.hue}">${raw(doodleSvg(from.mark))}${from.name}</a><span aria-hidden="true">·</span>` : ''}${agoSpan(card.revised ?? card.created, 'tc-ago')}<span aria-hidden="true">·</span><span>${cardNr(card)}</span>${place ? html`<span aria-hidden="true">·</span><span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>` : ''}${notes.length ? html`<span aria-hidden="true">·</span><a href="#card-thread-${card.id}">${notes.join(' · ')}</a>` : ''}</p>
 ${text ? html`<div class="tc-text">${rich(text, { assets: model.state.assets })}</div>` : ''}${more ? html`<a class="tc-more-text" href="#card-whole-${card.id}">More in the comments ↓</a>` : ''}
 </div>`
 }
@@ -406,7 +406,7 @@ function placeOf(card, model) {
 }
 
 /** The whole <main> of a card's page. pic: which picture stands. walk: a step of "Next, please". version: as it was
- *  then. from: the session it was opened from (/s/<id>/card/<n>): the way back and the links lead there. */
+ *  then. from: the session it was opened from (/chat/<id>/card/<n>): the way back and the links lead there. */
 function cardPage(card, model, base, { pic = 1, walk = false, error = '', version = null, from = null, more: older = false, full = false, focus = false } = {}) {
   const old = versionOf(card, version)
   const open = card.status === 'open' && !card.with_agent && !old
@@ -414,7 +414,7 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   // whose form is not rendered again, and what is drawn or written meanwhile is kept for it.
   const drafting = card.status === 'open' && card.kind === 'decision' && !old
   const session = from ? model.byAgent.get(from) : null
-  const home = session ? `${base}/s/${encodeURIComponent(session.id)}` : `${base}/`
+  const home = session ? `${base}/chat/${encodeURIComponent(session.id)}` : `${base}/`
   const self = session ? home : base
   const place = old ? null : placeOf(card, model)
   const query = `${walk ? '&walk=1' : ''}${old ? `&v=${old.n}` : ''}`
@@ -1200,7 +1200,7 @@ controller('card', class extends Controller {
       const a = e.target instanceof Element ? e.target.closest('a[href]') : null
       if (!a || a.matches('[data-action~="card#focus"]')) return
       const url = new URL(a.href, location.href)
-      if (url.origin === location.origin && /^\/(?:s\/[^/]+\/)?card\/[\w-]+(?:\/picture\/\d+)?$/.test(url.pathname)) a.href = focusAt(url.href, this.element.hasAttribute('data-focus'))
+      if (url.origin === location.origin && /^\/(?:chat\/[^/]+\/)?card\/[\w-]+(?:\/picture\/\d+)?$/.test(url.pathname)) a.href = focusAt(url.href, this.element.hasAttribute('data-focus'))
     }, true)
     this.element.addEventListener('load', e => { if (e.target.matches?.('.tc-figure img')) this.shape(e.target) }, true)
     this.link()
@@ -1722,7 +1722,7 @@ export function register(t) {
       const text = sayError(err, 'the board did not take it')
       const m = model(), now = card && m.byCard.get(card.id)
       // (Sent from the card's own page, where no Desk row stands: what went wrong comes as a note.)
-      const onCard = /^\/(?:s\/[^/]+\/)?card\/[\w-]+$/.test(new URL(String(req.headers.referer ?? '/'), location.origin).pathname)
+      const onCard = /^\/(?:chat\/[^/]+\/)?card\/[\w-]+$/.test(new URL(String(req.headers.referer ?? '/'), location.origin).pathname)
       if (stay && onCard) return t.sendStream(req, res, t.toast({ head: what === 'message' ? 'Not sent' : 'Not saved', line: text, role: 'alert' }), 422)
       if (stay) return t.sendStream(req, res, now && m.fresh.includes(now) ? stream('replace', `row-${now.id}`, deskRow(now, m, BASE, { error: `Not saved: ${text}`, slim: true })) : t.toast({ head: 'Not saved', line: text, role: 'alert' }))
       if (!now) return t.notFound(req, res, 'This question is not on the board any more.')
@@ -1734,7 +1734,7 @@ export function register(t) {
       // Undone from a toast: back to that card (its page, at its top, the answers in view), unless that is the page already;
       // from a session's page, its card under the session.
       if (form.has('undo')) {
-        const at = new URL(String(req.headers.referer ?? '/'), location.origin).pathname, s = /^\/s\/[^/]+/.exec(at.slice(BASE.length))?.[0]
+        const at = new URL(String(req.headers.referer ?? '/'), location.origin).pathname, s = /^\/chat\/[^/]+/.exec(at.slice(BASE.length))?.[0]
         const to = cardPath(card, s ? `${BASE}${s}` : BASE)
         if (at !== to) return t.sendStream(req, res, stream('visit', to))
       }
@@ -1742,7 +1742,7 @@ export function register(t) {
     }
     const said = quiet ? '' : `said=${id}:${what}`
     const home = String(form.get('back') ?? '')
-    const fromSession = home.startsWith(`${BASE}/s/`) && /^[\w\-/%+.]+$/.test(home)
+    const fromSession = home.startsWith(`${BASE}/chat/`) && /^[\w\-/%+.]+$/.test(home)
     // (the focus mode goes along to the card that comes next: name="focus" in the card's forms)
     const to = (c, under, ...query) => focusAt(`${cardPath(c, under)}?${query.filter(Boolean).join('&')}`, form.has('focus'))
     if (['message', 'reopen', 'takeback', 'wake'].includes(what) && !form.has('stay')) return redirect(res, to(card, fromSession ? home : BASE, what === 'message' ? `said=${id}:message` : ''))
@@ -1765,7 +1765,7 @@ export function register(t) {
     // The comments are a timeline loaded newest page first; ?older=1 loads the page before, then the card is shown.
     const threadOf = card => `chat:card/${card.id}`
     const moreOf = card => card.kind !== 'permission' && Boolean(hub.hasMore?.(threadOf(card)))
-    t.get(/^\/(?:s\/([^/]+)\/)?card\/([\w-]+)$/, async ({ req, res, url, match }) => {
+    t.get(/^\/(?:chat\/([^/]+)\/)?card\/([\w-]+)$/, async ({ req, res, url, match }) => {
       let m = model(), card = m.cardByRef(match[2])
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       if (url.searchParams.has('older') && moreOf(card)) {
@@ -1774,7 +1774,7 @@ export function register(t) {
       }
       cardView(req, res, card, m, { more: moreOf(card), said: String(url.searchParams.get('said') ?? ''), pic: Number(url.searchParams.get('pic')) || 1, walk: url.searchParams.has('walk'), focus: url.searchParams.has('focus'), version: Number(url.searchParams.get('v')) || null, from: match[1] ? decodeURIComponent(match[1]) : null })
     })
-    t.get(/^\/(?:s\/([^/]+)\/)?card\/([\w-]+)\/picture\/(\d+)$/, ({ req, res, url, match: [, from, ref, at] }) => {
+    t.get(/^\/(?:chat\/([^/]+)\/)?card\/([\w-]+)\/picture\/(\d+)$/, ({ req, res, url, match: [, from, ref, at] }) => {
       const m = model(), card = m.cardByRef(ref)
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       if (!imagesOf(card).length && !videosOf(card).length) return redirect(res, focusAt(cardPath(card, BASE), url.searchParams.has('focus')))
@@ -1782,7 +1782,7 @@ export function register(t) {
     })
     // The page a picture was made from (an attachment of the card): shown in the sandboxed frame, never as a page of the
     // app's own origin (controller "assetthumb": decrypted here, handed to /frame as one message).
-    t.get(/^\/(?:s\/([^/]+)\/)?card\/([\w-]+)\/picture\/(\d+)\/page$/, ({ req, res, match: [, from, ref, at] }) => {
+    t.get(/^\/(?:chat\/([^/]+)\/)?card\/([\w-]+)\/picture\/(\d+)\/page$/, ({ req, res, match: [, from, ref, at] }) => {
       const m = model(), card = m.cardByRef(ref)
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       const pic = imagesOf(card)[Number(at) - 1]
@@ -1804,7 +1804,7 @@ export function register(t) {
     })
     t.live('card', {
       take: (m, clients) => new Map([...new Set(clients.filter(c => c.params.get('card')).map(c => `${c.params.get('card')}|${c.params.get('from') ?? ''}`))].map(k => {
-        const [id, from] = k.split('|'), card = m.byCard.get(id), self = from ? `${BASE}/s/${encodeURIComponent(from)}` : BASE
+        const [id, from] = k.split('|'), card = m.byCard.get(id), self = from ? `${BASE}/chat/${encodeURIComponent(from)}` : BASE
         return [k, card ? { face: cardLead(card, m, self), answer: cardAnswer(card, m, BASE), answerSig: cardAnswer({ ...card, draft: undefined }, m, BASE), thread: cardThread(card, m, self, { more: moreOf(card) }) } : null]
       })),
       diff(was, now, client) {

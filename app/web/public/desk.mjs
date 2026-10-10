@@ -818,7 +818,7 @@ export function register(t) {
       if (form.has('from')) {
         const m = model(), from = m0.byCard.get(String(form.get('from'))), home = String(form.get('back') ?? '')
         const said = done.length && WHAT[way] ? `said=${done[0]}:${WHAT[way]}` : ''
-        if (home.startsWith(`${BASE}/s/`) && /^[\w\-/%+.]+$/.test(home)) return redirect(res, `${home}${said ? `?${said}` : ''}`)
+        if (home.startsWith(`${BASE}/chat/`) && /^[\w\-/%+.]+$/.test(home)) return redirect(res, `${home}${said ? `?${said}` : ''}`)
         const walk0 = walkOf(m0), walk = walkOf(m)
         const after = from ? walk0.slice(walk0.indexOf(from) + 1) : []
         const next = done.length ? after.map(c => m.byCard.get(c.id)).find(c => c && walk.includes(c)) ?? walk.find(c => c.id !== from?.id) : from

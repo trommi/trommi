@@ -233,7 +233,7 @@ ${raw(L.gone)}
       const bm = t.model()
       if (!bm.desks?.length) return null
       if (!bm.all) return bm.desk
-      const at = new URL(String(req.headers.referer ?? '/'), location.origin).pathname, ref = /^\/s\/([^/+]+)/.exec(at)?.[1], sid = ref ? (() => { try { return decodeURIComponent(ref) } catch { return ref } })() : null
+      const at = new URL(String(req.headers.referer ?? '/'), location.origin).pathname, ref = /^\/chat\/([^/+]+)/.exec(at)?.[1], sid = ref ? (() => { try { return decodeURIComponent(ref) } catch { return ref } })() : null
       const a = sid ? bm.everyone?.find(x => x.id === sid || x.device_id === sid) : null
       return a ? bm.deskOf(a) : bm.desks[0].id
     }

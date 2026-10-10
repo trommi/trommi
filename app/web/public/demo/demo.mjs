@@ -210,7 +210,7 @@ export class MockClient {
   async shareAttachment(ref, { expires_at = Date.now() + 30 * 86400000 - 60000, app_url = location.origin, keep_link = false } = {}) {
     const b64 = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
     const own = v => (v && v !== NO_KEY ? v : b64())
-    const share_id = hex(32), link = `${app_url}/a/${share_id}#${b64()}.${own(ref.file_key)}.${own(ref.sha256)}`
+    const share_id = hex(32), link = `${app_url}/artifact/${share_id}#${b64()}.${own(ref.file_key)}.${own(ref.sha256)}`
     ;(this.shares ??= new Map()).set(share_id, { attachment_id: ref.attachment_id, expires_at, ...(keep_link ? { link, created_at: Date.now() } : {}) })
     return { share_id, link, expires_at }
   }

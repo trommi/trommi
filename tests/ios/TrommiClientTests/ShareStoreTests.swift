@@ -7,7 +7,7 @@ final class ShareStoreTests: XCTestCase {
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     let key = systemRandom(32), now: UInt64 = 1_791_000_000_000, day: UInt64 = 86_400_000
-    let a = SharedLink(shareId: "s1", attachmentId: "att", link: "https://app.trommi.com/a/s1#x.y.z", expiresAt: now + 30 * day - 60_000)
+    let a = SharedLink(shareId: "s1", attachmentId: "att", link: "https://app.trommi.com/artifact/s1#x.y.z", expiresAt: now + 30 * day - 60_000)
     let store = ShareStore(dir: dir, key: key)
     XCTAssertNil(store.live("att", now: now))
     try store.put(a, now: now)

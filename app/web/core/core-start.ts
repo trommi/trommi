@@ -6,7 +6,7 @@
 // says meanwhile is kept until the page takes it over (remote.ts openRemote({ early })): a Worker drops messages
 // nobody listens to.
 //
-// Not for the demo (?mock=…, or the tab's demo switch), a share page (/a/<id>) or ?core=page (the room in the page).
+// Not for the demo (?mock=…, or the tab's demo switch), a share page (/artifact/<id>) or ?core=page (the room in the page).
 // The worker's address: __TROMMI_CORE_WORKER__ (the deployed bundle, dev/build.mjs), else the dev server's.
 declare const __TROMMI_CORE_WORKER__: string | undefined
 
@@ -22,8 +22,8 @@ function wanted(): boolean {
     if (q.has('mock') ? q.get('mock') !== '0' : sessionStorage.getItem('trommi-mock')) return false
     if ((q.get('core') ?? sessionStorage.getItem('trommi-core')) === 'page') return false
   } catch {}
-  // (a share page: `/a/<share id>`, base64url under protocol v2, hex in the links of before)
-  return !/^\/a\/(?:[0-9a-f]{32}|[A-Za-z0-9_-]{22})$/.test(location.pathname)
+  // (a share page: `/artifact/<share id>`, `/a/<share id>` in the links of before; base64url under protocol v2, hex before that)
+  return !/^\/(?:artifact|a)\/(?:[0-9a-f]{32}|[A-Za-z0-9_-]{22})$/.test(location.pathname)
 }
 
 if (g.__trommiCore === undefined) {

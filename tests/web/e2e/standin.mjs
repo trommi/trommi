@@ -373,7 +373,7 @@ export const steps = [
     await A.until("document.querySelector('#artifacts-list .shr.is-on')", 'the tile says it is shared')
     check((await ui.said(A)).some(t => t.startsWith('Link copied')), 'the toast says "Link copied"', await ui.said(A))
     const link = await A.clipboard()
-    check(/\/a\/[A-Za-z0-9_-]{22}#/.test(link), 'the clipboard holds a share link, its secret after the #', link.replace(/#.*/, '#…'))
+    check(/\/artifact\/[A-Za-z0-9_-]{22}#/.test(link), 'the clipboard holds a share link, its secret after the #', link.replace(/#.*/, '#…'))
     // a third, signed-out profile; the hub override travels in the query (in production the hub is fixed)
     await ctx.within('C', async C => {
     await C.go(link.replace('#', `?hub=${encodeURIComponent(ctx.app.origin)}#`))

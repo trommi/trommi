@@ -1,13 +1,13 @@
 // A session's page: its heading, the conversation, the composer, the filter ("Questions only"), the
 // files drawer and a picture as a page of its own. The markup is the one app.css and session.css style.
 //
-//   GET  <base>/s/<id>                  the conversation: the latest PAGE messages; ?before=<message> the ones before
+//   GET  <base>/chat/<id>                  the conversation: the latest PAGE messages; ?before=<message> the ones before
 //                                       that one (the "Earlier" link at the top loads them into a Turbo Frame)
-//   GET  <base>/s/<id>?only=questions   its questions only
-//   GET  <base>/s/<id>/files            the conversation with the files drawer open; asked from the drawer's frame
+//   GET  <base>/chat/<id>?only=questions   its questions only
+//   GET  <base>/chat/<id>/files            the conversation with the files drawer open; asked from the drawer's frame
 //                                       (header Turbo-Frame), only the drawer's list
-//   GET  <base>/s/<id>/files/<n>        one picture, large (n counts the session's pictures, the oldest is 1)
-//   POST <base>/s/<id>/message          the composer: text, files, copied cards (a FormData of this page)
+//   GET  <base>/chat/<id>/files/<n>        one picture, large (n counts the session's pictures, the oldest is 1)
+//   POST <base>/chat/<id>/message          the composer: text, files, copied cards (a FormData of this page)
 //
 // Windowed: the conversation in memory is the newest page(s) of the session's timeline (the core loads 50 at a time)
 // and what the heads say about its questions. Only what is at least as new as the oldest loaded item of the
@@ -62,7 +62,7 @@ function dayLabel(ts, now = Date.now()) {
 const timeNode = (ts, cls) => html`<time class="${cls}" datetime="${new Date(ts).toISOString()}" title="${FULL.format(ts)}">${clock(ts)}</time>`
 const sizeText = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} kB` : `${n} B`)
 
-const sessionPath = (id, base) => `${base}/s/${encodeURIComponent(id)}`
+const sessionPath = (id, base) => `${base}/chat/${encodeURIComponent(id)}`
 const questionPath = (card, base) => `${sessionPath(card.agent, base)}/card/${encodeURIComponent(card.number ?? card.id)}`
 const choiceLabel = card => { const keys = card.choices?.length ? card.choices : card.choice != null ? [card.choice] : []; return keys.map(key => (card.options ?? []).find(o => o.key === key)?.label ?? key).join(', ') }
 const isPicture = a => kindOf(a) === 'image' && a.url
@@ -188,10 +188,10 @@ function ask(m, s, base) {
 
 // Something the session published (a published object, announced in its conversation): the card shows a picture
 // of it (a picture itself; a page's first screen, drawn by controller "assetthumb" in the sandboxed frame), what it
-// is, Open (the app's own viewer, /s/<id>/a/<object>) and "Copy link": that address, for the people of this room.
+// is, Open (the app's own viewer, /chat/<id>/artifact/<object>) and "Copy link": that address, for the people of this room.
 // (The contents are end-to-end encrypted; a link for someone outside the room needs a release the hub does not have.)
 const ASSET_LABEL = { html: 'Page', image: 'Picture', video: 'Video', audio: 'Audio', file: 'File' }
-const assetPath = (s, id, base) => `${sessionPath(s.id, base)}/a/${id}`
+const assetPath = (s, id, base) => `${sessionPath(s.id, base)}/artifact/${id}`
 /** The published object a message announces, or a stand-in when it was taken back (or is not known here). */
 function assetOf(m, s) {
   const found = s.model.state.assets.find(a => a.id === m.published)
@@ -618,7 +618,7 @@ export function register(t) {
   }, code)
 
   // (An address with a '+' in the place of the id is not a session's: not rendered here.)
-  t.get(/^\/s\/([^/+]+)$/, async ({ req, res, url, match }) => {
+  t.get(/^\/chat\/([^/+]+)$/, async ({ req, res, url, match }) => {
     await firstPage(idOf(match[1]))
     let s = find(req, res, match[1])
     if (!s) return
@@ -627,8 +627,8 @@ export function register(t) {
     if (before) s = await reach(s, before)
     send(req, res, s, { mode: url.searchParams.get('only') === 'questions' ? 'questions' : '', before, text: (url.searchParams.get('say') ?? '').slice(0, 2000), focus: url.searchParams.has('say') })
   })
-  t.get(/^\/s\/([^/+]+)\/questions$/, ({ res, match }) => t.redirect(res, `${BASE}/s/${match[1]}?only=questions`))
-  t.get(/^\/s\/([^/+]+)\/files$/, async ({ req, res, match }) => {
+  t.get(/^\/chat\/([^/+]+)\/questions$/, ({ res, match }) => t.redirect(res, `${BASE}/chat/${match[1]}?only=questions`))
+  t.get(/^\/chat\/([^/+]+)\/files$/, async ({ req, res, match }) => {
     await firstPage(idOf(match[1]))
     const s = find(req, res, match[1])
     if (!s) return
@@ -639,7 +639,7 @@ export function register(t) {
     }
     send(req, res, s, { mode: 'files' })
   })
-  t.get(/^\/s\/([^/+]+)\/files\/(\d+)$/, ({ req, res, url, match }) => {
+  t.get(/^\/chat\/([^/+]+)\/files\/(\d+)$/, ({ req, res, url, match }) => {
     const s = find(req, res, match[1])
     if (!s) return
     if (!s.pictures.length) return t.redirect(res, `${sessionPath(s.id, BASE)}/files`)
@@ -647,7 +647,7 @@ export function register(t) {
   })
 
   // Something it published, in the app's viewer (?from=<message>: the way back to where it was announced).
-  t.get(/^\/s\/([^/+]+)\/a\/([0-9a-f]{8,64})$/, async ({ req, res, url, match }) => {
+  t.get(/^\/chat\/([^/+]+)\/artifact\/([0-9a-f]{8,64})$/, async ({ req, res, url, match }) => {
     await sharesLoaded()
     const s = find(req, res, match[1])
     if (!s) return
@@ -657,7 +657,7 @@ export function register(t) {
 
   // The composer: words, files (pictures, pasted or dropped ones) and copied cards (controller "composer"). The core
   // shows the message at once (its optimistic echo; the composer already put its own in), then seals and sends it.
-  t.post(/^\/s\/([^/+]+)\/message$/, async ({ req, res, match, form }) => {
+  t.post(/^\/chat\/([^/+]+)\/message$/, async ({ req, res, match, form }) => {
     const s = find(req, res, match[1])
     if (!s) return
     const stay = form.has('stay') && t.wantsStream(req)
@@ -1111,7 +1111,7 @@ controller('files', class extends Controller {
     if (!this.hasDrawerTarget) return
     this.drawerTarget.hidden = true
     this.element.removeAttribute('data-files-open')
-    // Opened as its own address (/s/<id>/files): the address becomes the conversation's again.
+    // Opened as its own address (/chat/<id>/files): the address becomes the conversation's again.
     if (/\/files$/.test(location.pathname)) history.replaceState(history.state, '', location.pathname.replace(/\/files$/, '') + location.search)
   }
   key(event) {
