@@ -28,6 +28,8 @@ enum Phase {
 pub struct Stream {
     pub id: u64,
     pub auth: Auth,
+    /// an agent device's: the lease generation it was opened under (13.7)
+    pub generation: Option<u64>,
     tx: mpsc::UnboundedSender<Msg>,
     pub queued: Arc<AtomicUsize>,
     phase: Mutex<Phase>,
@@ -165,6 +167,15 @@ pub fn sse(name: &str, id: Option<i64>, data: &Value) -> Bytes {
     Bytes::from(s)
 }
 
+/// Why a stream is not opened.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// the device has its limit of streams open
+    TooMany,
+    /// a stream of a later lease generation of the device is open: this process no longer holds the lease
+    LeaseLost,
+}
+
 #[derive(Default)]
 pub struct Live {
     rooms: Mutex<HashMap<Room, Vec<Arc<Stream>>>>,
@@ -179,31 +190,50 @@ impl Live {
     /// A new stream of a device, in its catch-up phase. With `replace` it ends the device's older streams at
     /// once (their connections are cut and their places freed): a device holds one stream, and one whose old
     /// stream was never closed by its client (a page reloaded under a service worker keeps it) is not locked out
-    /// by them. `None`: the device has its limit of streams open (only without `replace`).
+    /// by them. An agent device's stream carries the lease `generation` it was opened under: it replaces only
+    /// streams of the same or an earlier generation (or none), and a stream of a later one being open means this
+    /// process lost the lease, whenever its own check of the lease ran (`LeaseLost`, nothing cut). `TooMany`: the
+    /// device has its limit of streams open (only without `replace`).
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         &self,
         auth: Auth,
         replace: bool,
+        generation: Option<u64>,
         per_device: usize,
         buffer: usize,
         expires_at: u64,
         cut: Option<crate::http::Conn>,
-    ) -> Option<(Arc<Stream>, mpsc::UnboundedReceiver<Msg>)> {
+    ) -> Result<(Arc<Stream>, mpsc::UnboundedReceiver<Msg>), Refused> {
         let mut rooms = self.lock();
         let list = rooms.entry(auth.room).or_default();
+        list.retain(|s| !s.is_closed());
+        let own = |s: &&Arc<Stream>| s.auth.device == auth.device;
+        if let Some(g) = generation {
+            if list
+                .iter()
+                .filter(own)
+                .any(|s| s.generation.is_some_and(|other| other > g))
+            {
+                return Err(Refused::LeaseLost);
+            }
+        }
         if replace {
-            for older in list.iter().filter(|s| s.auth.device == auth.device) {
-                older.cut_now();
+            for older in list.iter().filter(own) {
+                if generation.is_none() || older.generation.is_none_or(|o| Some(o) <= generation) {
+                    older.cut_now();
+                }
             }
         }
         list.retain(|s| !s.is_closed());
-        if list.iter().filter(|s| s.auth.device == auth.device).count() >= per_device {
-            return None;
+        if list.iter().filter(own).count() >= per_device {
+            return Err(Refused::TooMany);
         }
         let (tx, rx) = mpsc::unbounded_channel();
         let stream = Arc::new(Stream {
             id: self.next.fetch_add(1, Ordering::Relaxed),
             auth,
+            generation,
             tx,
             queued: Arc::new(AtomicUsize::new(0)),
             phase: Mutex::new(Phase::CatchingUp(Vec::new())),
@@ -214,7 +244,7 @@ impl Live {
             cut,
         });
         list.push(stream.clone());
-        Some((stream, rx))
+        Ok((stream, rx))
     }
 
     pub fn close(&self, room: &Room, id: u64) {

@@ -1357,18 +1357,29 @@ async fn stream(
         _ => true,
     };
     // the stream lives as long as the token it was opened with; the device resumes with a new one
-    let Some((s, rx)) = app.live.open(
+    let generation = if auth.who == Who::Agent { lease } else { None };
+    let (s, rx) = match app.live.open(
         auth,
         replace,
+        generation,
         app.cfg.streams_per_device,
         app.cfg.stream_buffer_bytes,
         until,
         Some(conn.clone()),
-    ) else {
-        return Err(refuse(
-            "too-many",
-            "this device has its limit of streams open",
-        ));
+    ) {
+        Ok(opened) => opened,
+        Err(live::Refused::TooMany) => {
+            return Err(refuse(
+                "too-many",
+                "this device has its limit of streams open",
+            ))
+        }
+        Err(live::Refused::LeaseLost) => {
+            return Err(refuse(
+                "lease-lost",
+                "this process does not hold the device's lease",
+            ))
+        }
     };
     // the device may have been removed between the check of its token and the registration of its stream
     let (a, registered) = (app.clone(), s.clone());
