@@ -137,7 +137,9 @@ pub fn changes(part: Part, target: &str, from: Option<&Manifest>, to: &Manifest)
 /// `v123` (the release of every part) or `hub-v123` (the hub's own releases before it) → 123. One spelling only: no
 /// sign, no leading zero, at most twelve digits.
 pub fn parse_tag(tag: &str) -> Option<u64> {
-    let digits = tag.strip_prefix("hub-v").or_else(|| tag.strip_prefix('v'))?;
+    let digits = tag
+        .strip_prefix("hub-v")
+        .or_else(|| tag.strip_prefix('v'))?;
     let plain = !digits.is_empty()
         && digits.len() <= 12
         && digits.bytes().all(|b| b.is_ascii_digit())
@@ -959,6 +961,10 @@ impl Updater {
                     outcome.message = format!("{}; its updater was not taken: {e}", outcome.message)
                 }
             }
+            // a release whose hub was not taken keeps its folder only while a link names it
+            if outcome.result == "unchanged" && outcome.updater.next.is_none() {
+                self.prune();
+            }
             outcome.updater.reverted = self.reverted();
         }
         log(
@@ -1008,9 +1014,12 @@ impl Updater {
         // The same hub as the one that runs (its inputs, or else its bytes, as `changes` decides): it is not
         // stopped. The release is noted as accepted, so nothing older is taken; `current` stays where it is, and
         // the release's updater is taken by `deploy` if that changed.
+        // A hub that does not answer as well and as its commit takes the path below instead: started anew.
         if let Some(running) = running.as_ref() {
             if let Some(old) = running.manifest.as_ref() {
-                if !changes(Part::Hub, &self.cfg.target, Some(old), &manifest) {
+                let well =
+                    matches!(self.ask().await, Ok((true, Some(ref got))) if *got == old.commit);
+                if well && !changes(Part::Hub, &self.cfg.target, Some(old), &manifest) {
                     if version > state.high_water {
                         let state = State {
                             high_water: version,

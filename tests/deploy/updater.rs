@@ -1193,7 +1193,12 @@ async fn whether_the_updater_is_replaced_is_decided_by_its_inputs_when_both_rele
 #[tokio::test(flavor = "multi_thread")]
 async fn a_release_with_the_same_hub_inputs_leaves_the_hub_running() {
     let b = bench("same-hub").await;
-    let (h1, h2, u1, u2) = ("1".repeat(64), "2".repeat(64), "3".repeat(64), "4".repeat(64));
+    let (h1, h2, u1, u2) = (
+        "1".repeat(64),
+        "2".repeat(64),
+        "3".repeat(64),
+        "4".repeat(64),
+    );
     // what ran before: one of the hub's own releases, then the first release of every part (other bytes: swapped)
     b.publish(make(5).release_without_unit());
     assert!(deploy(&b.updater(), 5).await.ok);
@@ -1220,7 +1225,10 @@ async fn a_release_with_the_same_hub_inputs_leaves_the_hub_running() {
     assert_eq!(outcome.updater.next, None, "the same updater inputs");
     // accepted: nothing older than v7 is taken now
     let outcome = updater.deploy("v6").await;
-    assert_eq!(outcome.result, "unchanged", "what runs is v6: asked again, nothing changes");
+    assert_eq!(
+        outcome.result, "unchanged",
+        "what runs is v6: asked again, nothing changes"
+    );
     b.publish(make_all(4, &h2, &u1).release_without_unit());
     assert_eq!(updater.deploy("v4").await.result, "refused");
 
@@ -1230,7 +1238,12 @@ async fn a_release_with_the_same_hub_inputs_leaves_the_hub_running() {
     b.publish(eight.release_without_unit());
     let outcome = updater.deploy("v8").await;
     assert_eq!(outcome.result, "unchanged", "{}", outcome.message);
-    assert_eq!(outcome.updater.next.as_deref(), Some("v8"), "{}", outcome.message);
+    assert_eq!(
+        outcome.updater.next.as_deref(),
+        Some("v8"),
+        "{}",
+        outcome.message
+    );
     assert_eq!(b.world.starts.load(Ordering::SeqCst), starts);
 
     // v9: another hub: swapped and started
