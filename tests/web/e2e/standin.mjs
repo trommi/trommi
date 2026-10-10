@@ -754,7 +754,7 @@ export const steps = [
   ['the login screen does not ask the hub in a loop where the browser refuses the passkey offer at once', async ctx => {
     await ctx.within('G', async G => {
       const since = ctx.mark()
-      await G.go(`${ctx.app.numeric}/?hub=${encodeURIComponent(ctx.app.numeric)}`)
+      await G.go(`${ctx.app.numeric}/?hub=${encodeURIComponent(ctx.app.numeric)}&passkeys=1`)
       await G.until("document.querySelector('#way-login')", 'the welcome screen')
       await G.click('#way-login')
       await sleep(2000)
