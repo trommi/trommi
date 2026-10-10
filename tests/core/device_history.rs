@@ -1593,3 +1593,63 @@ fn a_helper_commit_is_judged_against_the_main_sessions_agent_leaf_at_its_place()
     );
     assert!(join(&mut signer, &real).is_ok());
 }
+
+#[test]
+fn what_the_hub_says_beside_the_commits_closes_no_session() {
+    let mut w = world(1);
+    let (main, side) = (w.main, w.side);
+    let (free, _, side_at) = takeover_with_a_gap(&mut w);
+    // A device signs in with the code: its join of the helper session is a Commit with a `RecoveryAuth`.
+    let keys = w.keys();
+    let mut signer = new_device();
+    trommi_tests::join_room(&w.hub, &mut signer, &keys).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    for group in [main, side] {
+        trommi_tests::join_session(&w.hub, &mut signer, &keys, &group).unwrap();
+        post_ok(&mut w.hub, &mut signer);
+    }
+    w.sync();
+    let (mut late, store) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    let joined = real
+        .commits
+        .iter()
+        .position(|(_, _, auth)| auth.is_some())
+        .unwrap();
+
+    // Every Commit is the group's own. What is wrong is what the hub alone says.
+    let mut hostile: Vec<(&str, FetchedGroup)> = Vec::new();
+    let mut served = real.clone();
+    served.commits[3].0 = served.commits[2].0;
+    hostile.push(("one change number twice", served));
+    hostile.push((
+        "a Commit placed before its main session's change",
+        moved(&real, side_at, free),
+    ));
+    let mut served = real.clone();
+    served.commits[joined].2 = None;
+    hostile.push(("a join without its RecoveryAuth", served));
+    let mut served = real.clone();
+    served.commits[2].2 = real.commits[joined].2.clone();
+    hostile.push(("a RecoveryAuth beside an ordinary Commit", served));
+    let mut served = real.clone();
+    for (change, _, _) in &mut served.commits {
+        *change += 1_000_000;
+    }
+    hostile.push(("every Commit in a later room epoch", served));
+
+    let before = store.entries();
+    for (what, served) in &hostile {
+        assert_eq!(
+            served.served(|served| late.verify_founding(&side, served)),
+            Err(Error::BadGroup),
+            "{what}"
+        );
+        assert!(store.entries() == before, "{what}: nothing is written");
+        assert_open(&late, &side);
+    }
+    assert!(real
+        .served(|served| late.verify_founding(&side, served))
+        .is_ok());
+    assert_open(&late, &side);
+}
