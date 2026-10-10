@@ -19,6 +19,7 @@ export const demo = await import(pathToFileURL(path.join(PUBLIC, 'demo/demo.mjs'
 
 /** The repository's own demo room (the skeleton every checkout has). */
 export const SKELETON = path.join(REPO, 'demo/data/fixture.json')
-/** The rich demo room, where the export has put it as test data (it is in no repository). */
-export const RICH = '/home/christopher/.cache/trommi-work/v2/web-tmp/fixtures/demo/fixture.json'
+/** The rich demo room: test data that is in no repository. TROMMI_DEMO_FIXTURE names its fixture.json; without it
+ *  the tests that need it are skipped and say so. */
+export const RICH = process.env.TROMMI_DEMO_FIXTURE ?? ''
 export const readFixture = file => JSON.parse(fs.readFileSync(file, 'utf8'))
