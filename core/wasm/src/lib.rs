@@ -204,6 +204,7 @@ methods!(RawDevice {
     observe_room(group_info, expected_state);
     observe_session(group_info);
     process_log_entry(entry, now_ms);
+    feed(items, now_ms);
     send_handover(group, recipient);
     handovers_sent();
     handover_read(group, recipient);

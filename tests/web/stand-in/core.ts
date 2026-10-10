@@ -19,7 +19,7 @@
 // too, as the binding does on its own failure.
 import type * as BindingModule from '../../../core/wasm/js/trommi-core.js'
 import type {
-  Core, Cut, Device, ErrorCode, InviteConfirmed, LogEntry, OutboxEntry, Processed, ServedCommit, ServedEnvelope, ServedGroup, ServedRoom, Store,
+  Core, Cut, Device, ErrorCode, Fed, FeedItem, InviteConfirmed, LogEntry, OutboxEntry, Processed, ServedCommit, ServedEnvelope, ServedGroup, ServedRoom, Store,
 } from '../../../app/web/core/core-api.ts'
 
 export type Binding = typeof BindingModule
@@ -302,6 +302,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
     observeSession: (groupInfo: Uint8Array) => run(() => raw.observeSession(splitFacts(groupInfo).bytes)),
     joinObserve: (groupInfo: Uint8Array) => run(() => raw.joinObserve(splitFacts(groupInfo).bytes)),
     processLogEntry: (entry: LogEntry, nowMs: number) => run((): Promise<Processed> => raw.processLogEntry({ ...entry, bytes: splitFacts(entry.bytes).bytes }, nowMs)),
+    feed: (items: FeedItem[], nowMs: number) => run((): Promise<Fed> => raw.feed(items.map(item => (item.entry ? { entry: { ...item.entry, bytes: splitFacts(item.entry.bytes).bytes } } : item)), nowMs)),
     learnHistory: (g: Uint8Array, founding: Uint8Array, commits: ServedCommit[]) => run(() => raw.learnHistory(g, splitFacts(founding).bytes, commits.map(c => ({ ...c, commit: splitFacts(c.commit).bytes })))),
     verifyFounding: (g: Uint8Array, served: ServedGroup) => run(() => raw.verifyFounding(g, bare(served))),
 
