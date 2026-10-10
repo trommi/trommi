@@ -318,6 +318,7 @@ impl Relay {
         let offer = SignedOffer {
             offer: opened.offer.clone(),
             signature: opened.signature.clone(),
+            mac: opened.mac.clone(),
         };
         let asked = newcomer.join_request(opened.link.clone(), offer, now_ms)?;
         let request = SignedRequest {

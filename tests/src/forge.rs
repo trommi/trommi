@@ -289,7 +289,27 @@ impl Forger {
 
     /// Commits in `group` with `aad` as the authenticated data, adding the given KeyPackages, and merges it.
     pub fn commit(&self, group: &mut MlsGroup, aad: &[u8], adds: &[Vec<u8>]) -> Forged {
-        self.commit_with(group, aad, adds, Vec::new())
+        self.commit_with(group, aad, adds, Vec::new(), Vec::new())
+    }
+
+    /// Commits in `group` with `aad` as the authenticated data, removing the leaves of `removes`, and merges
+    /// it.
+    pub fn commit_removing(
+        &self,
+        group: &mut MlsGroup,
+        aad: &[u8],
+        removes: &[DeviceId],
+    ) -> Forged {
+        let leaves = group
+            .members()
+            .filter(|member| {
+                removes
+                    .iter()
+                    .any(|device| member.signature_key == device.as_bytes())
+            })
+            .map(|member| member.index)
+            .collect();
+        self.commit_with(group, aad, &[], leaves, Vec::new())
     }
 
     /// A Commit that carries a PreSharedKey proposal for an external PSK this member made up and stored: MLS
@@ -306,7 +326,7 @@ impl Forger {
         id.store(&self.provider, &[7; 32])
             .expect("the PSK is stored");
         let proposal = Proposal::PreSharedKey(Box::new(PreSharedKeyProposal::new(id)));
-        self.commit_with(group, aad, &[], vec![proposal])
+        self.commit_with(group, aad, &[], Vec::new(), vec![proposal])
     }
 
     fn commit_with(
@@ -314,6 +334,7 @@ impl Forger {
         group: &mut MlsGroup,
         aad: &[u8],
         adds: &[Vec<u8>],
+        removes: Vec<openmls::prelude::LeafNodeIndex>,
         more: Vec<openmls::prelude::Proposal>,
     ) -> Forged {
         let adds: Vec<KeyPackage> = adds
@@ -335,6 +356,7 @@ impl Forger {
             .commit_builder()
             .consume_proposal_store(false)
             .propose_adds(adds)
+            .propose_removals(removes)
             .add_proposals(more)
             .load_psks(self.provider.storage())
             .expect("no PSK")
