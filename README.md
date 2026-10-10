@@ -93,9 +93,11 @@ Every commit on `main` runs `.github/workflows/build.yml`. It tests and builds t
 then decides whether there is a release: `.github/scripts/inputs.sh` hashes, per part (web, connector, ios, hub,
 updater), the files its build reads (as git lists them for the commit: mode, object, path; `build.yml` and `core/`
 count for every part, tests for none). When one hash differs from the newest release's manifest, the run makes **one
-release `v<N>`** (`release.yml`): every part's files, also the unchanged ones (built again from the same inputs, so
-every release is complete), and one signed `manifest.json` that names each file and says per part its `inputs` hash
-and whether it `changed`. When nothing changed, nothing is released. N is the build's run number (plus
+release `v<N>`** (`release.yml`): every part's files and one signed `manifest.json` that names each file and says per
+part its `inputs` hash and whether it `changed`. Only the changed parts are built for it; an unchanged part's files are
+taken from the newest release (its manifest's signature checked against `release/public-key.pem`, each file against
+its SHA-256 there), so every release is complete. A run that cannot read or check the newest release builds every
+part. When nothing changed, nothing is released. N is the build's run number (plus
 `RELEASE_BASE`): it only grows.
 
 Each part is then delivered only when it changed:
