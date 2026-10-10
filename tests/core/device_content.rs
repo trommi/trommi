@@ -1226,9 +1226,49 @@ fn a_board_is_loaded_from_its_snapshot_and_the_items_after_it() {
     )
     .unwrap();
     assert_eq!(whole.expose(), direct.expose());
-    // An older snapshot is not loaded over a newer frontier.
-    let reopened = b.board_load(&board_id, &served);
-    assert_eq!(reopened, Err(Error::Replay));
+    // The same snapshot loads again, with the items after it: the board is built anew from it.
+    assert_eq!(b.board_load(&board_id, &served), Ok(loaded.clone()));
+    let third = write(&mut hub, &mut a, &strokes(vec![shape(&mut dice).unwrap()]));
+    sync_all(&hub, &mut b);
+    let both = [
+        served[0],
+        ServedItem {
+            sender: a.id(),
+            seq: third.seq,
+            hash: third.envelope_hash,
+        },
+    ];
+    assert_eq!(b.board_load(&board_id, &both).unwrap().fresh, vec![0, 1]);
+    assert_eq!(b.board_load(&board_id, &both).unwrap().fresh, vec![0, 1]);
+    // A newer snapshot written by a device that had read the board only up to the second item is taken,
+    // though this device applied the third item already.
+    let newer = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: vec![(
+            a.id(),
+            trommi_core::chain::Head {
+                seq: second.seq,
+                hash: second.envelope_hash,
+            },
+        )],
+        change: a.cursor(),
+    };
+    let register = |snapshot: &Snapshot| Draft::Register {
+        group: room,
+        name: board::snapshot_name(&board_id),
+        value: Some(json(&snapshot.value().unwrap())),
+    };
+    write(&mut hub, &mut a, &register(&newer));
+    sync_all(&hub, &mut b);
+    assert_eq!(b.board_load(&board_id, &both[1..]).unwrap().fresh, vec![0]);
+    // An older snapshot is not loaded over the frontier of the one loaded last.
+    let older = Snapshot {
+        frontier: Vec::new(),
+        ..newer
+    };
+    write(&mut hub, &mut a, &register(&older));
+    sync_all(&hub, &mut b);
+    assert_eq!(b.board_load(&board_id, &both), Err(Error::Replay));
 }
 
 #[test]

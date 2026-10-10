@@ -360,6 +360,24 @@ fn assert_same_view(w: &World, old: &TestDevice, new: &TestDevice, group: &Group
     assert_eq!(read(new), read(old));
 }
 
+/// Reads every chain of `group` from number 1 in pruned form.
+fn read_pruned(w: &World, device: &mut TestDevice, group: &GroupId) {
+    let served = served_of(&w.hub, group);
+    assert!(served.len() > 5);
+    for stored in &served {
+        let got = device
+            .receive_envelope(
+                &stored.pruned(),
+                stored.change,
+                true,
+                stored.void_code.as_ref(),
+                now(),
+            )
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Chained, "{:?}", got.code);
+    }
+}
+
 /// Reads every chain of `group` from number 1 in pruned form, then every body out of order.
 fn read_all(w: &World, device: &mut TestDevice, group: &GroupId) {
     let served = served_of(&w.hub, group);
@@ -1008,6 +1026,20 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
     assert_eq!(epoch, hub.epoch(&group).unwrap());
     assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
     drop(late);
+    let mut late = reopen(handle.reopened()).unwrap();
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
+    // Removed and let in again with a fresh KeyPackage (3.7), it joins from the Welcome a group whose
+    // leaves all belong: the session stays closed all the same (5.2.6).
+    let package = late.key_package(now()).unwrap();
+    b.readmit_human(&group, &late.id(), &package, now())
+        .unwrap();
+    post_ok(&mut hub, &mut b);
+    assert_eq!(settle_joining(&hub, &mut late).len(), 1);
+    let epoch = late.group(&group).unwrap().epoch;
+    assert_eq!(epoch, hub.epoch(&group).unwrap());
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
+    assert_eq!(late.findings().unwrap().len(), 1);
+    drop(late);
     let late = reopen(handle.reopened()).unwrap();
     assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
 }
@@ -1134,7 +1166,17 @@ fn a_chain_that_begins_at_a_snapshots_frontier_goes_on_and_is_verified_from_numb
         c.register(&room, DESK).unwrap().unwrap().expose(),
         a.register(&room, DESK).unwrap().unwrap().expose()
     );
-    assert_eq!(c.board_load(&board_id, &[]), Err(Error::Replay));
+    // The snapshot loads again, with the items after it the chain shows.
+    assert_eq!(c.board_load(&board_id, &[]), Err(Error::Withheld));
+    let both = [
+        served[0],
+        ServedItem {
+            sender: a.id(),
+            seq: sixth.seq,
+            hash: sixth.envelope_hash,
+        },
+    ];
+    assert_eq!(c.board_load(&board_id, &both).unwrap().fresh, vec![0, 1]);
 }
 
 #[test]
@@ -1462,6 +1504,91 @@ fn a_refused_board_load_starts_no_chain_at_a_frontier_the_cut_contradicts() {
         assert_ne!(got.outcome, EnvelopeOutcome::Refused, "{:?}", got.code);
     }
     assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 2);
+}
+
+#[test]
+fn a_board_loads_its_snapshot_again_after_a_cut_dropped_items() {
+    use trommi_core::board::{self, ServedItem, Snapshot};
+
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    let mut pen = Pen::new(&forger.key);
+    let signed: Vec<_> = (0..3)
+        .map(|_| pen.sign(&claim, &item, &Objects::new(), now()))
+        .collect();
+    let post = |hub: &mut Hub, envelope: &envelope::Envelope| {
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(envelope))
+            .unwrap();
+    };
+    // The remover reads the writer's first item and writes a snapshot that covers it.
+    post(&mut hub, &signed[0]);
+    sync_all(&hub, &mut a);
+    let snapshot = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: vec![(pen.id(), a.chain_head(&room, &pen.id()).unwrap())],
+        change: a.cursor(),
+    };
+    write(
+        &mut hub,
+        &mut a,
+        &Draft::Register {
+            group: room,
+            name: board::snapshot_name(&BoardId::ALL_DESKS),
+            value: Some(json(&snapshot.value().unwrap())),
+        },
+    );
+    // The remover reads the second item too; the other device reads all three and loads the board with the
+    // two after the frontier.
+    post(&mut hub, &signed[1]);
+    sync_all(&hub, &mut a);
+    post(&mut hub, &signed[2]);
+    sync_all(&hub, &mut b);
+    let served: Vec<ServedItem> = signed[1..]
+        .iter()
+        .enumerate()
+        .map(|(at, envelope)| ServedItem {
+            sender: pen.id(),
+            seq: at as u64 + 2,
+            hash: envelope.hash().unwrap(),
+        })
+        .collect();
+    assert_eq!(
+        b.board_load(&BoardId::ALL_DESKS, &served).unwrap().fresh,
+        vec![0, 1]
+    );
+    // The remover had accepted two of them: the Cut drops the third on the other device.
+    let cut = a.cut_of(&room, &forger.id()).unwrap();
+    assert_eq!(cut.seq, 2);
+    a.remove_human_devices(&[cut], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut b);
+    // The same snapshot loads again: the board is built anew without the dropped item.
+    let loaded = b.board_load(&BoardId::ALL_DESKS, &served[..1]).unwrap();
+    assert_eq!(loaded.fresh, vec![0]);
+    assert!(loaded.frontier.contains(&(
+        pen.id(),
+        trommi_core::chain::Head {
+            seq: 2,
+            hash: signed[1].hash().unwrap()
+        }
+    )));
 }
 
 #[test]
@@ -1874,6 +2001,21 @@ fn recover_with(
     room: &GroupId,
     served: &[(Vec<u8>, u64)],
 ) -> Result<trommi_core::recovery::Replacement, Error> {
+    let marked: Vec<(Vec<u8>, u64, Option<Error>)> = served
+        .iter()
+        .map(|(bytes, change)| (bytes.clone(), *change, None))
+        .collect();
+    recover_marked(hub, device, keys, room, &marked)
+}
+
+/// [`recover_with`], each envelope with the void marker the hub serves it with.
+fn recover_marked(
+    hub: &mut Hub,
+    device: &mut TestDevice,
+    keys: &RecoveryKeys,
+    room: &GroupId,
+    served: &[(Vec<u8>, u64, Option<Error>)],
+) -> Result<trommi_core::recovery::Replacement, Error> {
     use trommi_core::device::ServedEnvelope;
     use trommi_core::recovery::check_room;
 
@@ -1889,10 +2031,10 @@ fn recover_with(
     })?;
     let chains: Vec<ServedEnvelope<'_>> = served
         .iter()
-        .map(|(bytes, change)| ServedEnvelope {
+        .map(|(bytes, change, void_code)| ServedEnvelope {
             bytes,
             change: *change,
-            void_code: None,
+            void_code: void_code.as_ref(),
         })
         .collect();
     let built = fetched
@@ -1949,6 +2091,25 @@ fn a_recovery_reads_the_chains_in_the_hubs_order_however_they_are_handed_in() {
         recover_with(&mut hub, &mut device, &keys, &room, &twice).err(),
         Some(Error::BadFormat)
     );
+    // One envelope handed twice, once as stored and once as a void record, in either order.
+    let once = [of(writer), of(follower)].concat();
+    for void_first in [false, true] {
+        let mut marked: Vec<(Vec<u8>, u64, Option<Error>)> = once
+            .iter()
+            .map(|(bytes, change)| (bytes.clone(), *change, None))
+            .collect();
+        let mut voided = marked[0].clone();
+        voided.2 = Some(Error::TooLarge);
+        if void_first {
+            marked.insert(0, voided);
+        } else {
+            marked.push(voided);
+        }
+        assert_eq!(
+            recover_marked(&mut hub, &mut device, &keys, &room, &marked).err(),
+            Some(Error::BadFormat)
+        );
+    }
     // Device after device, the follower's chain first, and one envelope handed twice.
     let mut by_device = [of(follower), of(writer)].concat();
     by_device.push(by_device[0].clone());
@@ -1962,4 +2123,253 @@ fn a_recovery_reads_the_chains_in_the_hubs_order_however_they_are_handed_in() {
     for sender in [writer, follower] {
         assert_eq!(device.chain_head(&room, &sender).unwrap().seq, 1);
     }
+}
+
+/// Hands the walk of `group` one slice of Commits.
+fn hand(
+    device: &mut TestDevice,
+    group: &GroupId,
+    commits: &[trommi_tests::GroupCommit],
+) -> Result<u64, Error> {
+    trommi_tests::served_commits(commits, |slice| device.learn_slice(group, slice))
+        .map(|progress| progress.epoch)
+}
+
+#[test]
+fn a_past_is_learned_in_slices_and_counts_only_when_it_is_finished() {
+    let mut w = world(2);
+    let room = w.room;
+    let (mut new, store) = newcomer(&mut w);
+    let real = fetch_group(&w.hub, &room);
+    let from = new.group(&room).unwrap().own_from;
+    let first = served_of(&w.hub, &room).remove(0);
+    let before = store.entries();
+
+    // The start, then the Commits five at a time. Until the finish nothing of it is the device's state.
+    let progress = new.learn_start(&room, &real.founding).unwrap();
+    assert_eq!((progress.epoch, progress.upto), (0, from));
+    let mut reached = 0;
+    for slice in real.commits.chunks(5) {
+        reached = hand(&mut new, &room, slice).unwrap();
+        assert!(store.entries() == before);
+        assert!(!new.group(&room).unwrap().past_learned);
+        let got = new
+            .receive_envelope(&first.bytes, first.change, true, None, now())
+            .unwrap();
+        assert_eq!(got.code, Some(Error::GroupBehind));
+    }
+    assert_eq!(reached, from);
+    assert!(store.entries() == before);
+    assert_eq!(new.learn_finish(&room).unwrap().epochs, from);
+    assert!(new.group(&room).unwrap().past_learned);
+    let got = new
+        .receive_envelope(&first.bytes, first.change, true, None, now())
+        .unwrap();
+    assert_eq!(got.outcome, EnvelopeOutcome::Chained);
+    // Nothing to learn is no error, at any step.
+    assert_eq!(new.learn_start(&room, &real.founding).unwrap().epoch, from);
+    assert_eq!(hand(&mut new, &room, &real.commits[..2]), Ok(from));
+    assert_eq!(new.learn_finish(&room).unwrap().epochs, 0);
+
+    // The same history, handed in wrongly, to a device that has not learned it.
+    let (mut other, store) = newcomer(&mut w);
+    let real = fetch_group(&w.hub, &room);
+    let from = other.group(&room).unwrap().own_from;
+    let before = store.entries();
+    let unlearned = |device: &TestDevice| {
+        assert!(store.entries() == before);
+        assert!(!device.group(&room).unwrap().past_learned);
+    };
+    // No walk was started.
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[..5]),
+        Err(Error::NotFound)
+    );
+    assert_eq!(other.learn_finish(&room), Err(Error::NotFound));
+    // A finish without all slices.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..5]).unwrap();
+    assert_eq!(other.learn_finish(&room), Err(Error::BadGroup));
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[5..10]),
+        Err(Error::NotFound)
+    );
+    unlearned(&other);
+    // A slice handed twice.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..5]).unwrap();
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[..5]),
+        Err(Error::BadGroup)
+    );
+    assert_eq!(other.learn_finish(&room), Err(Error::NotFound));
+    unlearned(&other);
+    // A slice out of turn.
+    other.learn_start(&room, &real.founding).unwrap();
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[5..10]),
+        Err(Error::BadGroup)
+    );
+    unlearned(&other);
+    // A hub that changes the history between two slices: a Commit of another branch is valid where it
+    // stands, and nothing of the group's own history follows it.
+    let fork = w.fork.0 as usize;
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..fork]).unwrap();
+    let branch = (real.commits[fork].0, w.fork.1.clone(), None);
+    assert_eq!(hand(&mut other, &room, &[branch]), Ok(fork as u64 + 1));
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[fork + 1..fork + 2]),
+        Err(Error::BadGroup)
+    );
+    unlearned(&other);
+    // A slice above the stated size is refused, and the walk stands where it was.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..3]).unwrap();
+    let many = vec![real.commits[3].clone(); trommi_core::recovery::MAX_SLICE_COMMITS + 1];
+    assert_eq!(hand(&mut other, &room, &many), Err(Error::TooLarge));
+    assert_eq!(hand(&mut other, &room, &real.commits[3..]), Ok(from));
+    // The write of the finish fails: nothing of the walk is written, and the walk is gone.
+    store.fail_apply(1);
+    assert!(matches!(other.learn_finish(&room), Err(Error::Storage(_))));
+    unlearned(&other);
+    assert_eq!(other.learn_finish(&room), Err(Error::NotFound));
+    // A device that is opened again in the middle of a walk holds none, and is what it was.
+    other.learn_start(&room, &real.founding).unwrap();
+    hand(&mut other, &room, &real.commits[..7]).unwrap();
+    drop(other);
+    let mut other = reopen(store.reopened()).unwrap();
+    assert!(!other.group(&room).unwrap().past_learned);
+    assert_eq!(
+        hand(&mut other, &room, &real.commits[7..]),
+        Err(Error::NotFound)
+    );
+    // It starts again, and learns.
+    other.learn_start(&room, &real.founding).unwrap();
+    for slice in real.commits.chunks(9) {
+        hand(&mut other, &room, slice).unwrap();
+    }
+    assert_eq!(other.learn_finish(&room).unwrap().epochs, from);
+
+    // The device holds one walk at a time: a start for another group replaces the walk held.
+    let (mut third, _) = newcomer(&mut w);
+    let real = fetch_group(&w.hub, &room);
+    third.learn_start(&room, &real.founding).unwrap();
+    hand(&mut third, &room, &real.commits[..3]).unwrap();
+    assert!(third.learn_start(&w.main, &real.founding).is_err());
+    assert_eq!(
+        hand(&mut third, &room, &real.commits[3..6]),
+        Err(Error::NotFound)
+    );
+}
+
+#[test]
+fn a_walk_in_slices_closes_a_session_only_by_its_own_history() {
+    // The helper session of the first-contact test, read in slices: a walk that meets a Commit which
+    // broke the rules reads on, and the finish closes the session if the history is the group's own.
+    let mut w = world(1);
+    let side = w.side;
+    let (free, _, side_at) = takeover_with_a_gap(&mut w);
+    let (mut late, store) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    let before = store.entries();
+    // The hub's word fails in the middle; the rest is the group's own: nothing is closed.
+    let lied = moved(&real, side_at, free);
+    late.learn_start(&side, &lied.founding).unwrap();
+    for slice in lied.commits.chunks(4) {
+        hand(&mut late, &side, slice).unwrap();
+    }
+    assert_eq!(late.learn_finish(&side), Err(Error::BadGroup));
+    assert!(store.entries() == before);
+    assert_open(&late, &side);
+    // The same with the end of the history withheld: it does not arrive, and says nothing.
+    late.learn_start(&side, &lied.founding).unwrap();
+    hand(&mut late, &side, &lied.commits[..lied.commits.len() - 1]).unwrap();
+    assert_eq!(late.learn_finish(&side), Err(Error::BadGroup));
+    assert_open(&late, &side);
+    late.learn_start(&side, &real.founding).unwrap();
+    for slice in real.commits.chunks(4) {
+        hand(&mut late, &side, slice).unwrap();
+    }
+    assert!(late.learn_finish(&side).is_ok());
+    assert_open(&late, &side);
+}
+
+#[test]
+fn a_helper_sessions_past_keeps_its_opener_when_the_main_session_is_archived() {
+    let mut w = world(1);
+    let (main, side) = (w.main, w.side);
+    let (mut late, _) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    // The main session is archived between the start of the helper session's walk and its finish.
+    late.learn_start(&side, &real.founding).unwrap();
+    for slice in real.commits.chunks(4) {
+        hand(&mut late, &side, slice).unwrap();
+    }
+    late.archive(&main).unwrap();
+    assert!(late.learn_finish(&side).unwrap().epochs > 2);
+    // Every envelope of the past is read as the old device read it: the opener's too.
+    read_pruned(&w, &mut late, &side);
+    assert_same_view(&w, &w.old, &late, &side);
+
+    // The same for a device on which the main session was archived before the walk began.
+    let (mut other, _) = late_in_both(&mut w);
+    other.archive(&main).unwrap();
+    assert!(learn(&w.hub, &mut other, &side).unwrap().epochs > 2);
+    read_pruned(&w, &mut other, &side);
+    assert_same_view(&w, &w.old, &other, &side);
+}
+
+#[test]
+fn a_walk_whose_places_the_devices_own_log_contradicts_by_its_finish_is_not_taken() {
+    let (mut a, mut b, mut agent) = (new_device(), new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    publish_some(&mut hub, &mut a, 4);
+    enrol(&mut hub, &mut a, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    add_human(&mut hub, &mut a, &mut b);
+    publish_some(&mut hub, &mut b, 4);
+    // A device that signed in with the code, which joins the session with it too.
+    let keys = trommi_tests::test_keys();
+    let mut c = new_device();
+    trommi_tests::join_room(&hub, &mut c, &keys).unwrap();
+    post_ok(&mut hub, &mut c);
+    publish_some(&mut hub, &mut c, 4);
+    sync_all(&hub, &mut a);
+    let main = found_main(&mut hub, &mut a, &agent.id());
+    assert_eq!(settle_joining(&hub, &mut b).len(), 1);
+    let log_of = |hub: &Hub, device: &mut TestDevice| {
+        for item in hub.log_after(device.cursor()) {
+            let _ = trommi_tests::process(device, &item);
+        }
+    };
+    log_of(&hub, &mut c);
+    learn(&hub, &mut b, &room).unwrap();
+    let real = fetch_group(&hub, &main);
+    assert_eq!(real.commits.len(), 1);
+
+    // The session's founding Commit is served under a change number far behind the log: the room epoch
+    // it names is the newest the device knows, so the slice passes.
+    let far = moved(&real, real.commits[0].0, hub.change() + 1_000);
+    b.learn_start(&main, &far.founding).unwrap();
+    hand(&mut b, &main, &far.commits).unwrap();
+    assert_eq!(c.session_check_start(&far.founding), Ok(main));
+    trommi_tests::served_commits(&far.commits, |slice| c.session_check_slice(&main, slice))
+        .unwrap();
+    // Before the finish the device processes a room Commit that lies before that number: there, the
+    // room stood in a later epoch than the one the Commit names.
+    a.update(&room, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut b);
+    log_of(&hub, &mut c);
+    assert_eq!(b.learn_finish(&main), Err(Error::BadGroup));
+    assert_eq!(
+        c.join_session_checked(&keys, &main, &far.current, now()),
+        Err(Error::BadGroup)
+    );
+    assert!(c.outbox().is_empty());
+    assert!(!b.group_past(&main).unwrap().unwrap().learned);
+    assert!(b.findings().unwrap().is_empty());
+    // The history at its true place is taken.
+    assert_eq!(learn(&hub, &mut b, &main).unwrap().epochs, 1);
 }

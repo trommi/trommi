@@ -34,6 +34,7 @@ struct Step: Decodable {
   var early: Bool?
   var feed: Bool?
   var register: Bool?
+  var slices: Bool?
   var groups: [String]?
   var session: String?
   var parent: String?
@@ -148,6 +149,21 @@ final class Hub {
       room: room, group: served(room, founding: roomInfos[0], current: roomInfos[roomInfos.count - 1]),
       anchor: roomInfos[Int(anchor.epoch)], rows: rows, links: links,
       sessions: sessions.map { served($0.key, founding: $0.value.founding, current: $0.value.current) })
+  }
+
+  /// The same room in three parts, for a check in steps: everything but the Commits, the Commits of the room group
+  /// and of every session ascending by change number with their groups, and the end.
+  func servedInSteps(_ room: Data, code: Data) throws -> (start: ServedStart, placed: [PlacedCommit], end: ServedEnd) {
+    let whole = try servedRoom(room, code: code)
+    let groups = [room] + sessions.map { $0.key }
+    let placed = ([whole.group] + whole.sessions).enumerated()
+      .flatMap { at, served in served.commits.map { PlacedCommit(group: groups[at], commit: $0) } }
+      .sorted { $0.commit.change < $1.commit.change }
+    return (
+      ServedStart(room: room, founding: whole.group.founding, anchor: whole.anchor, rows: whole.rows, sessions: whole.sessions.map { $0.founding }),
+      placed,
+      ServedEnd(current: whole.group.current, sessions: whole.sessions.map { $0.current }, rows: whole.rows, links: whole.links)
+    )
   }
 
   /// Hands the device everything after its cursor, with every Welcome at its place. Returns what the log's
@@ -417,13 +433,41 @@ final class ScenarioTests: XCTestCase {
       let cuts = try device(step.by).group(group: id).disallowed.map { try device(step.by).cutOf(group: id, device: $0) }
       _ = try device(step.by).cleanSession(group: id, cuts: cuts, replacement: nil, nowMs: now())
     case "join_with_code":
-      let joined = try device(step.device).joinRoomWithCode(recoveryCode: code, served: hub.servedRoom(room, code: code), nowMs: now())
+      let joined: CodeJoin
+      if step.slices == true {
+        // In steps, two Commits a slice. An end that names another number of sessions is bad-format and ends the check.
+        let (start, placed, end) = try hub.servedInSteps(room, code: code)
+        func checked() throws {
+          try device(step.device).codeCheckStart(recoveryCode: code, served: start)
+          for at in stride(from: 0, to: placed.count, by: 2) {
+            try device(step.device).codeCheckSlice(commits: Array(placed[at..<min(at + 2, placed.count)]))
+          }
+        }
+        try checked()
+        var wrong = end
+        wrong.sessions.append(end.current)
+        try check(refusal { _ = try device(step.device).joinRoomChecked(recoveryCode: code, served: wrong, nowMs: now()) } == .badFormat, "an end with another number of sessions was taken")
+        try check(refusal { _ = try device(step.device).joinRoomChecked(recoveryCode: code, served: end, nowMs: now()) } == .notFound, "the check outlived its finish")
+        try checked()
+        joined = try device(step.device).joinRoomChecked(recoveryCode: code, served: end, nowMs: now())
+      } else {
+        joined = try device(step.device).joinRoomWithCode(recoveryCode: code, served: hub.servedRoom(room, code: code), nowMs: now())
+      }
       try check(joined.outbox.count == 1 && joined.unverified.isEmpty && joined.missingLink == nil, "the room did not verify whole")
     case "join_session_with_code":
       let id = try group(step.group)
       guard let session = hub.sessions[id] else { throw Unexpected("the hub has no such session") }
-      _ = try device(step.device).joinSessionWithCode(
-        recoveryCode: code, served: hub.served(id, founding: session.founding, current: session.current), nowMs: now())
+      let served = hub.served(id, founding: session.founding, current: session.current)
+      if step.slices == true {
+        let checked = try device(step.device).sessionCheckStart(founding: session.founding)
+        try check(checked == id, "the session check names another group")
+        for at in stride(from: 0, to: served.commits.count, by: 2) {
+          try device(step.device).sessionCheckSlice(group: id, commits: Array(served.commits[at..<min(at + 2, served.commits.count)]))
+        }
+        _ = try device(step.device).joinSessionChecked(recoveryCode: code, group: id, current: session.current, nowMs: now())
+      } else {
+        _ = try device(step.device).joinSessionWithCode(recoveryCode: code, served: served, nowMs: now())
+      }
     case "earlier_key":
       let id = try group(step.group)
       let held = try [step.device, step.like].allSatisfy { try device($0).holdsKey(group: id, epoch: step.epoch!) }
@@ -436,7 +480,22 @@ final class ScenarioTests: XCTestCase {
     case "recover":
       let served = try hub.servedRoom(room, code: code)
       try check(!served.sessions.isEmpty, "the room is served without its sessions")
-      let plan = try device(step.device).prepareRecovery(recoveryCode: code, served: served)
+      let steps = try hub.servedInSteps(room, code: code)
+      let plan: RecoveryPlan
+      if step.slices == true {
+        // The plan on a check of its own, then the device's check, each in slices of two Commits.
+        try device(step.device).recoveryPlanStart(recoveryCode: code, served: steps.start)
+        for at in stride(from: 0, to: steps.placed.count, by: 2) {
+          try device(step.device).recoveryPlanSlice(commits: Array(steps.placed[at..<min(at + 2, steps.placed.count)]))
+        }
+        plan = try device(step.device).recoveryPlanFinish(recoveryCode: code, served: steps.end)
+        try device(step.device).codeCheckStart(recoveryCode: code, served: steps.start)
+        for at in stride(from: 0, to: steps.placed.count, by: 2) {
+          try device(step.device).codeCheckSlice(commits: Array(steps.placed[at..<min(at + 2, steps.placed.count)]))
+        }
+      } else {
+        plan = try device(step.device).prepareRecovery(recoveryCode: code, served: served)
+      }
       // The chains of the devices to go, as the hub's chain route serves them: every envelope of theirs, in order.
       let gone = Set(plan.removals.flatMap { $0.devices })
       try check(!gone.isEmpty && plan.newCode.count == 32, "the recovery removes nobody")
@@ -444,8 +503,10 @@ final class ScenarioTests: XCTestCase {
         .map { ServedEnvelope(bytes: $0.bytes, change: $0.change, voidCode: nil) }
         .reversed() as [ServedEnvelope]  // in any order: the device sorts them
       try check(!chains.isEmpty, "the devices to go wrote nothing")
-      let built = try device(step.device).recover(
-        recoveryCode: code, served: served, chains: chains, account: Data("the account's sealed copies".utf8), nowMs: now())
+      let account = Data("the account's sealed copies".utf8)
+      let built = step.slices == true
+        ? try device(step.device).recoverChecked(recoveryCode: code, served: steps.end, chains: chains, account: account, nowMs: now())
+        : try device(step.device).recover(recoveryCode: code, served: served, chains: chains, account: account, nowMs: now())
       try check(built.unverified.isEmpty && built.outbox.count >= 2, "the recovery was not built whole")
       code = plan.newCode
     case "early":
@@ -462,7 +523,22 @@ final class ScenarioTests: XCTestCase {
         // Before: its knowledge begins after the founding, and the past is not held; a group it is a leaf of says the same.
         guard let before = try device(step.device).groupPast(group: id), before.fromEpoch >= 1, !before.learned
         else { throw Unexpected("the past of \(name) is not shown as missing") }
-        let learned = try device(step.device).learnHistory(group: id, founding: founding, commits: hub.served(id, founding: founding, current: founding).commits)
+        let commits = hub.served(id, founding: founding, current: founding).commits
+        let learned: Learned
+        if step.slices == true {
+          // In steps, two Commits a slice: the walk counts only when it is finished.
+          var progress = try device(step.device).learnStart(group: id, founding: founding)
+          try check(progress.epoch == 0 && progress.upto == before.fromEpoch, "the walk of \(name) does not begin at the founding")
+          for at in stride(from: 0, to: commits.count, by: 2) {
+            progress = try device(step.device).learnSlice(group: id, commits: Array(commits[at..<min(at + 2, commits.count)]))
+          }
+          try check(
+            progress.epoch == progress.upto && (try device(step.device).groupPast(group: id))?.learned == false,
+            "the walk of \(name) counted before its finish")
+          learned = try device(step.device).learnFinish(group: id)
+        } else {
+          learned = try device(step.device).learnHistory(group: id, founding: founding, commits: commits)
+        }
         try check(learned.epochs >= 1, "nothing of \(name) was learned")
         let after = try device(step.device).groupPast(group: id)
         try check(after?.learned == true && after?.fromEpoch == before.fromEpoch, "the past of \(name) is not shown as learned")
@@ -553,9 +629,48 @@ final class ScenarioTests: XCTestCase {
       let id = try group(name)
       return id.subdata(in: id.startIndex + 32..<id.endIndex)
     }
-    let opened = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: now())
-    try check(try inviteLinkParse(text: opened.link).inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
-    let asked = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature), nowMs: now())
+    let openedAt = now()
+    let opened = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: openedAt)
+    let parts = try inviteLinkParse(text: opened.link)
+    try check(parts.inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
+    // The deadline is the link's fifth part: ten minutes for a human device, fifteen for an agent device.
+    let life = inviteLifeMs(role: role)
+    try check(
+      life == (agent ? 15 : 10) * 60000 && parts.expiresAt == opened.expiresAt && opened.expiresAt == openedAt + life,
+      "the invite does not live \(life) ms")
+    let late = opened.expiresAt + inviteClockToleranceMs() + 1
+    try check(
+      try inviteLinkCheck(text: opened.link, nowMs: openedAt).inviteId == opened.inviteId
+        && (try inviteLinkCheck(text: opened.link, nowMs: late - 1)).expiresAt == opened.expiresAt,
+      "a live link is refused")
+    try check(refusal { _ = try inviteLinkCheck(text: opened.link, nowMs: late) } == .inviteExpired, "an expired link is taken by the stateless check")
+    let read = try newcomer.joinLink(link: opened.link, nowMs: openedAt)
+    try check(read.inviteId == opened.inviteId && read.hub == "https://hub.example" && read.expiresAt == opened.expiresAt, "joinLink reads another link")
+    try check(refusal { _ = try newcomer.joinLink(link: opened.link, nowMs: late) } == .inviteExpired, "joinLink takes an expired link")
+    let offer = SignedOffer(offer: opened.offer, signature: opened.signature, mac: opened.mac)
+    try check(opened.mac.count == 32, "the Offer comes without its MAC")
+    // An expired link, an altered deadline, an Offer of another invite, a missing or wrong MAC: refused, nothing stored.
+    try check(refusal { _ = try newcomer.joinRequest(link: opened.link, offer: offer, nowMs: late) } == .inviteExpired, "an expired link was answered")
+    let cut = opened.link.lastIndex(of: ".")!
+    let deadline = String(opened.link[opened.link.index(after: cut)...])
+    var moved = try base64urlDecode(text: deadline).reduce(UInt64(0)) { $0 << 8 | UInt64($1) } + 60000
+    let movedBytes = Data((0..<8).map { _ -> UInt8 in defer { moved >>= 8 }; return UInt8(moved & 0xff) }.reversed())
+    let altered = String(opened.link[...cut]) + base64urlEncode(bytes: movedBytes)
+    try check(try inviteLinkParse(text: altered).expiresAt == opened.expiresAt + 60000, "the deadline was not altered")
+    try check(refusal { _ = try newcomer.joinRequest(link: altered, offer: offer, nowMs: openedAt) } == .badInvite, "a link with an altered deadline was answered")
+    let other = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: openedAt)
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: other.offer, signature: other.signature, mac: other.mac), nowMs: openedAt) }
+        == .badInvite, "an Offer of another invite was answered")
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature, mac: Data()), nowMs: openedAt) }
+        == .badInvite, "an Offer without its MAC was answered")
+    var wrong = opened.mac
+    wrong[wrong.startIndex] ^= 1
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature, mac: wrong), nowMs: openedAt) }
+        == .badInvite, "an Offer with a wrong MAC was answered")
+    let asked = try newcomer.joinRequest(link: opened.link, offer: offer, nowMs: now())
     try check(asked.role == role && asked.inviter == (try inviter.id()), "the Request is for another invite")
     let accepted = try inviter.inviteAccept(
       inviteId: opened.inviteId, request: SignedRequest(request: asked.request, mac: asked.mac, signature: asked.signature), nowMs: now())
@@ -635,6 +750,17 @@ final class ScenarioTests: XCTestCase {
     try check((try JSONSerialization.jsonObject(with: merged)) is [String: Any], "the board did not reduce to a snapshot file")
     let cut = try reader.cutOf(group: roomGroup, device: writerId)
     try check(cut.seq == second.seq && cut.hash == second.envelopeHash, "the Cut is not the last accepted envelope")
+    // The same snapshot loads again at any time: at once, and after more items were added (it was 'replay' once).
+    let again = try reader.boardLoad(board: allDesks, served: [ServedItem(sender: writerId, seq: second.seq, hash: second.envelopeHash)])
+    try check(again.frontier.first?.seq == second.seq && again.fresh.count == 1, "the same snapshot did not load again")
+    let third = try writer.seal(draft: item, recipient: nil, fileIds: [], nowMs: now())
+    try hub.post(writer)
+    let later = try hub.sync(reader, room: room).envelopes
+    try check(later.count == 1 && later[0].outcome == .applied, "the added item was not applied")
+    let grown = try reader.boardLoad(
+      board: allDesks,
+      served: [ServedItem(sender: writerId, seq: second.seq, hash: second.envelopeHash), ServedItem(sender: writerId, seq: third.seq, hash: third.envelopeHash)])
+    try check(grown.frontier.first?.seq == third.seq && grown.fresh.count == 2, "the same snapshot did not load again after items were added")
   }
 
   func file(bytes: Int, pieces: Int) throws {

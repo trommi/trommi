@@ -5,10 +5,11 @@ use trommi_core::device::{key_package_info, Processed, Received};
 use trommi_core::ids::GroupId;
 use trommi_core::invite::Role;
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::join_invited;
 use trommi_tests::{
     add_human, enrol, found_main, found_room, new_device, now, post_ok, process, publish_some,
-    settle, sync_ok, try_invite, try_invite_between,
+    settle, sync_ok, try_invite, try_invite_at,
 };
 
 #[test]
@@ -263,14 +264,24 @@ fn a_human_device_without_the_recovery_mac_founds_nothing_and_commits_nothing() 
 fn the_own_leaf_update_counts_from_the_last_commit_with_a_path() {
     const HOUR_MS: u64 = 60 * 60 * 1000;
     const DAY_MS: u64 = 24 * HOUR_MS;
-    let (mut a, mut b) = (new_device(), new_device());
+    let mut a = new_device();
     let start = now();
     let (mut hub, room_group) = found_room(&mut a);
 
     // A leaf younger than seven days needs no update (5.2.9).
     assert_eq!(a.update(&room_group, false, start + 6 * DAY_MS), Ok(None));
-    // An Add on the sixth day: a Commit without a path, which leaves the committer's leaf as it was.
-    try_invite_between(&mut a, &mut b, Role::Human, None, start + 6 * DAY_MS, now()).unwrap();
+    // An Add on the sixth day: a Commit without a path, which leaves the committer's leaf as it was. The new
+    // device's clock stands where the inviter's does (12.1.2), and its KeyPackage is valid by the real clock:
+    // a member that makes its KeyPackage by OpenMLS alone.
+    let joiner = Forger::new();
+    try_invite_at(
+        &mut a,
+        &mut joiner.invitee(),
+        Role::Human,
+        None,
+        start + 6 * DAY_MS,
+    )
+    .unwrap();
     post_ok(&mut hub, &mut a);
     // So the leaf is seven days old a day later, and the update is due.
     let due = a
