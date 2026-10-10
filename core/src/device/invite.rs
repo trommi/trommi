@@ -22,10 +22,10 @@ use crate::codec::{Reader, Writer};
 use crate::crypto::{SecretBytes, SigningKey};
 use crate::error::Error;
 use crate::hub_auth::{self, HubAddress, SignedHubAuth, CHALLENGE_LEN};
-use crate::ids::{DeviceId, GroupId, Hash32, InviteId, SessionId};
+use crate::ids::{DeviceId, GroupId, Hash32, InviteId, RoomId, SessionId};
 use crate::invite::{
     self, CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Request, Role, SignedOffer,
-    SignedRequest, SignedReveal, CONFIRM_MS, INVITE_LIFE_MS,
+    SignedRequest, SignedReveal, CONFIRM_MS,
 };
 use crate::mls::group;
 use crate::mls::key_package;
@@ -35,6 +35,9 @@ use std::collections::BTreeSet;
 
 /// How many invites a device holds open at once (section 16).
 pub const MAX_OPEN_INVITES: usize = 16;
+/// How long the record of an invite that can no longer be answered or confirmed is kept before it goes: until
+/// then a late Request or confirmation meets `invite-expired` rather than `not-found`.
+const KEPT_AFTER_END_MS: u64 = 10 * 60 * 1000;
 
 const SUB_INVITER: u8 = 0;
 const SUB_FOLLOW_UP: u8 = 1;
@@ -201,10 +204,23 @@ pub struct InviteOpened {
     pub invite_id: InviteId,
     /// The link to hand to the new device. It holds the invite's secret.
     pub link: SecretBytes,
-    /// The last moment a Request is accepted.
+    /// The last moment a Request is accepted, by this device's clock: the link's deadline.
     pub expires_at: u64,
-    /// The Offer to publish.
+    /// The Offer to publish, with its signature and its MAC (`POST /v2/invites { offer, signature, mac }`).
     pub signed_offer: SignedOffer,
+}
+
+/// What a link names, as the new device reads it before it fetches anything (12.1.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinLink {
+    /// The hub to fetch the Offer from.
+    pub hub: HubAddress,
+    /// The room.
+    pub room_id: RoomId,
+    /// The invite, by which the hub serves the Offer (`GET /v2/invites/{invite_id}`).
+    pub invite_id: InviteId,
+    /// The link's deadline, by the inviter's clock.
+    pub expires_at: u64,
 }
 
 /// What the inviter publishes and shows once it accepted a Request.
@@ -359,7 +375,8 @@ impl<S: Storage> Device<S> {
     /// or with `session_id` takes that one over. `app` is the app's origin for the link, `hub` the hub the
     /// room lives on. Only a human device invites (`forbidden`); at most [`MAX_OPEN_INVITES`] are open at
     /// once (`too-many`); `not-found` for a session to take over that is no live main session this device
-    /// holds. The invite lives ten minutes from `now_ms`.
+    /// holds. The invite lives from `now_ms` ten minutes for a human device, fifteen for an agent device
+    /// ([`Role::invite_life_ms`]); the link carries that deadline.
     pub fn invite_open(
         &mut self,
         role: Role,
@@ -398,7 +415,7 @@ impl<S: Storage> Device<S> {
                 };
                 if counts {
                     open = open.saturating_add(1);
-                } else if now_ms > answered_until.saturating_add(INVITE_LIFE_MS) {
+                } else if now_ms > answered_until.saturating_add(KEPT_AFTER_END_MS) {
                     this.delete_stored(batch, key);
                 }
             }
@@ -876,10 +893,31 @@ impl<S: Storage> Device<S> {
 
     // ---- the new device ----
 
+    /// Reads a link before anything is fetched for it (12.1.2): what to fetch the Offer by, after the deadline
+    /// was held against this device's clock `now_ms` ([`InviteLink::check_deadline`]). `room-exists` for a
+    /// device that holds a room; `bad-format`, `newer-version` for the link; `invite-expired` more than two
+    /// minutes past its deadline; `bad-invite` for a deadline further ahead than any invite lives.
+    pub fn join_link(&self, link: &str, now_ms: u64) -> Result<JoinLink, Error> {
+        self.owner()?;
+        if self.memory.record.room.is_some() {
+            return Err(Error::RoomExists);
+        }
+        let link = InviteLink::parse(link)?;
+        link.check_deadline(now_ms)?;
+        Ok(JoinLink {
+            invite_id: link.invite_id()?,
+            hub: link.hub.clone(),
+            room_id: link.room_id,
+            expires_at: link.expires_at,
+        })
+    }
+
     /// Checks the Offer served for `link` and answers it (12.1.2) with a fresh KeyPackage of this device,
-    /// whose private part is stored, with the Request, before the Request is returned. A device joins one
-    /// room, once: `room-exists` for a device that holds one. `bad-format`, `newer-version` for the link;
-    /// `bad-invite`, `bad-signature`, `invite-expired` for the Offer.
+    /// whose private part is stored, with the Request, before the Request is returned. Nothing is stored for
+    /// an Offer that is refused, and the stored invite holds only an Offer whose MAC verified. A device joins
+    /// one room, once: `room-exists` for a device that holds one. `bad-format`, `newer-version` for the link;
+    /// `bad-invite` (a MAC that is missing, short or wrong among others), `bad-signature`, `invite-expired`
+    /// for the Offer and the deadline, as [`Joiner::request`] says.
     pub fn join_request(
         &mut self,
         link: &str,

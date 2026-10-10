@@ -179,8 +179,10 @@ fn no_freed_block_holds_a_secret() {
     let hub = HubAddress::parse("https://hub.example.org").unwrap();
     let hub_text = ids::base64url_encode(hub.as_str().as_bytes());
     let room = RoomId::new([7; 32]);
+    // Opened at 1 000 for a human device: the deadline ten minutes later.
+    let deadline = ids::base64url_encode(&(1_000u64 + 10 * 60 * 1000).to_be_bytes());
     let link = format!(
-        "{APP}/join#v2.{hub_text}.{}.{KEY_TEXT}",
+        "{APP}/join#v2.{hub_text}.{}.{KEY_TEXT}.{deadline}",
         room.to_base64url()
     );
     let inviter_key = SigningKey::from_seed(Secret::new([1; 32]));
