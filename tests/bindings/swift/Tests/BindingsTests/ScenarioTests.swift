@@ -553,9 +553,48 @@ final class ScenarioTests: XCTestCase {
       let id = try group(name)
       return id.subdata(in: id.startIndex + 32..<id.endIndex)
     }
-    let opened = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: now())
-    try check(try inviteLinkParse(text: opened.link).inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
-    let asked = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature), nowMs: now())
+    let openedAt = now()
+    let opened = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: openedAt)
+    let parts = try inviteLinkParse(text: opened.link)
+    try check(parts.inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
+    // The deadline is the link's fifth part: ten minutes for a human device, fifteen for an agent device.
+    let life = inviteLifeMs(role: role)
+    try check(
+      life == (agent ? 15 : 10) * 60000 && parts.expiresAt == opened.expiresAt && opened.expiresAt == openedAt + life,
+      "the invite does not live \(life) ms")
+    let late = opened.expiresAt + inviteClockToleranceMs() + 1
+    try check(
+      try inviteLinkCheck(text: opened.link, nowMs: openedAt).inviteId == opened.inviteId
+        && (try inviteLinkCheck(text: opened.link, nowMs: late - 1)).expiresAt == opened.expiresAt,
+      "a live link is refused")
+    try check(refusal { _ = try inviteLinkCheck(text: opened.link, nowMs: late) } == .inviteExpired, "an expired link is taken by the stateless check")
+    let read = try newcomer.joinLink(link: opened.link, nowMs: openedAt)
+    try check(read.inviteId == opened.inviteId && read.hub == "https://hub.example" && read.expiresAt == opened.expiresAt, "joinLink reads another link")
+    try check(refusal { _ = try newcomer.joinLink(link: opened.link, nowMs: late) } == .inviteExpired, "joinLink takes an expired link")
+    let offer = SignedOffer(offer: opened.offer, signature: opened.signature, mac: opened.mac)
+    try check(opened.mac.count == 32, "the Offer comes without its MAC")
+    // An expired link, an altered deadline, an Offer of another invite, a missing or wrong MAC: refused, nothing stored.
+    try check(refusal { _ = try newcomer.joinRequest(link: opened.link, offer: offer, nowMs: late) } == .inviteExpired, "an expired link was answered")
+    let cut = opened.link.lastIndex(of: ".")!
+    let deadline = String(opened.link[opened.link.index(after: cut)...])
+    var moved = try base64urlDecode(text: deadline).reduce(UInt64(0)) { $0 << 8 | UInt64($1) } + 60000
+    let movedBytes = Data((0..<8).map { _ -> UInt8 in defer { moved >>= 8 }; return UInt8(moved & 0xff) }.reversed())
+    let altered = String(opened.link[...cut]) + base64urlEncode(bytes: movedBytes)
+    try check(try inviteLinkParse(text: altered).expiresAt == opened.expiresAt + 60000, "the deadline was not altered")
+    try check(refusal { _ = try newcomer.joinRequest(link: altered, offer: offer, nowMs: openedAt) } == .badInvite, "a link with an altered deadline was answered")
+    let other = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: openedAt)
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: other.offer, signature: other.signature, mac: other.mac), nowMs: openedAt) }
+        == .badInvite, "an Offer of another invite was answered")
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature, mac: Data()), nowMs: openedAt) }
+        == .badInvite, "an Offer without its MAC was answered")
+    var wrong = opened.mac
+    wrong[wrong.startIndex] ^= 1
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature, mac: wrong), nowMs: openedAt) }
+        == .badInvite, "an Offer with a wrong MAC was answered")
+    let asked = try newcomer.joinRequest(link: opened.link, offer: offer, nowMs: now())
     try check(asked.role == role && asked.inviter == (try inviter.id()), "the Request is for another invite")
     let accepted = try inviter.inviteAccept(
       inviteId: opened.inviteId, request: SignedRequest(request: asked.request, mac: asked.mac, signature: asked.signature), nowMs: now())

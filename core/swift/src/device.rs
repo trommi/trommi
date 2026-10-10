@@ -22,7 +22,7 @@ use crate::error::core_error;
 use crate::guard::{Guarded, Quiet};
 use crate::invite::{
     check_code, CheckCode, InviteAccepted, InviteConfirmed, InviteOpened, InviteRole, InviteStep,
-    JoinRequest, SignedOffer, SignedRequest, SignedReveal,
+    JoinLink, JoinRequest, SignedOffer, SignedRequest, SignedReveal,
 };
 use crate::records::ReceivedMessage;
 use crate::records::{
@@ -1135,7 +1135,8 @@ impl CoreDevice {
     /// Opens an invite: for a human device, or for an agent device, which founds a new main session or, with
     /// `session_id`, takes that one over. `app` is the app's origin for the link, `hub` the canonical address
     /// of the hub the room lives on. Only a human device invites; at most 16 invites are open at once. The
-    /// invite lives ten minutes from `now_ms`.
+    /// invite lives ten minutes from `now_ms` for a human device, fifteen for an agent device; its deadline is
+    /// the link's fifth part. The Offer is published with its signature and its MAC.
     pub fn invite_open(
         &self,
         role: InviteRole,
@@ -1163,6 +1164,7 @@ impl CoreDevice {
                 expires_at: opened.expires_at,
                 offer: opened.signed_offer.offer.clone(),
                 signature: opened.signed_offer.signature.clone(),
+                mac: opened.signed_offer.mac.clone(),
             })
         })
     }
@@ -1261,8 +1263,27 @@ impl CoreDevice {
         self.write(|device| Ok(device.invite_forget(&InviteId::from_slice(&invite_id)?)?))
     }
 
-    /// As the new device: checks the Offer served for `link` and answers it with a fresh KeyPackage of this
-    /// device, stored before the Request is returned. A device joins one room, once (`room-exists`).
+    /// As the new device: reads `link` before anything is fetched for it, with its deadline held against the
+    /// clock `now_ms`. `room-exists` for a device that holds a room; `bad-format`, `newer-version` for the link;
+    /// `invite-expired` more than two minutes past its deadline; `bad-invite` for a deadline further ahead than
+    /// any invite lives.
+    pub fn join_link(&self, link: String, now_ms: u64) -> Result<JoinLink, CoreError> {
+        self.read(|device| {
+            let read = device.join_link(&link, now_ms)?;
+            Ok(JoinLink {
+                hub: read.hub.as_str().to_owned(),
+                room_id: read.room_id.as_bytes().to_vec(),
+                invite_id: read.invite_id.as_bytes().to_vec(),
+                expires_at: read.expires_at,
+            })
+        })
+    }
+
+    /// As the new device: checks the Offer served for `link`, with the MAC the hub serves beside it, and
+    /// answers it with a fresh KeyPackage of this device, stored before the Request is returned. Nothing is
+    /// stored for an Offer that is refused: `bad-invite` for a MAC that is missing, short or wrong (an Offer
+    /// that is not the link's) among others, `bad-signature`, `invite-expired` for the deadline by the Offer's
+    /// kind. A device joins one room, once (`room-exists`).
     pub fn join_request(
         &self,
         link: String,
@@ -1273,6 +1294,7 @@ impl CoreDevice {
             let offer = invite::SignedOffer {
                 offer: offer.offer,
                 signature: offer.signature,
+                mac: offer.mac,
             };
             let request = device.join_request(&link, &offer, now_ms)?;
             Ok(JoinRequest::of(
