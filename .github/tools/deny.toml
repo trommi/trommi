@@ -1,0 +1,9 @@
+# What .github/workflows/advisories.yml checks with cargo-deny: known vulnerabilities (RustSec) in the crates the
+# workspace really builds, and yanked versions. A crate that is only named in Cargo.lock and built by nothing is not
+# counted; a crate that is merely unmaintained does not fail the check.
+[graph]
+all-features = true
+
+[advisories]
+unmaintained = "none"
+yanked = "deny"
