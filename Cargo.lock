@@ -3157,6 +3157,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "trommi-tests-shipped"
+version = "0.0.0"
+dependencies = [
+ "openmls",
+ "openmls_basic_credential",
+ "openmls_rust_crypto",
+ "openmls_traits",
+ "tls_codec",
+ "trommi-core",
+]
+
+[[package]]
 name = "trommi-uniffi-bindgen"
 version = "0.0.0"
 dependencies = [

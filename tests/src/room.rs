@@ -158,6 +158,8 @@ pub struct FakeGroup {
     pub epochs: Vec<FakeEpoch>,
     /// The Cuts of removed leaves.
     pub cuts: BTreeMap<DeviceId, Head>,
+    /// The epoch in which a key with a Cut became a leaf again.
+    pub again: BTreeMap<DeviceId, u64>,
     /// Whether it is stale.
     pub stale: bool,
 }
@@ -278,6 +280,13 @@ impl GroupFacts for Fake {
             .groups
             .get(group)
             .and_then(|g| g.cuts.get(device).copied()))
+    }
+
+    fn leaf_again_at(&self, group: &GroupId, device: &DeviceId) -> Result<Option<u64>, Error> {
+        Ok(self
+            .groups
+            .get(group)
+            .and_then(|g| g.again.get(device).copied()))
     }
 
     fn epoch_end(&self, group: &GroupId, epoch: u64) -> Result<Option<EpochEnd>, Error> {

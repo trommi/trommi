@@ -194,6 +194,17 @@ record! {
     }
 }
 
+record! {
+    /// Where a device's knowledge of a group begins, for a group it is a leaf of or follows as an observer.
+    pub struct GroupPast {
+        /// The epoch its own knowledge begins at: the one it joined at, or began to follow at.
+        pub from_epoch: u64,
+        /// Whether it holds every epoch before that one too (`learn_history`); true for a group it founded.
+        /// While false, an envelope of an earlier epoch is `group-behind`.
+        pub learned: bool,
+    }
+}
+
 /// The Commits of a served history as the core reads them.
 pub(crate) fn with_commits<R>(
     served: &[ServedCommit],

@@ -1,7 +1,7 @@
 # The v2 hub: routes and tables
 
 Short and normative for a hub and its clients; the rules a hub enforces are in [`v2.md`](v2.md) (sections 5, 8, 9,
-12, 14). Every route is under `/v2/`. Bodies are JSON; byte strings are base64url; an MLS message, a GroupInfo, a
+12, 14). Every route is under `/v2/`. Bodies are JSON, at most 1.5 MiB (v2.md section 16); byte strings are base64url; an MLS message, a GroupInfo, a
 KeyPackage, an envelope and every struct of v2.md travel as their TLS-encoded bytes in one string. A refusal is
 `{ "error": code, "message": text }` with the status of v2.md section 16. Every route but the first block needs
 `authorization: Bearer <token>`; `Trommi-Client: <kind>/<major>.<minor>.<patch>` is sent always (`client-too-old`).
