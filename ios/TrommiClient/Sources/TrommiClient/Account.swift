@@ -269,6 +269,17 @@ extension Room {
     return try Core.tools.openCode(copy, room: roomId, way: .password(wrapKey: keys.wrapKey))
   }
 
+  /** The room's recovery code, opened with a way in the person just used here. `wrong-login` when it does not open. */
+  private func codeFrom(_ way: WayIn, _ st: AccountStatus) throws -> Bytes {
+    switch way {
+    case .password(let password): return try codeFromPassword(password, st)
+    case .passkey(let credentialId, let prf):
+      guard prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
+      guard let copy = st.passkeyCopies[credentialId] else { throw TrommiError("wrong-login", "this passkey does not open the account") }
+      return try Core.tools.openCode(copy, room: roomId, way: .passkey(prf: prf, credentialId: credentialId))
+    }
+  }
+
   /** A new password: the code is sealed again under it and the hub swaps what it checks a login with; nothing else changes. */
   public func changePassword(current: String, next: String) async throws {
     try Core.tools.checkPassword(next)
@@ -280,9 +291,11 @@ extension Room {
   }
 
   /** A new Emergency Kit, which replaces the one before: its twelve words, to be shown once and kept nowhere. */
-  public func makeEmergencyKit(password: String) async throws -> EmergencyKit {
+  public func makeEmergencyKit(password: String) async throws -> EmergencyKit { try await makeEmergencyKit(way: .password(password)) }
+  /** The same with the way in just used here: the password, or a passkey of the account (an account without a password). */
+  public func makeEmergencyKit(way: WayIn) async throws -> EmergencyKit {
     let st = try await status()
-    let code = try codeFromPassword(password, st)
+    let code = try codeFrom(way, st)
     let words = try Core.tools.generateKitWords()
     var body = try kitPart(try Core.tools.kitKeysFor(st.kitName, words: words), room: roomId, code: code)
     body["revision"] = st.revision
@@ -314,9 +327,11 @@ extension Room {
    * the system asks for anything; `make` is the system's step (the app: Passkeys.swift). The code is sealed under the
    * passkey's prf output and posted together with what the system made.
    */
-  public func addPasskey(password: String, make: (PasskeyRequest) async throws -> PasskeyMade) async throws {
+  public func addPasskey(password: String, make: (PasskeyRequest) async throws -> PasskeyMade) async throws { try await addPasskey(way: .password(password), make: make) }
+  /** The same with the way in just used here: the password, or another passkey of the account. */
+  public func addPasskey(way: WayIn, make: (PasskeyRequest) async throws -> PasskeyMade) async throws {
     let st = try await status()
-    let code = try codeFromPassword(password, st)
+    let code = try codeFrom(way, st)
     let challenge = try passkeyChallenge(try await hub.request("POST", "/account/passkeys/challenge", body: [:]))
     let made = try await make(PasskeyRequest(challenge: challenge, userHandle: st.userHandle, email: st.email, accountId: st.accountId, existing: st.passkeys))
     guard made.prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
@@ -595,4 +610,18 @@ public func waitText(seconds: Int) -> String {
   if seconds < 60 { return seconds == 1 ? "1 second" : "\(max(1, seconds)) seconds" }
   let minutes = (seconds + 59) / 60
   return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+}
+
+/**
+ * Whether a domain's apple-app-site-association file lets this app use the domain's passkeys: its `webcredentials`
+ * names the app as "<team id>.<bundle id>". The app's passkeys are switched on by this (Passkeys.swift): the system
+ * hands out a domain's passkeys only to an app the domain names this way.
+ */
+public func associationAllowsPasskeys(_ file: Bytes, bundleId: String) -> Bool {
+  guard !bundleId.isEmpty, let j = (try? JSONSerialization.jsonObject(with: Data(file))) as? JSON,
+        let apps = (j["webcredentials"] as? JSON)?["apps"] as? [String] else { return false }
+  return apps.contains { app in
+    guard let dot = app.firstIndex(of: ".") else { return false }
+    return app[app.index(after: dot)...] == bundleId && dot > app.startIndex
+  }
 }
