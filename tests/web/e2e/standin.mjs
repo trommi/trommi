@@ -126,16 +126,17 @@ export const steps = [
     const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
     const link = /'(http\S+\/join#v2\.[^']+)'/.exec(command)?.[1]
     check(Boolean(link), 'the page shows the connect command with the invite link', command.slice(0, 60))
-    // Exactly three commands to copy, in this order: install (once per machine), setup (once per program), connect
-    // (once per folder); what a press copies is what the line shows; Codex's setup is named beside the second.
+    // Exactly two lines to copy, in this order: install (once per machine; it sets up Claude Code and Codex), then the
+    // slash command with the link, pasted into claude in the project folder; what a press copies is what the line shows.
     const lines = await A.js("return [...document.querySelectorAll('[data-state=open] .clip-copy')].map(b => ({ line: b.dataset.line, shown: b.querySelector('code').textContent, copied: b.dataset.inviteClipTextParam }))")
     check(JSON.stringify(lines.map(l => [l.line, l.shown])) === JSON.stringify([
       ['install', 'curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh'],
-      ['setup', 'trommi-connector setup claude'],
-      ['connect', `trommi-connector connect '${link}'`],
-    ]), 'the invite page shows the three commands: install, setup claude, connect with the link', lines.map(l => l.line))
+      ['connect', `/trommi:connect '${link}'`],
+    ]), 'the invite page shows the two lines: install, /trommi:connect with the link', lines.map(l => l.line))
     check(lines.every(l => l.copied === l.shown), 'each line copies what it shows')
-    check(await A.js("return [...document.querySelectorAll('[data-state=open] .clip-step code')].some(c => c.textContent === 'trommi-connector setup codex')"), 'the page names trommi-connector setup codex for Codex')
+    const steps = await A.js("return [...document.querySelectorAll('[data-state=open] .clip-step > .clip-step-body > b')].map(b => b.textContent)")
+    check(JSON.stringify(steps) === JSON.stringify(['Once per machine: install', 'In your project folder, start claude (or codex) and paste:', 'Compare the six emoji Claude shows with the ones here']), 'the invite page has the three steps', steps)
+    check(await A.js("return !document.body.innerText.includes('trommi-connector setup')"), 'no separate setup line any more')
     await A.shot('standin-03-agent-invite')
     const since = ctx.mark()
     ctx.agent = await joinAgent(ctx, link, async code => {
