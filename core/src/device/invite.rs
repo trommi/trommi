@@ -964,8 +964,7 @@ impl<S: Storage> Device<S> {
 
     /// A Welcome into the room group is taken only as the invite said (12.1.5): for the room of the Offer,
     /// committed by its inviter, for the KeyPackage of this device's Request, after the Reveal was checked
-    /// (`bad-invite` otherwise). The invite is then done. Without an invite a device takes no such Welcome,
-    /// except under the cargo feature `vectors`, where the scenario tests add devices without one.
+    /// (`bad-invite` otherwise). The invite is then done. Without an invite a device takes no such Welcome.
     pub(super) fn invited(
         &mut self,
         batch: &mut Batch,
@@ -973,13 +972,7 @@ impl<S: Storage> Device<S> {
         added_by: &DeviceId,
         welcome: &[u8],
     ) -> Result<(), Error> {
-        let Some(joining) = self.joining_by_link()? else {
-            return if cfg!(feature = "vectors") {
-                Ok(())
-            } else {
-                Err(Error::BadInvite)
-            };
-        };
+        let joining = self.joining_by_link()?.ok_or(Error::BadInvite)?;
         let offer = joining.joiner.offer();
         let for_request = group::welcome_recipients(welcome)?
             .iter()
@@ -1004,13 +997,12 @@ impl<S: Storage> Device<S> {
         history: Option<&crate::mls::rules::RoomHistory>,
     ) -> Result<(), Error> {
         // A state that holds this device in `agents` already brings an enrolment whose Commit the device
-        // never saw: it takes none that way, except under the cargo feature `vectors`.
+        // never saw: it takes none that way.
         let enrolled = history.is_some_and(|history| history.newest().is_agent(&self.id));
-        let joining = self.joining_by_link()?;
-        if enrolled && (joining.is_some() || !cfg!(feature = "vectors")) {
+        if enrolled {
             return Err(Error::BadInvite);
         }
-        let Some(joining) = joining else {
+        let Some(joining) = self.joining_by_link()? else {
             return Ok(());
         };
         let offer = joining.joiner.offer();
@@ -1056,15 +1048,8 @@ impl<S: Storage> Device<S> {
         if !now.is_agent(&self.id) || before {
             return Ok(());
         }
-        // This Commit enrols this device. Without an invite it takes no enrolment, except under the cargo
-        // feature `vectors`, where the scenario tests enrol devices without one.
-        let Some(joining) = self.joining_by_link()? else {
-            return if cfg!(feature = "vectors") {
-                Ok(())
-            } else {
-                Err(Error::BadInvite)
-            };
-        };
+        // This Commit enrols this device. Without an invite it takes no enrolment.
+        let joining = self.joining_by_link()?.ok_or(Error::BadInvite)?;
         let offer = joining.joiner.offer();
         if !joining.revealed || offer.role != Role::Agent || facts.committer != offer.inviter {
             return Err(Error::BadInvite);

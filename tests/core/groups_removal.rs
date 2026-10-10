@@ -4,6 +4,7 @@
 use trommi_core::codec;
 use trommi_core::device::{Processed, Received};
 use trommi_core::ids::{GroupId, TurnId};
+use trommi_core::invite::Role;
 use trommi_core::mls::message::TrommiMessage;
 use trommi_core::mls::profile::Cut;
 use trommi_core::Error;
@@ -11,8 +12,8 @@ use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
     add_forger, add_human, cuts_for, enrol, found_main, found_room, found_room_on, new_device,
-    new_device_on, now, post_ok, post_refused, publish_some, reopen, settle, sync, sync_ok,
-    MemoryStorage, TestDevice,
+    new_device_on, now, post_ok, post_refused, publish_some, reopen, seeded_device, settle, sync,
+    sync_ok, try_invite, MemoryStorage, TestDevice,
 };
 
 struct Room {
@@ -26,9 +27,17 @@ struct Room {
     group: GroupId,
 }
 
+/// The seed of the key of the device that is removed.
+const REMOVED: u8 = 0x58;
+
 /// Three human devices and one main session with its agent device.
 fn room() -> Room {
-    let (mut a, mut b, mut x, mut agent) = (new_device(), new_device(), new_device(), new_device());
+    let (mut a, mut b, mut x, mut agent) = (
+        new_device(),
+        new_device(),
+        seeded_device(REMOVED),
+        new_device(),
+    );
     let (mut hub, room_group) = found_room(&mut a);
     add_human(&mut hub, &mut a, &mut b);
     add_human(&mut hub, &mut a, &mut x);
@@ -220,13 +229,16 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
         agent.content_key(&group, 2).unwrap()
     );
 
-    // A revoked key returns nowhere (4.2): the device refuses to build the Add to the room group, and the
-    // hub refuses the Add to the session group.
-    let package = x.key_package(now()).unwrap();
+    // A revoked key returns nowhere (4.2): whoever holds it answers an invite, the person confirms, and the
+    // device refuses to build the Add to the room group; nor does it build the Add to the session group.
+    let mut returning = seeded_device(REMOVED);
+    assert_eq!(returning.id(), x.id());
     assert_eq!(
-        a.add_human_device(&x.id(), &package, now()),
+        try_invite(&mut a, &mut returning, Role::Human, None),
         Err(Error::BadCommit)
     );
+    assert!(a.outbox().is_empty());
+    let package = x.key_package(now()).unwrap();
     assert_eq!(
         a.add_to_session(&group, &x.id(), &package, now()),
         Err(Error::BadCommit)
@@ -324,12 +336,15 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
     let (mut hub, room_group) = found_room(&mut a);
     add_human(&mut hub, &mut a, &mut b);
     add_human(&mut hub, &mut a, &mut x);
-    // Fifty agent devices, enrolled in one Commit; the two other human devices are added to every session
-    // with their last-resort KeyPackage.
+    // Fifty agent devices, each enrolled by its invite; the two other human devices are added to every
+    // session with their last-resort KeyPackage.
     let mut agents: Vec<TestDevice> = (0..SESSIONS).map(|_| new_device()).collect();
     let ids: Vec<_> = agents.iter().map(TestDevice::id).collect();
-    a.change_agents(&ids, &[], now()).unwrap();
-    post_ok(&mut hub, &mut a);
+    for agent in &mut agents {
+        enrol(&mut hub, &mut a, agent);
+    }
+    // The room group: its founding, two Adds, fifty enrolments, and the removal that follows.
+    let removal_epoch = SESSIONS as u64 + 3;
     for device in agents.iter_mut().chain([&mut b, &mut x]) {
         publish_some(&mut hub, device, 0);
     }
@@ -346,7 +361,7 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
     let entry = a.outbox().remove(0);
     let accepted = hub.post(&a.id(), &entry).unwrap();
     drop(a);
-    assert_eq!(hub.epoch(&room_group), Some(4));
+    assert_eq!(hub.epoch(&room_group), Some(removal_epoch));
     for group in &groups {
         assert_eq!(hub.stale_leaves(group).unwrap(), [x.id()]);
     }
@@ -410,7 +425,7 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
     assert!(a.group(&room_group).unwrap().pending);
     assert_eq!(hub.post(&a.id(), &entry), Ok(accepted));
     post_ok(&mut hub, &mut a);
-    assert_eq!(a.group(&room_group).unwrap().epoch, 4);
+    assert_eq!(a.group(&room_group).unwrap().epoch, removal_epoch);
     let processed = sync_ok(&hub, &mut a);
     let cleaned = processed
         .iter()
@@ -432,7 +447,7 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
         processed.first(),
         Some(Ok(Processed::Commit { removed: true, .. }))
     ));
-    assert_eq!(x.content_key(&room_group, 4), Err(Error::NoKey));
+    assert_eq!(x.content_key(&room_group, removal_epoch), Err(Error::NoKey));
     for group in &groups {
         assert_eq!(x.content_key(group, 2), Err(Error::NoKey));
         assert!(x.content_key(group, 1).is_ok());
