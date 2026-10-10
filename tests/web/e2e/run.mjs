@@ -1,6 +1,6 @@
 // run.mjs: the end-to-end runs of the web app, one line per step.
 //   node tests/web/e2e/run.mjs [standin|real|all]        (default: all)
-//     standin   standin.mjs: the built app with the STAND-IN core against the FAKE hub (no content cryptography)
+//     standin   standin.mjs: the built app with the real core against the FAKE hub (it checks no cryptography), with an agent in Node
 //     real      real.mjs: the built app with the real core against the REAL hub's binary (TROMMI_HUB_BIN)
 //     all       both; `real` is skipped, loudly, when TROMMI_HUB_BIN is not set
 //   node tests/web/e2e/run.mjs real --app <app URL> --hub <hub URL> [--shots <folder>]
