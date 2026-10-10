@@ -75,6 +75,18 @@ export async function openDesk(page) {
   await page.until("location.pathname === '/' && document.querySelector('#inbox')", 'the Desk')
 }
 
+/** Settings → Invite a Device → Show Code → "No scanner? Send the link": the link as the screen shows it. */
+export async function deviceInvite(page) {
+  await openSettings(page)
+  await page.until("document.querySelector('#settings-pair')", 'Invite a Device')
+  await page.click('#settings-pair')
+  await page.until("document.querySelector('#set-device[data-state=open] .set-qr.is-real svg') || document.querySelector('#set-device .room-error')?.textContent.trim()", 'the code to scan, or an error line', 30000)
+  const error = await page.js("return document.querySelector('#set-device[data-state=open]') ? '' : document.querySelector('#set-device .room-error')?.textContent.trim() ?? ''")
+  if (error) throw new Error(`Show Code made no invite; the screen says "${error}"`)
+  await page.click('#set-device details.room-more summary')
+  await page.until("document.querySelector('#set-device .room-link input')?.getClientRects().length", 'the invite link')
+  return page.js("return document.querySelector('#set-device .room-link input').value")
+}
 /** The six emoji inside `scope`, as one string. */
 export const emoji = (page, scope) => page.js(`return [...document.querySelectorAll(${q(`${scope} .check-emoji-glyph`)})].map(e => e.textContent).join(' ')`)
 

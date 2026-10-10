@@ -691,7 +691,9 @@ export class Hub {
       const parsed: unknown = JSON.parse(new TextDecoder().decode(await this.read(res, CAP_REFUSAL, watch)))
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) body = parsed as Record<string, unknown>
     } catch { /* no refusal body: named by its status below */ }
-    const after = Number(res.headers.get('retry-after') ?? '')
+    // (seconds: the `retry-after` header, else the refusal's own `retry_after`)
+    const named = res.headers.get('retry-after')
+    const after = named !== null ? Number(named) : typeof body['retry_after'] === 'number' ? body['retry_after'] : NaN
     const retry_after = Number.isInteger(after) && after > 0 && after <= 86_400 ? after : null
     const { error, message, voided, ...details } = body
     if (typeof error !== 'string' || typeof message !== 'string' || !Object.hasOwn(STATUS_OF, error) || STATUS_OF[error] !== res.status) {

@@ -39,7 +39,7 @@ test('a removed human device reads nothing new, and every session is cleaned of 
   assert.equal(b.model.cards.has(card), false)
   // the removed device kept the keys it had; it holds none of the epochs after its removal
   const group = a.engine.groups.find(g => g.session === null)
-  await assert.rejects(b.engine.device.contentKey(group.group, group.epoch))
+  assert.equal(await b.engine.device.holdsKey(group.group, group.epoch).catch(() => false), false)
 })
 
 test('a new agent device takes a session over: the old one is out, the new one reads the history', async t => {
