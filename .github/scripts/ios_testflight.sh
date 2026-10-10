@@ -2,8 +2,9 @@
 # The TestFlight delivery of the iOS app on a macOS runner; deploy_ios.yml runs it under `op run`, which is where
 # the App Store Connect key comes from. Steps: the bundle ids and the app record (asc.py prepare) -> the build
 # number (the highest App Store Connect has, plus one) -> Trommi.xcodeproj from AppStore/project.yml (XcodeGen) ->
-# archive (Release, cloud-managed signing through the API key) -> check the archive -> export for App Store Connect
-# with destination upload (internal testing only) -> wait until the build is processed -> the group "Intern" holds
+# archive (ios_archive.sh: signed ad hoc, nothing created on the Apple account) -> check the archive -> export for
+# App Store Connect, signed with the team's cloud-managed distribution certificate through the API key, first to a
+# file whose entitlements are checked, then with destination upload (internal testing only) -> wait until the build is processed -> the group "Intern" holds
 # it -> "What to Test".
 #
 # Environment, from the 1Password Environment: APPLE_ASC_KEY (the .p8 of a team key with the Admin role; it may
@@ -68,11 +69,8 @@ echo "== 4. Archive =="
 archive=$RUNNER_TEMP/Trommi.xcarchive
 its=YES
 [ "${ITS_NON_EXEMPT_ENCRYPTION:-YES}" = NO ] && its=NO
-xcodebuild archive \
-  -project "$appstore/Trommi.xcodeproj" -scheme Trommi -configuration Release \
-  -destination 'generic/platform=iOS' -archivePath "$archive" \
-  -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-  "${auth[@]}" \
+# No -allowProvisioningUpdates and no key here: the archive is signed ad hoc (ios_archive.sh says why).
+bash "$here/ios_archive.sh" "$archive" "$RUNNER_TEMP/DerivedData" \
   DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CURRENT_PROJECT_VERSION="$build" \
   INFOPLIST_KEY_ITSAppUsesNonExemptEncryption="$its"
 
@@ -84,20 +82,21 @@ echo "$(plist CFBundleIdentifier) $(plist CFBundleShortVersionString) ($(plist C
 for extension in TrommiShare TrommiNotify TrommiLive; do
   [ -d "$app/PlugIns/$extension.appex" ] || { echo "::error::the app extension $extension is missing"; exit 1; }
 done
-# (the archive is signed for development; the export signs for distribution, with the entitlements file's
-# aps-environment production)
-if codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/entitlements.plist" 2>/dev/null; then
-  echo "aps-environment of the archive: $(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$RUNNER_TEMP/entitlements.plist" 2>/dev/null || echo none)"
-fi
+# (the archive is signed ad hoc and ios_archive.sh has checked its entitlements; the export signs for distribution)
 
 echo "== 6. Export and upload =="
-cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+# Signing style automatic with the Admin key: Xcode signs with the team's cloud-managed Apple Distribution
+# certificate (Apple keeps its private key) and makes or renews the App Store profiles of the four bundle ids.
+# No certificate is created on the account. The first export writes the signed app to a file, whose entitlements
+# are checked against the files (nothing goes to Apple); the second, the same signing, uploads.
+export_options() {
+  cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>method</key><string>app-store-connect</string>
-  <key>destination</key><string>upload</string>
+  <key>destination</key><string>$1</string>
   <key>teamID</key><string>$APPLE_TEAM_ID</string>
   <key>signingStyle</key><string>automatic</string>
   <key>manageAppVersionAndBuildNumber</key><false/>
@@ -106,6 +105,18 @@ cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
 </dict>
 </plist>
 EOF
+}
+export_options export
+xcodebuild -exportArchive \
+  -archivePath "$archive" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+  -exportPath "$RUNNER_TEMP/signed" \
+  "${auth[@]}"
+ipa=$(ls "$RUNNER_TEMP"/signed/*.ipa)
+mkdir -p "$RUNNER_TEMP/ipa"
+unzip -q "$ipa" -d "$RUNNER_TEMP/ipa"
+python3 "$here/ios_entitlements.py" "$appstore" "$RUNNER_TEMP/ipa/Payload/Trommi.app" --distribution
+codesign -dvv "$RUNNER_TEMP/ipa/Payload/Trommi.app" 2>&1 | grep '^Authority=' | head -n 1 || true
+export_options upload
 xcodebuild -exportArchive \
   -archivePath "$archive" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
   -exportPath "$RUNNER_TEMP/export" \
