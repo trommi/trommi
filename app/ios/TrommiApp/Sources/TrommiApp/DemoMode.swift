@@ -34,6 +34,21 @@ enum DemoData {
     let env = ProcessInfo.processInfo.environment
     return env["TROMMI_STORE_SHOTS"] == "1" && !(env["TROMMI_SCREEN"] ?? "").isEmpty
   }()
+  /** The open note in those screenshots: the fixture's one line and what he jots down beside it. */
+  static let storeShotsNote = """
+    Ask payments: does the checkout keep the plant someone was adding?
+
+    Before Monday:
+    · Safari test on the old iPad
+    · 404 page with the fern drawing
+    · status page link in the footer
+
+    Thursday call with Greenhouse: ask about the yearly plan and VAT in Austria.
+
+    Idea: a watering streak on the Today screen?
+
+    Widgets: small one first, medium after 1.2. Mia's plant photos: credit her on the About page.
+    """
   static func url(_ name: String) -> URL {
     Bundle.module.url(forResource: "Demo/\(name)", withExtension: nil) ?? (Bundle.module.resourceURL ?? Bundle.main.bundleURL).appendingPathComponent("Demo/\(name)")
   }

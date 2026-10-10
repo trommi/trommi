@@ -71,10 +71,16 @@ shoot() {   # shoot <device name> <folder> <width> <height> <shots>
     xcrun simctl bootstatus "$udid" -b > /dev/null
   fi
   xcrun simctl ui "$udid" appearance light
-  # 9:41 of today (an ISO time sets the iPad's date too), no carrier name
-  xcrun simctl status_bar "$udid" override --time "$(date +%Y-%m-%dT09:41:00.000%z | sed -E 's/([0-9]{2})$/:\1/')" \
-    --operatorName '' --dataNetwork wifi --wifiMode active --wifiBars 3 \
-    --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+  # 9:41 and no carrier name. The iPad's status bar always shows a date beside the time (iPadOS 27; no override hides
+  # it), so it is a fixed one: Jan 9, Apple's (an ISO time with milliseconds sets the date too; the zone of that day
+  # here). Over an app the simulator names the weekday on its own (Sun, though 9 Jan 2007 was a Tuesday). Set twice:
+  # right after a fresh start the first one has not always held.
+  for _ in 1 2; do
+    xcrun simctl status_bar "$udid" override --time "2007-01-09T09:41:00.000$(date -j -f '%Y-%m-%d %H:%M' '2007-01-09 09:41' +%z | sed -E 's/([0-9]{2})$/:\1/')" \
+      --operatorName '' --dataNetwork wifi --wifiMode active --wifiBars 3 \
+      --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+    sleep 3
+  done
   xcrun simctl install "$udid" "$app"
   mkdir -p "$out/$2"
   while read -r name screen; do

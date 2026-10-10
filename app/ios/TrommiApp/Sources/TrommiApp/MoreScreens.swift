@@ -393,6 +393,8 @@ struct NoteScreen: View {
     .background(Ink.noteYellow.ignoresSafeArea())
     .onAppear {
       if !loaded, let n = model.desk?.notes.filter({ $0.held.isNull }).sorted(by: { $0.updated > $1.updated }).first { text = n.text; noteId = n.id; files = n.attachments }
+      // the App Store screenshots (DemoData.storeShots): the demo's note with a few more lines, so the picture shows one
+      if !loaded && DemoData.storeShots { text = DemoData.storeShotsNote }
       loaded = true
       shown = true
     }
