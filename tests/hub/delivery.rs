@@ -2547,3 +2547,23 @@ fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
     );
     assert_ne!(claim(&ada), package);
 }
+
+#[test]
+fn signing_out_ends_the_token_at_once() {
+    let mut w = World::new();
+    let room = w.room;
+    let first = w.ada.token.clone().unwrap();
+    let mut stream = w.ada.events(&w.hub, None);
+    w.ada.sign_in(&w.hub, &room).ok();
+    let second = w.ada.token.clone().unwrap();
+    // the token ends, with the device's streams; another token of the device stays
+    w.ada.token = Some(first);
+    w.ada.call(&w.hub, "DELETE", "/v2/token", &Value::Null).ok();
+    assert!(stream.ended());
+    w.ada.get(&w.hub, "/v2/desk").refused(401, "unauthorised");
+    w.ada
+        .call(&w.hub, "DELETE", "/v2/token", &Value::Null)
+        .refused(401, "unauthorised");
+    w.ada.token = Some(second);
+    w.ada.get(&w.hub, "/v2/desk").ok();
+}
