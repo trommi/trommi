@@ -225,12 +225,16 @@ pub fn owner(
 }
 
 /// A Chat message in a session group: from its agent or helper devices, or from a human device addressed to
-/// the session's agent device (in a helper session: its opener).
+/// the session's agent device (in a helper session: its opener). While the session has no such leaf a human
+/// device writes with `recipient` zeros: the message is stored and read, and is nobody's command, since the
+/// gate acts only on what names its own device.
 fn chat_rule(facts: &dyn GroupFacts, header: &Header, role: Role) -> Result<(), Error> {
     allow(!header.group.is_room())?;
     if role == Role::Human {
-        let seat = facts.seat(&header.group, header.epoch)?;
-        allow(seat == Some(header.recipient))?;
+        let addressee = facts
+            .seat(&header.group, header.epoch)?
+            .unwrap_or(DeviceId::ZERO);
+        allow(header.recipient == addressee)?;
     }
     Ok(())
 }
@@ -816,7 +820,8 @@ pub fn command_gate(
     let header = opened.header;
     let standing = if !facts.is_human_now(&header.sender)? {
         Err(Refusal::NotHuman)
-    } else if header.recipient != *me {
+    } else if header.recipient.is_zero() || header.recipient != *me {
+        // Zeros address nobody (9.2: a human's Chat while the session has no agent leaf).
         Err(Refusal::NotAddressed)
     } else if !epoch_in_force(facts, header, now_ms)? {
         Err(Refusal::OldEpoch)
