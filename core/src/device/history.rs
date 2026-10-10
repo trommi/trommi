@@ -822,7 +822,8 @@ impl<S: Storage> Device<S> {
     }
 
     /// The record of the device's first epoch in `group`, written when it joined without knowing the
-    /// Commit that led there, gets the roles that Commit was judged with. The leaves are the walk's.
+    /// Commit that led there, gets the roles that Commit was judged with. The leaves are the walk's. Where
+    /// a role changes, the group's object states and registers are built again.
     fn correct_first_epoch(
         &mut self,
         batch: &mut Batch,
@@ -840,6 +841,7 @@ impl<S: Storage> Device<S> {
         if devices(&own) != devices(&judged) {
             return Err(Refusal::BadGroup);
         }
+        let corrected = own.leaves != judged.leaves || own.seat != judged.seat;
         own.leaves = judged.leaves;
         own.seat = judged.seat;
         self.put_stored(
@@ -847,6 +849,12 @@ impl<S: Storage> Device<S> {
             group_key(table::CHAIN, SUB_EPOCH, group, &epoch.to_be_bytes()),
             codec::encode(&own)?,
         );
+        if corrected {
+            // What the device took of that epoch was judged with the roles it held then: the group's
+            // objects and registers are built again from its records, each judged with the roles now
+            // known (9.2.1).
+            self.replay_group(batch, group)?;
+        }
         Ok(())
     }
 
