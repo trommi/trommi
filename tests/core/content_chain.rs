@@ -1596,3 +1596,58 @@ fn a_register_and_a_reserved_kind_change_no_object() {
     ));
     assert!(receipt.opened().is_some());
 }
+
+#[test]
+fn a_cut_at_a_frontiers_number_moves_the_frontier_to_the_cut() {
+    let mut writer = World::new();
+    let one = writer.post(2, room(), &stroke());
+    let two = writer.post(2, room(), &stroke());
+    // A chain that began at a frontier naming another envelope under number 2 than the chain holds.
+    let wrong = Head {
+        seq: 2,
+        hash: Hash32::new([9; 32]),
+    };
+    let mut reader = World::new();
+    let mut chains = Chains::new();
+    chains.start_at(device(2), wrong).unwrap();
+    // The device is removed, and its Cut names the chain's own envelope under that number.
+    let cut = Head {
+        seq: 2,
+        hash: two.hash(),
+    };
+    let effect = cut_chain(&reader.fake, &chains, &room(), &device(2), &cut).unwrap();
+    assert_eq!(effect.finding, Some(Error::Equivocation));
+    chains.apply_cut(&effect);
+    assert_eq!(chains.head(&device(2)), cut);
+    // The frontier is the Cut now: what is read from number 1 leads there.
+    assert_eq!(chains.started_at(&device(2)), Some(cut));
+    let stored = chains.to_bytes().unwrap();
+    assert_eq!(Chains::from_bytes(&stored).unwrap(), chains);
+    reader.fake.commit(&room(), NOW, NOW, |leaves| {
+        leaves.remove(&device(2));
+    });
+    reader.fake.group(&room()).cuts.insert(device(2), cut);
+    reader.chains.insert(room(), chains);
+    for envelope in [one.envelope(), two.envelope()] {
+        reader
+            .take_as(
+                &envelope.encode().unwrap(),
+                &Served::Stored,
+                Mode::ReadingBack,
+            )
+            .unwrap();
+    }
+    assert_eq!(reader.chains(&room()).started_at(&device(2)), None);
+
+    // A stored chain that stands at its frontier's number on another envelope than the frontier's is damaged.
+    let mut contradicting = Chains::new();
+    contradicting.start_at(device(2), wrong).unwrap();
+    let mut bytes = contradicting.to_bytes().unwrap();
+    assert_eq!(Chains::from_bytes(&bytes).unwrap(), contradicting);
+    let at = bytes
+        .windows(32)
+        .position(|window| window == [9; 32])
+        .unwrap();
+    bytes[at] = 8;
+    assert!(matches!(Chains::from_bytes(&bytes), Err(Error::Storage(_))));
+}
