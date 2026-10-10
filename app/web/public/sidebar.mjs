@@ -84,7 +84,8 @@ controller('corner-note', class extends Controller {
   static values = { id: String, base: String }
   connect() {
     this.field = this.element.querySelector('.corner-note-field')
-    this.guard = e => { if (e.target?.getAttribute?.('target') === 'corner-note-box' && this.element.classList.contains('is-open')) e.preventDefault() }
+    // (open, the note is not replaced under the hand that writes in it; its files are still taken from the new one)
+    this.guard = e => { if (e.target?.getAttribute?.('target') === 'corner-note-box' && this.element.classList.contains('is-open')) { e.preventDefault(); this.takeFiles(e.target.templateContent?.querySelector?.('#corner-note-box')) } }
     document.addEventListener('turbo:before-stream-render', this.guard)
     this.write = () => this.open()
     document.addEventListener('trommi:note', this.write)
@@ -215,8 +216,9 @@ controller('corner-note', class extends Controller {
     try {
       const fresh = await Promise.all(got.map(read))
       const res = await fetch('/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: [...kept, ...fresh] }) })
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
-      this.paintFiles(previews)
+      const said = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(said.error || res.statusText)
+      this.paintFiles(previews, said.note?.attachments ?? null)
     } catch (err) {
       console.warn('note', err)
       for (const chip of pending) {
@@ -229,11 +231,23 @@ controller('corner-note', class extends Controller {
       }
     }
   }
-  /** previews: this device's own pictures of the newest attachments, shown until the note's copies are drawn. */
-  paintFiles(previews = []) {
-    const m = (window.trommi?.model?.().state.notes ?? []).find(n => n.id === this.idValue)
+  /** The open note's files as the note now holds them (another device attached one, or took one off): drawn in, the
+   *  words left as they are; not while a file of this device is on its way (its own answer draws them, paintFiles). */
+  takeFiles(fresh) {
+    if (!fresh || this.element.querySelector('.corner-note-file:is(.is-uploading, .is-failed)')) return
+    const id = fresh.dataset.cornerNoteIdValue ?? ''
+    if (!id || (this.idValue && id !== this.idValue)) return
+    const box = this.element.querySelector('.corner-note-files'), now = fresh.querySelector('.corner-note-files')
+    if (!box || !now) return
+    const urls = el => [...el.querySelectorAll('.corner-note-file')].map(c => c.dataset.url).join(' ')
+    if (urls(box) !== urls(now)) box.innerHTML = now.innerHTML
+  }
+  /** files: the note's attachments as the store's answer has them; previews: this device's own pictures of the newest
+   *  attachments, shown until the note's copies are drawn. */
+  paintFiles(previews = [], files = null) {
+    const m = files ? null : (window.trommi?.model?.().state.notes ?? []).find(n => n.id === this.idValue)
     const box = this.element.querySelector('.corner-note-files')
-    box.innerHTML = noteFiles(m?.attachments ?? [])
+    box.innerHTML = noteFiles(files ?? m?.attachments ?? [])
     const chips = [...box.querySelectorAll('.corner-note-file')].slice(-previews.length || box.children.length)
     previews.forEach((url, i) => {
       const img = url && chips[i]?.querySelector('img')
