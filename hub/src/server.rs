@@ -81,6 +81,42 @@ pub fn spawn_jobs(app: &Arc<App>) {
     });
 }
 
+/// The admin page's listener (`admin.rs`), until `stop` is notified. Whoever calls this binds the listener to
+/// 127.0.0.1: the page is never served on the public port.
+pub async fn serve_admin(app: Arc<App>, listener: TcpListener, stop: Arc<Notify>) {
+    // few connections, none for long: the page has one user, and nobody holds the hub's descriptors through it
+    let places = Arc::new(tokio::sync::Semaphore::new(crate::admin::MAX_CONNECTIONS));
+    loop {
+        let accepted = tokio::select! {
+            a = listener.accept() => a,
+            _ = stop.notified() => return,
+        };
+        let Ok((socket, _)) = accepted else {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
+        };
+        // over the limit: the connection is closed at once
+        let Ok(place) = places.clone().try_acquire_owned() else {
+            continue;
+        };
+        let app = app.clone();
+        tokio::spawn(async move {
+            let _place = place;
+            let service = service_fn(move |req| {
+                let app = app.clone();
+                async move { Ok::<_, std::convert::Infallible>(crate::admin::handle(app, req).await) }
+            });
+            let serving = http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(Duration::from_secs(10))
+                .serve_connection(TokioIo::new(socket), service);
+            let _ =
+                tokio::time::timeout(Duration::from_millis(crate::admin::CONNECTION_MS), serving)
+                    .await;
+        });
+    }
+}
+
 /// Serves until `stop` is notified, then shuts down: no new connections, idle ones closed at once, busy ones
 /// after their answer, every stream ended, at most five seconds for what is in flight.
 pub async fn serve(app: Arc<App>, listener: TcpListener, stop: Arc<Notify>) {

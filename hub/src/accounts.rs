@@ -269,7 +269,11 @@ impl Accounts {
         now: u64,
         pre: &Prehashed,
     ) -> Res<Value> {
-        let email = normalise_email(v["email"].as_str().unwrap_or(""))?;
+        // an e-mail is what a password signs in under; an account whose way in is a passkey may have none
+        let email = match &v["email"] {
+            Value::Null => None,
+            given => Some(normalise_email(given.as_str().unwrap_or(""))?),
+        };
         let kit = &v["kit"];
         let kit_auth = bytes(kit, "auth_key", 32)?;
         let kit_copy = sealed_copy(kit, "sealed_copy")?;
@@ -285,12 +289,19 @@ impl Accounts {
             Value::Null => None,
             p => Some(self.register_passkey(p, None, now)?),
         };
-        // v1 §16.7: the user handle is 32 random bytes the device chose when it made the first passkey; the
-        // account keeps it, so that a later sign-in's handle can be compared
-        let user_handle = match &v["user_handle"] {
-            Value::Null if passkey.is_none() => random::<32>().to_vec(),
-            given => bytes(&json!({ "user_handle": given }), "user_handle", 32)?,
+        // The account's id: a UUID the hub mints. With a passkey it is the one the hub named with the
+        // registration's challenge (the device needed it before: it is the passkey's user handle, and for an
+        // account without e-mail the salt of its kit).
+        let user_handle = match &v["passkey"] {
+            Value::Null => new_id(),
+            p => {
+                let client_data = var_bytes(p, "client_data_json", 4096)?;
+                let (challenge, _) = webauthn::client_challenge(&client_data, "webauthn.create")
+                    .map_err(|w| refuse("bad-passkey", w.0))?;
+                id_of_challenge(&challenge)
+            }
         };
+        let kit_form = kit_form(kit, email.is_some())?;
         if password.is_none() && passkey.is_none() {
             return Err(refuse(
                 "bad-format",
@@ -302,12 +313,22 @@ impl Accounts {
         {
             return Err(refuse("account-exists", "this room has an account"));
         }
-        if c.prepare_cached("SELECT 1 FROM accounts WHERE email = ?1")?
-            .exists([&email])?
-        {
+        if password.is_some() && email.is_none() {
+            return Err(refuse("bad-email", "a password signs in under an e-mail"));
+        }
+        // one answer for an e-mail and for an account id that is taken
+        let taken = match &email {
+            Some(email) => c
+                .prepare_cached("SELECT 1 FROM accounts WHERE email = ?1")?
+                .exists([email])?,
+            None => false,
+        } || c
+            .prepare_cached("SELECT 1 FROM accounts WHERE user_handle = ?1")?
+            .exists([&user_handle[..]])?;
+        if taken {
             return Err(refuse(
                 "account-exists",
-                "an account with this e-mail exists",
+                "an account with this e-mail or id exists",
             ));
         }
         let (kit_salt, kit_hash) = pre.take(&kit_auth)?;
@@ -324,10 +345,10 @@ impl Accounts {
             None => (None, None, None, None),
         };
         c.prepare_cached(
-            "INSERT INTO accounts (email, created_at, updated_at, auth_salt, auth_hash, kdf, password_copy, kit_salt, kit_hash, kit_copy, user_handle)
-             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO accounts (email, created_at, updated_at, auth_salt, auth_hash, kdf, password_copy, kit_salt, kit_hash, kit_copy, user_handle, kit_form)
+             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?
-        .execute(params![email, now as i64, auth_salt, auth_hash, kdf, password_copy, &kit_salt[..], &kit_hash[..], kit_copy, &user_handle[..]])?;
+        .execute(params![email, now as i64, auth_salt, auth_hash, kdf, password_copy, &kit_salt[..], &kit_hash[..], kit_copy, &user_handle[..], kit_form])?;
         let account = c.last_insert_rowid();
         c.prepare_cached(
             "INSERT INTO account_rooms (account_id, room_id, position) VALUES (?1, ?2, 0)",
@@ -361,18 +382,32 @@ impl Accounts {
     /// Sign-in with e-mail and the login key, first half: what the hub holds for that e-mail. The slow hash is
     /// made by the caller outside any database connection (`check_login`).
     pub fn login_row(&self, c: &Connection, v: &Value, kit: bool) -> Res<LoginRow> {
-        let email = normalise_email(v["email"].as_str().unwrap_or("")).ok();
         let auth = bytes(v, "auth_key", 32)?;
         let (salt_col, hash_col, copy_col) = if kit {
             ("kit_salt", "kit_hash", "kit_copy")
         } else {
             ("auth_salt", "auth_hash", "password_copy")
         };
-        let row: Option<(i64, Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>, i64)> = match &email {
-            Some(e) => c
-                .prepare_cached(&format!("SELECT account_id, {salt_col}, {hash_col}, {copy_col}, revision FROM accounts WHERE email = ?1"))?
-                .query_row([e], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
-                .optional()?,
+        // the account is named by its e-mail or by its id: the same query shape, the same answer either way
+        let (column, name): (&str, Option<Vec<u8>>) = match name_of(v) {
+            Name::Email(e) => ("email", Some(e.into_bytes())),
+            Name::Id(id) => ("user_handle", Some(id.to_vec())),
+            Name::None => ("email", None),
+        };
+        let row: Option<(i64, Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>, i64)> = match name
+        {
+            Some(name) => {
+                let sql = format!("SELECT account_id, {salt_col}, {hash_col}, {copy_col}, revision FROM accounts WHERE {column} = ?1");
+                let mut q = c.prepare_cached(&sql)?;
+                let get =
+                    |r: &rusqlite::Row| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?));
+                if column == "email" {
+                    q.query_row([String::from_utf8_lossy(&name).as_ref()], get)
+                        .optional()?
+                } else {
+                    q.query_row([&name], get).optional()?
+                }
+            }
             None => None,
         };
         let revision = row.as_ref().map_or(0, |r| r.4);
@@ -514,6 +549,13 @@ pub fn account_of(c: &Connection, room: &Room) -> Res<i64> {
         .ok_or_else(|| refuse("not-found", "this room has no account"))
 }
 
+pub fn handle_of(c: &Connection, account: i64) -> Res<Vec<u8>> {
+    Ok(
+        c.prepare_cached("SELECT user_handle FROM accounts WHERE account_id = ?1")?
+            .query_row([account], |r| r.get(0))?,
+    )
+}
+
 /// The rooms of an account, in their order.
 pub fn rooms_of(c: &Connection, account: i64) -> Res<Vec<Room>> {
     let mut s = c.prepare_cached(
@@ -527,11 +569,11 @@ pub fn rooms_of(c: &Connection, account: i64) -> Res<Vec<Room>> {
 
 /// What a human device of the room sees of its account. The e-mail is the person's own; no hash leaves the hub.
 pub fn account_view(c: &Connection, account: i64) -> Res<Value> {
-    let (email, created, updated, revision, has_password, kdf, password_copy, kit_copy, handle): (String, i64, i64, i64, bool, Option<String>, Option<Vec<u8>>, Vec<u8>, Vec<u8>) = c
+    let (email, created, updated, revision, has_password, kdf, password_copy, kit_copy, handle, kit_form): (Option<String>, i64, i64, i64, bool, Option<String>, Option<Vec<u8>>, Vec<u8>, Vec<u8>, String) = c
         .prepare_cached(
-            "SELECT email, created_at, updated_at, revision, auth_hash IS NOT NULL, kdf, password_copy, kit_copy, user_handle FROM accounts WHERE account_id = ?1",
+            "SELECT email, created_at, updated_at, revision, auth_hash IS NOT NULL, kdf, password_copy, kit_copy, user_handle, kit_form FROM accounts WHERE account_id = ?1",
         )?
-        .query_row([account], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)))?;
+        .query_row([account], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)))?;
     let mut s = c.prepare_cached("SELECT credential_id, algorithm, transports, sign_count, created_at, last_used_at, sealed_copy FROM passkeys WHERE account_id = ?1 ORDER BY created_at")?;
     let passkeys = s
         .query_map([account], |r| {
@@ -549,7 +591,7 @@ pub fn account_view(c: &Connection, account: i64) -> Res<Value> {
     Ok(json!({
         "email": email, "created_at": created, "updated_at": updated, "revision": revision, "has_password": has_password,
         "kdf": kdf.and_then(|k| serde_json::from_str::<Value>(&k).ok()), "password_copy": password_copy.map(|c| b64(&c)),
-        "kit_copy": b64(&kit_copy), "user_handle": b64(&handle), "passkeys": passkeys,
+        "kit_copy": b64(&kit_copy), "user_handle": b64(&handle), "account": id_text(&handle), "kit_form": kit_form, "passkeys": passkeys,
         "rooms": rooms_of(c, account)?.iter().map(|r| b64(r)).collect::<Vec<_>>(),
     }))
 }
@@ -577,6 +619,7 @@ pub fn put_password(
 ) -> Res<Value> {
     let account = account_of(c, room)?;
     check_revision(c, account, v)?;
+    needs_email(c, account)?;
     let (auth, copy, kdf) = (
         bytes(v, "auth_key", 32)?,
         sealed_copy(v, "sealed_copy")?,
@@ -585,6 +628,140 @@ pub fn put_password(
     let (salt, hash) = pre.take(&auth)?;
     c.prepare_cached("UPDATE accounts SET auth_salt = ?1, auth_hash = ?2, kdf = ?3, password_copy = ?4 WHERE account_id = ?5")?
         .execute(params![&salt[..], &hash[..], kdf, copy, account])?;
+    bump(c, account, now)?;
+    Ok(json!({ "revision": v["revision"].as_i64().unwrap_or(0) + 1 }))
+}
+
+/// Which salt a kit's keys are derived with follows from the account alone (v2.md 8.8.2): the e-mail's where it
+/// has one, else the account id's. The hub cannot check a kit; it says which form the account's kit has.
+fn kit_form(_kit: &Value, has_email: bool) -> Res<&'static str> {
+    Ok(if has_email { "email" } else { "id" })
+}
+
+/// How a request names an account: by e-mail or by the account's id.
+pub enum Name {
+    Email(String),
+    Id([u8; 16]),
+    None,
+}
+
+impl Name {
+    /// What the login throttle counts under: each name has its own bounds.
+    pub fn key(&self) -> String {
+        match self {
+            Name::Email(e) => e.clone(),
+            Name::Id(id) => format!("id:{}", crate::util::hex(id)),
+            Name::None => String::new(),
+        }
+    }
+}
+
+/// The one field `account` (read as `email` too): an e-mail address, or the account's id as a UUID.
+pub fn name_of(v: &Value) -> Name {
+    let text = v["account"].as_str().or(v["email"].as_str()).unwrap_or("");
+    if text.contains('@') {
+        normalise_email(text).map_or(Name::None, Name::Email)
+    } else {
+        parse_id(text).map_or(Name::None, Name::Id)
+    }
+}
+
+/// A new account id: a random UUID (version 4).
+pub fn new_id() -> [u8; 16] {
+    as_uuid(random::<16>())
+}
+
+fn as_uuid(mut id: [u8; 16]) -> [u8; 16] {
+    id[6] = (id[6] & 0x0f) | 0x40;
+    id[8] = (id[8] & 0x3f) | 0x80;
+    id
+}
+
+/// The account id that goes with a passkey challenge: the hub names it when it hands the challenge out, and an
+/// account made with a passkey registered on that challenge gets it.
+pub fn id_of_challenge(challenge: &[u8]) -> [u8; 16] {
+    let hash = crate::util::sha256(&[&b"trommi account id\0"[..], challenge].concat());
+    as_uuid(hash[..16].try_into().expect("sixteen bytes"))
+}
+
+/// An account id as it is printed: the canonical UUID, lower case, with dashes.
+pub fn id_text(id: &[u8]) -> String {
+    let h = crate::util::hex(id);
+    if h.len() != 32 {
+        return h;
+    }
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..]
+    )
+}
+
+/// An account id as typed: case, spaces and dashes are ignored; what is left is 32 hex digits.
+pub fn parse_id(text: &str) -> Option<[u8; 16]> {
+    let digits: String = text
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect();
+    if digits.len() != 32 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&digits[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
+/// A password signs in under an e-mail: an account without one sets it first (`PUT /v2/account/email`).
+fn needs_email(c: &Connection, account: i64) -> Res<()> {
+    let has: bool = c
+        .prepare_cached("SELECT email IS NOT NULL FROM accounts WHERE account_id = ?1")?
+        .query_row([account], |r| r.get(0))?;
+    if has {
+        Ok(())
+    } else {
+        Err(refuse(
+            "bad-email",
+            "a password signs in under an e-mail: this account has none",
+        ))
+    }
+}
+
+/// `PUT /v2/account/email`: an account that has no e-mail is given one. It is set once: the keys of a password,
+/// and of the kit of an account that has one, are derived from it; the kit is made anew in the same request.
+pub fn put_email(c: &Connection, room: &Room, v: &Value, now: u64, pre: &Prehashed) -> Res<Value> {
+    let account = account_of(c, room)?;
+    check_revision(c, account, v)?;
+    let email = normalise_email(v["email"].as_str().unwrap_or(""))?;
+    let held: Option<String> = c
+        .prepare_cached("SELECT email FROM accounts WHERE account_id = ?1")?
+        .query_row([account], |r| r.get(0))?;
+    if held.is_some() {
+        return Err(refuse("forbidden", "the e-mail of an account is set once"));
+    }
+    // (the answer signing up with that address gets)
+    if c.prepare_cached("SELECT 1 FROM accounts WHERE email = ?1")?
+        .exists([&email])?
+    {
+        return Err(refuse(
+            "account-exists",
+            "an account with this e-mail exists",
+        ));
+    }
+    c.prepare_cached("UPDATE accounts SET email = ?1 WHERE account_id = ?2")?
+        .execute(params![email, account])?;
+    // 8.8.2: with an e-mail the kit's keys are under the e-mail's salt, so the kit comes anew in this request
+    // (the same words may stay; the keys do not)
+    set_kit(c, account, &v["kit"], pre).map_err(|_| {
+        refuse(
+            "incomplete",
+            "an e-mail comes with the kit made anew under it",
+        )
+    })?;
     bump(c, account, now)?;
     Ok(json!({ "revision": v["revision"].as_i64().unwrap_or(0) + 1 }))
 }
@@ -600,11 +777,15 @@ pub fn put_kit(c: &Connection, room: &Room, v: &Value, now: u64, pre: &Prehashed
 
 fn set_kit(c: &Connection, account: i64, v: &Value, pre: &Prehashed) -> Res<()> {
     let (auth, copy) = (bytes(v, "auth_key", 32)?, sealed_copy(v, "sealed_copy")?);
+    let has_email: bool = c
+        .prepare_cached("SELECT email IS NOT NULL FROM accounts WHERE account_id = ?1")?
+        .query_row([account], |r| r.get(0))?;
+    let form = kit_form(v, has_email)?;
     let (salt, hash) = pre.take(&auth)?;
     c.prepare_cached(
-        "UPDATE accounts SET kit_salt = ?1, kit_hash = ?2, kit_copy = ?3 WHERE account_id = ?4",
+        "UPDATE accounts SET kit_salt = ?1, kit_hash = ?2, kit_copy = ?3, kit_form = ?4 WHERE account_id = ?5",
     )?
-    .execute(params![&salt[..], &hash[..], copy, account])?;
+    .execute(params![&salt[..], &hash[..], copy, form, account])?;
     Ok(())
 }
 
@@ -669,6 +850,7 @@ impl Accounts {
         match (&v["password"], &v["passkey"]) {
             // a password set anew: its key, its copy and its derivation record
             (p, Value::Null) if !p["auth_key"].is_null() => {
+                needs_email(c, account)?;
                 let (auth, copy, kdf) = (bytes(p, "auth_key", 32)?, sealed_copy(p, "sealed_copy")?, kdf_record(p)?);
                 let (salt, hash) = pre.take(&auth)?;
                 c.prepare_cached("UPDATE accounts SET auth_salt = ?1, auth_hash = ?2, kdf = ?3, password_copy = ?4 WHERE account_id = ?5")?
@@ -686,9 +868,10 @@ impl Accounts {
                 }
                 c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
             }
-            // a passkey made anew: registered as any passkey, on a challenge asked for with or without a token
+            // a passkey made anew: registered as any passkey of this account, on the account's challenge
+            // (`POST /v2/account/passkeys/challenge`, which names the id the passkey carries)
             (Value::Null, p) if !p["attestation_object"].is_null() => {
-                let scopes = [Some((account, revision_of(c, account)?)), None];
+                let scopes = [Some((account, revision_of(c, account)?))];
                 let (registered, copy, transports) = self.register_passkey_of(p, &scopes, now)?;
                 c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
                 insert_passkey(c, account, &registered, &copy, &transports, now)?;

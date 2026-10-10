@@ -775,6 +775,61 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
     agent
         .post_commit(&w.hub, &out, &tagged)
         .refused(400, "incomplete");
+    agent.clear(&group);
+    // 8.3: the group went on to its next epoch before any human device filed a tagged key for the one before.
+    // That epoch's GroupInfo is kept until one has: a human device checks it before it files its key.
+    let current = w
+        .ada
+        .get(&w.hub, &format!("/v2/groups/{}/info", b64(&group)))
+        .ok()["epoch"]
+        .as_u64()
+        .unwrap();
+    assert!(current >= 2);
+    let before = format!("/v2/groups/{}/info?epoch={}", b64(&group), current - 1);
+    let info = unb64(
+        w.ada.get(&w.hub, &before).ok()["group_info"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let key = w.ada.sealed_key(
+        &group,
+        current - 1,
+        &info,
+        now.0,
+        &w.recovery.hpke_public,
+        true,
+    );
+    w.ada
+        .call(
+            &w.hub,
+            "PUT",
+            "/v2/sealed-keys",
+            &json!({ "sealed_key": b64(&key) }),
+        )
+        .ok();
+    w.ada.get(&w.hub, &before).refused(410, "gone");
+    // the current epoch's and the founding's stay
+    w.ada
+        .get(&w.hub, &format!("/v2/groups/{}/info?epoch=0", b64(&group)))
+        .ok();
+    w.ada
+        .get(
+            &w.hub,
+            &format!("/v2/groups/{}/info?epoch={current}", b64(&group)),
+        )
+        .ok();
+    // a token is taken under the scheme's name in any case (RFC 9110)
+    let token = w.ada.token.clone().unwrap();
+    for scheme in ["bearer", "BEARER"] {
+        let mut headers = w.ada.headers();
+        headers.retain(|(name, _)| *name != "authorization");
+        headers.push(("authorization", format!("{scheme} {token}")));
+        assert_eq!(
+            request(w.hub.port, "GET", "/v2/desk", &headers, b"").status,
+            200
+        );
+    }
 }
 
 #[test]
@@ -1562,8 +1617,12 @@ fn key_packages_are_handed_out_once_and_the_last_resort_one_when_none_is_left() 
     )
     .refused(400, "bad-key-package");
     let many: Vec<String> = (0..100).map(|_| b64(&bea.key_package(false))).collect();
-    bea.put(&w.hub, "/v2/key-packages", &json!({ "single_use": many }))
-        .refused(429, "too-many");
+    // a whole fresh set beside what was left: the oldest go
+    assert_eq!(
+        bea.put(&w.hub, "/v2/key-packages", &json!({ "single_use": many }))
+            .ok()["unused"],
+        100
+    );
 }
 
 #[test]
@@ -1959,7 +2018,7 @@ fn what_the_second_review_found_stays_refused() {
         .post(
             &w.hub,
             &format!("/v2/rooms/{}/recovery-code", b64(&room)),
-            &body,
+            &code_body(&body),
         )
         .refused(400, "bad-commit");
     w.ada.clear(&room);
@@ -2071,8 +2130,24 @@ fn what_the_second_review_found_stays_refused() {
     );
     w.ada.post_commit(&w.hub, &out, &key).ok();
     bea.join(out.welcome.as_ref().unwrap());
+    // 9.0.10: its chain goes on with envelopes of the epoch that added it or a later one only: one signed for
+    // an epoch before (it was a leaf then, before its removal) is refused, and takes no number
+    let (seq, prev) = bea.chain(&helper_group);
+    let now_epoch = bea.epoch(&helper_group);
+    let stale = bea
+        .build_envelope(
+            &helper_group,
+            now_epoch - 2,
+            seq + 1,
+            prev,
+            &register(&random(), "from before"),
+            &[9; 32],
+        )
+        .0;
+    bea.post_envelope(&w.hub, &stale).refused(403, "not-member");
     bea.send(&w.hub, &helper_group, &register(&random(), "back in"))
         .ok();
+    assert_eq!(bea.chain(&helper_group).0, seq + 1);
     // a wish is rate-limited per device
     let mut refused = 0;
     for _ in 0..14 {
@@ -2491,4 +2566,24 @@ fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
         0
     );
     assert_ne!(claim(&ada), package);
+}
+
+#[test]
+fn signing_out_ends_the_token_at_once() {
+    let mut w = World::new();
+    let room = w.room;
+    let first = w.ada.token.clone().unwrap();
+    let mut stream = w.ada.events(&w.hub, None);
+    w.ada.sign_in(&w.hub, &room).ok();
+    let second = w.ada.token.clone().unwrap();
+    // the token ends, with the device's streams; another token of the device stays
+    w.ada.token = Some(first);
+    w.ada.call(&w.hub, "DELETE", "/v2/token", &Value::Null).ok();
+    assert!(stream.ended());
+    w.ada.get(&w.hub, "/v2/desk").refused(401, "unauthorised");
+    w.ada
+        .call(&w.hub, "DELETE", "/v2/token", &Value::Null)
+        .refused(401, "unauthorised");
+    w.ada.token = Some(second);
+    w.ada.get(&w.hub, "/v2/desk").ok();
 }
