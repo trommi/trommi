@@ -95,7 +95,7 @@ final class GoalsTests: XCTestCase {
     let b = room()
     set(b, ["desk/zz": ["name": "Old", "created_at": 1, "goals": "old"], "desk/main": ["name": "", "created_at": 9, "goals": "main"]])
     XCTAssertEqual(wanted(b)[s1]?["desk_id"], "main", "without an order: main first")
-    XCTAssertEqual(wanted(b)[s1]?["desk_name"], "Desk", "a desk without a name")
+    XCTAssertEqual(wanted(b)[s1]?["desk_name"], "Personal", "a desk without a name")
     set(b, ["desk/zz": ["name": "Old", "created_at": 1, "goals": "old", "order": 0], "desk/main": ["name": "", "created_at": 9, "goals": "main", "order": 1]])
     XCTAssertEqual(wanted(b)[s1]?["desk_id"], "zz", "with an order: the order")
     set(b, ["desk/zz": .null])

@@ -280,6 +280,8 @@ final class BoardModel: ObservableObject {
     do {
       let report = try await PerfLog.time("refresh sync") { try await room.sync() }
       if let w = report.warnings.first { error = w }
+      // (after a catch-up the board is the hub's: an account without a desk gets its first one)
+      ensureDesk()
       if liveTask == nil && active { startLive() }
     } catch {
       // (a confirmed removal is said on the start screen: removedHere)
@@ -319,6 +321,11 @@ final class BoardModel: ObservableObject {
     phase = .board
     await refresh()
     checkKit()
+  }
+  /** Every account has a desk ("Personal"): written when this device sees none after a catch-up. */
+  func ensureDesk() {
+    guard !demo, let room = room, room.board.myRole == "human", room.liveDesks.isEmpty else { return }
+    act { try await room.ensureDesk() }
   }
 
   /** A scanned or pasted text: a pairing link carries "#v2." and parses as one (the core checks it). It asks at once. */
@@ -738,7 +745,7 @@ final class BoardModel: ObservableObject {
     act {
       let crown: JV = on ? .obj(["session_id": .s(a.sessionId), "agent_device_id": .s(a.agentDeviceId)]) : .null
       guard let deskId = d.deskOf(a) else { try await room.setCrown(crown); return }
-      var v = room.board.human.desks[deskId]?.object ?? ["name": .str(d.desks.first { $0.id == deskId }?.name ?? "Desk"), "created_at": .n(nowMs())]
+      var v = room.board.human.desks[deskId]?.object ?? ["name": .str(d.desks.first { $0.id == deskId }?.name ?? "Personal"), "created_at": .n(nowMs())]
       v["crown"] = crown
       try await room.setDesk(deskId, .obj(v))
     }
@@ -813,9 +820,9 @@ final class BoardModel: ObservableObject {
   func newDesk(name: String) {
     guard let room = acting() else { return }
     act {
-      if room.board.human.desks.isEmpty { try await room.setDesk("main", .obj(["name": "Desk", "created_at": .n(nowMs() - 1)])) }
+      if room.liveDesks.isEmpty { try await room.setDesk("main", Room.firstDesk) }
       let id = (0..<4).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
-      try await room.setDesk(id, .obj(["name": .str(String(name.trimmingCharacters(in: .whitespaces).prefix(40)).isEmpty ? "Desk" : String(name.prefix(40))), "created_at": .n(nowMs())]))
+      try await room.setDesk(id, .obj(["name": .str(String(name.trimmingCharacters(in: .whitespaces).prefix(40)).isEmpty ? "Personal" : String(name.prefix(40))), "created_at": .n(nowMs())]))
       self.deskId = id
     }
   }
@@ -833,7 +840,8 @@ final class BoardModel: ObservableObject {
   }
   func removeDesk(_ id: String) {
     guard let room = acting() else { return }
-    act { try await room.setDesk(id, nil); if self.deskId == id { self.deskId = nil } }
+    guard room.liveDesks.filter({ $0 != id }).count >= 1 else { error = "The last desk stays."; return }
+    act { try await room.removeDesk(id); if self.deskId == id { self.deskId = nil } }
   }
 
   // ---- words ---------------------------------------------------------------------------------------------
