@@ -13,7 +13,8 @@ use rusqlite::{Connection, OpenFlags};
 
 pub const SCHEMA_VERSION: i64 = 5;
 
-/// Added to schema 5 in place (Welcomes stored once, ids never given twice, an index for deleting by group), on every open (a fresh database and one that holds data alike): nothing is
+/// Added to schema 5 in place (Welcomes stored once, ids never given twice, an index for deleting by group, the
+/// Offer's MAC, an index for paging the groups), on every open (a fresh database and one that holds data alike): nothing is
 /// rewritten, rows written before keep working. A Welcome is stored once per group and epoch in
 /// `welcome_bytes`; a row of `welcomes` with `epoch` set points to it and keeps an empty `bytes`, a row without
 /// `epoch` (written before) holds its own. At 1000 human devices a founding's Welcome is some 0.3 MB, and it is
@@ -31,7 +32,17 @@ CREATE TABLE IF NOT EXISTS welcome_ids (
   one            INTEGER PRIMARY KEY CHECK (one = 1),
   last           INTEGER NOT NULL
 ) STRICT;
-INSERT OR IGNORE INTO welcome_ids (one, last) VALUES (1, (SELECT coalesce(max(id), 0) FROM welcomes));
+";
+
+/// The first id the counter of `welcome_ids` starts above, in a database the hub wrote before it had one: above
+/// every id SQLite can have given. Without AUTOINCREMENT SQLite gives the largest id there is plus one, so no id
+/// was larger than the number of rows ever written; each row was written for one Add of a Commit, a Commit is
+/// never deleted from the log and adds at most `MAX_LEAVES` devices.
+const WELCOME_IDS_SEED: &str = "
+INSERT INTO welcome_ids (one, last) VALUES (1, max(
+  (SELECT coalesce(max(id), 0) FROM welcomes),
+  (SELECT count(*) FROM group_log WHERE kind = 'commit') * 1024
+)) ON CONFLICT (one) DO UPDATE SET last = max(last, excluded.last);
 ";
 
 pub const SCHEMA: &str = r#"
@@ -678,9 +689,22 @@ impl Db {
             if has_epoch == 0 {
                 writer.execute_batch("ALTER TABLE welcomes ADD COLUMN epoch INTEGER;")?;
             }
+            // the Offer's MAC (12.1.2), stored and served with it; none for an invite stored before
+            let has_mac: i64 = writer.query_row(
+                "SELECT count(*) FROM pragma_table_info('invites') WHERE name = 'offer_mac'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_mac == 0 {
+                writer.execute_batch("ALTER TABLE invites ADD COLUMN offer_mac BLOB;")?;
+            }
+            // on every open, never lowering it: also a counter an earlier build seeded too low is raised (the
+            // ids it skips cost nothing)
+            writer.execute_batch(WELCOME_IDS_SEED)?;
             writer.execute_batch(
                 "CREATE INDEX IF NOT EXISTS welcomes_by_epoch ON welcomes(group_id, epoch) WHERE epoch IS NOT NULL;
-                 CREATE INDEX IF NOT EXISTS welcomes_by_group ON welcomes(group_id, device);",
+                 CREATE INDEX IF NOT EXISTS welcomes_by_group ON welcomes(group_id, device);
+                 CREATE INDEX IF NOT EXISTS groups_by_founding ON groups(room_id, founded_change);",
             )
         })();
         match added {

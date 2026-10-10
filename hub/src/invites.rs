@@ -12,13 +12,29 @@ use crate::store::{self, Audience, Auth, Effects, Event, GroupKind};
 use crate::util::{b64, same};
 use crate::wire::{self, InviteRequest, Offer, Reveal, ZERO16};
 
-pub const INVITE_MS: u64 = 600_000;
+/// The invite life of each kind of device (12.1.2): 10 minutes for a human device, 15 for an agent device; the
+/// inviter's clock may differ from the hub's by 2 minutes either way.
+pub const HUMAN_INVITE_MS: u64 = 600_000;
+pub const AGENT_INVITE_MS: u64 = 900_000;
+pub const CLOCK_TOLERANCE_MS: u64 = 120_000;
+/// The Offer's MAC under the link's secret (12.1.2): the hub stores and serves it, and checks only its length.
+pub const OFFER_MAC_LEN: usize = 32;
 const MAX_REQUESTS: i64 = 4;
 
-/// `POST /v2/invites`: only a human device invites; it publishes the signed Offer.
-pub fn publish(x: &Ctx, auth: &Auth, offer_bytes: &[u8], signature: &[u8]) -> Res<Value> {
+/// `POST /v2/invites`: only a human device invites; it publishes the signed Offer with its MAC.
+pub fn publish(
+    x: &Ctx,
+    auth: &Auth,
+    offer_bytes: &[u8],
+    signature: &[u8],
+    mac: Option<&[u8]>,
+) -> Res<Value> {
     auth.human()?;
     let offer = Offer::parse(offer_bytes)?;
+    // optional until every client sends it; when sent, exactly 32 bytes
+    if mac.is_some_and(|m| m.len() != OFFER_MAC_LEN) {
+        return Err(refuse("bad-format", "mac: the Offer's MAC, 32 bytes"));
+    }
     if offer.room_id != auth.room || offer.inviter != auth.device {
         return Err(refuse(
             "bad-invite",
@@ -36,19 +52,42 @@ pub fn publish(x: &Ctx, auth: &Auth, offer_bytes: &[u8], signature: &[u8]) -> Re
     }
     // a repeated post of the same Offer gets the first answer again, whatever the room has become since
     if let Some(held) =
-        x.c.prepare_cached("SELECT offer FROM invites WHERE invite_id = ?1")?
-            .query_row([&offer.invite_id[..]], |r| r.get::<_, Vec<u8>>(0))
-            .optional()?
+        x.c.prepare_cached(
+            "SELECT offer, offer_signature, offer_mac FROM invites WHERE invite_id = ?1",
+        )?
+        .query_row([&offer.invite_id[..]], |r| {
+            Ok((
+                r.get::<_, Vec<u8>>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, Option<Vec<u8>>>(2)?,
+            ))
+        })
+        .optional()?
     {
-        return if same(&held, offer_bytes) {
+        let (held_offer, held_signature, held_mac) = held;
+        return if same(&held_offer, offer_bytes)
+            && same(&held_signature, signature)
+            && match (held_mac.as_deref(), mac) {
+                (Some(held), Some(mac)) => same(held, mac),
+                (None, None) => true,
+                _ => false,
+            } {
             Ok(json!({ "invite_id": b64(&offer.invite_id) }))
         } else {
             Err(refuse("replay", "this invite id is used"))
         };
     }
-    // ten minutes, with a minute for clocks that differ
-    if offer.expires_at <= x.now || offer.expires_at > x.now + INVITE_MS + 60_000 {
-        return Err(refuse("bad-invite", "an invite lives ten minutes"));
+    // the invite life of its kind, with the clocks' tolerance; the hub's own expiry is the Offer's `expires_at`
+    let life = if offer.role == 2 {
+        AGENT_INVITE_MS
+    } else {
+        HUMAN_INVITE_MS
+    };
+    if offer.expires_at <= x.now || offer.expires_at > x.now + life + CLOCK_TOLERANCE_MS {
+        return Err(refuse(
+            "bad-invite",
+            "an invite lives 10 minutes (an agent's 15)",
+        ));
     }
     let view = store::room_view(x.c, &auth.room)?;
     if offer.room_epoch < view.epoch {
@@ -79,9 +118,9 @@ pub fn publish(x: &Ctx, auth: &Auth, offer_bytes: &[u8], signature: &[u8]) -> Re
         return Err(refuse("too-many", "a room has at most 16 open invites"));
     }
     x.c.prepare_cached(
-        "INSERT INTO invites (invite_id, room_id, inviter, role, offer, offer_signature, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO invites (invite_id, room_id, inviter, role, offer, offer_signature, offer_mac, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )?
-    .execute(params![&offer.invite_id[..], &auth.room[..], &offer.inviter[..], offer.role, offer_bytes, signature, x.now as i64, offer.expires_at as i64])?;
+    .execute(params![&offer.invite_id[..], &auth.room[..], &offer.inviter[..], offer.role, offer_bytes, signature, mac, x.now as i64, offer.expires_at as i64])?;
     Ok(json!({ "invite_id": b64(&offer.invite_id) }))
 }
 
@@ -90,6 +129,8 @@ struct Invite {
     inviter: Vec<u8>,
     offer: Vec<u8>,
     offer_signature: Vec<u8>,
+    /// none for an invite stored before the MAC was
+    offer_mac: Option<Vec<u8>>,
     reveal: Option<Vec<u8>>,
     reveal_signature: Option<Vec<u8>>,
     expires_at: u64,
@@ -98,7 +139,7 @@ struct Invite {
 }
 
 fn load(c: &Connection, id: &[u8]) -> Res<Invite> {
-    c.prepare_cached("SELECT room_id, inviter, offer, offer_signature, reveal, reveal_signature, expires_at, used_at IS NOT NULL, burned_at IS NOT NULL FROM invites WHERE invite_id = ?1")?
+    c.prepare_cached("SELECT room_id, inviter, offer, offer_signature, reveal, reveal_signature, expires_at, used_at IS NOT NULL, burned_at IS NOT NULL, offer_mac FROM invites WHERE invite_id = ?1")?
         .query_row([id], |r| {
             Ok(Invite {
                 room: store::fixed(r.get(0)?)?,
@@ -110,6 +151,7 @@ fn load(c: &Connection, id: &[u8]) -> Res<Invite> {
                 expires_at: r.get::<_, i64>(6)? as u64,
                 used: r.get(7)?,
                 burned: r.get(8)?,
+                offer_mac: r.get(9)?,
             })
         })
         .optional()?
@@ -134,7 +176,7 @@ fn open(invite: &Invite, now: u64) -> Res<()> {
 pub fn read(c: &Connection, id: &[u8], asker: Option<&Auth>, now: u64) -> Res<Value> {
     let invite = load(c, id)?;
     open(&invite, now)?;
-    let mut out = json!({ "offer": b64(&invite.offer), "signature": b64(&invite.offer_signature), "expires_at": invite.expires_at });
+    let mut out = json!({ "offer": b64(&invite.offer), "signature": b64(&invite.offer_signature), "mac": invite.offer_mac.as_deref().map(b64), "expires_at": invite.expires_at });
     if asker.is_some_and(|a| a.room == invite.room && a.who == store::Who::Human) {
         let mut s = c.prepare_cached(
             "SELECT request, mac, signature FROM invite_requests WHERE invite_id = ?1 ORDER BY at",

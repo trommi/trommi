@@ -1378,8 +1378,10 @@ pub fn group_page(c: &Connection, auth: &Auth, after: i64, limit: i64) -> Res<Va
     let (mut items, mut bytes, mut cursor, mut more) = (Vec::new(), 0usize, after, false);
     // groups the asker may not see are skipped, so the page is read in steps until it is full or the room ends
     'pages: loop {
-        let rows = store::groups_of_room_after(c, &auth.room, cursor, limit + 1)?;
-        let ended = (rows.len() as i64) <= limit;
+        // read in steps of at least 256 rows: a device that sees few groups does not ask once per two
+        let step = limit.max(256) + 1;
+        let rows = store::groups_of_room_after(c, &auth.room, cursor, step)?;
+        let ended = (rows.len() as i64) < step;
         for (founded, row) in rows {
             if items.len() as i64 == limit {
                 more = true;

@@ -123,7 +123,7 @@ fn lifetimes_and_retention() {
         room_state,
     }
     .bytes();
-    w.ada.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&w.ada.sign("TrommiInviteOffer", &offer)) })).ok();
+    w.ada.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&w.ada.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) })).ok();
     hub.get(&format!("/v2/invites/{}", b64(&invite_id))).ok();
 
     // ---- a recovery locks the room for ten minutes, then it is over by itself
