@@ -82,6 +82,11 @@ record! {
         /// The leaves the newest room state does not allow: not empty means the group is stale, and a human
         /// device cleans it with `clean_session`.
         pub disallowed: Vec<Vec<u8>>,
+        /// The opener this helper session lacks although its main session has an agent leaf: the
+        /// group is stale until a human device adds that device with `clean_session`.
+        pub missing_opener: Option<Vec<u8>>,
+        /// Whether the group is stale (5.2.8): a disallowed leaf or a missing opener.
+        pub stale: bool,
         /// Whether this device archived it.
         pub archived: bool,
         /// Whether a Commit of this device waits: for the hub's answer, or for its place in the log.
@@ -104,6 +109,10 @@ impl From<core::GroupSummary> for GroupSummary {
                 parent: session.parent.as_bytes().to_vec(),
             }),
             epoch: summary.epoch,
+            stale: summary.is_stale(),
+            missing_opener: summary
+                .missing_opener
+                .map(|device| device.as_bytes().to_vec()),
             leaves: devices(&summary.leaves),
             disallowed: devices(&summary.disallowed),
             archived: summary.archived,

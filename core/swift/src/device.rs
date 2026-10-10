@@ -417,6 +417,29 @@ impl CoreDevice {
         })
     }
 
+    /// Lets a human device into a session group again whose Welcome it could not use: one Commit that removes
+    /// its leaf, with the Cut this device holds for it, and adds the same key with the fresh KeyPackage it
+    /// asked with; its chain goes on from that Cut. Any human device of the group does this (`forbidden` for
+    /// another device, and in the room group, where a device that cannot join comes back as a new device);
+    /// `bad-commit` for a device that is no human device of the room, for this device itself, and when the
+    /// hub holds an envelope of the device beyond the Cut. Returns the outbox entry's id.
+    pub fn readmit_human(
+        &self,
+        group: Vec<u8>,
+        device: Vec<u8>,
+        key_package: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<u64, CoreError> {
+        self.write(|inner| {
+            Ok(inner.readmit_human(
+                &group_id(&group)?,
+                &device_id(&device)?,
+                &key_package,
+                now_ms,
+            )?)
+        })
+    }
+
     /// The own-leaf update of a human device: an empty Commit when its leaf in `group` is older than seven
     /// days and its last update there older than a day, or at once when `forced`. Returns the outbox entry's
     /// id, or none when nothing is due.

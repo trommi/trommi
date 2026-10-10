@@ -4,15 +4,16 @@
 use trommi_core::codec;
 use trommi_core::device::{Joined, Processed, Received, WelcomeExpectation};
 use trommi_core::ids::{GroupId, SessionId, TurnId};
+use trommi_core::invite::Role;
 use trommi_core::mls::message::TrommiMessage;
 use trommi_core::mls::profile::{CommitNote, Cut, TrommiSession};
 use trommi_core::Error;
 use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
-    now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync, sync_ok,
-    TestDevice,
+    add_forger, add_human, cuts_for, enrol, enrol_over, found_helper, found_main, found_room_on,
+    new_device, now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync,
+    sync_ok, try_invite, TestDevice,
 };
 
 struct Room {
@@ -401,9 +402,7 @@ fn after_a_takeover_the_helper_sessions_are_stale_until_cleaned_with_the_new_ope
 
     // (a) The old agent device leaves `agents`: its main session and the helper session it opened are stale.
     let mut new = new_device();
-    a.change_agents(&[new.id()], &[agent.id()], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    observe(&hub, &mut new);
+    enrol_over(&mut hub, &mut a, &mut new, &main);
     assert_eq!(hub.stale_leaves(&main).unwrap(), [agent.id()]);
     assert_eq!(hub.stale_leaves(&group).unwrap(), [agent.id()]);
     // The helper device writes nothing there: the hub refuses it, and once it saw the room Commit, so does
@@ -517,7 +516,7 @@ fn while_the_seat_is_empty_a_helper_session_waits_without_an_opener() {
     for device in [&mut a, &mut b, &mut h1] {
         settle(&hub, device);
     }
-    a.change_agents(&[], &[agent.id()], now()).unwrap();
+    a.remove_agents(&[agent.id()], now()).unwrap();
     post_ok(&mut hub, &mut a);
     for id in [main, group] {
         a.clean_session(&id, &cuts_for(&a, &id), None, now())
@@ -530,6 +529,10 @@ fn while_the_seat_is_empty_a_helper_session_waits_without_an_opener() {
         [a.id(), b.id(), h1.id()].into_iter().collect()
     );
     assert!(hub.stale_leaves(&group).unwrap().is_empty());
+    // It lacks an opener and is not stale for that: its main session has no agent leaf.
+    assert!(!hub.is_stale(&group).unwrap());
+    let summary = a.group(&group).unwrap();
+    assert_eq!((summary.is_stale(), summary.missing_opener), (false, None));
     // Only human devices commit, and they add no helper device and remove no leaf the room allows.
     let package = new_device().key_package(now()).unwrap();
     let stranger = trommi_core::device::key_package_info(&package)
@@ -557,15 +560,15 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         mut hub,
         mut a,
         mut b,
+        agent,
         room_group,
         main,
         parent,
-        ..
     } = room(false);
     // No device builds this founding (`groups_hardening_rules.rs`): the agent device is a member that obeys
     // MLS only.
     let other = Forger::new();
-    a.change_agents(&[other.id()], &[], now()).unwrap();
+    try_invite(&mut a, &mut other.invitee(), Role::Agent, None).unwrap();
     post_ok(&mut hub, &mut a);
     sync_ok(&hub, &mut b);
     let packages = hub.claim(&[a.id(), b.id()]).unwrap();
@@ -641,14 +644,28 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
 
     // It removes the offending leaf. Open point: 5.2.6 says such a session's content is never opened; a
     // device that processed the cleaning hands the keys out from then on, the device that made it does not.
-    a.clean_session(&group, &cuts_for(&a, &group), None, now())
-        .unwrap();
+    // The same Commit adds the opener the group lacks, the main session's agent leaf (5.2.8).
+    assert_eq!(
+        a.clean_session(&group, &cuts_for(&a, &group), None, now()),
+        Err(Error::StaleSession)
+    );
+    let of_agent = hub.claim(&[agent.id()]).unwrap().remove(0);
+    a.clean_session(
+        &group,
+        &cuts_for(&a, &group),
+        Some((&agent.id(), &of_agent)),
+        now(),
+    )
+    .unwrap();
     post_ok(&mut hub, &mut a);
     sync_ok(&hub, &mut b);
     for device in [&a, &b] {
         let summary = device.group(&group).unwrap();
-        assert_eq!((summary.epoch, summary.disallowed.len()), (2, 0));
-        assert_eq!(summary.leaves, [a.id(), b.id()].into_iter().collect());
+        assert_eq!((summary.epoch, summary.is_stale()), (2, false));
+        assert_eq!(
+            summary.leaves,
+            [a.id(), b.id(), agent.id()].into_iter().collect()
+        );
     }
 }
 
@@ -698,4 +715,97 @@ fn first_contact_finds_more_helper_devices_than_a_helper_session_holds() {
             Err(Error::BadGroup)
         );
     }
+}
+
+#[test]
+fn a_helper_session_that_lacks_its_opener_is_stale_and_any_human_device_that_sees_it_repairs_it() {
+    let Room {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        main,
+        ..
+    } = room(true);
+    let mut h1 = helper_device(&hub, &main);
+    let group = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
+    for device in [&mut a, &mut b, &mut h1] {
+        settle(&hub, device);
+    }
+    let turn = TurnId::new([4; 16]);
+
+    // (a) The takeover begins in the room group. The old opener's leaf goes from the helper session before
+    // the main session has its new agent leaf: the helper session then waits, and is not stale.
+    let mut new = new_device();
+    enrol_over(&mut hub, &mut a, &mut new, &main);
+    publish_some(&mut hub, &mut new, 2);
+    a.clean_session(&group, &cuts_for(&a, &group), None, now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    assert!(!hub.is_stale(&group).unwrap());
+    settle(&hub, &mut b);
+    settle(&hub, &mut h1);
+
+    // (b) The main session is taken over, and there the first device stops: the helper session lacks its
+    // opener although its main session has an agent leaf.
+    let of_main = hub.claim(&[new.id()]).unwrap().remove(0);
+    a.clean_session(
+        &main,
+        &cuts_for(&a, &main),
+        Some((&new.id(), &of_main)),
+        now(),
+    )
+    .unwrap();
+    post_ok(&mut hub, &mut a);
+    assert!(hub.is_stale(&group).unwrap());
+    assert!(hub.stale_leaves(&group).unwrap().is_empty());
+
+    // The hub takes nothing for it: not a helper device's message, and not the Commit of a human device that
+    // has not seen the takeover yet.
+    h1.send_work_trail(&group, &turn, 1, b"{}", now()).unwrap();
+    assert_eq!(post_refused(&mut hub, &mut h1), [Error::StaleSession]);
+    b.update(&group, true, now()).unwrap();
+    assert_eq!(post_refused(&mut hub, &mut b), [Error::StaleSession]);
+
+    // The second human device merely sees the group: no invite of its own, no record of the takeover. Its
+    // summary says why the group is stale, and it writes nothing there but the repair.
+    settle(&hub, &mut b);
+    settle(&hub, &mut h1);
+    let summary = b.group(&group).unwrap();
+    assert!(summary.is_stale());
+    assert_eq!(
+        (summary.disallowed, summary.missing_opener),
+        (vec![], Some(new.id()))
+    );
+    assert!(b.invite_steps().unwrap().is_empty());
+    assert_eq!(b.update(&group, true, now()), Err(Error::StaleSession));
+    assert_eq!(
+        h1.send_work_trail(&group, &turn, 1, b"{}", now()),
+        Err(Error::StaleSession)
+    );
+    // A Commit that adds another device than the missing opener is not the repair.
+    let of_c = new_device().key_package(now()).unwrap();
+    let c = trommi_core::device::key_package_info(&of_c).unwrap().device;
+    assert_eq!(
+        b.add_to_session(&group, &c, &of_c, now()),
+        Err(Error::StaleSession)
+    );
+
+    // The repair: the Add of the main session's agent leaf, with a KeyPackage claimed at the hub.
+    let of_helper = hub.claim(&[new.id()]).unwrap().remove(0);
+    b.clean_session(&group, &[], Some((&new.id(), &of_helper)), now())
+        .unwrap();
+    post_ok(&mut hub, &mut b);
+    assert!(!hub.is_stale(&group).unwrap());
+    assert_eq!(settle_joining(&hub, &mut new).len(), 2);
+    for device in [&mut a, &mut h1] {
+        settle(&hub, device);
+    }
+    assert!(!a.group(&group).unwrap().is_stale());
+    assert_eq!(
+        a.group(&group).unwrap().leaves,
+        [a.id(), b.id(), new.id(), h1.id()].into_iter().collect()
+    );
+    h1.send_work_trail(&group, &turn, 1, b"{}", now()).unwrap();
+    post_ok(&mut hub, &mut h1);
 }
