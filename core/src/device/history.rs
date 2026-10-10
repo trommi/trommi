@@ -162,6 +162,14 @@ fn origin_key(group: &GroupId) -> Vec<u8> {
     group_key(table::CHAIN, SUB_ORIGIN, group, &[])
 }
 
+/// Whether the places of the room's epochs ascend with the epochs, as the hub's order has them (5.4.1).
+pub(super) fn ascending(places: &BTreeMap<u64, u64>) -> bool {
+    places
+        .values()
+        .zip(places.values().skip(1))
+        .all(|(earlier, later)| earlier < later)
+}
+
 /// A main session's agent leaf over time: what a walk found up to where the device's own record begins,
 /// then what the device recorded from the Commits it processed itself. The first entry of the device's own
 /// record stands for the state it started from, which the walk arrives at.
@@ -514,9 +522,20 @@ impl<S: Storage> Device<S> {
         let arrived = arrived.first().ok_or(Error::Internal("a walk's end"))?;
 
         if let Some(earlier) = observer.history() {
-            self.take_room_past(batch, group, earlier)?;
             // Where each room epoch began in the hub's order, by which a session Commit is judged at
-            // its place. A place the device knows from the log itself stays.
+            // its place. The places are the hub's word, and one hub's word does not contradict itself:
+            // a place the device knows from the log itself stays, the walk names the same one for that
+            // epoch, and all of them together ascend with the epochs.
+            let mut whole = self.memory.room_places.clone();
+            for (epoch, change) in &places {
+                if *whole.entry(*epoch).or_insert(*change) != *change {
+                    return Err(Refusal::BadGroup);
+                }
+            }
+            if !ascending(&whole) {
+                return Err(Refusal::BadGroup);
+            }
+            self.take_room_past(batch, group, earlier)?;
             for (epoch, change) in places {
                 if !self.memory.room_places.contains_key(&epoch) {
                     self.put_room_place(batch, epoch, change);
