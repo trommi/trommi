@@ -320,6 +320,19 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
     bea.sign_in(&w.hub, &room).ok();
     let welcomes = bea.get(&w.hub, "/v2/welcomes").ok();
     assert_eq!(welcomes[0]["welcome"], b64(out.welcome.as_ref().unwrap()));
+    // read on from the last one's `id`: nothing after it
+    let last = welcomes.as_array().unwrap().last().unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        bea.get(&w.hub, &format!("/v2/welcomes?after={last}")).ok(),
+        json!([])
+    );
+    assert_eq!(
+        bea.get(&w.hub, &format!("/v2/welcomes?after={}", last - 1))
+            .ok(),
+        welcomes
+    );
     bea.join(&unb64(welcomes[0]["welcome"].as_str().unwrap()).unwrap());
     assert_eq!(bea.members(&room).len(), 2);
     // the invite is used: the same KeyPackage does not get in twice, nor does the invite

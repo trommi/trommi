@@ -263,7 +263,7 @@ pub struct RoomChange {
     pub joined_from_outside: Option<Device>,
 }
 
-/// 5.1.2 to 5.1.4 and 4.2: a Commit in the room group. `humans` is the limit in force (32, or 33 during a
+/// 5.1.2 to 5.1.4 and 4.2: a Commit in the room group. `humans` is the limit in force (1000, or 1001 during a
 /// recovery). Whether an Add or a new agent key is the outcome of an invite (12.1.7), and whether the recovery
 /// keys may change in this request (8.6), is the caller's to check from the returned change.
 pub fn check_room_commit(
