@@ -1299,22 +1299,23 @@ mod live_tests {
     }
 
     #[test]
-    fn a_device_has_a_limit_of_streams_and_a_slow_reader_is_cut() {
+    fn a_new_stream_ends_the_older_ones_of_its_device_and_a_slow_reader_is_cut() {
         let live = Live::default();
         let mut keep = vec![];
-        for _ in 0..2 {
+        for _ in 0..3 {
             keep.push(
                 live.open(auth(1, Who::Human), 2, 64, u64::MAX, None)
                     .unwrap(),
             );
         }
-        assert!(live
-            .open(auth(1, Who::Human), 2, 64, u64::MAX, None)
-            .is_none());
-        assert!(live
+        // each new one ended those before it, so the limit of two is never reached; another device's stay
+        let other = live
             .open(auth(2, Who::Human), 2, 64, u64::MAX, None)
-            .is_some());
-        let (s, rx) = &mut keep[0];
+            .unwrap();
+        assert!(keep[0].0.is_closed() && keep[1].0.is_closed() && !keep[2].0.is_closed());
+        assert!(!other.0.is_closed());
+        assert_eq!(drain(&mut keep[0].1), vec!["END"]);
+        let (s, rx) = &mut keep[2];
         s.go_live(0);
         live.publish(
             &event(Some(1), true, vec![], None),
