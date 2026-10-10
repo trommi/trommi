@@ -52,7 +52,7 @@ extension Room {
       if !self.synced { _ = try await self.catchUp() }
       let hubURL = self.hubURL
       let made = try await self.onCore { try $0.inviteOpen(role: role, session: session, app: app, hub: hubURL, nowMs: nowMs()) }
-      try await self.noted { try await self.hub.postInvite(offer: made.offer.offer, signature: made.offer.signature) }
+      try await self.noted { try await self.hub.postInvite(offer: made.offer.offer, signature: made.offer.signature, mac: made.offer.mac) }
       return Pairing(inviteId: hex(made.inviteId), link: made.link, expiresAt: made.expiresAt, invite: made.inviteId)
     }
   }

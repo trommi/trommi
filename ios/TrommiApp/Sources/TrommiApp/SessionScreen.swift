@@ -252,6 +252,12 @@ struct DayLine: View {
     }.padding(.vertical, 14)
   }
 }
+/** How long an invite still holds, from its deadline: "valid for 9 more minutes (until 14:05)"; "run out" after it. */
+func validFor(_ deadline: UInt64, now: UInt64 = nowMs()) -> String {
+  guard deadline > now else { return "run out at \(clockOf(deadline))" }
+  let minutes = Int((deadline - now + 59_999) / 60_000)
+  return "valid for \(minutes == 1 ? "1 more minute" : "\(minutes) more minutes") (until \(clockOf(deadline)))"
+}
 func clockOf(_ ts: UInt64) -> String { let f = DateFormatter(); f.dateFormat = "HH:mm"; return f.string(from: Date(timeIntervalSince1970: Double(ts) / 1000)) }
 
 let EVENT_LABEL = ["asked": "New question", "info": "To read", "decided": "Answered", "done": "Done", "reopened": "Taken back", "revised": "Question revised", "trusted": Words.trust,

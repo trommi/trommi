@@ -33,6 +33,12 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var boards: [String: [UInt64]] = [:]
   /// The stored files, by their id as the route names it.
   nonisolated(unsafe) static var files: [String: Data] = [:]
+  /// Invites by id (base64url): the Offer as posted, the Requests that came, the Reveal once published.
+  nonisolated(unsafe) static var invites: [String: (offer: JSON, requests: [JSON], reveal: JSON?)] = [:]
+  /// The id (base64url) the next posted Offer is kept under.
+  nonisolated(unsafe) static var pendingInvite: String?
+  /// Set: the Offer is served without its MAC (an older hub, or one that drops it).
+  nonisolated(unsafe) static var dropMac = false
   /// The bodies of the requests `refuseOnce` refused, in order.
   nonisolated(unsafe) static var refused: [JSON] = []
   /// Devices the hub calls removed (hex of the key): their token names `role: "removed"`, and the removal route
@@ -42,7 +48,7 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
 
   /// Routes every hub client of the process here, over a fresh PocketHub.
   static func install(_ hub: PocketHub) {
-    self.hub = hub; account = nil; logins = [:]; asked = []; refuseOnce = [:]; refused = []; removed = [:]; loseAnswers = [:]; takeLost = true; lostTaken = []; boards = [:]; files = [:]
+    self.hub = hub; account = nil; logins = [:]; asked = []; refuseOnce = [:]; refused = []; removed = [:]; loseAnswers = [:]; takeLost = true; lostTaken = []; boards = [:]; files = [:]; invites = [:]; dropMac = false
     HubClient.transportForTests = [PocketRoutes.self]
   }
 
@@ -137,6 +143,24 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
       _ = hub.take(kind: 5, group: id(path[1]), epoch: epoch, parts: [bytes("message")])
       return (200, ["n": 1])
     case ("POST", 1, "envelopes"): return (200, ["change": hub.take(kind: 7, group: [], epoch: 0, parts: [bytes("envelope")], sender: sender) ?? 0])
+    case ("POST", 1, "invites"):
+      guard let offer = body["offer"] as? String, let raw = try? unb64u(offer), raw.count >= 16 else { return refuse(400, "bad-format") }
+      // (the pocket hub knows the invite id as the Offer's: the test names it after posting, `inviteKey`)
+      invites[pendingInvite ?? ""] = (body, [], nil)
+      return (200, JSON())
+    case ("GET", 2, "invites"):
+      guard let inv = invites[path[1]] else { return refuse(404, "not-found") }
+      if token != nil { return (200, ["requests": inv.requests]) }
+      var offer = inv.offer
+      if dropMac { offer["mac"] = nil }
+      return (200, offer)
+    case ("POST", 3, "invites") where path[2] == "request":
+      guard invites[path[1]] != nil else { return refuse(404, "not-found") }
+      invites[path[1]]!.requests.append(body)
+      return (200, JSON())
+    case ("GET", 3, "invites") where path[2] == "reveal":
+      guard let r = invites[path[1]]?.reveal else { return refuse(404, "not-found") }
+      return (200, r)
     case ("GET", 2, "boards"):
       let numbers = Set(boards[path[1]] ?? [])
       let from = UInt64(query["after_change"] ?? "0") ?? 0

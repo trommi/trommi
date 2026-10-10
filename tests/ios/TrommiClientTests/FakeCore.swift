@@ -233,6 +233,7 @@ final class FakeDevice: CoreDevice {
   func inviteRecommit(invite: Bytes, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func inviteForget(invite: Bytes) throws {}
   func inviteChecked(invite: Bytes, helpers: [GroupId]) throws {}
+  func joinLink(_ link: String, nowMs: UInt64) throws -> JoinLink { throw TrommiError("not-built") }
   func joinRequest(link: String, offer: SignedOffer, nowMs: UInt64) throws -> JoinRequest { throw TrommiError("not-built") }
   func joinReveal(_ reveal: SignedReveal) throws -> CheckCode { throw TrommiError("not-built") }
   func joinObserve(groupInfo: Bytes) throws { throw TrommiError("not-built") }
@@ -276,6 +277,9 @@ final class FakeTools: CoreTools {
   func isFinalRefusal(_ code: String) -> Bool { !["internal", "overloaded", "rate-limited", "unauthorised"].contains(code) && !code.hasPrefix("http-") }
   func canonicalHub(_ text: String) throws -> String { text }
   func parseInviteLink(_ text: String) throws -> InviteLinkParts { throw TrommiError("not-built") }
+  func inviteLinkCheck(_ text: String, nowMs: UInt64) throws -> InviteLinkParts { throw TrommiError("not-built") }
+  func inviteLifeMs(_ role: InviteRole) -> UInt64 { role == .human ? 600_000 : 900_000 }
+  func inviteClockToleranceMs() -> UInt64 { 120_000 }
   func checkEmoji() -> [(emoji: String, word: String)] { (0..<64).map { ("#", String($0)) } }
   func boardReduce(snapshot: Bytes?, snapshotFrontier: [WriterHead], items: [BoardItemBody], frontier: [WriterHead]) throws -> Bytes { throw TrommiError("not-built") }
   func encryptFile(_ plain: Bytes) throws -> SealedFile { SealedFile(fileId: systemRandom(16), fileKey: [1], sha256: [2], stored: plain.reversed()) }
