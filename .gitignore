@@ -10,3 +10,6 @@ app/web/public/demo/files/
 
 # Rust build output.
 /target/
+
+# What the release steps of .github/workflows/build.yml write when they are run by hand.
+/out/

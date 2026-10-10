@@ -2,6 +2,24 @@
 
 Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted.
 
+## What lies where
+
+| | |
+|---|---|
+| `core/` | the shared Rust core (keys, envelopes, account) and its bindings: `core/wasm` for the browser, `core/swift` for iOS |
+| `hub/` | the hub (the server) and its updater; `hub/deploy/` is how it is installed |
+| `app/web/` | the web app |
+| `connector/` | the connector: the program and plugin that join a Claude Code session to a room |
+| `ios/` | the iOS app |
+| `demo/` | the demo room: shared data built into both the web app and the iOS app, so it belongs to neither |
+| `tests/` | every part's tests, one folder per part |
+| `spec/` | the protocol, the hub's API, the test vectors |
+| `release/` | the form of a signed release: manifest, signature, the public key |
+| `.github/` | the workflows and what only they use (`scripts/`, `tools/`) |
+
+`THIRD-PARTY.md` lists the licences of the Rust crates the clients ship (the web app's own material:
+`app/web/THIRD-PARTY.md`).
+
 ## How the data is organised
 
 The protocol is version 2: MLS (RFC 9420) distributes the keys, content is Trommi's own signed envelope. The whole of
