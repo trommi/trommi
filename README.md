@@ -244,7 +244,9 @@ The code follows the specification, not the other way round. More: [`spec/README
 
 - No forward secrecy for history (see Encryption).
 - The hub sees who is in which group and when anyone writes.
-- In the browser, the keys are only as safe as the server that delivers the app.
+- In the browser, the app's code is loaded from Cloudflare (app.trommi.com) each time; whoever controls that
+  delivery (our Cloudflare account or the deploy pipeline) could ship code that reads your keys. The hub cannot.
+  The iOS app and the connector do not have this risk: they are installed signed releases.
 - The connector checks its updates, not its own start.
 - A hub rollback does not roll back the database.
 - Post-quantum: planned once OpenMLS ships a suite.
