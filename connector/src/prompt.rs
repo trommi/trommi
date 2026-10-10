@@ -132,6 +132,8 @@ struct RawTools<'a> {
     reload: &'a serde_json::value::RawValue,
     #[serde(borrow)]
     inbox: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    connect: &'a serde_json::value::RawValue,
 }
 
 /// One tool as it is written in tools.json, on one line, with its description from prompt.md in front. The
@@ -166,6 +168,14 @@ pub fn tools_list_json(inbox: bool) -> String {
         tools.push(raw_tool(doc.inbox));
     }
     format!("{{\"tools\":[{}]}}", tools.join(","))
+}
+
+/// The answer to `tools/list` of a session whose folder is in no room yet: the connect tool alone.
+pub fn connect_list_json() -> String {
+    let Ok(doc) = serde_json::from_str::<RawTools>(TOOLS_JSON) else {
+        return "{\"tools\":[]}".into();
+    };
+    format!("{{\"tools\":[{}]}}", raw_tool(doc.connect))
 }
 
 /// The tools (TOOLS), each with its description.

@@ -130,7 +130,9 @@ pub fn claude() -> Result<Vec<String>, String> {
         done.push("plugin trommi@trommi: installed for your user".to_string());
     }
     done.push(format!("the plugin starts {program}"));
-    done.push("Start Claude Code again. In a project folder: `trommi-connector connect '<invite link>'`, then `claude`.".to_string());
+    done.push(
+        "Start Claude Code in a project folder, then: /trommi:connect '<invite link>'".to_string(),
+    );
     Ok(done)
 }
 
@@ -179,7 +181,7 @@ pub fn codex() -> Result<Vec<String>, String> {
         );
     }
     done.push(format!("Codex starts {program}"));
-    done.push("In a project folder: `trommi-connector connect '<invite link>'`, then `codex`. Board events wait for the `inbox` tool: Codex has no live events.".to_string());
+    done.push("Start Codex in a project folder, then ask it to connect to Trommi with '<invite link>' (its tool connect). Board events wait for the `inbox` tool: Codex has no live events.".to_string());
     Ok(done)
 }
 

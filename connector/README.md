@@ -6,7 +6,7 @@ the wire comes from [`trommi-core`](../core); nothing of the first protocol is i
 
 ```
 trommi-connector                     MCP stdio server "trommi" (what Claude Code starts)
-trommi-connector connect <link>      join a room with an agent invite link (also: join; or TROMMI_INVITE)
+trommi-connector connect <link>      join a room with an agent invite link, for scripts (also: join; or TROMMI_INVITE)
 trommi-connector say "<text>" [--session <name>] [--urgent]
 trommi-connector permission|notice|denied|resolved    the plugin's hooks (JSON on stdin)
 trommi-connector prompt|stop         the terminal mirror's hooks (UserPromptSubmit, Stop)
@@ -19,20 +19,38 @@ trommi-connector whoami | allow-tools | --version
 
 ## Install
 
-Once per machine, then once per program, then once per project folder:
+Once per machine, in a terminal:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh
-trommi-connector setup claude          # or: trommi-connector setup codex
-trommi-connector connect '<invite link>'
 ```
+
+Then once per project folder, inside Claude Code started there:
+
+```
+/trommi:connect '<invite link>'
+```
+
+A session whose folder is in no room yet starts unconnected: its MCP server offers one tool, `connect(link)`, and
+the plugin's command `/trommi:connect` tells the agent to call it. The tool runs the same join as
+`trommi-connector connect` for this folder (an expired link is refused before a hub is asked, the Offer's MAC is
+checked, …) and answers with the six emoji and their words, which the agent shows in the chat. Once the human taps
+"They match" in the app, the same process goes online and announces its board tools (`notifications/tools/list_changed`);
+no restart. In Codex the human asks the agent to connect with the link. `trommi-connector connect '<link>'` in a
+terminal does the same for scripts.
+
+A folder's keys of an earlier format (a room folder whose name is no room id of this protocol, or whose key file is
+not one of it) are ignored with one log line. With keys of several rooms, the room the folder joined last decides
+(`<folder>/.trommi/room`, written by every join); without it the tool error names the rooms.
 
 `install.sh` (repository root, POSIX sh, curl and OpenSSL 3) finds the newest release that holds `manifest.json` and
 the connector for this machine, checks the manifest's Ed25519 signature against its own copy of
 `release/public-key.pem`, then product, repository, tag, version (never older than the installed one), size and
 SHA-256, and only then puts the program into `~/.local/share/trommi/bin/` with a link in `~/.local/bin/`. It ends by
 running `trommi-connector --version`, which must say "signature verified", and prints the version and the
-manifest's SHA-256. It refuses root and only talks https to github.com and GitHub's release store.
+manifest's SHA-256. It refuses root and only talks https to github.com and GitHub's release store. Last it runs
+`trommi-connector setup claude` and `setup codex` for those of the two that are on the PATH (a setup that fails
+leaves the connector installed and says how to run it later); with neither, one line says how.
 
 `setup claude` adds the marketplace of this repository (`.claude-plugin/marketplace.json`, sparse checkout) and
 installs the plugin `trommi@trommi` for the user. The plugin (`plugin/`) holds no program: its MCP server, channel,

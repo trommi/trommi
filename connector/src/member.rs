@@ -184,7 +184,75 @@ pub fn slots_in(cfg: &Cfg, dir: &Path) -> Vec<u32> {
     v.sort();
     v
 }
-/// The room this folder belongs to: from the invite link, TROMMI_ROOM, or the only room with a key of this folder.
+/// The file in the folder that names the room this folder joined last (written by a join).
+fn joined_file(cfg: &Cfg) -> PathBuf {
+    cfg.folder.join(".trommi").join("room")
+}
+/// The room this folder joined last, as a join wrote it.
+pub fn joined_room(cfg: &Cfg) -> Option<String> {
+    let text = std::fs::read_to_string(joined_file(cfg)).ok()?;
+    let room = text.trim();
+    is_room_id(room).then(|| room.to_string())
+}
+/// Notes the room this folder joined: with keys of several rooms, it is the one this folder uses.
+pub fn note_joined_room(cfg: &Cfg, room_id: &str) {
+    let dir = cfg.folder.join(".trommi");
+    let _ = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(&dir)?;
+        if !dir.join(".gitignore").exists() {
+            std::fs::write(dir.join(".gitignore"), "*\n")?;
+        }
+        std::fs::write(joined_file(cfg), format!("{room_id}\n"))
+    })();
+}
+/// Whether `name` is a room id of this protocol (base64url of a room id); an earlier format's rooms were hex.
+fn is_room_id(name: &str) -> bool {
+    trommi_core::ids::RoomId::from_base64url(name).is_ok()
+}
+/// Whether the room folder `name` holds keys of this folder that this connector can open: its name is a room id
+/// of this protocol and a key of this folder in it is a key file of this protocol.
+fn openable(cfg: &Cfg, name: &str) -> bool {
+    if !is_room_id(name) {
+        return false;
+    }
+    slots_in(cfg, &cfg.keys_dir.join(name)).iter().any(|n| {
+        std::fs::read_to_string(paths_of(cfg, name, *n).key_file).is_ok_and(|t| t == KEY_MARKER)
+    })
+}
+/// Says once per process that keys of a format this connector cannot open are left alone.
+fn tell_ignored(dir: &Path) {
+    static TOLD: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    let mut told = TOLD.lock().unwrap_or_else(|e| e.into_inner());
+    if told.iter().any(|d| d == dir) {
+        return;
+    }
+    told.push(dir.to_path_buf());
+    eprintln!("[trommi] ignored {}: keys of an earlier format, which this connector cannot open (move the folder aside to silence this)", dir.display());
+}
+/// A room as the human can tell it: when this folder's key for it was made, and the start of its id.
+fn room_shown(cfg: &Cfg, room_id: &str) -> String {
+    let made = slots_in(cfg, &cfg.keys_dir.join(room_id))
+        .iter()
+        .filter_map(|n| std::fs::metadata(paths_of(cfg, room_id, *n).key_file).ok())
+        .filter_map(|m| m.modified().ok())
+        .min()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| {
+            let secs = d.as_secs() as i64;
+            let (y, mo, day) = crate::bridge::civil(secs.div_euclid(86400));
+            let s = secs.rem_euclid(86400);
+            format!(
+                "joined {y:04}-{mo:02}-{day:02} {:02}:{:02} UTC",
+                s / 3600,
+                s % 3600 / 60
+            )
+        })
+        .unwrap_or_else(|| "without a key".into());
+    format!("the room {made} ({room_id})")
+}
+/// The room this folder belongs to: from the invite link, TROMMI_ROOM, or the room with a key of this folder.
+/// Keys of a format this connector cannot open are left alone (one log line). With keys of several rooms, the
+/// room this folder joined last decides; without that note it is an error that names the rooms.
 pub fn resolve_room(cfg: &Cfg) -> Result<Option<String>> {
     if !cfg.room.is_empty() {
         return Ok(Some(cfg.room.clone()));
@@ -199,24 +267,32 @@ pub fn resolve_room(cfg: &Cfg) -> Result<Option<String>> {
                 .collect()
         })
         .unwrap_or_default();
-    let mut rooms: Vec<String> = names
-        .iter()
-        .filter(|r| !slots_in(cfg, &cfg.keys_dir.join(r)).is_empty())
-        .cloned()
-        .collect();
+    let mut rooms: Vec<String> = vec![];
+    for name in &names {
+        if openable(cfg, name) {
+            rooms.push(name.clone());
+        } else if !slots_in(cfg, &cfg.keys_dir.join(name)).is_empty() {
+            tell_ignored(&cfg.keys_dir.join(name));
+        }
+    }
     if rooms.is_empty() {
         rooms = names
             .iter()
-            .filter(|r| last_out(cfg, r).is_some())
+            .filter(|r| is_room_id(r) && last_out(cfg, r).is_some())
             .cloned()
             .collect();
     }
     rooms.sort();
     if rooms.len() > 1 {
+        if let Some(joined) = joined_room(cfg).filter(|r| rooms.contains(r)) {
+            return Ok(Some(joined));
+        }
+        let shown: Vec<String> = rooms.iter().map(|r| room_shown(cfg, r)).collect();
         return Err(Fault::plain(format!(
-            "this folder has keys for {} rooms ({}); set TROMMI_ROOM",
+            "this folder has keys for {} Trommi rooms: {}. Keep the one you use: move the other room's folder out of {} (or start with TROMMI_ROOM=<room id>), then call the tool again",
             rooms.len(),
-            rooms.join(", ")
+            shown.join("; "),
+            cfg.keys_dir.display()
         ))
         .with("code", "ambiguous-room"));
     }
@@ -505,6 +581,8 @@ pub struct Me {
     pub out: Option<Value>,
     pub out_told: bool,
     pub joining: bool,
+    /// The check code of the join under way, once the inviter revealed it: (the six emoji, their words).
+    pub check_code: Option<(Vec<String>, Vec<String>)>,
 }
 
 pub struct Member {
@@ -613,7 +691,7 @@ impl Member {
     fn out_text(was: &Value) -> String {
         let kf = was["key_file"].as_str().unwrap_or("");
         if was["verified"] == Value::Bool(false) {
-            format!("This connector stopped: the hub no longer takes its device. Either the human removed it or let another connector continue this Trommi session while this one was away, or the hub is wrong. Its state is kept ({kf}); nothing sent from here reaches the board. To use Trommi again here, the human reconnects this session in the Trommi app (a new invite link), then `trommi-connector connect '<link>'` here.")
+            format!("This connector stopped: the hub no longer takes its device. Either the human removed it or let another connector continue this Trommi session while this one was away, or the hub is wrong. Its state is kept ({kf}); nothing sent from here reaches the board. To use Trommi again here, the human reconnects this session in the Trommi app (a new invite link), then /trommi:connect '<link>' in this session.")
         } else if was["replaced"] == Value::Bool(true) {
             format!("This connector is retired: the human let another connector continue this Trommi session (a new invite link for the same session), and this key ({kf}) no longer belongs to the room; it is put aside, and no other usable key is left in this folder. Nothing sent from here reaches the board. If this Claude Code session should use Trommi again, the human invites this session again in the Trommi app.")
         } else {
@@ -1035,11 +1113,17 @@ impl Member {
             let mut me = self.me.lock().unwrap();
             me.phase = "joining".into();
             me.joining = true;
+            me.check_code = None;
         }
+        let shown = self.clone();
         let storage = self.me.lock().unwrap().storage.clone().unwrap();
         let key_file = self.paths().map(|p| p.key_file);
         let res = async {
-            crate::join::join_room(link.trim(), storage.journal().clone(), |code| {
+            crate::join::join_room(link.trim(), storage.journal().clone(), move |code| {
+                shown.me.lock().unwrap().check_code = Some((
+                    code.emoji().iter().map(|e| e.to_string()).collect(),
+                    code.words().iter().map(|w| w.to_string()).collect(),
+                ));
                 eprintln!("[trommi] invite answered: check code {}  ({})", code.emoji().join("  "), code.words().join(", "));
                 eprintln!("[trommi] the Trommi app shows six emoji on its invite page: the same six in the same order? Tap \"They match\" there; if not, \"They don't match\". Waiting for the app to add this session");
             }, 800, 15 * 60_000).await?;
@@ -1088,6 +1172,7 @@ impl Member {
             &p,
             &owner_record(&self.cfg.owner, if cli { None } else { Some(ppid()) }),
         );
+        note_joined_room(&self.cfg, &room_id);
         if let Some(before) = old.clone().or(held.clone()) {
             // The earlier device's id is in its state, which its connector holds locked; it is not named here.
             let was_id: Option<String> = None;

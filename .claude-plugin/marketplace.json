@@ -12,7 +12,7 @@
       "name": "trommi",
       "displayName": "Trommi",
       "source": "./connector/plugin",
-      "description": "Connects a Claude Code session to your Trommi board. Needs the connector: install.sh of github.com/trommi/trommi, then `trommi-connector setup claude`."
+      "description": "Connects a Claude Code session to your Trommi board. Needs the connector: install.sh of github.com/trommi/trommi, which also adds this plugin."
     }
   ]
 }
