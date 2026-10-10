@@ -383,17 +383,24 @@ encrypted.
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
 40. **The admin page** is not part of the API and not on the public port: a second listener on 127.0.0.1:8791
     (`HUB_ADMIN_HOST`, `HUB_ADMIN_PORT`), started only if `HUB_ADMIN_PASSWORD_HASH` is set (Argon2id, PHC text;
-    `trommi-hub admin-hash` makes one from a password on standard input). It takes `GET /`, `POST /login` and
-    `POST /logout`, nothing else. Without a session `GET /` is a sign-in form (user name `admin`, the password; a
+    `trommi-hub admin-hash` makes one from a password on standard input). It takes `GET /`, `GET /accounts`,
+    `GET /tables` (`?t=` one of the tables listed), `POST /login` and `POST /logout`, nothing else. Without a session `GET /` is a sign-in form (user name `admin`, the password; a
     password manager fills it); a right password gives a session cookie `__Host-trommi_admin` (32 random bytes,
     `HttpOnly; Secure; SameSite=Strict; Path=/`, twelve hours, kept in memory only) and sends the browser back to
     `/`. Both POSTs are taken only with an `Origin` equal to the request's `Host` or `X-Forwarded-Host` (the page
-    is reached through a TLS proxy) and no cross-site `Sec-Fetch-Site` (403 otherwise). One read-only page:
-    the version and health, the rooms with the counts the hub keeps (devices by role, sessions, changes,
-    envelopes, file bytes against the quota, push registrations, the account's e-mail), and every table with
-    its number of rows, what the hub reads in it and what lies in it sealed. After a wrong password the page
+    is reached through a TLS proxy) and no cross-site `Sec-Fetch-Site` (403 otherwise). Three read-only pages
+    (without a session `/accounts` and `/tables` send the browser to `/`): the overview (CPU, memory, disk of the
+    data folder, uptime, the hub's own memory, read from `/proc` and `statvfs`; version, release, database size;
+    rooms, accounts, devices, sessions, streams, requests at work, push registrations); the accounts (number,
+    e-mail masked to its first character and its ending, `a•••@•••.org`, how it signs in, passkeys, rooms, times)
+    and the rooms with the counts the hub keeps (devices by role, sessions, changes, envelopes, file bytes against
+    the quota, push registrations, the account by number); and the tables, a side list of every table opened for
+    its columns and number of rows, and one table with what the hub reads in it, what lies in it sealed, its
+    columns and, only for a table that holds nothing sealed and nothing of signing in or pushing, its first ten
+    rows (ids by their first four bytes, numbers and times, a few words such as a role; any other bytes and text
+    by their length only). After a wrong password the page
     takes no other for 1 s, 2 s … up to a minute (a session is taken meanwhile). A password is 12 to 1 024 bytes,
-    the form at most 4 096. The page is put together by one request at a time and kept five seconds (who asks meanwhile and finds none
+    the form at most 4 096. A page is put together by one request at a time and kept five seconds (who asks meanwhile and finds none
     that fresh is told to try again); the
     listener holds 16 connections, each for a minute at most.
 41. A device keeps at most 100 single-use KeyPackages: one upload holds at most 100, and what then exceeds 100

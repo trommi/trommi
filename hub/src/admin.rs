@@ -1,8 +1,9 @@
-//! The hub's admin page: one read-only page for whoever runs the hub. It listens on 127.0.0.1 (`HUB_ADMIN_HOST`
-//! for a container, whose port is then published to the host's loopback only), on a port of its own, and only when
-//! a password hash is configured (`HUB_ADMIN_PASSWORD_HASH`); it is never part of the public port. It shows what
-//! the hub can see and nothing else: rooms and accounts with their counts, the hub's tables with what kind of
-//! data each holds, the running version and health. No content: the hub has none.
+//! The hub's admin page: three read-only pages for whoever runs the hub (`admin_view.rs`: the overview, the
+//! accounts, the tables). It listens on 127.0.0.1 (`HUB_ADMIN_HOST` for a container, whose port is then published
+//! to the host's loopback only), on a port of its own, and only when a password hash is configured
+//! (`HUB_ADMIN_PASSWORD_HASH`); it is never part of the public port. It shows what the hub can see and nothing
+//! else: the server's health, rooms and accounts with their counts, the hub's tables with what kind of data each
+//! holds, the running version. No content: the hub has none.
 //!
 //! Sign-in is a plain HTML form (user name "admin", the one password), so a password manager fills it. A right
 //! password gives a session cookie: 32 random bytes, `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, twelve
@@ -25,7 +26,6 @@ use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 
 use crate::app::App;
-use crate::error::Refused;
 use crate::util::{b64, now, random, sha256, unb64};
 
 /// how long a session lasts after sign-in
@@ -48,8 +48,8 @@ pub const CONNECTION_MS: u64 = 60_000;
 /// up to a minute, whoever asks (it has one user), and it checks one password at a time.
 pub struct Admin {
     state: Mutex<State>,
-    /// the page as last computed, and whether it is being computed now
-    page: Mutex<Option<(u64, String)>>,
+    /// each page as last computed (by its path and table), and whether one is being computed now
+    pages: Mutex<HashMap<String, (u64, String)>>,
     computing: AtomicBool,
 }
 
@@ -57,7 +57,7 @@ impl Default for Admin {
     fn default() -> Self {
         Admin {
             state: Default::default(),
-            page: Default::default(),
+            pages: Default::default(),
             computing: AtomicBool::new(false),
         }
     }
@@ -86,7 +86,7 @@ fn verify(hash: &str, password: &[u8]) -> bool {
         .is_ok_and(|parsed| Argon2::default().verify_password(password, &parsed).is_ok())
 }
 
-fn esc(text: &str) -> String {
+pub(crate) fn esc(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -100,9 +100,9 @@ stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3.1 19Q12.3 18.6 16.7 
 <path d=\"M10 6.6Q11.8 6 12.8 6.4L13.8 6.8\"/><path d=\"M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5\"/><path d=\"M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5\"/></svg>";
 
 /// The marks of the tables: sealed (a lock) and read by the hub (an eye).
-const LOCK: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"5\" y=\"11\" width=\"14\" height=\"9.5\" rx=\"2\"/>\
+pub(crate) const LOCK: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"5\" y=\"11\" width=\"14\" height=\"9.5\" rx=\"2\"/>\
 <path d=\"M8.2 11V8a3.8 3.8 0 0 1 7.6 0v3\"/></svg>";
-const EYE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z\"/>\
+pub(crate) const EYE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z\"/>\
 <circle cx=\"12\" cy=\"12\" r=\"2.8\"/></svg>";
 
 fn brand() -> String {
@@ -207,8 +207,52 @@ table.grid{border-collapse:separate;border-spacing:0;font-size:.84rem;min-width:
 .login form{display:flex;flex-direction:column;gap:14px;margin-top:18px}
 .login p.err{margin-top:14px}
 .login label{display:flex;flex-direction:column;gap:5px;font-size:.84rem;font-weight:500;color:var(--muted)}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.top nav{display:flex;gap:2px;min-width:0;margin-left:14px}
+.top nav a{padding:6px 12px;border-radius:999px;color:var(--muted);font-size:.9rem;font-weight:500;white-space:nowrap}
+.top nav a:hover{color:var(--fg);background:var(--sunken);text-decoration:none}
+.top nav a.on{background:var(--sunken);color:var(--fg);font-weight:600}
+h2.fam{font-size:.72rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin:4px 0 8px}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:12px;margin-top:12px}
+.cols .card+.card{margin-top:0}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:0;font-size:.84rem}
+.kv dt{color:var(--muted)}.kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.tlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0 18px;margin:0 -8px;padding:0;list-style:none;font-size:.84rem}
+.tlist a{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 8px;border-radius:8px;color:var(--fg)}
+.tlist a:hover{background:var(--sunken);text-decoration:none}
+code.big{font-size:1.3rem;font-weight:600}
+.data{display:grid;grid-template-columns:290px minmax(0,1fr);min-height:calc(100dvh - 52px)}
+.pane{padding:24px 24px 56px;min-width:0}
+.tree{background:var(--surface-2);border-right:1px solid var(--line);padding:10px 10px 32px;font-size:.84rem;overflow:auto;max-height:calc(100dvh - 52px);position:sticky;top:52px}
+.tree .grp{font-size:.72rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:14px 8px 5px}
+.tree a.node{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:5px 8px;border-radius:8px;color:var(--fg);font-weight:600}
+.tree a.node:hover{background:var(--sunken);text-decoration:none}
+.tree a.node.on,.tree details.on>summary{background:var(--accent-soft)}
+.tree summary{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:8px;cursor:pointer;list-style:none;white-space:nowrap}
+.tree summary::-webkit-details-marker{display:none}
+.tree summary:hover{background:var(--sunken)}
+.tree summary::before{content:"";align-self:center;flex:none;border:4px solid transparent;border-left:5px solid var(--faint);border-right:0}
+.tree details[open]>summary::before{transform:rotate(90deg)}
+.tree summary .name{display:inline-flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:.8rem}
+.tree summary .count{margin-left:auto}
+.tree .cm svg{margin-top:0}
+.cols-list{list-style:none;margin:2px 0 8px 13px;padding:2px 0 2px 9px;border-left:1px solid var(--line-strong);font-size:.78rem}
+.cols-list li{display:flex;justify-content:space-between;gap:8px;padding:1px 4px;font-family:var(--mono)}
+.cols-list li span:first-child{display:inline-flex;align-items:center;gap:3px;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cols-list li.open{font-family:var(--font);padding-top:4px}
+.treetoggle{display:none}
+#tt{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
 @media (max-width:820px){
-.top{padding:0 12px}.brand small{display:none}
+.top{padding:0 12px}.brand small{display:none}.brand b{display:none}
+.top nav{margin-left:4px;overflow-x:auto;scrollbar-width:none}.top nav a{padding:6px 9px;font-size:.84rem}
+.who .login-name{display:none}
+.cols{grid-template-columns:minmax(0,1fr)}
+.data{display:flex;flex-direction:column;min-height:0}
+.pane{padding:20px 16px 40px}
+.treetoggle{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line);background:var(--surface-2);font-size:.84rem;cursor:pointer}
+.treetoggle::after{content:"";flex:none;border:5px solid transparent;border-top:6px solid var(--muted);border-bottom:0}
+.tree{display:none;position:static;border-right:0;border-bottom:1px solid var(--line);max-height:60vh}
+#tt:checked~.data .tree{display:block}
 .page{padding:20px 16px 40px}
 h1{font-size:1.35rem}
 .tile .v{font-size:1.35rem}.tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.tile{padding:12px 13px 10px}
@@ -244,13 +288,16 @@ fn wait(seconds: u64) -> Response<Full<Bytes>> {
     answer
 }
 
-/// To `/`, with this cookie.
+/// To `/`, with this cookie (none if empty).
 fn to_start(cookie: String) -> Response<Full<Bytes>> {
     let mut answer = page(StatusCode::SEE_OTHER, "");
     answer
         .headers_mut()
         .insert("location", "/".parse().expect("static"));
-    if let Ok(value) = cookie.parse() {
+    if let Some(value) = Some(&cookie)
+        .filter(|c| !c.is_empty())
+        .and_then(|c| c.parse().ok())
+    {
         answer.headers_mut().insert("set-cookie", value);
     }
     answer
@@ -415,9 +462,24 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>) -> Response<Full<Byte
     let session = cookie(&req).filter(|token| app.admin.signed_in(token));
     match (req.method().clone(), req.uri().path()) {
         (Method::GET, "/") => match session {
-            Some(_) => overview_page(app).await,
+            Some(_) => shown(app, Page::Overview).await,
             None => login(StatusCode::OK, ""),
         },
+        (Method::GET, "/accounts") if session.is_some() => shown(app, Page::Accounts).await,
+        (Method::GET, "/tables") if session.is_some() => {
+            let named = req
+                .uri()
+                .query()
+                .unwrap_or("")
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("t="));
+            match named.map(crate::admin_view::table_named) {
+                None => shown(app, Page::Tables(None)).await,
+                Some(Some(table)) => shown(app, Page::Tables(Some(table))).await,
+                Some(None) => notice(StatusCode::NOT_FOUND, "No such table."),
+            }
+        }
+        (Method::GET, "/accounts" | "/tables") => to_start(String::new()),
         (Method::POST, "/login") => {
             if !same_origin(&req) {
                 return notice(StatusCode::FORBIDDEN, "Sign in from the admin page itself.");
@@ -476,40 +538,71 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>) -> Response<Full<Byte
     }
 }
 
-/// The overview inside the page's top bar.
-fn signed_in_page(status: StatusCode, main: &str) -> Response<Full<Bytes>> {
+/// The three pages behind the sign-in.
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Overview,
+    Accounts,
+    Tables(Option<&'static str>),
+}
+
+impl Page {
+    fn key(self) -> String {
+        match self {
+            Page::Overview => "/".into(),
+            Page::Accounts => "/accounts".into(),
+            Page::Tables(None) => "/tables".into(),
+            Page::Tables(Some(t)) => format!("/tables?t={t}"),
+        }
+    }
+}
+
+/// A page inside the top bar with its navigation.
+fn signed_in_page(status: StatusCode, on: Page, main: &str) -> Response<Full<Bytes>> {
+    let tab = |href: &str, label: &str, here: bool| {
+        format!(
+            "<a href=\"{href}\"{}>{label}</a>",
+            if here {
+                " class=\"on\" aria-current=\"page\""
+            } else {
+                ""
+            }
+        )
+    };
     page(
         status,
         &format!(
-            "<header class=\"top\">{}<div class=\"who\"><span>admin</span><form method=\"post\" action=\"/logout\">\
-<button>Sign out</button></form></div></header><main class=\"page\">{main}</main>",
-            brand()
+            "<header class=\"top\">{}<nav>{}{}{}</nav><div class=\"who\"><span class=\"login-name\">admin</span><form method=\"post\" action=\"/logout\">\
+<button>Sign out</button></form></div></header>{}",
+            brand(),
+            tab("/", "Overview", on == Page::Overview),
+            tab("/accounts", "Accounts", on == Page::Accounts),
+            tab("/tables", "Tables", matches!(on, Page::Tables(_))),
+            if main.starts_with('<') { main.to_string() } else { format!("<main class=\"page\"><p class=\"muted\">{}</p></main>", esc(main)) }
         ),
     )
 }
 
-async fn overview_page(app: Arc<App>) -> Response<Full<Bytes>> {
-    // the page is computed by one request at a time and kept for a few seconds: it reads every table
+async fn shown(app: Arc<App>, on: Page) -> Response<Full<Bytes>> {
+    // a page is computed by one request at a time and kept for a few seconds: it reads every table
     let t = now();
-    let cached = app
-        .admin
-        .page
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .filter(|(at, _)| t < at + PAGE_MS)
-        .map(|(_, html)| html.clone());
+    let key = on.key();
+    let cached = {
+        let mut pages = app.admin.pages.lock().unwrap_or_else(|e| e.into_inner());
+        pages.retain(|_, (at, _)| t < *at + PAGE_MS);
+        pages.get(&key).map(|(_, html)| html.clone())
+    };
     if let Some(html) = cached {
-        return signed_in_page(StatusCode::OK, &html);
+        return signed_in_page(StatusCode::OK, on, &html);
     }
     if app.admin.computing.swap(true, Ordering::SeqCst) {
         // (an older page is not shown as the hub's state of now)
         return signed_in_page(
             StatusCode::SERVICE_UNAVAILABLE,
-            "<p class=\"muted\">The page is being put together. Try again in a moment.</p>",
+            on,
+            "The page is being put together. Try again in a moment.",
         );
     }
-    let shown = app.clone();
     let computed = tokio::task::spawn_blocking(move || {
         struct Done(Arc<App>);
         impl Drop for Done {
@@ -517,237 +610,29 @@ async fn overview_page(app: Arc<App>) -> Response<Full<Bytes>> {
                 self.0.admin.computing.store(false, Ordering::SeqCst);
             }
         }
-        let done = Done(shown);
-        let html = overview(&done.0);
+        let done = Done(app);
+        let html = match on {
+            Page::Overview => crate::admin_view::overview(&done.0),
+            Page::Accounts => crate::admin_view::accounts(&done.0),
+            Page::Tables(t) => crate::admin_view::tables(&done.0, t),
+        };
         if let Ok(html) = &html {
-            *done.0.admin.page.lock().unwrap_or_else(|e| e.into_inner()) =
-                Some((now(), html.clone()));
+            done.0
+                .admin
+                .pages
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key, (now(), html.clone()));
         }
         html
     })
     .await;
     match computed {
-        Ok(Ok(html)) => signed_in_page(StatusCode::OK, &html),
+        Ok(Ok(html)) => signed_in_page(StatusCode::OK, on, &html),
         _ => signed_in_page(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "<p class=\"err\">The database did not answer.</p>",
+            on,
+            "The database did not answer.",
         ),
     }
-}
-
-/// What each table holds, as spec/hub-api.md "Tables" has it: what the hub reads, and what lies in it sealed.
-const TABLES: &[(&str, &str, &str)] = &[
-    ("accounts", "e-mail, login hashes, KDF record", "sealed copies of the code"),
-    ("passkeys", "passkey public keys", "sealed copies of the code"),
-    ("account_rooms", "account → room", ""),
-    ("account_sources", "keyed hashes of the addresses an account was signed in to from", ""),
-    ("login_sources", "login throttle: hashes of e-mail and source, failures", ""),
-    ("login_accounts", "login throttle: an e-mail's hour and line", ""),
-    ("login_turns", "login throttle: places in line", ""),
-    ("rooms", "room id, founding time, change counter, counts, recovery public keys", ""),
-    ("devices", "device public key, role, epochs", ""),
-    ("group_members", "the leaves of each group", ""),
-    ("key_packages", "KeyPackages (public)", ""),
-    ("spent_key_packages", "references of KeyPackages handed out", ""),
-    ("groups", "group id, kind, session, epoch, the public group state", ""),
-    ("group_log", "Commits (public), sender, times", "application messages"),
-    ("group_infos", "GroupInfos (public)", ""),
-    ("welcomes", "device, group, time, epoch", "the Welcome (rows written before its own table)"),
-    ("welcome_bytes", "group, epoch", "the Welcome, once for every device it adds"),
-    ("welcome_ids", "the counter of Welcome ids (one number)", ""),
-    ("sealed_keys", "group, epoch, writer, recovery public key", "the sealed content keys"),
-    ("recovery_links", "room epoch, recovery public key", "the sealed older recovery key"),
-    ("recovery_keys_held", "every recovery public key a room had", ""),
-    ("recoveries", "open recoveries: key, times", ""),
-    ("recovery_parts", "the Commits of an open recovery (public)", ""),
-    ("recovery_memo", "public group state of an open recovery", ""),
-    ("envelopes", "signed header: group, sender, numbers, kind, times, timeline, object id, type and state, file ids", "the body"),
-    ("epoch_counts", "envelopes per group and epoch", ""),
-    ("cards", "object id, state, urgency, owner (index over envelopes)", ""),
-    ("permission_requests", "as cards", ""),
-    ("artifacts", "as cards", ""),
-    ("notes", "as cards", ""),
-    ("chats", "timeline, item count (index)", ""),
-    ("boards", "timeline, item count (index)", ""),
-    ("registers", "group, writer, register id (index)", ""),
-    ("files", "file id, uploader, group, object, size, times", "the bytes, beside the database"),
-    ("shares", "share id, file, hash of the secret, expiry", ""),
-    ("invites", "the signed Offer with its MAC, expiry, use", ""),
-    ("invite_requests", "Requests and Reveal of an invite", ""),
-    ("requests", "device, kind, group, time", ""),
-    ("push_subscriptions", "push endpoints and tokens, level", ""),
-    ("live_activities", "Live Activity tokens, the counts last sent", ""),
-    ("agent_leases", "device, process, generation, expiry", ""),
-];
-
-fn when(ms: i64) -> String {
-    // days since 1970 to a date (civil-from-days), UTC
-    let secs = ms.div_euclid(1000);
-    let (days, rest) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let (d, m) = (
-        doy - (153 * mp + 2) / 5 + 1,
-        if mp < 10 { mp + 3 } else { mp - 9 },
-    );
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
-        rest / 3600,
-        rest % 3600 / 60
-    )
-}
-
-fn size(bytes: i64) -> String {
-    match bytes {
-        b if b >= 1 << 30 => format!("{:.1} GiB", b as f64 / (1u64 << 30) as f64),
-        b if b >= 1 << 20 => format!("{:.1} MiB", b as f64 / (1u64 << 20) as f64),
-        b if b >= 1 << 10 => format!("{:.1} KiB", b as f64 / 1024.0),
-        b => format!("{b} B"),
-    }
-}
-
-fn tile(key: &str, value: &str, small: &str, sub: &str) -> String {
-    format!(
-        "<div class=\"tile\"><div class=\"k\">{key}</div><div class=\"v\">{value}{}</div><div class=\"s\">{sub}</div></div>",
-        if small.is_empty() {
-            String::new()
-        } else {
-            format!("<small>{small}</small>")
-        }
-    )
-}
-
-/// The page: read in one snapshot of the database.
-fn overview(app: &App) -> Result<String, Refused> {
-    const SHOWN: i64 = 500;
-    app.db.read(|c| {
-        let mut out = String::new();
-        let one = |sql: &str| -> rusqlite::Result<i64> { c.query_row(sql, [], |r| r.get(0)) };
-        let (rooms, accounts) = (one("SELECT count(*) FROM rooms")?, one("SELECT count(*) FROM accounts")?);
-        let devices = one("SELECT count(*) FROM devices WHERE removed_epoch IS NULL")?;
-        let (at_work, waiting) = app.gate.load();
-        out.push_str(&format!(
-            "<div class=\"head\"><h1>Overview</h1><span class=\"muted\">version <code>{}</code> · protocol 2 · {} · database answers</span></div>",
-            esc(&app.cfg.commit),
-            esc(&app.cfg.url),
-        ));
-        out.push_str("<div class=\"tiles\">");
-        out.push_str(&tile("Rooms", &rooms.to_string(), "", &format!("{devices} devices")));
-        out.push_str(&tile("Accounts", &accounts.to_string(), "", "e-mail or passkey"));
-        out.push_str(&tile("Streams", &app.live.count().to_string(), "open", "devices listening now"));
-        out.push_str(&tile(
-            "Requests",
-            &app.in_flight.load(Ordering::Relaxed).to_string(),
-            "at work",
-            "on the public port",
-        ));
-        out.push_str(&tile("Pool", &at_work.to_string(), "at work", &format!("{waiting} waiting")));
-        out.push_str(&tile(
-            "Push to Apple",
-            if app.apns.is_some() { "on" } else { "off" },
-            "",
-            if app.apns.is_some() { "configured" } else { "not configured" },
-        ));
-        out.push_str("</div>");
-
-        // ---- rooms, with what the hub counts in each
-        out.push_str(&format!(
-            "<section class=\"card\"><h3>Rooms <span class=\"count\">{rooms}</span></h3><div class=\"scroll\"><table class=\"grid\"><thead><tr>\
-<th>Room</th><th>Account</th><th>Founded</th><th class=\"n\">Human</th><th class=\"n\">Agent</th><th class=\"n\">Helper</th>\
-<th class=\"n\">Sessions live</th><th class=\"n\">Archived</th><th class=\"n\">Changes</th><th class=\"n\">Envelopes</th><th class=\"n\">Files</th>\
-<th class=\"n\">of quota</th><th class=\"n\">Push</th><th>Last write</th></tr></thead><tbody>"
-        ));
-        let mut s = c.prepare(
-            "SELECT r.room_id, r.founded_at, r.change, r.file_bytes,
-               (SELECT coalesce(a.email, '') FROM account_rooms ar JOIN accounts a ON a.account_id = ar.account_id WHERE ar.room_id = r.room_id),
-               (SELECT count(*) FROM devices d WHERE d.room_id = r.room_id AND d.removed_epoch IS NULL AND d.role = 'human'),
-               (SELECT count(*) FROM devices d WHERE d.room_id = r.room_id AND d.removed_epoch IS NULL AND d.role = 'agent'),
-               (SELECT count(*) FROM devices d WHERE d.room_id = r.room_id AND d.removed_epoch IS NULL AND d.role = 'helper'),
-               (SELECT count(*) FROM groups g WHERE g.room_id = r.room_id AND g.kind != 'room' AND g.live = 1),
-               (SELECT count(*) FROM groups g WHERE g.room_id = r.room_id AND g.kind != 'room' AND g.live = 0),
-               (SELECT count(*) FROM envelopes e WHERE e.room_id = r.room_id),
-               (SELECT count(*) FROM push_subscriptions p WHERE p.room_id = r.room_id),
-               (SELECT max(e.received_at) FROM envelopes e WHERE e.room_id = r.room_id AND e.change = (SELECT max(change) FROM envelopes WHERE room_id = r.room_id))
-             FROM rooms r ORDER BY r.founded_at DESC LIMIT ?1",
-        )?;
-        let mut rows = s.query([SHOWN])?;
-        let mut any = false;
-        while let Some(r) = rows.next()? {
-            any = true;
-            let room: Vec<u8> = r.get(0)?;
-            let file_bytes: i64 = r.get(3)?;
-            let email: Option<String> = r.get(4)?;
-            let last: Option<i64> = r.get(12)?;
-            out.push_str(&format!(
-                "<tr><td><code>{}</code></td><td>{}</td><td class=\"when\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td>\
-<td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{:.1} %</td><td class=\"n\">{}</td><td class=\"when\">{}</td></tr>",
-                esc(&crate::util::short(&room)),
-                match email.as_deref() {
-                    None => "<span class=\"faint\">none</span>".to_string(),
-                    Some("") => "<span class=\"faint\">without e-mail</span>".to_string(),
-                    Some(email) => esc(email),
-                },
-                when(r.get(1)?),
-                r.get::<_, i64>(5)?,
-                r.get::<_, i64>(6)?,
-                r.get::<_, i64>(7)?,
-                r.get::<_, i64>(8)?,
-                r.get::<_, i64>(9)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, i64>(10)?,
-                size(file_bytes),
-                file_bytes as f64 * 100.0 / app.cfg.room_quota.max(1) as f64,
-                r.get::<_, i64>(11)?,
-                last.map(when).unwrap_or_else(|| "<span class=\"faint\">never</span>".into()),
-            ));
-        }
-        if !any {
-            out.push_str("<tr><td colspan=\"14\" class=\"faint\">No rooms yet.</td></tr>");
-        }
-        out.push_str("</tbody></table></div>");
-        if rooms > SHOWN {
-            out.push_str(&format!("<p class=\"note\">The newest {SHOWN} of {rooms} rooms.</p>"));
-        }
-        out.push_str("</section>");
-
-        // ---- the tables, classified
-        out.push_str(&format!(
-            "<section class=\"card\"><h3>Tables <span class=\"count\">{}</span></h3><p class=\"legend\">\
-<span class=\"cm cm-plain\">{EYE}The hub reads</span><span class=\"cm cm-e2e\">{LOCK}Sealed: the hub cannot read</span></p>\
-<div class=\"scroll\"><table class=\"grid\"><thead><tr><th>Table</th><th class=\"n\">Rows</th><th>The hub reads</th><th>Sealed</th></tr></thead><tbody>",
-            TABLES.len()
-        ));
-        for (table, reads, sealed) in TABLES {
-            // (names from the list above, never from a request)
-            let n = one(&format!("SELECT count(*) FROM {table}"))?;
-            out.push_str(&format!(
-                "<tr><td><code>{table}</code></td><td class=\"n\">{n}</td><td><span class=\"cm cm-plain\">{EYE}<span>{}</span></span></td><td>{}</td></tr>",
-                esc(reads),
-                if sealed.is_empty() {
-                    "<span class=\"faint\">nothing</span>".to_string()
-                } else {
-                    format!("<span class=\"cm cm-e2e\">{LOCK}<span>{}</span></span>", esc(sealed))
-                }
-            ));
-        }
-        out.push_str("</tbody></table></div>");
-        // a table the list does not know is said, not hidden
-        let mut s = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")?;
-        let unknown: Vec<String> = s
-            .query_map([], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .filter(|name| name != "login_counts" && !TABLES.iter().any(|(t, _, _)| t == name))
-            .collect();
-        if !unknown.is_empty() {
-            out.push_str(&format!("<p class=\"err\">Not classified yet: <code>{}</code></p>", esc(&unknown.join(", "))));
-        }
-        out.push_str("</section>");
-        Ok::<_, Refused>(out)
-    })
 }
