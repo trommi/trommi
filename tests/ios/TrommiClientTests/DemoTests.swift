@@ -5,18 +5,21 @@ import XCTest
 @testable import TrommiClient
 
 final class DemoTests: XCTestCase {
-  func fixtureData() throws -> Data {
-    // The repository's root: the first folder above this file that holds demo/data.
+  /** The repository's root: the first folder above this file that holds demo/data. */
+  func repoRoot() throws -> URL {
     var repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     while repo.path != "/", !FileManager.default.fileExists(atPath: repo.appendingPathComponent("demo/data/fixture.json").path) { repo = repo.deletingLastPathComponent() }
-    return try Data(contentsOf: repo.appendingPathComponent("demo/data/fixture.json"))
+    return repo
   }
+  func fixtureData() throws -> Data { try Data(contentsOf: try repoRoot().appendingPathComponent("demo/data/fixture.json")) }
 
   func testTheDemoRoomIsABoard() throws {
     let data = try fixtureData()
     let raw = JV.parse(Array(data))!
-    // The demo room is shared with the web app (demo/data); while it is a skeleton there is nothing to check.
-    if raw["sessions"].array?.isEmpty != false { throw XCTSkip("demo/data/fixture.json is a skeleton: no sessions") }
+    // The demo room is shared with the web app (demo/data). The app's demo has no hub and no core state: what it
+    // shows is this file alone, so an empty room would be an empty demo.
+    XCTAssertFalse(raw["sessions"].array?.isEmpty ?? true, "demo/data/fixture.json has agent sessions")
+    XCTAssertFalse(raw["cards"].array?.isEmpty ?? true, "demo/data/fixture.json has cards")
     let now = nowMs()
     let b = try DemoFixture.board(data, now: now)
     XCTAssertEqual(b.members.count, raw["members"].array!.count)
@@ -28,7 +31,14 @@ final class DemoTests: XCTestCase {
     XCTAssertEqual(Set(d.desks.map { $0.id }), ["main", "game"])
     XCTAssertNotNil(d.byAgent["web-app"])
     XCTAssertEqual(d.byAgent["web-design"]?.parent, "web-app", "a helper sits under its main session")
-    XCTAssertFalse(d.view(desk: "main", now: now).fresh.isEmpty, "the Desk has open questions")
+    let desk = d.view(desk: "main", now: now)
+    XCTAssertFalse(desk.fresh.isEmpty, "the Desk has open questions")
+    XCTAssertFalse(desk.units.isEmpty, "the Desk shows the agents")
+    // every file a card or a page names is in demo/data/files (the app reads them from there, DemoMode.swift)
+    let files = try FileManager.default.contentsOfDirectory(atPath: try repoRoot().appendingPathComponent("demo/data/files").path)
+    let named = Set(String(decoding: data, as: UTF8.self).components(separatedBy: "/demo/files/").dropFirst().compactMap { $0.split(separator: "\"").first.map(String.init) })
+    XCTAssertFalse(named.isEmpty)
+    XCTAssertTrue(named.isSubset(of: Set(files)), "missing: \(named.subtracting(files))")
     XCTAssertGreaterThan(d.messagesOf(agent: "web-app").filter { $0.from != "event" }.count, 5)
     // the times are now's: the newest card is minutes old, not days
     let newest = b.cards.values.map { $0.updatedAt }.max()!

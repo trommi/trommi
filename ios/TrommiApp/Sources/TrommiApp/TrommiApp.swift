@@ -275,7 +275,7 @@ final class BoardModel: ObservableObject {
     self.active = active
     // what was shared meanwhile (ShareImport.swift): after the catch-up, so the note and the sessions are current
     if active { startLive(); Task { await refresh(); ShareImport.shared.run() } }
-    else { liveTask?.cancel(); liveTask = nil; live = false; room?.saveCache(snapshot: true); NotifyBridge.shared.writeNow(self) }
+    else { liveTask?.cancel(); liveTask = nil; if !demo { live = false }; room?.saveCache(snapshot: true); NotifyBridge.shared.writeNow(self) }
   }
   private func startLive() {
     #if canImport(Darwin)
