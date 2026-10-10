@@ -71,7 +71,7 @@ impl Sessions {
         auth: &[u8],
         signature: &[u8],
         now: u64,
-    ) -> Res<(String, u64, Who)> {
+    ) -> Res<(String, u64, Option<Who>)> {
         let parsed = HubAuth::parse(auth)?;
         let known = self.lock().challenges.remove(&parsed.challenge);
         match known {
@@ -96,8 +96,12 @@ impl Sessions {
                 "the sign-in signature does not verify",
             ));
         }
-        let Some(who) = store::standing(c, room, &parsed.device)? else {
-            return Err(refuse("not-member", "this key has no standing in the room"));
+        // A device that was removed lately gets a token all the same: it has no standing, so every route answers
+        // it `not-member` as before, but the one that shows it its removal (13.5).
+        let who = match store::standing(c, room, &parsed.device)? {
+            Some(who) => Some(who),
+            None if crate::delivery::removed_lately(c, room, &parsed.device, now)? => None,
+            None => return Err(refuse("not-member", "this key has no standing in the room")),
         };
         let token = b64(&random::<32>());
         let expires_at = now + TOKEN_MS;
@@ -132,6 +136,19 @@ impl Sessions {
                     .get(&key_of(token))
                     .is_some_and(|t| t.expires_at > now)
             })
+    }
+
+    /// Room and device of a token, whatever the device's standing: for the one route a removed device has.
+    pub fn bearer(&self, bearer: Option<&str>, now: u64) -> Option<(Room, Device)> {
+        let (scheme, token) = bearer?.split_once(' ')?;
+        if !scheme.eq_ignore_ascii_case("Bearer") || token.len() > 200 {
+            return None;
+        }
+        self.lock()
+            .tokens
+            .get(&key_of(token))
+            .filter(|t| t.expires_at > now)
+            .map(|t| (t.room, t.device))
     }
 
     /// Signing out: the token is no token any more. `false`: it was none.
