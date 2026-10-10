@@ -1079,9 +1079,10 @@ impl<S: Storage> Device<S> {
             let mut chains = this.chains(&room)?;
             let mut began = false;
             for (writer, named) in &snapshot.frontier {
-                // A frontier beyond a removed writer's Cut is no start: the load refuses it.
+                // A frontier beyond a removed writer's Cut, or one that names another envelope under
+                // the Cut's number, is no start: the load refuses it.
                 let cut = this.cut(&room, writer)?;
-                let within = cut.is_none_or(|cut| named.seq <= cut.seq);
+                let within = cut.is_none_or(|cut| named.seq < cut.seq || *named == cut);
                 if chains.head(writer).seq == 0 && named.seq > 0 && within {
                     chains.start_at(*writer, *named)?;
                     began = true;

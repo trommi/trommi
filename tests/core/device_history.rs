@@ -1323,3 +1323,89 @@ fn a_later_group_info_served_as_the_founding_closes_nothing() {
         .served(|served| late.verify_founding(&side, served))
         .is_ok());
 }
+
+#[test]
+fn a_refused_board_load_starts_no_chain_at_a_frontier_the_cut_contradicts() {
+    use trommi_core::board::{self, Snapshot};
+
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    // The writer signs two envelopes under number 2. The remover accepted one of them: the Cut names it.
+    let mut pen = Pen::new(&forger.key);
+    let one = pen.sign(&claim, &item, &Objects::new(), now());
+    let mut branch = pen.fork();
+    let two = pen.sign(&claim, &item, &Objects::new(), now());
+    let other_two = branch.sign(&claim, &item, &Objects::new(), now() + 1);
+    let mut at = a.cursor();
+    for envelope in [&one, &two] {
+        at += 1;
+        let got = a
+            .receive_envelope(&envelope.encode().unwrap(), at, true, None, now())
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+    }
+    let cut = a.cut_of(&room, &forger.id()).unwrap();
+    assert_eq!((cut.seq, cut.hash), (2, two.hash().unwrap()));
+    a.remove_human_devices(&[cut], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut b);
+    assert_eq!(
+        b.chain_cut(&room, &pen.id()).unwrap().map(|cut| cut.seq),
+        Some(2)
+    );
+
+    // A snapshot whose frontier names the other envelope under the Cut's number.
+    let snapshot = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: vec![(
+            pen.id(),
+            trommi_core::chain::Head {
+                seq: 2,
+                hash: other_two.hash().unwrap(),
+            },
+        )],
+        change: a.cursor(),
+    };
+    write(
+        &mut hub,
+        &mut a,
+        &Draft::Register {
+            group: room,
+            name: board::snapshot_name(&BoardId::ALL_DESKS),
+            value: Some(json(&snapshot.value().unwrap())),
+        },
+    );
+    sync_all(&hub, &mut b);
+    assert_eq!(
+        b.board_load(&BoardId::ALL_DESKS, &[]).map(|_| ()),
+        Err(Error::Equivocation)
+    );
+    // The refused load began no chain there: the writer's chain is read from number 1 up to its Cut.
+    assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 0);
+    let mut at = b.cursor();
+    for envelope in [&one, &two] {
+        at += 1;
+        let got = b
+            .receive_envelope(&envelope.encode().unwrap(), at, true, None, now())
+            .unwrap();
+        assert_ne!(got.outcome, EnvelopeOutcome::Refused, "{:?}", got.code);
+    }
+    assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 2);
+}
