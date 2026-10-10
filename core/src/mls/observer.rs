@@ -63,8 +63,30 @@ pub struct Context<'a> {
     pub sessions: &'a dyn SessionFacts,
     /// The recovery construct's checks.
     pub recovery: &'a dyn RecoveryRules,
-    /// The most human devices the room may hold: 32, or 33 while a recovery runs.
+    /// The most human devices the room may hold: the limit of section 16, or one more while a recovery runs.
     pub max_human_devices: usize,
+}
+
+/// The room epoch a session Commit read from a log is judged against (5.2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoomEpochAt {
+    /// The newest one the room's history holds: the log is followed in the hub's order.
+    Newest,
+    /// This one, which was current at the Commit's place: the holder's record of the room reaches beyond
+    /// that place.
+    Epoch(u64),
+    /// The one the Commit's own note names. This reads the Commit by its own word alone, without the hub's
+    /// word on where it stands; it shows what the group did, not where.
+    Named,
+}
+
+/// Where a Commit read from a log stands in the hub's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Place {
+    /// The Commit's change number.
+    pub change: u64,
+    /// The room epoch it is judged against.
+    pub room_epoch: RoomEpochAt,
 }
 
 /// A session group's record beside its public state.
@@ -73,8 +95,8 @@ struct SessionRecord {
     session: TrommiSession,
     /// The `room_epoch` of the group's last Commit.
     previous_room_epoch: u64,
-    /// For a main session: its agent leaf over time, as (the `room_epoch` of the Commit that changed it, the
-    /// leaf after it).
+    /// For a main session: its agent leaf over time, as (the change number of the Commit that changed it,
+    /// the leaf after it). A follower that is told no place records 0: it reads the seat as it stands.
     seats: Vec<(u64, Option<DeviceId>)>,
 }
 
@@ -83,8 +105,8 @@ impl Encode for SessionRecord {
         writer.value(&self.session)?;
         writer.u64(self.previous_room_epoch);
         let mut seats = Writer::new();
-        for (room_epoch, seat) in &self.seats {
-            seats.u64(*room_epoch);
+        for (change, seat) in &self.seats {
+            seats.u64(*change);
             seats.value(&seat.unwrap_or(DeviceId::ZERO))?;
         }
         writer.opaque(&seats.into_bytes())
@@ -98,9 +120,9 @@ impl Decode for SessionRecord {
         let mut listed = Reader::new(reader.opaque()?);
         let mut seats = Vec::new();
         while !listed.is_empty() {
-            let room_epoch = listed.u64()?;
+            let change = listed.u64()?;
             let seat: DeviceId = listed.value()?;
-            seats.push((room_epoch, Some(seat).filter(|seat| !seat.is_zero())));
+            seats.push((change, Some(seat).filter(|seat| !seat.is_zero())));
         }
         Ok(Self {
             session,
@@ -596,12 +618,13 @@ impl Observer {
         }
     }
 
-    /// A main session's agent leaf at the place of a Commit naming `room_epoch`: what
-    /// [`SessionFacts::main_session`] answers from this observer.
-    pub fn seat_at(&self, room_epoch: u64) -> Parent {
+    /// A main session's agent leaf at the place `change` of the hub's order: what
+    /// [`SessionFacts::main_session`] answers from this observer for a Commit that stands there;
+    /// `u64::MAX` for the leaf as it stands.
+    pub fn seat_at(&self, change: u64) -> Parent {
         match &self.followed {
             Followed::Session(record) if record.session.parent.is_zero() => {
-                Parent::Seat(seat_at(&record.seats, room_epoch))
+                parent_at(&record.seats, change)
             }
             _ => Parent::NotAMainSession,
         }
@@ -627,6 +650,26 @@ impl Observer {
         };
         let parent = parent_of(&record.session, sessions, room.epoch);
         Ok(rules::disallowed_leaves(
+            history,
+            room,
+            &record.session,
+            parent,
+            &self.leaves()?,
+        ))
+    }
+
+    /// Whether this session group is stale under `room`, and why (5.2.8).
+    pub fn staleness(
+        &self,
+        history: &RoomHistory,
+        room: &RoomState,
+        sessions: &dyn SessionFacts,
+    ) -> Result<rules::Staleness, Error> {
+        let Followed::Session(record) = &self.followed else {
+            return Ok(rules::Staleness::default());
+        };
+        let parent = parent_of(&record.session, sessions, room.epoch);
+        Ok(rules::staleness(
             history,
             room,
             &record.session,
@@ -709,20 +752,21 @@ impl Observer {
         })
     }
 
-    /// As [`Observer::process_commit`], for a holder whose record of the room reaches beyond the Commit's
-    /// place: one that replays a session's log, or is handed the log of a group it joined late. `room_epoch`
-    /// is the room epoch that was current at the Commit's place in the hub's order, which a session Commit
-    /// must name (5.2.1).
+    /// As [`Observer::process_commit`], for a holder that knows the Commit's place in the hub's order:
+    /// `place` names its change number, by which a main session's agent leaf is recorded over time, and
+    /// the room epoch a session Commit is judged against (5.2.1): the one that was current at that place,
+    /// for a holder whose record of the room reaches beyond it (one that replays a session's log, or is
+    /// handed the log of a group it joined late).
     pub fn process_commit_at(
         &mut self,
         commit: &[u8],
         recovery_auth: Option<&[u8]>,
         context: &Context<'_>,
-        room_epoch: u64,
+        place: &Place,
     ) -> Result<CommitFacts, Error> {
         self.guarded(|observer| {
             observer
-                .follow(commit, recovery_auth, context, None, Some(room_epoch))
+                .follow(commit, recovery_auth, context, None, Some(place))
                 .map(|(facts, _)| facts)
         })
     }
@@ -751,7 +795,7 @@ impl Observer {
         recovery_auth: Option<&[u8]>,
         context: &Context<'_>,
         posted: Option<Option<&Hash32>>,
-        at: Option<u64>,
+        place: Option<&Place>,
     ) -> Result<(CommitFacts, Vec<Vec<u8>>), Error> {
         let posting = posted.is_some();
         let message = rules::parse_commit(commit)?;
@@ -811,7 +855,11 @@ impl Observer {
                     sessions: context.sessions,
                     recovery: context.recovery,
                     max_human_devices: context.max_human_devices,
-                    room_epoch: at.unwrap_or(history.newest().epoch),
+                    room_epoch: match place.map(|place| place.room_epoch) {
+                        None | Some(RoomEpochAt::Newest) => history.newest().epoch,
+                        Some(RoomEpochAt::Epoch(epoch)) => epoch,
+                        Some(RoomEpochAt::Named) => note_epoch,
+                    },
                 };
                 let before = SessionBefore {
                     session: record.session,
@@ -845,7 +893,9 @@ impl Observer {
                         .ok_or(Error::RoomBehind)?;
                     let now = seat(&record.session, &leaves, room);
                     if record.seats.last().map(|(_, seat)| *seat) != Some(now) {
-                        record.seats.push((note_epoch, now));
+                        record
+                            .seats
+                            .push((place.map_or(0, |place| place.change), now));
                     }
                 }
                 self.record_changed = true;
@@ -995,14 +1045,15 @@ pub(crate) fn seat(
     first.filter(|_| others.next().is_none())
 }
 
-/// The agent leaf after the last change whose `room_epoch` is not above the one asked for.
-pub(crate) fn seat_at(seats: &[(u64, Option<DeviceId>)], room_epoch: u64) -> Option<DeviceId> {
+/// A main session at the place `change` of the hub's order, from its agent leaf over time: the leaf after
+/// the last of its Commits that does not stand behind that place. Before the first of them the session
+/// did not exist: no main session has that id there.
+pub(crate) fn parent_at(seats: &[(u64, Option<DeviceId>)], change: u64) -> Parent {
     seats
         .iter()
         .rev()
-        .find(|(since, _)| *since <= room_epoch)
-        .or(seats.first())
-        .and_then(|(_, seat)| *seat)
+        .find(|(since, _)| *since <= change)
+        .map_or(Parent::NotAMainSession, |(_, seat)| Parent::Seat(*seat))
 }
 
 fn parent_of(session: &TrommiSession, sessions: &dyn SessionFacts, room_epoch: u64) -> Parent {

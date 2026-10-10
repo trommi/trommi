@@ -6,6 +6,7 @@
 use trommi_core::codec;
 use trommi_core::device::{log_finding, LogFinding, Processed, WelcomeExpectation};
 use trommi_core::ids::GroupId;
+use trommi_core::invite::Role;
 use trommi_core::mls::profile::{CommitNote, Cut};
 use trommi_core::mls::rules::RoomState;
 use trommi_core::Error;
@@ -14,7 +15,7 @@ use trommi_tests::hub::Hub;
 use trommi_tests::{
     add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, join_room,
     join_session, new_device, now, observe, post_ok, post_refused, process, publish_some, settle,
-    sync, sync_ok, test_keys, TestDevice,
+    sync, sync_ok, test_keys, try_invite, TestDevice,
 };
 
 /// Two human devices and a main session with its agent device, on a hub that checks or does not.
@@ -275,8 +276,10 @@ fn a_key_package_valid_for_longer_than_the_profile_allows_is_refused() {
         trommi_core::device::key_package_info(&package).err(),
         Some(Error::BadKeyPackage)
     );
+    // No Request is made with it (4.5), so no invite lets it in; the inviter's own check of a Request's
+    // KeyPackage: `join_invite.rs`.
     assert_eq!(
-        a.add_human_device(&forger.id(), &package, now()),
+        try_invite(&mut a, &mut forger.invitee(), Role::Human, None),
         Err(Error::BadKeyPackage)
     );
     assert!(a.outbox().is_empty());

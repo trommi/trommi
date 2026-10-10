@@ -19,15 +19,19 @@
 //! its change number, which must lie in the room epoch the Commit's own note names (5.2.1), and records
 //! where each room epoch began. A wrong number can fail a walk; in a walk that is taken it changes nothing
 //! of what is recorded but those places. A helper session's Commit is judged against its main session's
-//! agent leaf at the room epoch its note names.
+//! agent leaf at the Commit's place: a main session can lose its agent leaf and gain another within one
+//! room epoch.
 //!
 //! **Order.** A session Commit names a room state, and a helper session's the agent leaf of its main
 //! session: the room group's past is learned first (`room-behind` otherwise), then a main session's, then
 //! its helper sessions' (`group-behind` otherwise).
 //!
-//! **First contact (5.2.6).** A history that is the group's own, by the test above, and does not obey
-//! section 5 is the finding `bad-group`: the session group is closed as after a failed first contact. A
-//! history that is not the group's own is `bad-group` too, and changes nothing: the hub lied, not the group.
+//! **First contact (5.2.6).** A history that is the group's own, by the test above, and that breaks
+//! section 5 by its own word is the finding `bad-group`: the session group is closed as after a failed
+//! first contact. Its own word is what the transcript binds: the Commits, their notes and the trees. The
+//! change numbers, their order and a `RecoveryAuth` stored beside a Commit are the hub's word: a history
+//! that fails only by them, or that is not the group's own, is `bad-group` too, and changes nothing. The
+//! hub lied, not the group.
 
 use super::facts::{group_key, EpochFacts, SUB_EPOCH, SUB_FINDING, SUB_ORIGIN};
 use super::Device;
@@ -36,17 +40,22 @@ use crate::codec::{self, Decode, Encode, Reader, Writer};
 use crate::error::Error;
 use crate::ids::{DeviceId, GroupId, SessionId};
 use crate::mls::group;
-use crate::mls::observer::{self, Context, Observer};
+use crate::mls::observer::{self, Context, Observer, Place, RoomEpochAt};
 use crate::mls::profile::{Cut, TrommiSession, MAX_HUMAN_DEVICES_IN_RECOVERY};
 use crate::mls::provider::{MlsEntries, Provider};
-use crate::mls::rules::{self, Parent, RoomHistory, SessionFacts};
-use crate::recovery::{PublicRules, ServedCommit, ServedGroup, Walked, WalkedEnd, WalkedEpoch};
+use crate::mls::rules::{
+    self, JoinClaim, Parent, RecoveryRules, RoomHistory, SealedKeyClaim, SessionFacts,
+};
+use crate::recovery::{
+    At, PublicRules, ServedCommit, ServedGroup, SessionsAt, Walked, WalkedEnd, WalkedEpoch,
+};
 use crate::store::{table, Batch, Storage};
-use openmls::group::{ProposalStore, PublicGroup};
+use openmls::group::{GroupContext, ProposalStore, PublicGroup};
 use openmls::prelude::{LeafNodeIndex, ProcessedMessageContent};
 use openmls_traits::OpenMlsProvider as _;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use tls_codec::Serialize as _;
+use tls_codec::{Deserialize as _, Serialize as _};
 
 /// The largest stored GroupContext this module reads: a room's holds up to 256 agent devices.
 const MAX_CONTEXT_LEN: usize = 1 << 16;
@@ -74,19 +83,33 @@ impl Encode for Origin {
 impl Decode for Origin {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
         let epoch = reader.u64()?;
-        let context = reader.opaque()?.to_vec();
+        let context = reader.opaque()?;
+        if context.is_empty() || context.len() > MAX_CONTEXT_LEN {
+            return Err(Error::BadFormat);
+        }
         let learned = match reader.u8()? {
             0 => false,
             1 => true,
             _ => return Err(Error::BadFormat),
         };
-        if context.is_empty() || context.len() > MAX_CONTEXT_LEN || (epoch == 0 && !learned) {
+        if epoch == 0 && !learned {
             return Err(Error::BadFormat);
         }
         Ok(Self {
             epoch,
-            context,
+            context: context.to_vec(),
             learned,
+        })
+    }
+}
+
+impl Origin {
+    /// Whether the context written down is a GroupContext of `group` at the origin's epoch: what a walk
+    /// of that group can arrive at.
+    fn is_of(&self, group: &GroupId) -> bool {
+        GroupContext::tls_deserialize_exact(&self.context).is_ok_and(|context| {
+            context.group_id().as_slice() == group.as_bytes()
+                && context.epoch().as_u64() == self.epoch
         })
     }
 }
@@ -130,10 +153,10 @@ struct PastSessions {
     seats: BTreeMap<SessionId, Vec<(u64, Option<DeviceId>)>>,
 }
 
-impl SessionFacts for PastSessions {
-    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+impl SessionsAt for PastSessions {
+    fn main_session_at(&self, session: &SessionId, change: u64) -> Parent {
         match self.seats.get(session) {
-            Some(seats) => Parent::Seat(observer::seat_at(seats, room_epoch)),
+            Some(seats) => observer::parent_at(seats, change),
             None => Parent::Unknown,
         }
     }
@@ -144,6 +167,74 @@ impl SessionFacts for PastSessions {
 
     fn live_helpers(&self, _: &SessionId) -> usize {
         0
+    }
+}
+
+/// The main sessions for a reading of a helper session's Commit by the group's own word (5.2.6): the hub
+/// says where a Commit stands, the Commit's signed note says which room epoch it names. Within that room
+/// epoch the main session may have had several agent leaves, one after the other; each is offered in turn,
+/// and the Commit broke the rules only if it breaks them against every one.
+struct AnyPlace<'a> {
+    sessions: &'a PastSessions,
+    /// Per room epoch, the place of the Commit that led to it.
+    places: &'a BTreeMap<u64, u64>,
+    /// Which of the main session's states is offered.
+    pick: Cell<usize>,
+    /// How many there are, as the last question found.
+    offered: Cell<usize>,
+}
+
+impl SessionFacts for AnyPlace<'_> {
+    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+        let Some(seats) = self.sessions.seats.get(session) else {
+            return Parent::Unknown;
+        };
+        // The room epoch reaches from the place of the Commit that led to it to the next one's.
+        let from = match (room_epoch, self.places.get(&room_epoch)) {
+            (_, Some(place)) => *place,
+            (0, None) => 0,
+            (_, None) => return Parent::Unknown,
+        };
+        let until = room_epoch
+            .checked_add(1)
+            .and_then(|next| self.places.get(&next))
+            .copied()
+            .unwrap_or(u64::MAX);
+        let mut states = vec![observer::parent_at(seats, from)];
+        for (change, seat) in seats {
+            let state = Parent::Seat(*seat);
+            if *change > from && *change < until && !states.contains(&state) {
+                states.push(state);
+            }
+        }
+        self.offered.set(states.len());
+        states
+            .get(self.pick.get())
+            .copied()
+            .unwrap_or(Parent::Unknown)
+    }
+
+    fn main_session_of(&self, _: &DeviceId) -> Option<SessionId> {
+        None
+    }
+
+    fn live_helpers(&self, _: &SessionId) -> usize {
+        0
+    }
+}
+
+/// The recovery construct for a reading by the group's own word: a `RecoveryAuth` is stored beside its
+/// Commit, not in it, so whether a join carried one is the hub's word, and no join is held against the
+/// group for it.
+struct DetachedAuth;
+
+impl RecoveryRules for DetachedAuth {
+    fn verify_join(&self, _: &JoinClaim<'_>) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn verify_sealed_key(&self, _: &SealedKeyClaim<'_>, _: &[u8]) -> Result<(), Error> {
+        Err(Error::Incomplete)
     }
 }
 
@@ -162,6 +253,14 @@ fn origin_key(group: &GroupId) -> Vec<u8> {
     group_key(table::CHAIN, SUB_ORIGIN, group, &[])
 }
 
+/// Whether the places of the room's epochs ascend with the epochs, as the hub's order has them (5.4.1).
+pub(super) fn ascending(places: &BTreeMap<u64, u64>) -> bool {
+    places
+        .values()
+        .zip(places.values().skip(1))
+        .all(|(earlier, later)| earlier < later)
+}
+
 /// A main session's agent leaf over time: what a walk found up to where the device's own record begins,
 /// then what the device recorded from the Commits it processed itself. The first entry of the device's own
 /// record stands for the state it started from, which the walk arrives at.
@@ -178,10 +277,16 @@ fn joined_seats(
     seats
 }
 
-/// Whether the served history, read as MLS alone without Trommi's rules, arrives at `origin`: every Commit
-/// verifies against the state before it, and at the origin's epoch the GroupContext is the origin's. Then
-/// the Commits served are the group's own, whatever they did.
-fn arrives(founding: &[u8], commits: &[ServedCommit<'_>], origin: &Origin) -> bool {
+/// Whether the served history, read as MLS alone without Trommi's rules, arrives at `origin`: it begins at
+/// the founding GroupInfo of `group` (epoch 0), every Commit verifies against the state before it, and at
+/// the origin's epoch the GroupContext is the origin's. Then the Commits served are the group's own,
+/// whatever they did. A later GroupInfo as the start shows no history, and so nothing about one.
+fn arrives(
+    group: &GroupId,
+    founding: &[u8],
+    commits: &[ServedCommit<'_>],
+    origin: &Origin,
+) -> bool {
     let replay = || -> Result<Vec<u8>, Error> {
         let verifiable = observer::parse_group_info(founding)?;
         let tree = verifiable
@@ -199,6 +304,10 @@ fn arrives(founding: &[u8], commits: &[ServedCommit<'_>], origin: &Origin) -> bo
             ProposalStore::new(),
         )
         .map_err(|_| Error::BadSignature)?;
+        let context = public.group_context();
+        if context.group_id().as_slice() != group.as_bytes() || context.epoch().as_u64() != 0 {
+            return Err(Error::BadGroup);
+        }
         let mut served = commits.iter();
         while public.group_context().epoch().as_u64() < origin.epoch {
             let commit = served.next().ok_or(Error::BadGroup)?;
@@ -321,15 +430,20 @@ impl<S: Storage> Device<S> {
             Ok(learned) => Ok(learned),
             Err(Error::BadGroup) => {
                 // The hub's word decides nothing about the group: only a history that is the group's own
-                // closes it.
-                let origin = self.origin(group)?;
-                let own = !group.is_room()
-                    && self.is_leaf_of(group)
-                    && origin.is_some_and(|origin| arrives(founding, commits, &origin));
+                // and that broke the rules by its own word closes it.
+                let own = match self.origin(group)? {
+                    Some(origin) if !group.is_room() && self.is_leaf_of(group) => {
+                        arrives(group, founding, commits, &origin)
+                            && self.broke_the_rules(group, founding, commits, origin.epoch)?
+                    }
+                    _ => false,
+                };
                 if own {
                     self.transact(|this, batch| {
                         this.begin(0);
-                        this.meta(group)?.distrusted = true;
+                        let meta = this.meta(group)?;
+                        meta.distrusted = true;
+                        meta.closed = true;
                         this.put_group(batch, group)?;
                         this.put_stored(
                             batch,
@@ -363,6 +477,68 @@ impl<S: Storage> Device<S> {
         }
         self.learn_history(group, served.founding, served.commits)
             .map(|_| ())
+    }
+
+    /// Whether the history of the session `group`, which is the group's own ([`arrives`]), breaks section 5
+    /// by its own word, whatever the hub says beside it: each Commit is read against the room epoch its
+    /// signed note names, a helper session's against every agent leaf its main session had in that room
+    /// epoch, and without its `RecoveryAuth`. Change numbers, their order and the attachments are the
+    /// hub's word, and a history that fails only by them says nothing about the group. A Commit this device
+    /// cannot judge (`room-behind`, a newer version) says nothing either.
+    fn broke_the_rules(
+        &self,
+        group: &GroupId,
+        founding: &[u8],
+        commits: &[ServedCommit<'_>],
+        upto: u64,
+    ) -> Result<bool, Error> {
+        let room = self.history()?.clone();
+        let sessions = self.past_sessions()?;
+        let any = AnyPlace {
+            sessions: &sessions,
+            places: &self.memory.room_places,
+            pick: Cell::new(0),
+            offered: Cell::new(1),
+        };
+        let context = Context {
+            room: Some(&room),
+            sessions: &any,
+            recovery: &DetachedAuth,
+            max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+        };
+        let Ok(mut observer) = Observer::follow_founding(founding) else {
+            return Ok(false);
+        };
+        if observer.group() != *group {
+            return Ok(false);
+        }
+        let mut served = commits.iter();
+        while observer.epoch()? < upto {
+            let Some(commit) = served.next() else {
+                return Ok(false);
+            };
+            let place = Place {
+                change: commit.change,
+                room_epoch: RoomEpochAt::Named,
+            };
+            any.pick.set(0);
+            loop {
+                any.offered.set(1);
+                match observer.process_commit_at(commit.commit, None, &context, &place) {
+                    Ok(_) => break,
+                    Err(fault) if is_fault(&fault) => return Err(fault),
+                    Err(Error::RoomBehind | Error::NewerVersion) => return Ok(false),
+                    Err(_) => {
+                        let next = any.pick.get().saturating_add(1);
+                        if next >= any.offered.get() {
+                            return Ok(true);
+                        }
+                        any.pick.set(next);
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// The main sessions whose agent leaf over the whole time this device holds.
@@ -461,12 +637,6 @@ impl<S: Storage> Device<S> {
         if let Some(history) = observer.history() {
             rules::check_room_founding(history.newest()).map_err(|_| Refusal::BadGroup)?;
         }
-        let context = Context {
-            room: room_history.as_ref(),
-            sessions: &sessions,
-            recovery: &PublicRules,
-            max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
-        };
         let mut walked = Walked::begin(&observer)?;
         let mut served = commits.iter();
         let mut places: Vec<(u64, u64)> = Vec::new();
@@ -480,10 +650,17 @@ impl<S: Storage> Device<S> {
             {
                 return Err(Refusal::BadGroup);
             }
-            // 5.2.1: a session Commit names the room epoch that was current at its place.
+            // 5.2.1: a session Commit names the room epoch that was current at its place, and a helper
+            // session's is judged against its main session's agent leaf there.
             let at = match session {
-                Some(_) => Some(self.room_epoch_at(commit.change)?),
-                None => None,
+                Some(_) => RoomEpochAt::Epoch(self.room_epoch_at(commit.change)?),
+                None => RoomEpochAt::Newest,
+            };
+            let context = Context {
+                room: room_history.as_ref(),
+                sessions: &At(&sessions, commit.change),
+                recovery: &PublicRules,
+                max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
             };
             match walked.follow(&mut observer, commit, &context, at) {
                 Ok(_) => places.push((observer.epoch()?, commit.change)),
@@ -504,9 +681,20 @@ impl<S: Storage> Device<S> {
         let arrived = arrived.first().ok_or(Error::Internal("a walk's end"))?;
 
         if let Some(earlier) = observer.history() {
-            self.take_room_past(batch, group, earlier)?;
             // Where each room epoch began in the hub's order, by which a session Commit is judged at
-            // its place. A place the device knows from the log itself stays.
+            // its place. The places are the hub's word, and one hub's word does not contradict itself:
+            // a place the device knows from the log itself stays, the walk names the same one for that
+            // epoch, and all of them together ascend with the epochs.
+            let mut whole = self.memory.room_places.clone();
+            for (epoch, change) in &places {
+                if *whole.entry(*epoch).or_insert(*change) != *change {
+                    return Err(Refusal::BadGroup);
+                }
+            }
+            if !ascending(&whole) {
+                return Err(Refusal::BadGroup);
+            }
+            self.take_room_past(batch, group, earlier)?;
             for (epoch, change) in places {
                 if !self.memory.room_places.contains_key(&epoch) {
                     self.put_room_place(batch, epoch, change);
@@ -589,7 +777,7 @@ impl<S: Storage> Device<S> {
             .zip(0u32..)
             .map(|(device, index)| (LeafNodeIndex::new(index), *device))
             .collect();
-        self.roles(group, &leaves, epoch.room_epoch)
+        self.roles(group, &leaves, epoch.room_epoch, Some(epoch.change))
     }
 
     /// Records the epochs `past` of `group`, all of which ended, as learned, and ends the chains their
@@ -634,7 +822,8 @@ impl<S: Storage> Device<S> {
     }
 
     /// The record of the device's first epoch in `group`, written when it joined without knowing the
-    /// Commit that led there, gets the roles that Commit was judged with. The leaves are the walk's.
+    /// Commit that led there, gets the roles that Commit was judged with. The leaves are the walk's. Where
+    /// a role changes, the group's object states and registers are built again.
     fn correct_first_epoch(
         &mut self,
         batch: &mut Batch,
@@ -652,6 +841,7 @@ impl<S: Storage> Device<S> {
         if devices(&own) != devices(&judged) {
             return Err(Refusal::BadGroup);
         }
+        let corrected = own.leaves != judged.leaves || own.seat != judged.seat;
         own.leaves = judged.leaves;
         own.seat = judged.seat;
         self.put_stored(
@@ -659,6 +849,12 @@ impl<S: Storage> Device<S> {
             group_key(table::CHAIN, SUB_EPOCH, group, &epoch.to_be_bytes()),
             codec::encode(&own)?,
         );
+        if corrected {
+            // What the device took of that epoch was judged with the roles it held then: the group's
+            // objects and registers are built again from its records, each judged with the roles now
+            // known (9.2.1).
+            self.replay_group(batch, group)?;
+        }
         Ok(())
     }
 
@@ -693,10 +889,30 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
-    /// Whether the records of every group's epochs fit together: they run without a hole from the first
-    /// to the newest, those before the group's origin are learned and reach back to epoch 0, and no other
-    /// is. `Error::Storage` otherwise. For the device being opened.
+    /// Whether the records of every group's epochs fit together: every group the device holds or follows
+    /// has its origin, an origin's context is a GroupContext of its group at its epoch, the records run
+    /// without a hole from the first to the newest, those before the group's origin are learned and reach
+    /// back to epoch 0, and no other is. `Error::Storage` otherwise. For the device being opened.
     pub(super) fn check_past(&self) -> Result<(), Error> {
+        let origins = [table::CHAIN, SUB_ORIGIN];
+        for (key, _) in self.stored_under(&origins) {
+            let mut rest = Reader::new(key.get(origins.len()..).unwrap_or_default());
+            let group = super::group_after(&mut rest)
+                .and_then(|group| rest.finish().map(|()| group))
+                .map_err(|_| damaged("a group's origin"))?;
+            if !self
+                .origin(&group)?
+                .is_some_and(|origin| origin.is_of(&group))
+            {
+                return Err(damaged("a group's origin"));
+            }
+        }
+        let held = self.memory.groups.keys();
+        for group in held.chain(self.memory.observers.keys()) {
+            if self.origin(group)?.is_none() {
+                return Err(damaged("a group's origin"));
+            }
+        }
         let prefix = [table::CHAIN, SUB_EPOCH];
         let mut epochs: BTreeMap<GroupId, Vec<(u64, bool)>> = BTreeMap::new();
         for (key, value) in self.stored_under(&prefix) {

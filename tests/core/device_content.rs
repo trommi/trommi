@@ -574,14 +574,15 @@ fn heads_are_due_when_a_head_changed_and_show_what_a_reader_lacks() {
     };
     write(&mut w.hub, &mut w.human, &heads);
     sync_all(&w.hub, &mut w.human);
-    // The heads register itself moved the own chain, but while connected the next one waits ten minutes.
+    // The heads register itself moved the own chain, and that calls for no other one.
     let written = now();
     assert_eq!(w.human.heads_due(&w.room, written + 1).unwrap(), None);
-    assert!(w
-        .human
-        .heads_due(&w.room, written + HEADS_EVERY_MS)
-        .unwrap()
-        .is_some());
+    assert_eq!(
+        w.human
+            .heads_due(&w.room, written + HEADS_EVERY_MS)
+            .unwrap(),
+        None
+    );
 
     // The other device is handed the heads but not the Note: it holds less than the head names.
     let served = w.hub.changes_after(other.cursor());
@@ -1304,4 +1305,73 @@ fn a_relayed_stroke_piece_is_taken_without_the_log() {
         w.agent.receive_relay(&group, &relayed, now()).unwrap(),
         None
     );
+}
+
+#[test]
+fn the_heads_envelope_itself_calls_for_no_other_heads() {
+    let store = trommi_tests::MemoryStorage::new();
+    let mut handle = store.handle();
+    let (mut human, mut other) = (trommi_tests::new_device_on(store), new_device());
+    let (mut hub, room) = found_room(&mut human);
+    add_human(&mut hub, &mut human, &mut other);
+    sync_all(&hub, &mut human);
+    sync_all(&hub, &mut other);
+    let note = Draft::NoteFirst {
+        payload: json(&format!(
+            r#"{{"text":"n","previous_version_hash":"{ZERO_HASH}"}}"#
+        )),
+    };
+    let heads_of = |device: &mut TestDevice, at: u64| {
+        device
+            .heads_due(&room, at)
+            .unwrap()
+            .map(|value| Draft::Register {
+                group: room,
+                name: "heads".into(),
+                value: Some(SecretBytes::new(value)),
+            })
+    };
+    let mut restart = |device: TestDevice| {
+        drop(device);
+        let store = handle.reopened();
+        handle = store.handle();
+        trommi_tests::reopen(store).unwrap()
+    };
+    let start = now();
+    write(&mut hub, &mut human, &note);
+    sync_all(&hub, &mut human);
+    let heads = heads_of(&mut human, start).unwrap();
+    write(&mut hub, &mut human, &heads);
+    sync_all(&hub, &mut human);
+
+    // The device comes online again: its own chain moved by the `heads` envelope alone, nothing is due.
+    let mut human = restart(human);
+    assert!(heads_of(&mut human, start + 1).is_none());
+    assert!(heads_of(&mut human, start + HEADS_EVERY_MS).is_none());
+    let mut human = restart(human);
+    assert!(heads_of(&mut human, start + 2 * HEADS_EVERY_MS).is_none());
+
+    // Another sender writes: a head changed. The device says so when it next comes online.
+    write(&mut hub, &mut other, &note);
+    sync_all(&hub, &mut human);
+    assert!(heads_of(&mut human, start + 1).is_none());
+    let mut human = restart(human);
+    let heads = heads_of(&mut human, start + 1).unwrap();
+    // The value lists every chain, the device's own too.
+    let Draft::Register {
+        value: Some(value), ..
+    } = &heads
+    else {
+        unreachable!()
+    };
+    let listed = String::from_utf8(value.expose().to_vec()).unwrap();
+    assert!(listed.contains(&human.id().to_base64url()));
+    assert!(listed.contains(&other.id().to_base64url()));
+    write(&mut hub, &mut human, &heads);
+    sync_all(&hub, &mut human);
+    assert!(heads_of(&mut human, start + 3 * HEADS_EVERY_MS).is_none());
+
+    // What the device writes itself that is no `heads` is a changed head too.
+    write(&mut hub, &mut human, &note);
+    assert!(heads_of(&mut human, start + 3 * HEADS_EVERY_MS).is_some());
 }

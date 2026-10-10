@@ -9,8 +9,9 @@
 // - One owner: a Web Lock on the state's name, taken before anything is read and held until close(). A second
 //   tab or worker that opens the same state gets StoreConflict (or waits, with { wait: true }). The database
 //   connection stays open as long, so nobody deletes or upgrades the state under a live device. A lock that is
-//   taken away (`steal`, which nothing of Trommi does) is noticed: the next write is a StoreConflict, which closes
-//   the device. What the device reads from memory until then is not fenced; the revision is the check behind it.
+//   taken away (`steal`, which nothing of Trommi does) is noticed: a write still under way is aborted, unless the
+//   browser already began to commit it, and the next write is a StoreConflict, which closes the device. What the
+//   device reads from memory until then is not fenced; the revision is the check behind it.
 //
 // One store object serves one device, once: after close() it stays closed.
 //
@@ -38,10 +39,11 @@ const committed = transaction => new Promise((resolve, reject) => {
 /**
  * Takes the Web Lock `name`. Resolves with `release`, which gives the lock back and resolves once the browser has
  * let it go (the next owner can take it without waiting from then on), and `lost`, a promise that resolves if the
- * lock is taken away while it is held (another context asked for it with `steal`). With `signal`, a wait for the
+ * lock is taken away while it is held (another context asked for it with `steal`); `onLost` is called at that
+ * moment, in the same step in which the browser reports it. With `signal`, a wait for the
  * lock can be given up.
  */
-function lock(name, wait, signal) {
+function lock(name, wait, signal, onLost = () => {}) {
   if (!globalThis.navigator?.locks) return Promise.reject(new Error('Web Locks are not available: one owner cannot be ensured'))
   return new Promise((resolve, reject) => {
     let release
@@ -58,7 +60,8 @@ function lock(name, wait, signal) {
     })
     // The request settles when the lock is gone: resolved after a release, rejected when it was stolen, or when it
     // was never granted (given up, or refused by the browser).
-    request.then(() => {}, error => { if (release) stolen(); else reject(error) })
+    // `onLost` runs in this very step: the holder is marked before anything else of the page runs.
+    request.then(() => {}, error => { if (release) { onLost(); stolen() } else reject(error) })
   })
 }
 
@@ -72,6 +75,7 @@ export class IdbStore {
   #lost = false                   // the lock was taken away
   #acquiring = null               // the request for the lock, while it is not yet answered
   #closing = null                 // the one closing, once it began
+  #writing = new Set()            // the write transactions under way: aborted when the lock is taken away
 
   /** `name` names the stored state: the IndexedDB database and the lock. One per device. */
   constructor(name, { wait = false } = {}) {
@@ -83,10 +87,9 @@ export class IdbStore {
     if (this.#state !== 'new') throw new Error('this store was loaded before: a store object serves one device, once')
     this.#state = 'loading'
     try {
-      this.#acquiring = lock(lockName(this.#name), this.#wait, this.#waiting.signal)
-      this.#lock = await this.#acquiring
       // A lock that is taken away ends this owner: nothing more is written.
-      this.#lock.lost.then(() => { this.#lost = true })
+      this.#acquiring = lock(lockName(this.#name), this.#wait, this.#waiting.signal, () => this.#taken())
+      this.#lock = await this.#acquiring
       if (this.#state !== 'loading') throw new Error('the store was closed while it loaded')
       const open = indexedDB.open(this.#name, 1)
       open.onupgradeneeded = () => {
@@ -117,6 +120,14 @@ export class IdbStore {
     }
   }
 
+  /** The lock was taken away: nothing more is written, and a write under way is aborted where it still can be. */
+  #taken() {
+    this.#lost = true
+    for (const transaction of this.#writing) {
+      try { transaction.abort() } catch { /* it is committing or done already: the browser no longer takes it back */ }
+    }
+  }
+
   apply(write) { return this.applyAll([write]) }
 
   /** Several writes, in order, in ONE transaction: all of them or none. Each names the revision the one before it
@@ -130,11 +141,14 @@ export class IdbStore {
       throw new Error('the browser does not grant a strict transaction')
     }
     const finished = committed(transaction)
+    this.#writing.add(transaction)
     const entries = transaction.objectStore(ENTRIES)
     const meta = transaction.objectStore(META)
     let conflict = false
     const stored = meta.get('revision')
     stored.onsuccess = () => {
+      // The lock may be taken away between the start of the transaction and this answer: nothing is put then.
+      if (this.#lost) { transaction.abort(); return }
       let revision = stored.result ?? 0
       for (const write of writes) {
         if (revision !== write.expectedRevision) { conflict = true; transaction.abort(); return }
@@ -147,7 +161,10 @@ export class IdbStore {
     try {
       await finished
     } catch (error) {
+      if (this.#lost) throw new StoreConflict('another tab or worker took this state over')
       throw conflict ? new StoreConflict() : error
+    } finally {
+      this.#writing.delete(transaction)
     }
   }
 

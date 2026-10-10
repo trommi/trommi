@@ -3,13 +3,14 @@
 
 use trommi_core::device::{Processed, Received};
 use trommi_core::ids::{GroupId, TurnId};
+use trommi_core::invite::Role;
 use trommi_core::mls::profile::Cut;
 use trommi_core::mls::rules::Parent;
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, cuts_for, enrol, found_main, found_room, new_device, now, observe, post_ok,
-    publish_some, settle, sync_ok, TestDevice,
+    add_human, cuts_for, enrol, enrol_over, found_main, found_room, new_device, now, post_ok,
+    publish_some, seeded_device, settle, sync_ok, try_invite, TestDevice,
 };
 
 struct Room {
@@ -22,9 +23,12 @@ struct Room {
     group: GroupId,
 }
 
+/// The seed of the key of the session's first agent device.
+const OLD: u8 = 0x0D;
+
 /// Two human devices and a main session that stands in epoch 3.
 fn room() -> Room {
-    let (mut a, mut b, mut old) = (new_device(), new_device(), new_device());
+    let (mut a, mut b, mut old) = (new_device(), new_device(), seeded_device(OLD));
     let (mut hub, room_group) = found_room(&mut a);
     add_human(&mut hub, &mut a, &mut b);
     enrol(&mut hub, &mut a, &mut old);
@@ -71,9 +75,7 @@ fn a_takeover_with_history_is_one_commit_and_a_handover() {
     let mut new = new_device();
 
     // (a) One room Commit takes the old device out of `agents` and enrols the new one.
-    a.change_agents(&[new.id()], &[old.id()], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    observe(&hub, &mut new);
+    enrol_over(&mut hub, &mut a, &mut new, &group);
     let roles = hub.history().unwrap();
     assert_eq!(roles.newest().room.agents, [new.id()]);
     assert!(roles.is_revoked(&old.id(), roles.newest().epoch));
@@ -184,7 +186,7 @@ fn a_takeover_without_history_hands_over_nothing_until_asked() {
     // Two room Commits this time: the new device is enrolled first, the old one removed later.
     enrol(&mut hub, &mut a, &mut new);
     assert!(hub.stale_leaves(&group).unwrap().is_empty());
-    a.change_agents(&[], &[old.id()], now()).unwrap();
+    a.remove_agents(&[old.id()], now()).unwrap();
     post_ok(&mut hub, &mut a);
     assert_eq!(hub.stale_leaves(&group).unwrap(), [old.id()]);
     take_over(&mut hub, &mut a, &mut new, &group);
@@ -235,26 +237,28 @@ fn a_replaced_agent_device_is_revoked_for_good() {
         group,
     } = room();
     let mut new = new_device();
-    a.change_agents(&[new.id()], &[old.id()], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    observe(&hub, &mut new);
+    enrol_over(&mut hub, &mut a, &mut new, &group);
     take_over(&mut hub, &mut a, &mut new, &group);
     settle(&hub, &mut new);
     settle(&hub, &mut old);
     let room_epoch = hub.epoch(&room_group).unwrap();
 
-    // It is never enrolled again.
+    // It is never enrolled again: whoever holds its key answers an invite, the person confirms, and the
+    // Commit is not built.
+    let mut returning = seeded_device(OLD);
+    assert_eq!(returning.id(), old.id());
     assert_eq!(
-        a.change_agents(&[old.id()], &[], now()),
+        try_invite(&mut a, &mut returning, Role::Agent, None),
         Err(Error::BadCommit)
     );
     assert!(!a.group(&room_group).unwrap().pending);
     // It is never a human device.
-    let package = old.key_package(now()).unwrap();
     assert_eq!(
-        a.add_human_device(&old.id(), &package, now()),
+        try_invite(&mut a, &mut returning, Role::Human, None),
         Err(Error::BadCommit)
     );
+    assert!(a.outbox().is_empty());
+    let package = old.key_package(now()).unwrap();
     // It is never added to a session group again, by an Add or as the device that takes over.
     assert_eq!(
         a.add_to_session(&group, &old.id(), &package, now()),
@@ -301,7 +305,7 @@ fn a_session_waits_with_an_empty_seat_for_a_later_takeover() {
         ..
     } = room();
     // The agent device is removed and nobody takes over yet: the cleaning has no replacement.
-    a.change_agents(&[], &[old.id()], now()).unwrap();
+    a.remove_agents(&[old.id()], now()).unwrap();
     post_ok(&mut hub, &mut a);
     let cuts = cuts_for(&a, &group);
     assert_eq!(cuts, [Cut::none(old.id())]);
@@ -371,7 +375,7 @@ fn an_agent_device_is_the_agent_leaf_of_one_live_main_session() {
     enrol(&mut hub, &mut a, &mut other);
     publish_some(&mut hub, &mut other, 1);
     let second = found_main(&mut hub, &mut a, &other.id());
-    a.change_agents(&[], &[other.id()], now()).unwrap();
+    a.remove_agents(&[other.id()], now()).unwrap();
     post_ok(&mut hub, &mut a);
     let package = old.key_package(now()).unwrap();
     let cuts = cuts_for(&a, &second);

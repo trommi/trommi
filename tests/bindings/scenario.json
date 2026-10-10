@@ -14,6 +14,8 @@
     "the Chat message with 'text'. A device that came with the recovery code reads back without learning.",
     "An invited device signs in at the hub before it is let in (invite). W is a helper device in a helper session",
     "'side' under 'main'; N is an agent device that takes 'main' over by invite, and with it 'side' (take_over).",
+    "A sync with 'feed' hands everything over through the batch call, split where a Welcome is due. The recovery hands",
+    "its chains over in reverse order. read_back with 'register' must show the board's snapshot register by name.",
     "gate: the agent device asks its command gate about the Chat message with that text: act once, then done."
   ],
   "steps": [
@@ -57,7 +59,7 @@
     { "do": "post", "device": "A" },
     { "do": "fetch", "device": "B", "text": "the first message" },
     { "do": "sync", "device": "B", "chat": "the first message", "confirmed": true },
-    { "do": "sync", "device": "G", "chat": "the first message" },
+    { "do": "sync", "device": "G", "chat": "the first message", "feed": true },
     { "do": "gate", "device": "G", "text": "the first message" },
 
     { "do": "work_trail", "device": "G", "group": "main", "number": 1, "text": "{\"step\":\"reading the brief\"}" },
@@ -109,14 +111,14 @@
     { "do": "sync", "device": "A" },
     { "do": "sync", "device": "G" },
     { "do": "same_key", "devices": ["A", "C"], "group": "room" },
-    { "do": "read_back", "device": "C", "early": true, "text": "the first message" },
+    { "do": "read_back", "device": "C", "early": true, "text": "the first message", "register": true },
     { "do": "same_key", "devices": ["A", "C", "G"], "group": "main" },
     { "do": "earlier_key", "device": "C", "like": "A", "group": "main", "epoch": 1 },
 
     { "do": "replace_code", "device": "A" },
     { "do": "post", "device": "A" },
     { "do": "post", "device": "A" },
-    { "do": "sync", "device": "C" },
+    { "do": "sync", "device": "C", "feed": true },
     { "do": "sync", "device": "G" },
     { "do": "holds_recovery_mac", "device": "C" },
     { "do": "same_key", "devices": ["A", "C"], "group": "room" },
@@ -140,7 +142,7 @@
 
     { "do": "create", "device": "N" },
     { "do": "take_over", "by": "R", "device": "N", "session": "main", "helpers": ["side"] },
-    { "do": "sync", "device": "N" },
+    { "do": "sync", "device": "N", "feed": true },
     { "do": "sync", "device": "W" },
     { "do": "learn", "device": "N", "groups": ["room", "main", "side"] },
     { "do": "read_back", "device": "N" },
