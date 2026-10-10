@@ -3366,6 +3366,34 @@ impl<S: Storage> Device<S> {
         })
     }
 
+    /// Lets a human device into a session group again whose Welcome it could not use (3.7): one Commit that
+    /// removes its leaf, with the Cut this device holds for it, and adds the same key with the fresh
+    /// KeyPackage it asked with. Its chain goes on from that Cut, with envelopes of the new epoch on
+    /// (9.0.10). Any human device of the group does this (`forbidden` for another device, and in the room
+    /// group, where a device that cannot join comes back as a new device); `bad-commit` for a device that is
+    /// no human device of the room, for this device itself, and when the hub holds an envelope of the device
+    /// beyond the Cut, which this device then fetches before it asks again.
+    pub fn readmit_human(
+        &mut self,
+        group: &GroupId,
+        device: &DeviceId,
+        key_package: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        self.transact(|this, batch| {
+            if group.is_room() || !this.is_human() {
+                return Err(Error::Forbidden);
+            }
+            if *device == this.id || !this.history()?.newest().is_human(device) {
+                return Err(Error::BadCommit);
+            }
+            key_package::verify_key_package_of(key_package, device)?;
+            let (package, _) = key_package::validated(key_package)?;
+            let cuts = this.cuts_of(group, &[*device])?;
+            this.commit(batch, group, vec![package], &cuts, None, now_ms)
+        })
+    }
+
     /// The own-leaf update of a human device (5.2.9): an empty Commit when its leaf in `group` is older than
     /// seven days and its last update there older than a day; in the room group also when this device sent
     /// [`STROKE_PIECES_PER_EPOCH`] stroke pieces in the epoch (7.2); or at once when `forced` (`epoch-full`
@@ -3492,10 +3520,13 @@ impl<S: Storage> Device<S> {
         {
             return Err(Error::WrongRoom);
         }
-        // A Welcome never replaces a group this device holds.
-        if self.memory.groups.contains_key(&id) {
+        // A Welcome never replaces a group this device holds. A session group it was removed from it joins
+        // again when its key was added again (3.7).
+        let left = self.memory.groups.get(&id).filter(|held| held.removed);
+        if self.memory.groups.contains_key(&id) && left.is_none() {
             return Err(Error::Replay);
         }
+        let seats = left.map(|held| held.seats.clone()).unwrap_or_default();
         let leaves = rules::leaves_of(staged.members())?;
         let added_by = staged
             .welcome_sender()
@@ -3521,6 +3552,7 @@ impl<S: Storage> Device<S> {
             own_leaf_ms: now_ms,
             joined_epoch: epoch,
             passed: self.memory.record.cursor,
+            seats,
             ..GroupMeta::default()
         };
         let mut offending = Vec::new();
@@ -4618,6 +4650,22 @@ impl<S: Storage> Device<S> {
                 },
                 &judged,
             )?,
+        }
+        // 9.0.10: a key is added again only if nothing of it is held beyond its Cut. What this device holds it
+        // was served by the hub, which decides this for everyone and should have refused the Commit.
+        if let Some(note) = facts.note.as_ref() {
+            let chains = self.chains(id)?;
+            for cut in note
+                .cuts
+                .iter()
+                .filter(|cut| facts.adds.contains(&cut.device))
+            {
+                let named = crate::chain::Head {
+                    seq: cut.seq,
+                    hash: cut.hash,
+                };
+                crate::chain::check_added_again(&chains.head(&cut.device), &named)?;
+            }
         }
         let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
             return Err(Error::BadGroup);

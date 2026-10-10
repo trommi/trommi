@@ -612,6 +612,10 @@ impl Hub {
                         .transpose()?;
                     let checked = self
                         .check(&group, &posted, from)
+                        .and_then(|facts| {
+                            self.check_added_again(&group, posted.commit, &facts.adds)?;
+                            Ok(facts)
+                        })
                         .and_then(|facts| self.check_replacement(&facts, entry, replaces));
                     if let Err(refusal) = checked {
                         match before {

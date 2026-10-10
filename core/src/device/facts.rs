@@ -269,27 +269,34 @@ impl Decode for GroupState {
     }
 }
 
-/// The removal of a device from a group: its Cut, and the epoch that began without its leaf. The first one
-/// for a device stands.
+/// The removal of a device from a group: its Cut, the epoch its removing Commit began, and the epoch in which
+/// its key became a leaf again, if it did (9.0.10). One is kept per device: a later removal of a key that
+/// came back replaces it, and its Cut names the chain up to it.
 pub(super) struct Removal {
     pub cut: Head,
     pub epoch: u64,
+    pub again: Option<u64>,
 }
 
 impl Encode for Removal {
     fn write(&self, writer: &mut Writer) -> Result<(), Error> {
         writer.value(&self.cut)?;
         writer.u64(self.epoch);
+        writer.u8(u8::from(self.again.is_some()));
+        writer.u64(self.again.unwrap_or(0));
         Ok(())
     }
 }
 
 impl Decode for Removal {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
-        Ok(Self {
-            cut: reader.value()?,
-            epoch: reader.u64()?,
-        })
+        let (cut, epoch) = (reader.value()?, reader.u64()?);
+        let again = match (reader.u8()?, reader.u64()?) {
+            (0, 0) => None,
+            (1, again) if again >= epoch => Some(again),
+            _ => return Err(Error::BadFormat),
+        };
+        Ok(Self { cut, epoch, again })
     }
 }
 
@@ -595,6 +602,19 @@ impl<S: Storage> Device<S> {
             group_key(table::CHAIN, SUB_EPOCH, group, &epoch.to_be_bytes()),
             codec::encode(&facts)?,
         );
+        // 9.0.10: a key that a Cut ended and that is a leaf in this epoch came back with it.
+        for (device, _) in &facts.leaves {
+            if let Some(mut removal) = self.removal(group, device)? {
+                if removal.again.is_none() && removal.epoch <= epoch {
+                    removal.again = Some(epoch);
+                    self.put_stored(
+                        batch,
+                        group_key(table::CHAIN, SUB_CUT, group, device.as_bytes()),
+                        codec::encode(&removal)?,
+                    );
+                }
+            }
+        }
         let Some(merging) = merging else {
             return Ok(());
         };
@@ -933,9 +953,10 @@ impl<S: Storage> Device<S> {
         Ok(self.removal(group, device)?.map(|removal| removal.cut))
     }
 
-    /// Ends the chain of a removed device at its Cut (9.0.10): the Cut is kept for ever, the first one for a
-    /// device stands; what this device had accepted beyond it is dropped, and the group's object states and
-    /// registers are built again without it.
+    /// Ends the chain of a removed device at its Cut (9.0.10), when this device merges the removing Commit:
+    /// the Cut is kept for ever; what this device had accepted beyond it is dropped, and the group's object
+    /// states and registers are built again without it. A Cut held for a key that has not been a leaf since
+    /// stands; one for a key that came back is replaced by the Cut of this removal.
     fn apply_cut(
         &mut self,
         batch: &mut Batch,
@@ -943,10 +964,47 @@ impl<S: Storage> Device<S> {
         cut: &Cut,
         epoch: u64,
     ) -> Result<(), Error> {
-        if self.cut(group, &cut.device)?.is_some() {
+        let held = self.removal(group, &cut.device)?;
+        if held.is_some_and(|held| held.again.is_none() || held.epoch >= epoch) {
             return Ok(());
         }
-        self.end_chain(batch, group, cut, epoch)
+        self.end_chain(batch, group, cut, epoch)?;
+        // This device's own chain ends there too: whatever it signed beyond the Cut is void, and if its key
+        // is added again, its next envelope is the one after the Cut (3.7).
+        if cut.device == self.id {
+            let head = Head {
+                seq: cut.seq,
+                hash: cut.hash,
+            };
+            self.put_stored(
+                batch,
+                group_key(table::CHAIN, SUB_OWN_CHAIN, group, &[]),
+                OwnChain::from_cut(head).to_bytes()?,
+            );
+        }
+        Ok(())
+    }
+
+    /// The epoch from which `device` is a leaf of `group` up to the newest epoch recorded, looking from
+    /// `epoch` on; none if it is no leaf in the newest one, or left again in between.
+    fn leaf_since(
+        &self,
+        group: &GroupId,
+        device: &DeviceId,
+        epoch: u64,
+    ) -> Result<Option<u64>, Error> {
+        let mut since = None;
+        for at in epoch..=self.newest_epoch(group).unwrap_or(0) {
+            let leaf = self
+                .epoch_facts(group, at)?
+                .is_some_and(|facts| facts.leaves.iter().any(|(leaf, _)| leaf == device));
+            since = match (leaf, since) {
+                (true, None) => Some(at),
+                (true, since) => since,
+                (false, _) => None,
+            };
+        }
+        Ok(since)
     }
 
     /// Writes the Cut of a removed device and does to its chain what the Cut says, whatever Cut was held
@@ -962,13 +1020,45 @@ impl<S: Storage> Device<S> {
             seq: cut.seq,
             hash: cut.hash,
         };
+        // A later removal this device already holds names the chain up to itself, this Cut included.
+        if self
+            .removal(group, &cut.device)?
+            .is_some_and(|held| held.epoch > epoch)
+        {
+            return Ok(());
+        }
+        // 9.0.10: where the key is a leaf again from an epoch on, what it signed for that epoch or a later
+        // one lies beyond the Cut by right and stays.
+        let again = self.leaf_since(group, &cut.device, epoch)?;
         self.put_stored(
             batch,
             group_key(table::CHAIN, SUB_CUT, group, cut.device.as_bytes()),
-            codec::encode(&Removal { cut: head, epoch })?,
+            codec::encode(&Removal {
+                cut: head,
+                epoch,
+                again,
+            })?,
         );
         let mut chains = self.chains(group)?;
-        let effect = chain::cut_chain(&Facts(self), &chains, group, &cut.device, &head)?;
+        let mut effect = chain::cut_chain(&Facts(self), &chains, group, &cut.device, &head)?;
+        let prefix = group_key(table::CHAIN, SUB_RECORD, group, cut.device.as_bytes());
+        let mut beyond = Vec::new();
+        let mut stays = false;
+        for (key, value) in self.stored_under(&prefix) {
+            let record: Record =
+                codec::decode(&value, value.len()).map_err(|_| damaged("a chain record"))?;
+            if effect.drop_from.is_none_or(|from| record.header.seq < from) {
+                continue;
+            }
+            if again.is_some_and(|again| record.header.epoch >= again) {
+                stays = true;
+            } else {
+                beyond.push((key, record.hash));
+            }
+        }
+        if stays {
+            effect.head = None;
+        }
         chains.apply_cut(&effect);
         self.put_chains(batch, group, &chains)?;
         if let Some(code) = &effect.finding {
@@ -978,20 +1068,15 @@ impl<S: Storage> Device<S> {
                 code.code().as_bytes().to_vec(),
             );
         }
-        let Some(from) = effect.drop_from else {
+        if effect.drop_from.is_none() || (stays && beyond.is_empty()) {
             return Ok(());
-        };
-        let prefix = group_key(table::CHAIN, SUB_RECORD, group, cut.device.as_bytes());
-        for (key, value) in self.stored_under(&prefix) {
-            let record: Record =
-                codec::decode(&value, value.len()).map_err(|_| damaged("a chain record"))?;
-            if record.header.seq >= from {
-                self.delete_stored(batch, key);
-                self.delete_stored(
-                    batch,
-                    group_key(table::CHAIN, SUB_BY_HASH, group, record.hash.as_bytes()),
-                );
-            }
+        }
+        for (key, hash) in beyond {
+            self.delete_stored(batch, key);
+            self.delete_stored(
+                batch,
+                group_key(table::CHAIN, SUB_BY_HASH, group, hash.as_bytes()),
+            );
         }
         self.replay_group(batch, group)
     }
@@ -1117,6 +1202,13 @@ impl<S: Storage> GroupFacts for Facts<'_, S> {
 
     /// From the record of the removal itself: the epoch that began without the device's leaf. A Commit that
     /// removes a leaf and adds the same key at once is seen this way too.
+    fn leaf_again_at(&self, group: &GroupId, device: &DeviceId) -> Result<Option<u64>, Error> {
+        Ok(self
+            .0
+            .removal(group, device)?
+            .and_then(|removal| removal.again))
+    }
+
     fn removed_by(&self, group: &GroupId, epoch: u64, device: &DeviceId) -> Result<bool, Error> {
         Ok(self
             .0
