@@ -414,7 +414,19 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
         }
         w.ada.post(&w.hub, "/v2/invites", &body)
     };
-    with_mac(None).refused(400, "bad-format");
+    // without a MAC (clients before 12.1.2's MAC): taken, stored without one and served as null
+    let unbound = wire::Offer {
+        invite_id: random(),
+        ..offer.clone()
+    };
+    let unbound_bytes = unbound.bytes();
+    w.ada.post(&w.hub, "/v2/invites", &json!({ "offer": b64(&unbound_bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &unbound_bytes)) })).ok();
+    assert_eq!(
+        w.hub
+            .get(&format!("/v2/invites/{}", b64(&unbound.invite_id)))
+            .ok()["mac"],
+        Value::Null
+    );
     with_mac(Some(&[9u8; 31])).refused(400, "bad-format");
     with_mac(Some(&[9u8; 33])).refused(400, "bad-format");
     // 12.1.2: a human device's invite lives 10 minutes, an agent device's 15; 2 minutes for the clocks

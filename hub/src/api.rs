@@ -895,9 +895,9 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
 
         // ---- invites, by human devices
         ("POST", ["invites"]) => {
-            let (offer, signature, mac) = (rq.bytes("offer")?, rq.bytes("signature")?, rq.bytes("mac")?);
+            let (offer, signature, mac) = (rq.bytes("offer")?, rq.bytes("signature")?, rq.opt_bytes("mac")?);
             let auth = read_auth()?;
-            app.write_as(&auth, rq.lease, |x, _| invites::publish(x, &auth, &offer, &signature, &mac))
+            app.write_as(&auth, rq.lease, |x, _| invites::publish(x, &auth, &offer, &signature, mac.as_deref()))
         }
         ("PUT", ["invites", invite, "reveal"]) => {
             let invite = id::<16>(invite)?;
