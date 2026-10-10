@@ -4,6 +4,7 @@ import * as core from '/core/wasm/pkg/trommi-core.js'
 import { StoreConflict } from '/core/wasm/pkg/trommi-core.js'
 import { IdbStore } from '/core/wasm/pkg/idb-store.js'
 import { runScenario } from '/tests/bindings/scenario.mjs'
+import { accountVectors } from '/tests/bindings/vectors.mjs'
 
 const violations = []
 addEventListener('securitypolicyviolation', event => violations.push(`${event.violatedDirective} ${event.blockedURI}`))
@@ -44,8 +45,9 @@ async function deviceInWorker(run, name, how, wait = false) {
 }
 
 const cases = {
-  /** The self-test in the page. */
+  /** The self-test in the page, and the account's known answers. */
   async page() {
+    accountVectors(core, await (await fetch('/spec/vectors/account.json')).json())
     const report = core.selfTest(Date.now())
     return { ok: report.ok, steps: report.steps, versions: report.versions }
   },
@@ -105,6 +107,12 @@ const cases = {
       if (await outcome(store.load()) !== 'resolved') found.reopen = false
       await store.close()
     }
+
+    // Two closes at once both resolve only when the lock is free.
+    const twice = new IdbStore(name)
+    await twice.load()
+    await Promise.all([twice.close(), twice.close()])
+    found.closedTwice = !(await held())
 
     // A load that waits for the lock is given up by close(), and never takes the lock.
     const first = new IdbStore(name)

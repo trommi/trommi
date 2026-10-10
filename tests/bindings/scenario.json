@@ -4,7 +4,17 @@
     "Chromium with every device in a worker of its own), tests/bindings/swift runs it through the Swift binding.",
     "Devices are named by a letter; A, B and C are human devices (C comes with the recovery code), G is an agent",
     "device. Groups are named 'room' or by the name a session was founded under. The hub is a stand-in that orders and stores and verifies nothing: the",
-    "devices do. A step with 'refused' must fail with that code; every other step must succeed."
+    "devices do. A step with 'refused' must fail with that code; every other step must succeed. The room is always",
+    "served with its session groups: the deepest thing a call takes. R is a new device that recovers the room alone.",
+    "same_key: every device named stands in the same epoch of the group and holds its key. A sync with 'chat' must",
+    "bring an applied envelope with that text; 'fetch' hands a device the newest envelope out of order, before its turn.",
+    "In a session group same_key also has the first device write a Chat message that every other one must open.",
+    "early: an item written in the room before anyone else is there. learn: a device that joined by link learns the",
+    "past of its groups; read_back: a device is handed every stored envelope again and must open the early item, and",
+    "the Chat message with 'text'. A device that came with the recovery code reads back without learning.",
+    "An invited device signs in at the hub before it is let in (invite). W is a helper device in a helper session",
+    "'side' under 'main'; N is an agent device that takes 'main' over by invite, and with it 'side' (take_over).",
+    "gate: the agent device asks its command gate about the Chat message with that text: act once, then done."
   ],
   "steps": [
     { "do": "create", "device": "A" },
@@ -14,21 +24,41 @@
     { "do": "found_room", "device": "A" },
     { "do": "post", "device": "A" },
 
-    { "do": "add_human", "by": "A", "device": "B" },
+    { "do": "early", "device": "A" },
+    { "do": "post", "device": "A" },
+
+    { "do": "invite", "by": "A", "device": "B", "role": "human" },
     { "do": "post", "device": "A" },
     { "do": "join", "device": "B", "by": "A" },
+    { "do": "hand_over", "by": "A" },
+    { "do": "post", "device": "A" },
+    { "do": "sync", "device": "B" },
+    { "do": "holds_recovery_mac", "device": "B" },
+    { "do": "learn", "device": "B", "groups": ["room"] },
+    { "do": "read_back", "device": "B", "early": true },
     { "do": "same_key", "devices": ["A", "B"], "group": "room" },
     { "do": "sign_in", "device": "B" },
 
-    { "do": "enrol", "by": "A", "device": "G" },
+    { "do": "board", "writer": "A", "reader": "B" },
+    { "do": "stroke", "device": "A" },
     { "do": "post", "device": "A" },
-    { "do": "observe", "device": "G" },
+    { "do": "relay", "device": "B" },
+
+    { "do": "invite", "by": "A", "device": "G", "role": "agent" },
+    { "do": "post", "device": "A" },
     { "do": "sync", "device": "B" },
     { "do": "found_session", "by": "A", "agent": "G", "humans": ["B"], "name": "main" },
     { "do": "post", "device": "A" },
     { "do": "sync", "device": "B" },
     { "do": "sync", "device": "G" },
     { "do": "same_key", "devices": ["A", "B", "G"], "group": "main" },
+
+    { "do": "chat", "device": "A", "group": "main", "text": "the first message" },
+    { "do": "post", "device": "A" },
+    { "do": "fetch", "device": "B", "text": "the first message" },
+    { "do": "sync", "device": "B", "chat": "the first message", "confirmed": true },
+    { "do": "sync", "device": "G", "chat": "the first message" },
+    { "do": "gate", "device": "G", "text": "the first message" },
 
     { "do": "work_trail", "device": "G", "group": "main", "number": 1, "text": "{\"step\":\"reading the brief\"}" },
     { "do": "post", "device": "G" },
@@ -79,6 +109,7 @@
     { "do": "sync", "device": "A" },
     { "do": "sync", "device": "G" },
     { "do": "same_key", "devices": ["A", "C"], "group": "room" },
+    { "do": "read_back", "device": "C", "early": true, "text": "the first message" },
     { "do": "same_key", "devices": ["A", "C", "G"], "group": "main" },
     { "do": "earlier_key", "device": "C", "like": "A", "group": "main", "epoch": 1 },
 
@@ -90,6 +121,30 @@
     { "do": "holds_recovery_mac", "device": "C" },
     { "do": "same_key", "devices": ["A", "C"], "group": "room" },
     { "do": "restart", "device": "C" },
-    { "do": "holds_recovery_mac", "device": "C" }
+    { "do": "holds_recovery_mac", "device": "C" },
+
+    { "do": "create", "device": "R" },
+    { "do": "recover", "device": "R" },
+    { "do": "post", "device": "R" },
+    { "do": "holds_recovery_mac", "device": "R" },
+    { "do": "sync", "device": "A", "removed": true },
+    { "do": "sync", "device": "G" },
+    { "do": "read_back", "device": "R", "early": true, "text": "the first message" },
+    { "do": "same_key", "devices": ["R", "G"], "group": "main" },
+
+    { "do": "create", "device": "W" },
+    { "do": "found_helper", "by": "G", "parent": "main", "humans": ["R"], "helper": "W", "name": "side" },
+    { "do": "sync", "device": "R" },
+    { "do": "sync", "device": "W" },
+    { "do": "same_key", "devices": ["R", "G", "W"], "group": "side" },
+
+    { "do": "create", "device": "N" },
+    { "do": "take_over", "by": "R", "device": "N", "session": "main", "helpers": ["side"] },
+    { "do": "sync", "device": "N" },
+    { "do": "sync", "device": "W" },
+    { "do": "learn", "device": "N", "groups": ["room", "main", "side"] },
+    { "do": "read_back", "device": "N" },
+    { "do": "same_key", "devices": ["R", "N"], "group": "main" },
+    { "do": "same_key", "devices": ["R", "N", "W"], "group": "side" }
   ]
 }
