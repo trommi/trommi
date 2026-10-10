@@ -726,8 +726,15 @@ export function kitGate(client, { fresh = false } = {}) {
   const box = gate = Object.assign(document.createElement('dialog'), { id: 'kit-gate', className: 'ob-gate' })
   box.append(root); document.body.append(box); box.showModal()
   box.addEventListener('cancel', e => e.preventDefault())
-  // (a page change closes every open dialog, ui.mjs: this one opens again while the kit is due)
-  box.addEventListener('close', () => { if (gate === box && box.isConnected) box.showModal() })
+  // (a page change closes every open dialog, ui.mjs, and a page drawn anew may take it out of the body: this one is put
+  //  back and opened again while it is the gate, at once and on a watch, whatever the browser allowed at that moment)
+  const reopen = () => {
+    if (gate !== box) return
+    if (!box.isConnected) document.body.append(box)
+    if (!box.open) try { box.showModal() } catch { try { box.show() } catch {} }
+  }
+  box.addEventListener('close', () => { reopen(); requestAnimationFrame(reopen) })
+  const guard = setInterval(() => { if (gate !== box) clearInterval(guard); else reopen() }, 400)
   box.addEventListener('keydown', e => e.stopPropagation())
   const registered = () => client.model.human?.raw?.get('kit')?.value?.pending === true
   const kit = freshKit; freshKit = null
@@ -1236,7 +1243,7 @@ ${obError()}${obSubmit('Next')}</form></details>
       if (err.code === 'cancelled') return
       console.error(err)
       if (err.code === 'room-exists') return roomExists()
-      joinFailed({ 'invite-used': 'This code was used already.', 'invite-expired': 'This code has run out.', 'invite-burned': 'The emoji did not match there.' }[err.code] ?? accountError(err))
+      joinFailed({ 'invite-used': 'This code was used already.', 'invite-expired': 'This code has run out.', 'invite-burned': 'The emoji did not match there.', 'bad-invite': 'This link is not a valid invite. Ask for a new one.' }[err.code] ?? accountError(err))
     }
   }
   function joinWait() { show(obShell('Log in', html`<p class="room-wait">Asking the other device…</p>`), null) }

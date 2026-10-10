@@ -54,17 +54,13 @@ export async function takeKit(page) {
   return words
 }
 
-/** The menu at the Desk's name → Settings. (The recovered profile of real.mjs once saw the menu close again right
- *  after a press: it is pressed again, at most three times, and each write of its `hidden` is kept for the line.) */
+/** The menu at the Desk's name → Settings. */
 export async function openSettings(page) {
   if (await page.js("return location.pathname === '/settings' && !location.search && !!document.querySelector('#settings-pair, #set-device')")) return
-  await page.js("const d = document.getElementById('brand-doors'); window.__hid = []; if (d && !d.__watched) { const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden'); Object.defineProperty(d, 'hidden', { configurable: true, get() { return desc.get.call(this) }, set(v) { window.__hid.push(Math.round(performance.now()) + ' ' + v + ' ' + (new Error().stack || '').split('\\n').slice(2, 5).join(' | ')); desc.set.call(this, v) } }); d.__watched = true } return true").catch(() => {})
-  const open = "document.getElementById('brand-doors')?.hidden === false && document.querySelector('#menu-settings')?.getClientRects().length"
-  for (let i = 0; i < 3 && !await page.js(`return Boolean(${open})`); i++) {
+  if (await page.js("return document.getElementById('brand-doors')?.hidden !== false")) {
     await page.click(await page.js("return document.querySelector('.desk-switch-open')?.getClientRects().length ? '.desk-switch-open' : '#brand-menu'"))
-    await page.until(open, 'the menu open', 3000).catch(() => {})
+    await page.until("document.getElementById('brand-doors')?.hidden === false && document.querySelector('#menu-settings')?.getClientRects().length", 'the menu open')
   }
-  await page.until(open, 'the menu open', 1000).catch(async err => { throw new Error(`${err.message} (writes of its hidden: ${await page.js('return JSON.stringify(window.__hid)').catch(() => '?')})`) })
   await page.click('#menu-settings')
   await page.until("location.pathname === '/settings' && document.querySelector('#settings-devices')", 'Settings')
 }
