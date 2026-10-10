@@ -2,14 +2,14 @@
 // (core/swift, built by core/swift/build.sh). The app installs it once at launch: `Core.tools = LiveCore()`.
 // The device is LiveDevice.swift; the store, errors and bytes at the edge are LiveStore.swift.
 //
-// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src at v2-bindings b2e5b98.
+// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src at v2-bindings 33a943d.
 //
-//   STUBBED      nothing. Every call of Core.swift is one call into the binding, with the shapes changed and
-//                nothing else; no call answers "not in this build".
+//   STUBBED      nothing.
+//                Every call of Core.swift is one call into the binding, with the shapes changed and nothing else.
 //
 //   REAL, Core.swift's calls:
 //   CoreTools    version, selfTest, createDevice, openDevice,
-//                normaliseEmail, checkPassword, passwordKeys, kitAuthKey, generateKitWords, parseKitWords,
+//                normaliseEmail, checkPassword, passwordKeys, kitKeysFor, accountIdParse, generateKitWords, parseKitWords,
 //                generateRecoveryCode, formatRecoveryCode, parseRecoveryCode, sealCode, openCode,
 //                encryptFile, decryptFile, createShareLink, generatePushKey, isFinalRefusal (the core's table, held
 //                by a test), canonicalHub (`hub_address`), parseInviteLink (`invite_link_parse`), checkEmoji,
@@ -85,32 +85,41 @@ open class LiveCore: CoreTools {
     let keys = try core { try TrommiCoreRust.passwordKeys(email: email, password: password, kdf: kdf) }
     return PasswordKeys(authKey: b64u(keys.authKey.bytes), wrapKey: keys.wrapKey.bytes)
   }
-  public func kitAuthKey(email: String, words: String) throws -> String { b64u(try core { try kitKeys(email: email, words: words) }.authKey.bytes) }
+  public func kitKeysFor(_ name: TrommiClient.AccountName, words: String) throws -> PasswordKeys {
+    // (exactly one of the two names: an account is named by its e-mail, or without one by its id)
+    let theirs: TrommiCoreRust.AccountName
+    switch name {
+    case .email(let email): theirs = TrommiCoreRust.AccountName(email: email, id: nil)
+    case .id(let id): theirs = TrommiCoreRust.AccountName(email: nil, id: id)
+    }
+    let keys = try core { try TrommiCoreRust.kitKeysFor(name: theirs, words: words) }
+    return PasswordKeys(authKey: b64u(keys.authKey.bytes), wrapKey: keys.wrapKey.bytes)
+  }
+  public func accountIdParse(_ text: String) throws -> String { try core { try TrommiCoreRust.accountIdParse(text: text) } }
   public func generateKitWords() throws -> String { try core { try TrommiCoreRust.generateKitWords() } }
   public func parseKitWords(_ text: String) throws -> String { try core { try TrommiCoreRust.parseKitWords(text: text) } }
   public func generateRecoveryCode() throws -> Bytes { try core { try TrommiCoreRust.generateRecoveryCode() }.bytes }
   /// Empty for anything but 32 bytes: Core.swift's call cannot throw, the core's does.
   public func formatRecoveryCode(_ code: Bytes) -> String { (try? TrommiCoreRust.formatRecoveryCode(recoveryCode: code.data)) ?? "" }
   public func parseRecoveryCode(_ text: String) throws -> Bytes { try core { try TrommiCoreRust.parseRecoveryCode(text: text) }.bytes }
-  public func sealCode(_ code: Bytes, email: String, room: RoomId, way: TrommiClient.AccountWay) throws -> Bytes {
+  public func sealCode(_ code: Bytes, room: RoomId, way: TrommiClient.AccountWay) throws -> Bytes {
     try core {
-      let (key, way, credential) = try wrapKey(way, email: email, room: room)
+      let (key, way, credential) = try wrapKey(way, room: room)
       return try sealRecoveryCode(wrapKey: key, roomId: room.data, wayIn: way, credentialId: credential, recoveryCode: code.data)
     }.bytes
   }
-  public func openCode(_ sealed: Bytes, email: String, room: RoomId, way: TrommiClient.AccountWay) throws -> Bytes {
+  public func openCode(_ sealed: Bytes, room: RoomId, way: TrommiClient.AccountWay) throws -> Bytes {
     try core {
-      let (key, way, credential) = try wrapKey(way, email: email, room: room)
+      let (key, way, credential) = try wrapKey(way, room: room)
       return try openRecoveryCode(wrapKey: key, roomId: room.data, wayIn: way, credentialId: credential, sealed: sealed.data)
     }.bytes
   }
-  /// The key that seals one copy of the code. The e-mail goes into the kit's key alone: the password's key was
-  /// derived from it already, and a passkey's key hangs on the room and the credential, so `email` is not read
-  /// for those two and may be empty.
-  private func wrapKey(_ way: TrommiClient.AccountWay, email: String, room: RoomId) throws -> (key: Data, way: TrommiCoreRust.AccountWay, credential: Data?) {
+  /// The key that seals one copy of the code. The password's and the kit's were derived already (`passwordKeys`,
+  /// `kitKeysFor`); a passkey's hangs on the room and the credential.
+  private func wrapKey(_ way: TrommiClient.AccountWay, room: RoomId) throws -> (key: Data, way: TrommiCoreRust.AccountWay, credential: Data?) {
     switch way {
     case .password(let wrapKey): return (wrapKey.data, .password, nil)
-    case .kit(let words): return (try kitKeys(email: email, words: words).wrapKey, .kit, nil)
+    case .kit(let wrapKey): return (wrapKey.data, .kit, nil)
     case .passkey(let prf, let credentialId): return (try passkeyWrapKey(prf: prf.data, roomId: room.data, credentialId: credentialId.data), .passkey, credentialId.data)
     }
   }

@@ -360,7 +360,7 @@ final class BoardModel: ObservableObject {
     UserDefaults.standard.set(true, forKey: Self.kitMark)
     do {
       let made = try await Room.createAccount(hubURL: Self.hubURL, email: email, password: password)
-      kit = KitGate(email: made.kit.email, words: made.kit.words)
+      kit = KitGate(email: made.kit.email, words: made.kit.words, accountId: made.kit.accountId)
       await entered(made.room)
     } catch {
       UserDefaults.standard.removeObject(forKey: Self.kitMark)
@@ -369,13 +369,32 @@ final class BoardModel: ObservableObject {
     }
   }
 
-  /** Log in with email and password (shared/account.ts loginWithPassword): this device adds itself to the account. */
-  func login(email: String, password: String) async {
+  /**
+   * Create account with a passkey (Passkeys.swift): the system makes one, this device founds the account with it
+   * and its Emergency Kit. `email` is optional: empty for an account without one.
+   */
+  func createWithPasskey(email: String) async {
     if drawnOnly() { return }
     await began(email)
+    UserDefaults.standard.set(true, forKey: Self.kitMark)
+    do {
+      let made = try await Room.createAccountWithPasskey(hubURL: Self.hubURL, email: email, make: { try await Passkeys.make($0) })
+      kit = KitGate(email: made.kit.email, words: made.kit.words, accountId: made.kit.accountId)
+      await entered(made.room)
+    } catch {
+      UserDefaults.standard.removeObject(forKey: Self.kitMark)
+      signing = false
+      self.error = accountError(error)
+    }
+  }
+
+  /** Log in with password: `account` is the one field, the email or the account id. This device adds itself to the account. */
+  func login(account: String, password: String) async {
+    if drawnOnly() { return }
+    await began(account)
     do {
       // The one place the sign-in's outcome is handled: a later "check your email" step of the hub lands here.
-      switch try await Room.signInWithPassword(hubURL: Self.hubURL, email: email, password: password) {
+      switch try await Room.signInWithPassword(hubURL: Self.hubURL, account: account, password: password) {
       case .joined(let r): await entered(r)
       }
     } catch {
@@ -399,12 +418,16 @@ final class BoardModel: ObservableObject {
     }
   }
 
-  /** Forgot password: the Emergency Kit's words open the account, this device adds itself and sets the new password. */
-  func forgot(email: String, words: String, password: String) async {
+  /**
+   * Forgot password: the Emergency Kit's words open the account, this device adds itself and sets the new password.
+   * `account` is the one field, the email or the account id; `password` nil (an account named by its id has no
+   * password): the words log this device in and nothing else.
+   */
+  func forgot(account: String, words: String, password: String?) async {
     if drawnOnly() { return }
-    await began(email)
+    await began(account)
     do {
-      await entered(try await Room.resetPassword(hubURL: Self.hubURL, email: email, words: words, newPassword: password))
+      await entered(try await Room.resetPassword(hubURL: Self.hubURL, account: account, words: words, newPassword: password))
     } catch {
       signing = false
       self.error = accountError(error)
@@ -427,7 +450,7 @@ final class BoardModel: ObservableObject {
     if kit == nil {
       guard marked || r.kitPending else { return }
       kit = KitGate(email: lastEmail, words: nil)
-      if lastEmail.isEmpty { Task { if let st = try? await r.accountStatus(), kit != nil { kit?.email = st.email } } }
+      if lastEmail.isEmpty { Task { if let st = try? await r.accountStatus(), kit != nil { kit?.email = st.email; kit?.accountId = st.accountId } } }
     } else if !marked && r.kitRegistered && !r.kitPending {
       kit = nil
       return
@@ -447,12 +470,14 @@ final class BoardModel: ObservableObject {
     try? await Task.sleep(nanoseconds: 60_000_000)
     do {
       let made = try await r.makeEmergencyKit(password: password)
-      kit = KitGate(email: made.email, words: made.words)
+      kit = KitGate(email: made.email, words: made.words, accountId: made.accountId)
       return nil
     } catch {
       return ((error as? TrommiError)?.code ?? "") == "wrong-login" ? "Wrong password." : accountError(error)
     }
   }
+  /** The text of the kit's QR code for this account (Account.swift `kitQRText`: hub and account id, never the words). */
+  func kitQR(_ accountId: String) -> String? { kitQRText(hubURL: room?.record.hubURL ?? Self.hubURL, accountId: accountId) }
   /** "Open Trommi": the kit was shown, saved or printed. The register is cleared for every device, the words are dropped. */
   func kitSaved() async -> Bool {
     if demo { backToDemo(); return true }
@@ -746,7 +771,12 @@ final class BoardModel: ObservableObject {
     case "wrong-login": return "Wrong email or password."
     case "wrong-recovery": return "Wrong email or words."
     case "bad-recovery-words": return "Check the twelve words."
-    case "rate-limited": return "Too many tries. Wait a few minutes."
+    // (the hub names the wait: shown as it is; spec/hub-api.md "Failed logins slow down whoever guesses wrong")
+    case "rate-limited": return retryWait(of: e).map { "Too many tries. Wait \(waitText(seconds: $0))." } ?? "Too many tries. Wait a few minutes."
+    case "overloaded": return retryWait(of: e).map { "Trommi is busy. Wait \(waitText(seconds: $0))." } ?? "Trommi is busy. Try again."
+    case "needs-email": return "Enter your email to log in with a password."
+    case "bad-account": return "That is not an email address or an account ID."
+    case "not-built": return "This version can’t do that yet."
     case "too-many": return "Too many sign-ups with this email. Try tomorrow."
     case "weak-password": return "At least 12 characters."
     case "bad-email": return "That is not an email address."

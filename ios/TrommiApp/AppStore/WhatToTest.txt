@@ -7,7 +7,8 @@ Please look at, in this order:
 4. If you get in: write to an agent, answer a card, write a note. Each of these has passed tests on Linux and has never met the real hub.
 
 Known not to work in this build:
-- The account id, signing in with it, the id on the Emergency Kit and signing out at the hub are not in this build.
+- New in this build: the Emergency Kit shows your account ID, as text and as a QR code; Log in and New password take "Email or account ID"; Log Out ends the session at the hub too. Please look at the Emergency Kit page after creating an account: the ID and the QR code should be there.
+- An account ID is for an account without an email, and such accounts are made with a passkey, which is switched off. So an account ID will not log you in yet: with a password the app asks for your email.
 - Chat, cards, notes, the Scribble Board and pairing a device are wired to the core and pass their tests on Linux, but have never met a real hub.
 - Content from before a device joined by link is not shown yet.
 - Notifications show the fixed text only ("A new question."), never a title.

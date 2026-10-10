@@ -257,14 +257,15 @@ final class FakeTools: CoreTools {
   func normaliseEmail(_ email: String) throws -> String { email.lowercased() }
   func checkPassword(_ password: String) throws { if password.count < 12 { throw TrommiError("weak-password") } }
   func passwordKeys(email: String, password: String, kdf: String?) throws -> PasswordKeys { PasswordKeys(authKey: "auth:" + hex(Bytes((email + password).utf8)), wrapKey: Bytes(password.utf8)) }
-  func kitAuthKey(email: String, words: String) throws -> String { "kit:" + hex(Bytes(words.utf8)) }
+  func kitKeysFor(_ name: AccountName, words: String) throws -> PasswordKeys { PasswordKeys(authKey: "kit:" + hex(Bytes(words.utf8)), wrapKey: Bytes(words.utf8)) }
+  func accountIdParse(_ text: String) throws -> String { text.lowercased() }
   func generateKitWords() throws -> String { "one two three four five six seven eight nine ten eleven twelve" }
   func parseKitWords(_ text: String) throws -> String { text }
   func generateRecoveryCode() throws -> Bytes { systemRandom(32) }
   func formatRecoveryCode(_ code: Bytes) -> String { hex(code) }
   func parseRecoveryCode(_ text: String) throws -> Bytes { try unhex(text) }
-  func sealCode(_ code: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes { code.reversed() }
-  func openCode(_ sealed: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes { sealed.reversed() }
+  func sealCode(_ code: Bytes, room: RoomId, way: AccountWay) throws -> Bytes { code.reversed() }
+  func openCode(_ sealed: Bytes, room: RoomId, way: AccountWay) throws -> Bytes { sealed.reversed() }
   func isFinalRefusal(_ code: String) -> Bool { !["internal", "overloaded", "rate-limited", "unauthorised"].contains(code) && !code.hasPrefix("http-") }
   func canonicalHub(_ text: String) throws -> String { text }
   func parseInviteLink(_ text: String) throws -> InviteLinkParts { throw TrommiError("not-built") }
