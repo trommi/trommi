@@ -354,8 +354,17 @@ public struct CheckCode: Equatable {
 }
 /** A signed part as the hub takes and serves it: the bytes with the signature beside them. */
 public struct SignedOffer: Equatable {
-  public var offer: Bytes, signature: Bytes
-  public init(offer: Bytes, signature: Bytes) { self.offer = offer; self.signature = signature }
+  /** `mac`: the Offer's MAC under the link's secret (32 bytes), published and served beside it. */
+  public var offer: Bytes, signature: Bytes, mac: Bytes
+  public init(offer: Bytes, signature: Bytes, mac: Bytes) { self.offer = offer; self.signature = signature; self.mac = mac }
+}
+/** What a link names to fetch its Offer by, its deadline checked (`CoreDevice.joinLink`). */
+public struct JoinLink: Equatable {
+  public var hub: String
+  public var room: RoomId
+  public var invite: Bytes
+  public var expiresAt: UInt64
+  public init(hub: String, room: RoomId, invite: Bytes, expiresAt: UInt64) { self.hub = hub; self.room = room; self.invite = invite; self.expiresAt = expiresAt }
 }
 public struct SignedRequest: Equatable {
   public var request: Bytes, mac: Bytes, signature: Bytes
@@ -574,6 +583,9 @@ public protocol CoreDevice: CoreSigner {
 
   // joining by link (12.1), the new device: the joining side's state is kept in the device's store
   /** Checks the Offer served for `link` and answers it with a fresh KeyPackage. A device joins one room, once (`room-exists`). */
+  /** What to fetch a link's Offer by, before anything else: its deadline checked, `room-exists` for a device in a room. */
+  func joinLink(_ link: String, nowMs: UInt64) throws -> JoinLink
+  /** `offer` with the MAC the hub serves beside it: a missing or wrong one, or a changed deadline, is `bad-invite`. */
   func joinRequest(link: String, offer: SignedOffer, nowMs: UInt64) throws -> JoinRequest
   /** Checks the Reveal against this device's Request; the code to show. Nothing of a Reveal that does not check is shown. */
   func joinReveal(_ reveal: SignedReveal) throws -> CheckCode
@@ -627,7 +639,9 @@ public struct InviteLinkParts: Equatable {
   public var hub: String
   public var room: RoomId
   public var invite: Bytes
-  public init(app: String, hub: String, room: RoomId, invite: Bytes) { self.app = app; self.hub = hub; self.room = room; self.invite = invite }
+  /** The link's deadline (ms), its fifth part. */
+  public var expiresAt: UInt64
+  public init(app: String, hub: String, room: RoomId, invite: Bytes, expiresAt: UInt64) { self.app = app; self.hub = hub; self.room = room; self.invite = invite; self.expiresAt = expiresAt }
 }
 /** One item of a Scribble Board for `boardReduce`: the sender and number of its signed header, and its body. */
 public struct BoardItemBody: Equatable {
@@ -699,6 +713,15 @@ public protocol CoreTools: AnyObject {
 
   // invite (12.1): what needs no device
   func parseInviteLink(_ text: String) throws -> InviteLinkParts
+  /**
+   * A link held against the clock, without a device: `invite-expired` more than the tolerance past its deadline,
+   * `bad-invite` for a deadline further ahead than any invite lives. For refusing a pasted link before any request.
+   */
+  func inviteLinkCheck(_ text: String, nowMs: UInt64) throws -> InviteLinkParts
+  /** How long an invite of that kind lives (ms): 10 minutes for a device, 15 for an agent. */
+  func inviteLifeMs(_ role: InviteRole) -> UInt64
+  /** The clock difference a deadline is given (ms). */
+  func inviteClockToleranceMs() -> UInt64
   /** The core's 64 emoji of the check code with their words, in the order of their numbers (`invite::CHECK_EMOJI`). */
   func checkEmoji() -> [(emoji: String, word: String)]
 
