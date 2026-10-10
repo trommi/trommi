@@ -2,7 +2,7 @@
 // register (drafts, Later, desks, goals), write a Note, draw on a Scribble Board, send and fetch files, share a file
 // by link. Each shows at once (an echo) and is replaced by the hub's copy when it comes back in the stream.
 //
-// Every write is one envelope the core seals and signs (`sendEnvelope`); it is in the core's outbox, durable,
+// Every write is one envelope the core seals and signs (`seal`); it is in the core's outbox, durable,
 // before the hub sees it.
 import Foundation
 
@@ -24,12 +24,12 @@ extension Room {
    * Throws what the core refuses (no key, removed, too large) and, within a moment, what the hub refuses.
    */
   @discardableResult
-  func send(localId: String? = nil, _ draft: @escaping () throws -> EnvelopeDraft) async throws -> (localId: String, sent: SentEnvelope) {
+  func send(localId: String? = nil, files: [FileId] = [], _ draft: @escaping () throws -> EnvelopeDraft) async throws -> (localId: String, sent: Sealed) {
     if let u = upgrade { throw TrommiError("client-too-old", u.message) }
-    let r: (String, SentEnvelope) = try await serial { [self] in
+    let r: (String, Sealed) = try await serial { [self] in
       if !self.synced { _ = try await self.catchUp() }
       let d = try draft()
-      let sent = try await self.onCore { try $0.sendEnvelope(d, nowMs: nowMs()) }
+      let sent = try await self.onCore { try $0.seal(d, files: files, nowMs: nowMs()) }
       let lid = localId ?? self.newLocalId()
       self.ownEchoes[hex(sent.hash)] = lid
       self.pumpOutbox()
@@ -63,7 +63,7 @@ extension Room {
     do {
       let w = try wire(.obj(content))
       let session = try unhex(sid), cardBytes = try cardId.map { try unhex($0) }
-      try await send(localId: lid) { cardBytes.map { .cardChat(card: $0, payload: w.payload, files: w.files) } ?? .sessionChat(session: session, payload: w.payload, files: w.files) }
+      try await send(localId: lid, files: w.files) { cardBytes.map { .cardChat(session: session, card: $0, payload: w.payload) } ?? .sessionChat(session: session, payload: w.payload) }
     } catch { var c = Change(); dropEcho(lid, &c); emit(c); throw error }
   }
 
@@ -103,14 +103,19 @@ extension Room {
     var ch = Change(); ch.cards.insert(cardId); ch.stack = true; if let s = card.sessionId { ch.sessions.insert(s) }; emit(ch)
     do {
       let w = try wire(.obj(content))
-      let object = try unhex(cardId)
-      try await send(localId: lid) { .answer(object: object, choices: choices, closes: closes, payload: w.payload, files: w.files) }
+      let object = try unhex(cardId), session = try sessionOf(card.sessionId)
+      try await send(localId: lid, files: w.files) { .answer(session: session, object: object, choices: choices, closes: closes, payload: w.payload) }
     } catch {
       board.answerEchoes.removeValue(forKey: lid)
       card.objectState = was.0; card.closedHow = was.1; card.answer = was.2; card.answers.removeAll { $0.pending }
       board.project(); var c = Change(); c.cards.insert(cardId); c.stack = true; emit(c)
       throw error
     }
+  }
+  /** The session a card or a request belongs to, as the core's drafts name it. */
+  private func sessionOf(_ sid: String?) throws -> SessionId {
+    guard let s = sid.flatMap({ try? unhex($0) }), s.count == 16 else { throw TrommiError("not-found", "this object belongs to no session") }
+    return s
   }
   /** "I don't give a duck": the agent's own recommendation, its call. */
   public func trust(cardId: String, note: String? = nil) async throws {
@@ -124,16 +129,16 @@ extension Room {
   public func decideAgain(cardId: String) async throws {
     guard let card = board.cards[cardId], let a = card.answer, a.envelopeHash != nil, !a.pending, card.versionHash != nil else { throw TrommiError("decision-mismatch", "no answer in force to take back") }
     let w = try wire(.obj([:]))
-    let object = try unhex(cardId)
-    try await send { .takeBack(object: object, payload: w.payload) }
+    let object = try unhex(cardId), session = try sessionOf(card.sessionId)
+    try await send { .takeBack(session: session, object: object, payload: w.payload) }
   }
 
   /** Allow or deny a permission request. */
   public func verdict(requestId: String, allow: Bool) async throws {
-    guard board.permissions[requestId] != nil else { throw TrommiError("not-found", "no such permission request") }
+    guard let asked = board.permissions[requestId] else { throw TrommiError("not-found", "no such permission request") }
     let w = try wire(.obj([:]))
-    let request = try unhex(requestId)
-    try await send { .verdict(request: request, allow: allow, payload: w.payload) }
+    let request = try unhex(requestId), session = try sessionOf(asked.sessionId)
+    try await send { .verdict(session: session, request: request, allow: allow, payload: w.payload) }
   }
 
   // ---- registers -----------------------------------------------------------------------------------------
@@ -215,7 +220,8 @@ extension Room {
     content["lamport"] = .n(lamport + 1)
     let w = try wire(.obj(content))
     let object = try objectId.map { try unhex($0) }
-    let r = try await send { .note(object: object, payload: w.payload, closed: close, files: w.files) }
+    if object == nil && close { throw TrommiError("bad-argument", "a note that does not exist cannot be deleted") }
+    let r = try await send(files: w.files) { object.map { .noteVersion(object: $0, closed: close, payload: w.payload) } ?? .noteFirst(payload: w.payload) }
     // The object id of a new note is derived from its first envelope: known only now.
     guard let made = objectId ?? r.sent.objectId.map(hex) else { throw TrommiError("internal", "the core named no object for a new note") }
     // The echo: the note shows at once (the hub's copy replaces it).
@@ -322,8 +328,9 @@ extension Room {
   /** One board item (strokes, erase, move, send_away): the room group, human devices only. */
   public func sendCanvas(_ timelineId: String, _ content: JV) async throws {
     let id = try boardId(timelineId)
-    let w = try wire(content)
-    try await send { .boardItem(board: id, payload: w.payload, files: w.files) }
+    // (the views write the model's form; the wire's is whole 1/16 units and `shape_ids`: Records.boardItem)
+    let w = try wire(Records.boardItem(content, toWire: true))
+    try await send(files: w.files) { .boardItem(board: id, payload: w.payload) }
   }
   /** A selection of the board to a session: its picture and words; what was sent leaves the board. */
   public func sendSelection(sessionId: String, canvas timelineId: String, text: String, picture: JV, strokeIds: [String]) async throws {
@@ -332,7 +339,7 @@ extension Room {
     if !text.isEmpty { c["text"] = .str(text) }
     let w = try wire(.obj(c))
     let session = try unhex(sessionId)
-    try await send { .sessionChat(session: session, payload: w.payload, files: w.files) }
+    try await send(files: w.files) { .sessionChat(session: session, payload: w.payload) }
     if !strokeIds.isEmpty { try await sendCanvas(timelineId, .obj(["content_type": "send_away", "stroke_ids": .arr(strokeIds.map { .str($0) })])) }
   }
 
@@ -349,12 +356,15 @@ extension Room {
     }
     guard !parsed.isEmpty else { return }
     let got: [(UInt64, Result<ReceivedEnvelope, Error>)] = try await onCore { device in
-      parsed.map { p in (p.change, Result { try device.receiveEnvelope(p.bytes, change: p.change, source: .page, voidCode: p.void, nowMs: nowMs()) }) }
+      parsed.map { p in (p.change, Result { try device.receiveEnvelope(p.bytes, change: p.change, ordered: false, voidCode: p.void, nowMs: nowMs()) }) }
     }
     for (n, r) in got {
       // What the core refuses of a page is a finding about the hub (a forged or swapped item), shown and not applied.
       if case .failure(let error) = r { board.pushAlert(&ch, code: Room.codeOf(error), message: "an older item from the hub was refused", envelopeNumber: Int(n)); continue }
-      guard case .success(let e) = r, let rec = Records.record(e, change: n, sessionId: sessionIdOfGroup[hex(e.header.group)]), rec.timelineId.map({ timelineKeyOf(rec.timelineKind ?? "", $0) }) == key else { continue }
+      guard case .success(let e) = r else { continue }
+      // (an epoch before this device came into the group is nothing it can take, and no finding)
+      if e.outcome == .refused, e.code != "group-behind" { board.pushAlert(&ch, code: e.code ?? "bad-format", message: "an older item from the hub was refused", envelopeNumber: Int(n), sender: hex(e.header.sender)) }
+      guard let rec = Records.record(e, senderRole: roleOf(e.header.sender)), rec.timelineId.map({ timelineKeyOf(rec.timelineKind ?? "", $0) }) == key else { continue }
       let had = t.items[Int(n)]
       if had == nil || had?.itemState == "header" || had?.itemState == "undecryptable" {
         var item = Board.itemOf(rec)
