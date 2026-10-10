@@ -17,10 +17,9 @@
 // hub's state (`stage.fake`), which is the one place it reaches behind the hub's routes.
 //
 // Against the REAL hub (`stage.real`, real-hub.test.mjs) the room is founded by a real `Device` of the core's
-// binding, with one substitution: the binding's stand-in SealedKey gives way to one of the right form (see
-// tests/web/hub/real-hub.test.mjs, where that is explained and done the same way). Joining with the code and
-// replacing it are not in the binding this worktree has built: here they refuse with `core-missing`, as core-wasm.ts
-// does (against the real hub the code in force is the one the room was founded with: nothing replaces it there).
+// binding, nothing put in its place. Joining with the code and replacing it are room.ts's and are not played here:
+// against the real hub they refuse with `core-missing` (the code in force there is the one the room was founded
+// with: nothing replaces it). tests/web/hub/real-hub.test.mjs does both with the real core.
 //
 // `stage.calls` keeps what account.ts handed over and what was made for it: the codes as hex (taken at the call:
 // account.ts zeroes its arrays afterwards, and `held` keeps the arrays themselves so that a test can see them zeroed).
@@ -117,8 +116,11 @@ export async function joinWithCode(o) {
     call.new_code = hex(new_code)
     call.posted_before_copies = stage.fake.requests.filter(r => /\/recovery\/[^/]+\/(commits|finish)$/.test(r.path)).length
     call.account = o.account ? await o.account(new_code) : null
-    await outside.recoveryCommit(recovery_id, room_id, { epoch, commit: utf8({ added: [device], removed: others }), group_info: groupInfo(room_id, epoch + 1, [device], new_code), sealed_key: utf8('sealed'), recovery_auth: utf8('auth') })
-    await outside.finishRecovery(recovery_id, utf8('link'), call.account)
+    // (as room.ts: a recovery that fails is dropped at the hub, which gives the room back)
+    try {
+      await outside.recoveryCommit(recovery_id, room_id, { epoch, commit: utf8({ added: [device], removed: others }), group_info: groupInfo(room_id, epoch + 1, [device], new_code), sealed_key: utf8('sealed'), recovery_auth: utf8('auth') })
+      await outside.finishRecovery(recovery_id, utf8('link'), call.account)
+    } catch (e) { await outside.dropRecovery(recovery_id).catch(() => {}); throw e }
     rekey(room_id, new_code)
   } else {
     await outside.postCommit(room_id, { epoch, commit: utf8({ added: [device] }), group_info: groupInfo(room_id, epoch + 1, [...others, device], o.code), sealed_key: utf8('sealed'), recovery_auth: utf8('auth') })
@@ -128,14 +130,6 @@ export async function joinWithCode(o) {
   return { client: await clientOf(o, hub, room_id, device) }
 }
 
-/** A SealedKey in the wire form of hub/src/wire.rs, sealing nothing: what tests/web/hub/real-hub.test.mjs puts in
- *  the place of the binding's stand-in, which the real hub refuses. */
-function formalSealedKey({ group, epoch, group_info, room_epoch, recovery_hpke_key, writer }) {
-  const vec = b => b.length < 64 ? [b.length, ...b] : b.length < 16384 ? [0x40 | b.length >> 8, b.length & 255, ...b] : [0x80 | b.length >>> 24, b.length >> 16 & 255, b.length >> 8 & 255, b.length & 255, ...b]
-  const u64 = n => { const b = Buffer.alloc(8); b.writeBigUInt64BE(BigInt(n)); return b }
-  const info_hash = createHash('sha256').update(Buffer.from([...vec(Buffer.from('Trommi Group Info')), ...vec(group_info)])).digest()
-  return new Uint8Array([...vec(group), ...u64(epoch), ...info_hash, ...u64(room_epoch), ...vec(recovery_hpke_key), ...vec(randomBytes(32)), ...vec(randomBytes(48)), ...writer, ...vec(randomBytes(32))])
-}
 /** The founding by a real device of the core, posted to the real hub with the account in the same request. */
 async function foundReal(o, hub, code, call) {
   const device = await stage.real.binding.Device.create(new stage.real.MemoryStore(`${o.storage.name}-${Date.now()}`))
@@ -144,11 +138,10 @@ async function foundReal(o, hub, code, call) {
     call.room_id = hex(room_id)
     call.body = o.account ? await o.account(room_id) : null
     const entry = (await device.outbox()).find(e => e.kind === 'roomFounding')
-    const sealed_key = formalSealedKey({ group: entry.group, epoch: entry.epoch, group_info: entry.parts[0], room_epoch: entry.epoch, recovery_hpke_key: (await device.roomRoles()).recoveryHpkeKey, writer: await device.id() })
-    const founded = await hub.foundRoom({ group_info: entry.parts[0], sealed_key, account: call.body, found_token: o.found_token ?? null })
+    const founded = await hub.foundRoom({ group_info: entry.parts[0], sealed_key: entry.parts[1], account: call.body, found_token: o.found_token ?? null })
     if (hex(founded.room_id) !== call.room_id) throw refusal('bad-answer', 'another room than the one founded')
     await device.outboxAccepted(entry.id, null)
-    const sign = (address, challenge) => device.hubSignIn(room_id, address, challenge)
+    const sign = (address, challenge) => device.hubSignIn(address, challenge)
     hub.useSigner(room_id, sign)
     return { client: await clientOf(o, hub, room_id, await device.id(), { close: () => device.close(), sign, code: hex(code) }), recovery_code: code }
   } catch (e) { await device.close(); throw e }

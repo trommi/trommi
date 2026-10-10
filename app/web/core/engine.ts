@@ -7,8 +7,9 @@
 //                      order, one entry in flight, and tells the core the hub's answer
 //   catch-up           pages of `GET /v2/changes` after the cursor, each item to the core in the hub's order
 //   the live stream    the same items as they happen, the relayed stroke pieces, Welcomes, wishes of other devices
-//   upkeep             joining by Welcome, adding a human device a live session lacks (5.2.7), cleaning stale
-//                      sessions (5.2.8), the own-leaf update (5.2.9), `heads` (9.0.7), KeyPackages
+//   upkeep             joining by Welcome, the steps of the invites this device confirmed (`inviteSteps`), adding a
+//                      human device a live session lacks (5.2.7), cleaning stale sessions (5.2.8), the own-leaf
+//                      update (5.2.9), `heads` (9.0.7), KeyPackages, the core's findings
 //   recovery           a device that closed itself is opened again from its store
 //
 // THE INVARIANTS
@@ -40,15 +41,12 @@
 //    batch is tried again by the next catch-up.
 // 8. No timer survives `stop()`. Nothing here logs: errors travel as events with a code.
 //
-// WHAT THE CORE DOES NOT OFFER YET, and how this module is written against that (core-api.ts Part 2, README.md):
-// - A relayed message (a stroke piece, 7.2) has no change number, and `processLogEntry` takes none without one
-//   (it would move the cursor). The engine hands it to `receiveRelay` (core-api.ts, provisional) and drops the
-//   piece where the core answers `core-missing`.
+// WHAT THE CORE DOES NOT DO YET, and how this module is written against that (README.md):
 // - An envelope that arrived before this device joined its group, or before its key was handed over, is not taken
 //   in the hub's order. The engine then reads the room's changes once more from the start (`rescan`): what the
 //   chain could not take is taken, what it holds is read back (`receiveEnvelope(…, ordered = false)`).
 import type {
-  Core, Cut, Device, Draft, ErrorCode, GroupSummary, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, Store,
+  Core, Cut, Device, Draft, ErrorCode, GroupSummary, InviteStep, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, Store,
 } from './core-api.ts'
 import { HubError, logEntry } from './hub.ts'
 import type { ChangeItem, EnvelopeItem, Hub, LogItem, NewAccount, OutboxAnswer, StreamEvent } from './hub.ts'
@@ -84,6 +82,10 @@ export interface EngineEvents {
   connection: Connection
   /** Stream events that are not the engine's to act on: presence, wishes, invite Requests, archived, evicted files. */
   stream: StreamEvent
+  /** After each look at the invites' steps: the invites (hex ids) whose device is not let in to the end yet. A
+   *  human device counts as in once it was handed the keys: it is added to the live sessions after that, as its
+   *  KeyPackages reach the hub, which they do only once it is in. */
+  invites: { open: string[] }
   alert: { code: string; message: string; group: Uint8Array | null; change: number | null }
   batch: null
   /** The device was opened again from its store: everything derived from the old object is to be built again. */
@@ -105,8 +107,10 @@ export interface EngineTiming {
   upkeep_every: number
   /** How long a halted catch-up waits before it is tried again. */
   halted_retry: number
+  /** How long `land` waits for the hub to take, and hand back, what it built. */
+  land: number
 }
-const TIMING: EngineTiming = { backoff_first: 300, backoff_max: 30_000, blocked_retry: 30_000, heal_delay: 3000, upkeep_every: 600_000, halted_retry: 15_000 }
+const TIMING: EngineTiming = { backoff_first: 300, backoff_max: 30_000, blocked_retry: 30_000, heal_delay: 3000, upkeep_every: 600_000, halted_retry: 15_000, land: 60_000 }
 
 export interface EngineOptions {
   core: Core
@@ -166,18 +170,19 @@ export class Engine {
   /** Who waits for the hub's answer to an outbox entry, and the answers of entries nobody waited for yet. */
   private readonly waiters = new Map<number, (outcome: string) => void>()
   private readonly outcomes = new Map<number, string>()
-  /** Session groups a takeover is at work on: upkeep leaves their stale leaves to it. */
-  private readonly held = new Set<string>()
   private readonly badWelcomes = new Set<string>()
   /** Per group, the log number up to which `handLog` handed the log to the device. */
   private readonly logRead = new Map<string, number>()
   private rescanDue = false
+  private learnDue = false
   /** How often a rescan was asked for: one asked for while a rescan runs is not lost. */
   private rescanAsked = 0
   /** The outbox entry the pump is posting, and the entries whose own Commit came back before their POST was answered. */
   private inFlight: number | null = null
   private readonly merged = new Set<number>()
   private halted = false
+  /** Accepted Commits that wait to come back in the hub's order: outbox id -> group (hex). */
+  private readonly awaiting = new Map<number, string>()
   /** Upkeep left a gap open that it will look at again (a human device without a KeyPackage at the hub yet). */
   private owing = false
   private timedAt = 0
@@ -202,9 +207,10 @@ export class Engine {
       this.position = Math.max(this.position, this.cursor)
       await this.refresh()
       this.rescanDue = (await this.opts.meta.get('rescan').catch(() => null)) === true
+      this.learnDue = (await this.opts.meta.get('learn').catch(() => null)) === true
     })
     // the signer asks whatever device the engine holds at that moment: a reopened one signs as the same key
-    if (this.room_id) this.hub.useSigner(this.room_id, (hub, challenge) => this.device.hubSignIn(this.room_id!, hub, challenge))
+    if (this.room_id) this.hub.useSigner(this.room_id, (hub, challenge) => this.device.hubSignIn(hub, challenge))
     return this
   }
 
@@ -304,12 +310,39 @@ export class Engine {
       const made = await this.do(build)
       const ids = made === null ? [] : Array.isArray(made) ? made : [made]
       if (!ids.length) return
-      const lost = (await Promise.all(ids.map(id => this.outcome(id)))).find(o => o !== 'accepted')
+      // an engine that was never started has no pump: what was built is posted here and now, and fed back
+      if (!this.running) await this.drain()
+      const outcomes = Promise.all(ids.map(id => this.outcome(id)))
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const late = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), this.running ? this.timing.land : 0) })
+      const got = await Promise.race([outcomes, late]).finally(() => clearTimeout(timer))
+      if (got === 'timeout') {
+        for (const id of ids) this.waiters.delete(id)
+        throw new EngineError(this.running ? 'timeout' : 'offline', 'the hub did not take it in time: it stays in the outbox and is sent again')
+      }
+      const lost = got.find(o => o !== 'accepted')
       if (!lost) return
       if (lost === 'stopped') throw new EngineError('stopped', 'the engine stopped before the hub answered')
       if (!MOVED.includes(lost) || tries >= 4) throw new EngineError(lost, `the hub refused it (${lost})`)
       await this.catchUp().catch(() => {})
     }
+  }
+  /** Without the pump: posts the outbox in order, reports each answer, and takes the hub's order once, so that a
+   *  Commit that was accepted is merged. A failure is the caller's to hear; the entry stays for the next start. */
+  private async drain(): Promise<void> {
+    for (;;) {
+      const entry = (await this.outbox())[0]
+      if (!entry) break
+      let answer: OutboxAnswer
+      try { answer = await this.post(entry) } catch (e) {
+        const verdict = this.judge(entry, e)
+        if (verdict.kind !== 'refuse') throw e
+        await this.serial(() => this.refused(entry, verdict.code, verdict.voided))
+        continue
+      }
+      await this.serial(() => this.accepted(entry, answer))
+    }
+    if (this.awaiting.size) await this.catchUp()
   }
   private outcome(id: number): Promise<string> {
     if (this.halted) return Promise.resolve('stopped')
@@ -410,15 +443,24 @@ export class Engine {
     await this.opts.meta.delete(`outbox-extra/${entry.id}`).catch(() => {})
     if (entry.kind === 'keyPackages' && answer.unused !== undefined) await this.opts.meta.set('key-packages', { unused: answer.unused }).catch(() => {})
     const commit = entry.kind !== 'message' && entry.kind !== 'relayMessage' && entry.kind !== 'envelope' && entry.kind !== 'keyPackages' && entry.kind !== 'sealedKey'
-    if (commit) { this.cursor = await this.call(d => d.cursor()); this.position = Math.max(this.position, this.cursor); await this.refresh() }
-    this.settleEntry(entry.id, 'accepted')
+    if (commit) await this.refresh()
+    // An accepted Commit is not merged by the hub's answer: the group stands in its old epoch until the Commit
+    // comes back at its place in the hub's order (core/README.md). Whoever waits for it waits for that; the
+    // position does not move here, or the Commit would be passed over when it comes.
+    if (commit && entry.group && this.group(entry.group)?.pending) {
+      this.awaiting.set(entry.id, hex(entry.group))
+      if (this.running && !this.streamLive) void this.catchUp().catch(() => {})
+    } else this.settleEntry(entry.id, 'accepted')
     this.emit('accepted', { entry, change: answer.change ?? null })
     this.emit('batch', null)
     if (commit) this.keepSoon(this.timing.heal_delay)
   }
   private async refused(entry: OutboxEntry, code: ErrorCode, voided: boolean): Promise<void> {
     // (`not-found`: the log already showed the Commit that took the epoch, and the core dropped the entry with it)
-    try { await this.call(d => d.outboxRefused(entry.id, code)) } catch (e) { if (this.core.errorCode(e) !== 'not-found') throw e }
+    // An envelope's number stays used whatever became of it: one the hub keeps as a void record is reported as
+    // that, one refused because this device is out of the group is given up.
+    const report = (d: Device): Promise<void> => (entry.kind !== 'envelope' ? d.outboxRefused(entry.id, code) : voided ? d.outboxVoided(entry.id) : d.envelopeAbandon(entry.id))
+    try { await this.call(report) } catch (e) { if (this.core.errorCode(e) !== 'not-found') throw e }
     await this.opts.meta.delete(`outbox-extra/${entry.id}`).catch(() => {})
     await this.refresh()
     this.emit('refused', { entry, code, voided })
@@ -455,10 +497,19 @@ export class Engine {
       }
       this.position = Math.max(this.position, upTo)
     } finally {
-      if (changed) await this.refresh().catch(() => {})
+      if (changed) { await this.refresh().catch(() => {}); this.mergedNow() }
       this.emit('batch', null)
     }
     if (changed) this.keepSoon(this.timing.heal_delay)
+  }
+  /** The accepted Commits whose group no longer waits: they were merged (or dropped for the one that took their epoch,
+   *  which `processed` told already). */
+  private mergedNow(): void {
+    for (const [id, group] of this.awaiting) {
+      if (this.groups.find(g => hex(g.group) === group)?.pending) continue
+      this.awaiting.delete(id)
+      this.settleEntry(id, 'accepted')
+    }
   }
   /** One item. Returns whether the device's groups may have changed. Throws Halt when it does not process. */
   private async take(item: ChangeItem): Promise<boolean> {
@@ -476,11 +527,9 @@ export class Engine {
     let done: Processed | null
     try { done = await this.process(item) } catch (e) {
       if (!(e instanceof Halt) || e.code !== 'early') throw e
-      // what it builds on: a Welcome not taken yet, or Commits of the room group or of its own group that the
-      // hub's order did not serve this device (an agent device follows the room group by its log)
-      await this.joinWelcomes(null)
-      if (this.room_id) await this.handLog(this.core.roomGroupId(this.room_id), item.change)
-      if (item.group.length !== 32) await this.handLog(item.group, item.change)
+      // what it builds on may be a Welcome not taken yet. Nothing is read ahead of the hub's order for it: an
+      // entry that still comes early halts the batch, and the next catch-up tries it again.
+      if (!(await this.joinWelcomes(null))) throw e
       done = await this.process(item)
     }
     if (!done) return false
@@ -491,7 +540,7 @@ export class Engine {
   private async processed(item: LogItem, done: Processed): Promise<void> {
     if (done.message?.kind === 'keys' && done.message.keysTaken > 0) await this.wantRescan()
     // another Commit took the epoch of one of this device's: whoever waits for it builds it again
-    if (done.superseded !== null) this.settleEntry(done.superseded, 'epoch-taken')
+    if (done.superseded !== null) { this.awaiting.delete(done.superseded); this.settleEntry(done.superseded, 'epoch-taken') }
     // this device's own Commit, back from the hub: if its POST is still without an answer, it is the one in flight
     if (done.kind === 'ownCommit' && this.inFlight !== null) this.merged.add(this.inFlight)
     this.emit('log', { item, done })
@@ -521,9 +570,10 @@ export class Engine {
       more = more && page.more && page.items.length > 0
     }
     await this.refresh()
+    this.mergedNow()
   }
   private async process(item: LogItem): Promise<Processed | null> {
-    try { return await this.call(d => d.processLogEntry(logEntry(item))) } catch (e) {
+    try { return await this.call(d => d.processLogEntry(logEntry(item), this.now())) } catch (e) {
       const code = this.core.errorCode(e)
       if (code === null || code === 'core-missing') throw e
       const finding = this.core.logFinding(code)
@@ -591,7 +641,7 @@ export class Engine {
     return pass
   }
   private async pages(): Promise<void> {
-    const was = this.connection
+    const was = this.connection, from = this.position
     this.setConnection('catching_up')
     try {
       for (;;) {
@@ -608,8 +658,8 @@ export class Engine {
     } finally {
       this.setConnection(this.streamLive ? 'live' : was === 'catching_up' ? 'offline' : was === 'live' ? 'offline' : was)
     }
-    // a device without a stream hears of no Welcome: it looks after each catch-up
-    if (!this.streamLive) this.keepSoon(0)
+    // a device without a stream hears of no Welcome: it looks after each catch-up that brought something
+    if (!this.streamLive && this.position !== from) this.keepSoon(0)
     if (this.rescanDue) await this.rescan()
   }
   /** Asks for a rescan (see the header): also the client's, when it has to build its model again from nothing. */
@@ -658,7 +708,7 @@ export class Engine {
       case 'change': await this.serial(() => this.ingest([event.item], event.item.change)); return
       case 'relay': {
         // (a piece that does not open, or a core without the call, is a piece not shown: nothing else follows)
-        const message = await this.serial(() => this.call(d => d.receiveRelay(event.group, event.epoch, event.sender, event.message, this.now()))).catch(() => null)
+        const message = await this.serial(() => this.call(d => d.receiveRelay(event.group, event.message, this.now()))).catch(() => null)
         if (message) { this.emit('relay', message); this.emit('batch', null) }
         return
       }
@@ -696,11 +746,13 @@ export class Engine {
       if (this.group(row.group) || this.badWelcomes.has(id)) continue
       try {
         let done
-        try { done = await this.call(d => d.joinWelcome(row.welcome, room, committer, this.now())) } catch (e) {
+        // into the room group: only as this device's invite said (12.1.5), which the core reads from the stored invite
+        const join = (d: Device) => (row.group.length === 32 ? d.joinInvited(row.welcome, this.now()) : d.joinWelcome(row.welcome, room, committer, this.now()))
+        try { done = await this.call(join) } catch (e) {
           // behind the room: its Commits first (an agent device follows the room group by its log), then once more
           if (this.core.errorCode(e) !== 'room-behind') throw e
           await this.handLog(this.core.roomGroupId(room), Infinity)
-          done = await this.call(d => d.joinWelcome(row.welcome, room, committer, this.now()))
+          done = await this.call(join)
         }
         joined = true
         // a Welcome taken later than its place in the hub's order: the group's entries since are handed again
@@ -715,7 +767,12 @@ export class Engine {
         if (code !== 'room-behind' && code !== 'group-behind') { this.badWelcomes.add(id); this.alert(String(code ?? 'bad-format'), 'a Welcome was not taken', row.group) }
       }
     }
-    if (joined) { await this.refresh(); if (this.position > 0) await this.wantRescan() }
+    if (joined) {
+      await this.refresh()
+      // a device that came in by link knows nothing of the time before: its groups' past is learned, then read
+      this.learnDue = true
+      await this.opts.meta.set('learn', true).catch(() => {})
+    }
     return joined
   }
   /** Joins by Welcome now: for a device that was just let in. */
@@ -736,18 +793,48 @@ export class Engine {
     })
   }
   private async keep(): Promise<void> {
-    await this.serial(async () => { await this.joinWelcomes(null); this.emit('batch', null) })
-    if (this.is_human) await this.heal()
+    await this.serial(async () => { await this.joinWelcomes(null); await this.tellFindings(); this.emit('batch', null) })
+    if (this.is_human) await this.heal(await this.invited())
     if (this.now() - this.timedAt >= this.timing.upkeep_every) { this.timedAt = this.now(); await this.timed() }
+    if (this.learnDue) await this.learn()
     if (this.rescanDue && !this.catching) await this.rescan()
+  }
+  /**
+   * The past of the groups a device joined by link (core `learnHistory`): each group's founding GroupInfo and its
+   * Commits from the hub, the room group first, then main sessions, then helper sessions. After that the envelopes
+   * of the earlier epochs are handed over again (`rescan`); the keys to read them come by the handover. A group
+   * that is not learned now (the hub not reached) is tried again with the next upkeep.
+   */
+  private async learn(): Promise<void> {
+    const rank = (g: GroupSummary): number => (!g.session ? 0 : g.session.parent.every(b => b === 0) ? 1 : 2)
+    let open = false
+    // (the room group also for a device that only follows it: a session's past is judged against the room's)
+    const sessions = this.groups.filter(g => g.session && !g.archived).sort((x, y) => rank(x) - rank(y)).map(g => g.group)
+    for (const group of [...(this.room_id ? [this.core.roomGroupId(this.room_id)] : []), ...sessions]) {
+      try {
+        const served = await this.hub.servedGroup(group)
+        await this.serial(() => this.call(d => d.learnHistory(group, served.founding, served.commits)))
+      } catch (e) {
+        if (this.isLocal(e)) throw e
+        if (e instanceof HubError && e.transient) open = true
+      }
+    }
+    if (open) { this.owing = true; return }
+    this.learnDue = false
+    await this.opts.meta.delete('learn').catch(() => {})
+    await this.wantRescan()
   }
   /** Closes the gaps any human device closes when it sees them: a stale session group gets its missing Remove
    *  (5.2.8), a live one that lacks a human device gets it added (5.2.7), one Commit and one KeyPackage each. */
-  private async heal(): Promise<void> {
-    this.owing = false
-    const humans = this.roles?.humans ?? []
+  private async heal(steps: InviteStep[]): Promise<void> {
+    // what an open invite still has to do is the invite's: a takeover's session (and its helper sessions) keeps
+    // its old leaf until the new one takes the seat, and a newcomer is added by its inviter's steps
+    const taken = steps.filter(s => s.kind === 'takeOver' && s.group).map(s => hex(s.group!))
+    const coming = steps.filter(s => s.device).map(s => hex(s.device!))
+    const covered = (g: GroupSummary): boolean => taken.includes(hex(g.group)) || (!!this.room_id && taken.includes(hex(this.core.sessionGroupId(this.room_id, g.session!.parent))))
+    const humans = (this.roles?.humans ?? []).filter(h => !coming.includes(hex(h)))
     for (const g of this.groups) {
-      if (!g.session || g.archived || this.held.has(hex(g.group))) continue
+      if (!g.session || g.archived || covered(g)) continue
       if (g.disallowed.length) { await this.clean(g.group, null).catch(() => {}); continue }
       for (const device of humans) {
         if (g.leaves.some(l => same(l, device))) continue
@@ -778,8 +865,78 @@ export class Engine {
   async archive(group: Uint8Array): Promise<void> {
     await this.serial(async () => { await this.call(d => d.archive(group)); await this.refresh(); this.emit('batch', null) })
   }
-  /** While a takeover works on a session group, upkeep leaves it alone. */
-  hold(group: Uint8Array, held: boolean): void { if (held) this.held.add(hex(group)); else this.held.delete(hex(group)) }
+  /** A takeover whose person chose "without the earlier conversation": its handover step is dropped, not sent (5.3.2). */
+  async withoutHistory(inviteId: Uint8Array): Promise<void> { await this.opts.meta.set(`invite-no-history/${hex(inviteId)}`, true) }
+  /**
+   * What is left to do for the devices this one let in by link (spec 12.1.5, 12.1.6, 5.3), as the core lists it
+   * from the state of the groups: each step is taken once, the next shows after its Commit came back. Returns the
+   * steps that were open, and tells the client which invites are still at work. A step that fails (no KeyPackage at
+   * the hub yet, the hub not reached) is simply there again at the next round.
+   */
+  private async invited(): Promise<InviteStep[]> {
+    this.owing = false
+    let steps: InviteStep[]
+    try { steps = await this.serial(() => this.call(d => d.inviteSteps())) } catch { return [] }
+    for (const step of steps) {
+      const id = step.inviteId, device = step.device, group = step.group
+      try {
+        switch (step.kind) {
+          case 'wait': break
+          case 'commit': await this.do(d => d.inviteRecommit(id, this.now())); break
+          case 'handover': {
+            // (the recovery key's tag for a new human device, 7.4, went with the Commit that added it)
+            const skip = (await this.opts.meta.get(`invite-no-history/${hex(id)}`).catch(() => null)) === true
+            await this.do(async d => { if (skip) await d.inviteForget(id); else await d.inviteHandover(id) })
+            break
+          }
+          case 'addToSession': {
+            const keyPackage = (await this.hub.claimKeyPackages([device!]))[0]!.key_package
+            await this.do(d => d.addToSession(group!, device!, keyPackage, this.now()))
+            break
+          }
+          case 'foundSession': {
+            const others = (this.roles?.humans ?? []).filter(h => !same(h, this.device_id))
+            const claimed = others.length ? await this.hub.claimKeyPackages(others) : []
+            await this.do(d => d.foundSession(device!, [...claimed.map(c => c.key_package), step.keyPackage!], this.now()))
+            break
+          }
+          case 'takeOver': {
+            // (a helper session's new opener comes with a KeyPackage claimed at the hub; the main session's with the invite's)
+            const keyPackage = step.keyPackage ?? (await this.hub.claimKeyPackages([device!]))[0]!.key_package
+            await this.do(d => d.cleanSession(group!, step.cuts, { device: device!, keyPackage }, this.now()))
+            break
+          }
+          case 'checkHelpers': {
+            // 5.3.1 (c): the hub's list of that session's helper sessions, after the Welcomes still waiting were taken
+            await this.serial(() => this.joinWelcomes(null))
+            const helpers = (await this.hub.roomGroups()).filter(g => g.live && g.kind === 'helper' && g.parent && step.session && same(g.parent, step.session)).map(g => g.group)
+            await this.do(d => d.inviteChecked(id, helpers))
+            break
+          }
+        }
+      } catch (e) {
+        if (this.isLocal(e)) throw e
+        this.owing = true
+      }
+    }
+    // what is left now (the core drops an invite that has nothing left); a newcomer that only waits to be added
+    // to sessions counts as in
+    let left = steps
+    if (steps.length) {
+      try { left = await this.serial(() => this.call(d => d.inviteSteps())) } catch { /* the list of before */ }
+      if (left.length) { this.owing = true; this.later(this.timing.heal_delay * 5, () => this.keepSoon(0)) }
+    }
+    this.emit('invites', { open: [...new Set(left.filter(s => s.kind !== 'addToSession').map(s => hex(s.inviteId)))] })
+    this.emit('batch', null)
+    return left
+  }
+  /** What the core found while it processed Commits (a Cut that drops what was shown, a hub's void it cannot check). */
+  private async tellFindings(): Promise<void> {
+    const found = await this.call(d => d.findings()).catch(() => [])
+    if (!found.length) return
+    for (const f of found) this.alert(f.code, 'the core found something wrong in a group', f.group)
+    await this.call(d => d.findingsRead()).catch(() => {})
+  }
   /** Upkeep now, to its end: for the device that caused a gap (it added a human device, removed one). */
   async healNow(): Promise<void> {
     while (this.keeping) await this.keeping
@@ -829,7 +986,7 @@ export class Engine {
       const before = this.position
       await this.catchUp().catch(() => {})
       if ((await this.outbox()).length || this.keeping || this.position !== before) { quiet = 0; continue }
-      if (this.owing || this.rescanDue) { quiet = 0; await this.sleep(50); continue }
+      if (this.owing || this.rescanDue || this.learnDue) { quiet = 0; await this.sleep(50); continue }
       if (++quiet >= 2) return
     }
     throw new EngineError('timeout', 'the outbox did not settle in time')

@@ -113,20 +113,26 @@ export class World {
       this.objects.set(object.object_id, known)
       after = { object_id: object.object_id, owner: known.owner, object_state: known.state, current_version: known.current }
     }
+    // (a test names a timeline in the wire's words: kind chat or board, scope, ref)
+    const tl = timeline && { kind: timeline.kind === 'board' ? 'board' : timeline.scope === 'card' ? 'cardChat' : 'sessionChat', id: raw(timeline.ref) }
     const header = {
-      change: n, envelopeHash: raw(envelope_hash), group: raw(g), sessionId: raw(session), epoch: 2, sender: raw(sender), seq: number, recipient: raw(recipient), time: time ?? (this.clock += 1000),
-      kind: kind === 'take_back' ? 'takeBack' : kind, push, timeline: timeline && { ...timeline, ref: raw(timeline.ref) }, registerId: raw(register_id),
-      object: object && { objectId: raw(object.object_id), objectType: object.object_type, objectState: object.object_state, urgency: object.urgency, answeredAt: object.answered_at, objectRef: raw(object.object_ref) }, fileIds: file_ids.map(raw),
+      group: raw(g), sessionId: raw(session), epoch: 2, sender: raw(sender), seq: number, prev: new Uint8Array(32), recipient: raw(recipient), time: time ?? (this.clock += 1000),
+      kind: kind === 'take_back' ? 'takeBack' : kind, push, timeline: tl, registerId: raw(register_id),
+      object: object && { objectId: raw(object.object_id), objectType: object.object_type, objectState: object.object_state, urgency: object.urgency, answeredAt: object.answered_at, objectRef: raw(object.object_ref) ?? new Uint8Array(32) }, fileIds: file_ids.map(raw),
+      reservedKind: null, reservedBlock: null,
     }
+    const flat = { objectId: null, requestId: null, versionHash: null, previousHash: null, requestHash: null, choices: [], expiresAt: 0, allow: false }
     const coreBind = !bind ? null
-      : bind.kind === 'answer' ? { kind: 'answer', objectId: raw(bind.object_id), versionHash: raw(bind.version_hash), choices: bind.choices }
-        : bind.kind === 'request' ? { kind: 'request', requestId: raw(bind.request_id), expiresAt: bind.expires_at }
-          : bind.kind === 'verdict' ? { kind: 'verdict', requestId: raw(bind.request_id), requestHash: raw(bind.request_hash), expiresAt: bind.expires_at, allow: bind.allow }
-            : { kind: 'takeBack', objectId: raw(bind.object_id), previousHash: raw(bind.previous_hash), versionHash: raw(bind.version_hash) }
+      : bind.kind === 'answer' ? { ...flat, kind: 'answer', objectId: raw(bind.object_id), versionHash: raw(bind.version_hash), choices: bind.choices }
+        : bind.kind === 'request' ? { ...flat, kind: 'request', requestId: raw(bind.request_id), expiresAt: bind.expires_at }
+          : bind.kind === 'verdict' ? { ...flat, kind: 'verdict', requestId: raw(bind.request_id), requestHash: raw(bind.request_hash), expiresAt: bind.expires_at, allow: bind.allow }
+            : { ...flat, kind: 'takeBack', objectId: raw(bind.object_id), previousHash: raw(bind.previous_hash), versionHash: raw(bind.version_hash) }
     return {
-      header, outcome, code, payload: payload === null || outcome === 'chained' || outcome === 'void' || outcome === 'refused' ? null : utf8(JSON.stringify(payload)),
+      change: n, envelopeHash: raw(envelope_hash), header, outcome, code, finding: null,
+      payload: payload === null || outcome === 'chained' || outcome === 'void' || outcome === 'refused' ? null : utf8(JSON.stringify(payload)),
       bind: outcome === 'applied' || outcome === 'provisional' ? coreBind : null,
-      objectAfter: after ? { objectId: raw(after.object_id), owner: raw(after.owner), objectState: after.object_state, currentVersion: raw(after.current_version) } : null, register,
+      objectAfter: after ? { objectId: raw(after.object_id), objectType: object?.object_type ?? 'card', owner: raw(after.owner), objectState: after.object_state, current: raw(after.current_version), answer: null } : null,
+      register: register && { of: null, ...register }, confirmed: null, dropped: null, replayed: false, command: false,
     }
   }
   /** Build an envelope (or take one already built) and hand it to the model. Returns the core's value `r`, the
@@ -134,7 +140,7 @@ export class World {
   take(spec, ctx = { now: this.clock }) {
     const r = spec.header ? spec : this.envelope(spec)
     const result = this.run(c => applyEnvelope(this.model, r, c, ctx))
-    return { r, result, hash: b64u(r.header.envelopeHash), change: r.header.change, time: r.header.time }
+    return { r, result, hash: b64u(r.envelopeHash), change: r.change, time: r.header.time }
   }
 
   // ---- the stories' sentences ----

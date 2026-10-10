@@ -204,21 +204,20 @@ await client.settle({ timeout_ms })   // outbox empty and the hub's copies back;
 const invite = await client.createInvite({ device_role: 'human' | 'agent', app_url?, label?, desk?, takeover?, session_id?, with_history? })
 await client.confirmInvite(invite_id, true | false)
 await client.removeDevices([device_id, ...])              // → { key_epoch }
-await client.createSession({ agent_device_id })           // → session_id: a main session for an enrolled agent without one
-await client.assignSession({ session_id, agent_device_id, with_history? })   // a takeover by an enrolled agent device
 await client.leaveRoom()                                  // → { key_epoch, humans_left, removed: false }
 ```
 
 - **Invite** (spec 12.1). The inviter watches for the Request (the stream's event, and a look every second), shows
-  `check_code` in state `confirm_code` (five minutes), and on `confirmInvite(id, true)` goes to `adding`: a human
-  device is added to the room group, handed every content key (7.1) and the recovery key's tag (7.4), and added to
-  every live session group (5.2.7); an agent device is enrolled and gets a new main session (named `label`, on
-  `desk`). `false` burns the invite and throws `code-mismatch`. An invite that did not get through (a restart, a
-  hub that did not answer) stays `adding` and is taken up again; it is `failed` only on a final refusal.
-- **Takeover** (5.3, 13.5): `createInvite({ device_role: 'agent', takeover: true, session_id })`. The agent that
-  joins replaces that session's agent device: the old one leaves `agents`, the new one takes its leaf in the main
-  session first, then in its helper sessions, and is handed their keys unless `with_history: false`. A second
-  session is never founded for it.
+  `check_code` in state `confirm_code` (five minutes), and on `confirmInvite(id, true)` the core commits the
+  newcomer in the same write that finishes the invite; the state is `adding`. What follows is listed by the core
+  (`inviteSteps`) and taken by the engine step by step, also after a restart: the Commit again if it lost its
+  epoch, the key handover (7.1) and the recovery key's tag (7.4), the Adds into the live session groups (5.2.7),
+  an agent's new main session (named `label`, on `desk`) or its takeover. `joined` for a human device means it is
+  in and was handed the keys; the session Adds follow as its KeyPackages reach the hub. `false` burns the invite
+  and throws `code-mismatch`.
+- **Takeover** (5.3, 13.5): `createInvite({ device_role: 'agent', takeover: true, session_id })`, the only way a
+  session changes hands. The Commit that enrols the new agent device takes the old one out of `agents`; the new
+  one then takes its leaf in the main session and is handed its keys unless `with_history: false`.
 - **Removal** (5.2.8): one room Commit with each human device's Cut (agents: the `agents` change), then the Remove
   in every session group that still holds a removed leaf. Any human device that sees a stale group finishes it.
 - **`leaveRoom` removes nothing.** The core lets no device commit its own removal. It sends what is in the outbox,
@@ -297,27 +296,20 @@ route; if it stays, the alert is `withheld`.
 
 ## What the core's binding lacks today
 
-`core-api.ts` Part 2 names these; `core-wasm.ts` answers each with the refusal `core-missing`, and the tests run
-them on the stand-in. So with the real core today a room can be founded, opened, signed in to with the code, and
-files work; stored content and invites refuse.
+Stored content, joining by link, stroke pieces and recovery are the binding's own calls, in the binding's shapes
+(`core-api.ts` Part 1 re-exports them). What is still open:
 
-- **Stored content**: `seal(draft, recipient, fileIds, now) → Sealed`; `receiveEnvelope(bytes, change, ordered,
-  voidCode, now) → ReceivedEnvelope`, with two semantics the engine relies on (in the hub's order the cursor moves
-  to `change` whatever the outcome; out of order, an envelope the chain already holds is answered `applied` with
-  its stored object state and its body if the key is there now); `headsDue(group, now)`; `cutOf(group, device)`.
-- **Joining by link**, each signed struct and its signature apart, as the hub's routes take them:
-  `inviteOpen(role, sessionId, app, hub, now) → { inviteId, link, expiresAt, offer, signature }`;
-  `inviteAccept(inviteId, { request, mac, signature }, now) → { newDevice, checkCode, requestHash, reveal,
-  signature }`; `inviteConfirm(inviteId, matches, now)`, callable again after `epoch-taken`;
-  `joinRequest(link, { offer, signature }, now) → { request, mac, signature, role, inviter, expiresAt, sessionId,
-  roomEpoch, roomState }`; `joinReveal({ reveal, signature }) → six numbers`.
-- **Relayed messages**: `receiveRelay(group, epoch, sender, message, now) → ReceivedMessage | null`. A stroke piece
-  has no change number, and `processLogEntry` takes nothing without one. Until then incoming pieces are dropped.
-- **Recovery Cuts**: `chainCut(served, device, envelopes) → Cut`, the verified end of a removed device's chain for a
-  device that is no member yet. Without it `joinWithCode({ recover: true })` refuses with `core-missing` as soon as
-  a device it removes has written anything.
-- **Stateless**: `inviteLinkParse`, `checkEmoji`, `hubAddress`, `boardReduce` (`scribble.ts` `reduceBoard` does the
-  merge in the meantime).
-- **The depth of an argument.** The binding copies arguments at most four levels deep and refuses deeper ones with
-  `bad-format`. A `ServedRoom` with sessions is deeper: `room.ts` hands `joinRoomWithCode` the room without its
-  sessions and joins them one by one; `prepareRecovery` and `recover` of a room with sessions still meet it.
+- **`servedChainCut(served, device, envelopes) → Cut`** (`core-api.ts` Part 2, the one provisional call): the
+  verified end of a removed device's chain for a device that is no member yet. `core-wasm.ts` answers it with
+  `core-missing`, and so `joinWithCode({ recover: true })` refuses as soon as a device it removes has written
+  anything.
+- **A device that is joining by link cannot sign in at the hub** with the binding the tests were last run on
+  (`hubSignIn` answers `no-room` until `joinInvited` / `joinObserve`, which need a token first). The tests' core
+  bridges exactly that for the fake hub; on the real core a join by link stops there.
+- **What was written before a device joined** is not read by the binding yet. The engine reads the room's changes
+  once more after keys arrive (`rescan`), which is what will open them.
+- **Helper sessions in a takeover**: the invite's steps name the main session only; the helper sessions that
+  session opened are held back from the generic cleaning while the takeover is open, but nothing installs their
+  new opener yet.
+- The tests of `tests/web/client/` still run stored content on the stand-in's plain JSON, because the fake hub
+  files an envelope by reading its header as JSON.

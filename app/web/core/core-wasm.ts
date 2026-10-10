@@ -5,8 +5,8 @@
 // What it does: loads the WebAssembly module once (`loadCore`), then hands out the binding as it is: its functions
 // without state (versions, the self test, the account, files, share links, ids, push), a `Device` made or opened
 // over a store, and `errorCode`. What core-api.ts calls PROVISIONAL, the calls the binding does not have yet, is
-// added as refusals: each throws (a device's: rejects with) a `core-missing` error that names the call. The two
-// tables below are all of it; a name leaves its table the day the binding exports the call.
+// added as refusals: each throws (a device's: rejects with) a `core-missing` error that names the call. The
+// table below is all of it; a name leaves its table the day the binding exports the call.
 //
 // Where the files come from (app/web/dev/build.mjs "the Rust core"): the binding's scripts (its own layer
 // trommi-core.js, wasm-bindgen's glue under it, idb-store.js) are bundled into the worker with this module, like the
@@ -18,7 +18,7 @@
 // on its own: all of it is inside the worker's one file, which is as trustworthy as the worker itself (this origin
 // only, CSP `script-src 'self'`; a worker's script and its imports take no integrity).
 import * as binding from '../../../core/wasm/js/trommi-core.js'
-import type { Core, Device, ErrorCode, ProvisionalDevice, ProvisionalStateless, Store } from './core-api.ts'
+import type { Core, Device, ErrorCode, ProvisionalDevice, Store } from './core-api.ts'
 
 /** The binding's store on IndexedDB (store-idb.ts is handed this class and wraps it). */
 export { IdbStore } from '../../../core/wasm/js/idb-store.js'
@@ -28,11 +28,7 @@ declare const __TROMMI_CORE_WASM__: string
 declare const __TROMMI_CORE_WASM_SHA256__: string
 
 /** The calls of core-api.ts the binding does not have yet (a Record: a call missing here, or one too many, does not compile). */
-const MISSING_ON_DEVICE: Record<keyof ProvisionalDevice, true> = {
-  seal: true, receiveEnvelope: true, headsDue: true, cutOf: true, chainCut: true, receiveRelay: true,
-  inviteOpen: true, inviteAccept: true, inviteConfirm: true, joinRequest: true, joinReveal: true,
-}
-const MISSING_STATELESS: Record<keyof ProvisionalStateless, true> = { inviteLinkParse: true, checkEmoji: true, hubAddress: true, boardReduce: true }
+const MISSING_ON_DEVICE: Record<keyof ProvisionalDevice, true> = {}
 
 /** What a call the binding lacks answers with. */
 class CoreMissing extends Error {
@@ -57,7 +53,6 @@ async function load(): Promise<Core> {
   const { init: _init, Device: _Device, TrommiError: _TrommiError, StoreConflict: _StoreConflict, ...stateless } = binding
   return {
     ...stateless,
-    ...refusals<ProvisionalStateless>(MISSING_STATELESS, false),
     createDevice: async (store: Store) => whole(await binding.Device.create(store)),
     openDevice: async (store: Store) => whole(await binding.Device.open(store)),
     errorCode: (error: unknown): ErrorCode | 'core-missing' | null => (error instanceof binding.TrommiError ? error.code : error instanceof CoreMissing ? error.code : null),

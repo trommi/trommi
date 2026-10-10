@@ -128,8 +128,8 @@ test('the work trail of a turn, and an agent\'s registers: profile, status line,
   await agent.settle(); await a.settle()
   assert.equal(a.model.sessions.get(agent.session_id).heard_up_to, number)
   assert.deepEqual(a.model.sessions.get(agent.session_id).status_lines, [])
-  // a human device may not write an agent's register: the core does not take it as the current value
-  await a.setRegisters({ profile: { agent_name: 'Mallory' } }, { session_id: agent.session_id })
+  // a human device may not write an agent's register: the core refuses to seal it
+  await assert.rejects(a.setRegisters({ profile: { agent_name: 'Mallory' } }, { session_id: agent.session_id }), { code: 'forbidden' })
   await a.settle()
   assert.equal(a.model.sessions.get(agent.session_id).profile.agent_name, 'Ada')
 })

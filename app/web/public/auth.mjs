@@ -133,10 +133,6 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
     // The earlier conversation stays closed unless the human opens it: an agent invite comes without history.
     const historyAsk = () => html`<fieldset class="room-history"><legend>May it read the earlier conversation?</legend><label><input type="radio" name="with_history" value="no" checked> No</label><label><input type="radio" name="with_history" value="yes"> Yes</label></fieldset>`
     const sessionOptions = (except = null) => [...m().sessions.values()].filter(s => s.agent_device_id !== except).map(s => html`<option value="${s.session_id ?? s.agent_session_id ?? s.agent_device_id}">${sessionName(s)}</option>`)
-    // Hand a session to an agent that is in the room: one form under the agents (not one per row: big rooms).
-    const handoverForm = agents => html`<details class="room-more room-handover"><summary>Hand a session to an agent</summary><form method="post" action="/devices/handover" class="room-form">
-<label>Agent<select name="agent_device_id" required>${agents.map(d => html`<option value="${d.device_id}">${d.device_name || 'Agent'} · ${fp(d)}</option>`)}</select></label>
-<label>Session<select name="session_id" required>${sessionOptions()}</select></label>${historyAsk()}<button type="submit" class="room-primary">Hand over</button></form></details>`
     // The three lists, each one element with an id, so a change replaces only the list it touched.
     const lists = () => {
       const all = [...m().members.values()]
@@ -151,7 +147,7 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
       }
     }
     const devicesMain = (error = '') => {
-      const L = lists(), active = [...m().members.values()].filter(d => d.is_active && d.device_role !== 'human')
+      const L = lists()
       return roomPage('Devices', html`${errorLine(error)}
 <section class="room-section" aria-labelledby="people-head"><h3 id="people-head">Your devices</h3>${raw(L.people)}</section>
 ${isHuman() ? html`<section class="room-section push-section" aria-labelledby="push-head"><h3 id="push-head">Push</h3>
@@ -161,8 +157,8 @@ ${isHuman() ? html`<section class="room-section push-section" aria-labelledby="p
 <p class="room-meta">Only knocking: a card marked high or critical (the ones that knock on the Desk), and a session that lost its connection.</p>
 <p class="push-level-note" id="push-level-note" role="status"></p>
 <ul class="push-others" id="push-others" aria-label="Push on your other devices"></ul></section>` : ''}
-<section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agents</h3>${raw(L.agents)}${isHuman() && active.length && has(client, 'assignSession') ? handoverForm(active) : ''}
-${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><input type="hidden" name="role" value="agent"><label>Name of the session<input name="label" maxlength="40" placeholder="e.g. Website" autocomplete="off"></label>${has(client, 'assignSession') && m().sessions.size ? html`<label>Takes over<select name="session_id"><option value="">a new session</option>${sessionOptions()}</select></label>${historyAsk()}` : ''}<button type="submit" id="agent-invite">Invite an agent</button></form>` : ''}</section>
+<section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agents</h3>${raw(L.agents)}
+${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><input type="hidden" name="role" value="agent"><label>Name of the session<input name="label" maxlength="40" placeholder="e.g. Website" autocomplete="off"></label>${has(client, 'createInvite') && m().sessions.size ? html`<label>Takes over<select name="session_id"><option value="">a new session</option>${sessionOptions()}</select></label>${historyAsk()}` : ''}<button type="submit" id="agent-invite">Invite an agent</button></form>` : ''}</section>
 ${raw(L.gone)}
 <p class="room-meta">A new device: <a href="/settings" data-nav>Invite a Device</a> in Settings, or open app.trommi.com on it and log in with email and password. A device names itself; rename this one above. Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.</p>`, 'The people and agents with keys to this account.')
     }
@@ -178,10 +174,6 @@ ${raw(L.gone)}
         if (!me || !device_name) throw new Error('a name is missing')
         await client.setRegisters({ [`device/${me.device_id}`]: { device_name, ...Object.fromEntries(['platform', 'folder', 'host'].filter(k => me[k] != null).map(k => [k, me[k]])) } }, { own_device: true })
       } catch (err) { return page(req, res, 'Devices', devicesMain(`Not renamed: ${sayError(err)}`), {}, 422) }
-      t.redirect(res, '/settings/devices')
-    })
-    t.post(/^\/devices\/handover$/, async ({ req, res, form }) => {
-      try { await client.assignSession({ session_id: String(form.get('session_id')), agent_device_id: String(form.get('agent_device_id')), with_history: form.get('with_history') === 'yes' }) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not handed over: ${sayError(err)}`), {}, 422) }
       t.redirect(res, '/settings/devices')
     })
     // The desk a new agent's session goes on: the desk in view; on "All desks" the desk of the session open there (the
@@ -203,7 +195,7 @@ ${raw(L.gone)}
         // session_id: "Takes over" on the Devices page, the same kind of link (the client hands the session over when
         // the new agent has joined).
         const cont = agent ? String(form.get('continue') ?? '') || String(form.get('session_id') ?? '') : ''
-        const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true } : agent ? { desk: inviteDesk(req) } : {}) })
+        const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true, ...(form.get('with_history') != null ? { with_history: form.get('with_history') === 'yes' } : {}) } : agent ? { desk: inviteDesk(req) } : {}) })
         t.redirect(res, !agent && form.get('in') === 'settings' ? `/settings?pair=${invite.invite_id}` : `/pair/${invite.invite_id}`)
       } catch (err) { if (form.get('in') === 'settings') return home(req, res, '', `No code: ${sayError(err)}`, 422); page(req, res, 'Devices', devicesMain(`No invite: ${sayError(err)}`), {}, 422) }
     })
