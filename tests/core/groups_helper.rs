@@ -4,15 +4,16 @@
 use trommi_core::codec;
 use trommi_core::device::{Joined, Processed, Received, WelcomeExpectation};
 use trommi_core::ids::{GroupId, SessionId, TurnId};
+use trommi_core::invite::Role;
 use trommi_core::mls::message::TrommiMessage;
 use trommi_core::mls::profile::{CommitNote, Cut, TrommiSession};
 use trommi_core::Error;
 use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
-    now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync, sync_ok,
-    TestDevice,
+    add_forger, add_human, cuts_for, enrol, enrol_over, found_helper, found_main, found_room_on,
+    new_device, now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync,
+    sync_ok, try_invite, TestDevice,
 };
 
 struct Room {
@@ -401,9 +402,7 @@ fn after_a_takeover_the_helper_sessions_are_stale_until_cleaned_with_the_new_ope
 
     // (a) The old agent device leaves `agents`: its main session and the helper session it opened are stale.
     let mut new = new_device();
-    a.change_agents(&[new.id()], &[agent.id()], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    observe(&hub, &mut new);
+    enrol_over(&mut hub, &mut a, &mut new, &main);
     assert_eq!(hub.stale_leaves(&main).unwrap(), [agent.id()]);
     assert_eq!(hub.stale_leaves(&group).unwrap(), [agent.id()]);
     // The helper device writes nothing there: the hub refuses it, and once it saw the room Commit, so does
@@ -517,7 +516,7 @@ fn while_the_seat_is_empty_a_helper_session_waits_without_an_opener() {
     for device in [&mut a, &mut b, &mut h1] {
         settle(&hub, device);
     }
-    a.change_agents(&[], &[agent.id()], now()).unwrap();
+    a.remove_agents(&[agent.id()], now()).unwrap();
     post_ok(&mut hub, &mut a);
     for id in [main, group] {
         a.clean_session(&id, &cuts_for(&a, &id), None, now())
@@ -569,7 +568,7 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
     // No device builds this founding (`groups_hardening_rules.rs`): the agent device is a member that obeys
     // MLS only.
     let other = Forger::new();
-    a.change_agents(&[other.id()], &[], now()).unwrap();
+    try_invite(&mut a, &mut other.invitee(), Role::Agent, None).unwrap();
     post_ok(&mut hub, &mut a);
     sync_ok(&hub, &mut b);
     let packages = hub.claim(&[a.id(), b.id()]).unwrap();
@@ -738,9 +737,7 @@ fn a_helper_session_that_lacks_its_opener_is_stale_and_any_human_device_that_see
     // (a) The takeover begins in the room group. The old opener's leaf goes from the helper session before
     // the main session has its new agent leaf: the helper session then waits, and is not stale.
     let mut new = new_device();
-    a.change_agents(&[new.id()], &[agent.id()], now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    observe(&hub, &mut new);
+    enrol_over(&mut hub, &mut a, &mut new, &main);
     publish_some(&mut hub, &mut new, 2);
     a.clean_session(&group, &cuts_for(&a, &group), None, now())
         .unwrap();
