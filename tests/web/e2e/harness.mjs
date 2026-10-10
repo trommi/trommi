@@ -31,9 +31,9 @@ import { appPolicy, serveStatic } from '../build/static.mjs'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.join(HERE, '..', '..', '..')
 /** Everything a run writes: builds, browser profiles, the real hub's data. */
-export const TMP = process.env.TROMMI_E2E_TMP || path.join(os.homedir(), '.cache/trommi-work/v2/web-tmp/e2e')
+export const TMP = process.env.TROMMI_E2E_TMP || path.join(os.tmpdir(), 'trommi-e2e')
 /** Screenshots of key moments. */
-export const SHOTS = process.env.TROMMI_E2E_SHOTS || path.join(os.homedir(), '.cache/trommi-work/v2/web-shots/e2e')
+export const SHOTS = process.env.TROMMI_E2E_SHOTS || path.join(os.tmpdir(), 'trommi-e2e-shots')
 fs.mkdirSync(path.join(TMP, 'tmp'), { recursive: true })
 // (cdp.mjs makes its throwaway profiles under the system's temporary folder: that is ours)
 process.env.TMPDIR = path.join(TMP, 'tmp')
