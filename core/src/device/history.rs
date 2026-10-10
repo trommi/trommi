@@ -441,7 +441,9 @@ impl<S: Storage> Device<S> {
                 if own {
                     self.transact(|this, batch| {
                         this.begin(0);
-                        this.meta(group)?.distrusted = true;
+                        let meta = this.meta(group)?;
+                        meta.distrusted = true;
+                        meta.closed = true;
                         this.put_group(batch, group)?;
                         this.put_stored(
                             batch,

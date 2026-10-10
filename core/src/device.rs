@@ -432,6 +432,8 @@ struct GroupMeta {
     founding: bool,
     /// First contact found leaves that do not belong: no content key is handed out.
     distrusted: bool,
+    /// The group's own history broke the rules (5.2.6): it stays distrusted, whatever its leaves are now.
+    closed: bool,
     /// This device was removed: OpenMLS's state is gone, the keys stay.
     removed: bool,
     pending: Option<Pending>,
@@ -477,7 +479,8 @@ impl Encode for GroupMeta {
                 self.pending
                     .as_ref()
                     .is_some_and(|pending| pending.accepted),
-            ) << 6);
+            ) << 6)
+            | (u8::from(self.closed) << 7);
         writer.u8(flags);
         let pending = self.pending.as_ref();
         writer.u64(pending.map_or(0, |pending| pending.outbox));
@@ -506,7 +509,8 @@ impl Decode for GroupMeta {
         let own_leaf_ms = reader.u64()?;
         let last_update_ms = reader.u64()?;
         let flags = reader.u8()?;
-        if flags >= 1 << 7 {
+        // A group is closed only as a distrusted one.
+        if flags & (1 << 7) != 0 && flags & (1 << 2) == 0 {
             return Err(Error::BadFormat);
         }
         let outbox = reader.u64()?;
@@ -533,6 +537,7 @@ impl Decode for GroupMeta {
             archived: flags & 1 != 0,
             founding: flags & (1 << 1) != 0,
             distrusted: flags & (1 << 2) != 0,
+            closed: flags & (1 << 7) != 0,
             removed: flags & (1 << 3) != 0,
             pending,
             joined_epoch: reader.u64()?,
@@ -4670,8 +4675,10 @@ impl<S: Storage> Device<S> {
             .merge_staged_commit(&self.provider, *staged)
             .map_err(|_| Error::BadGroup)?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
-        if self.meta(id)?.distrusted {
-            // The offending leaves of a first contact may be gone now.
+        let meta = self.meta(id)?;
+        if meta.distrusted && !meta.closed {
+            // The offending leaves of a first contact may be gone now. A group whose history broke the
+            // rules stays closed: no later Commit makes that history another one.
             let after: BTreeSet<DeviceId> = rules::leaves_of(group.members())?
                 .into_iter()
                 .map(|(_, device)| device)
