@@ -28,14 +28,15 @@ func refusedCode(_ call: () throws -> Void) -> String? {
 
 /// One invite up to the moment both sides show their code: the inviter opens it, the new device answers the Offer,
 /// the inviter accepts the Request, the new device checks the Reveal. (A hub only carries the four parts between
-/// them, so none is needed.) The six numbers each side shows; what follows is `confirmInvite` or `burnInvite`.
-func exchangeInvite(from inviter: LiveDevice, to newcomer: LiveDevice, role: Int = ROLE.HUMAN, session: SessionId? = nil,
-                    tools: LiveCore) throws -> (invite: Bytes, inviterShows: [UInt8], newcomerShows: [UInt8]) {
-  let opened = try inviter.openInvite(role: role, session: session, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
-  let asked = try tools.inviteRequest(link: opened.link, offer: opened.offer, offerSignature: opened.offerSignature, device: newcomer, nowMs: nowMs())
-  let accepted = try inviter.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: nowMs())
-  let shown = try tools.inviteReveal(device: newcomer, reveal: accepted.reveal, signature: accepted.revealSignature)
-  return (opened.invite, accepted.numbers, shown)
+/// them, so none is needed.) The six numbers each side shows and the hash of the accepted Request; what follows is
+/// `inviteConfirm`, with `matches` as the person said.
+func exchangeInvite(from inviter: LiveDevice, to newcomer: LiveDevice, role: InviteRole = .human, session: SessionId? = nil,
+                    tools: LiveCore) throws -> (invite: Bytes, inviterShows: [UInt8], newcomerShows: [UInt8], requestHash: Hash32) {
+  let opened = try inviter.inviteOpen(role: role, session: session, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
+  let asked = try newcomer.joinRequest(link: opened.link, offer: opened.offer, nowMs: nowMs())
+  let accepted = try inviter.inviteAccept(invite: opened.inviteId, request: asked.request, nowMs: nowMs())
+  let shown = try newcomer.joinReveal(accepted.reveal)
+  return (opened.inviteId, accepted.code.numbers, shown.numbers, accepted.requestHash)
 }
 
 /// Whether both devices hold the content key of that group and epoch. (The key itself never leaves the core.)
@@ -301,7 +302,7 @@ final class LiveCoreTests: XCTestCase {
     // A takes B in. The Commit's parts: Commit, GroupInfo, Welcome, SealedKey.
     let forB = try exchangeInvite(from: a, to: b, tools: tools)
     XCTAssertEqual(forB.inviterShows, forB.newcomerShows)
-    let id = try a.confirmInvite(invite: forB.invite, numbers: forB.inviterShows, nowMs: nowMs())
+    let id = try a.inviteConfirm(invite: forB.invite, numbers: forB.inviterShows, requestHash: forB.requestHash, matches: true, nowMs: nowMs())
     XCTAssertEqual(try a.groups().first?.pending, true)
     XCTAssertEqual(try a.inviteSteps(), [.wait(invite: forB.invite)])
     let add = try accept(a, .commit, &change)
@@ -373,10 +374,10 @@ final class LiveCoreTests: XCTestCase {
 
     // An agent device is enrolled by invite: it follows the room group from the GroupInfo of the epoch its Offer
     // names (the update's), and the Commit that enrols it reaches it and B through the log.
-    let forAgent = try exchangeInvite(from: a, to: agent, role: ROLE.AGENT, tools: tools)
+    let forAgent = try exchangeInvite(from: a, to: agent, role: .agent, tools: tools)
     XCTAssertEqual(forAgent.inviterShows, forAgent.newcomerShows)
     try agent.joinObserve(groupInfo: update.parts[1])
-    _ = try a.confirmInvite(invite: forAgent.invite, numbers: forAgent.inviterShows, nowMs: nowMs())
+    _ = try a.inviteConfirm(invite: forAgent.invite, numbers: forAgent.inviterShows, requestHash: forAgent.requestHash, matches: true, nowMs: nowMs())
     let enrol = try accept(a, .commit, &change)
     let enrolEntry = LogEntry(change: change, group: room, kind: .commit(bytes: enrol.parts[0], recoveryAuth: nil))
     _ = try b.processLogEntry(enrolEntry)
@@ -419,7 +420,7 @@ final class LiveCoreTests: XCTestCase {
   }
   private func bring(_ b: LiveDevice, into a: LiveDevice, room: RoomId, _ change: inout UInt64) throws {
     let invite = try exchangeInvite(from: a, to: b, tools: tools)
-    _ = try a.confirmInvite(invite: invite.invite, numbers: invite.inviterShows, nowMs: nowMs())
+    _ = try a.inviteConfirm(invite: invite.invite, numbers: invite.inviterShows, requestHash: invite.requestHash, matches: true, nowMs: nowMs())
     let add = try accept(a, .commit, &change)
     _ = try b.joinInvited(add.parts[2], nowMs: nowMs())
     let auth = try accept(a, .message, &change)
@@ -518,7 +519,7 @@ final class LiveCoreTests: XCTestCase {
     _ = try a.foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
     _ = try accept(a, .roomFounding, &change)
     let invite = try exchangeInvite(from: a, to: b, tools: tools)
-    _ = try a.confirmInvite(invite: invite.invite, numbers: invite.inviterShows, nowMs: nowMs())
+    _ = try a.inviteConfirm(invite: invite.invite, numbers: invite.inviterShows, requestHash: invite.requestHash, matches: true, nowMs: nowMs())
     let welcome = try accept(a, .commit, &change).parts[2]
     XCTAssertEqual(refusedCode { _ = try b.joinWelcome(welcome, room: systemRandom(32), committer: a.id, nowMs: nowMs()) }, "wrong-room")
     XCTAssertEqual(refusedCode { _ = try b.joinInvited(welcome, nowMs: nowMs()) }, "not-member")

@@ -74,7 +74,7 @@ final class FakeDevice: CoreDevice {
       GroupSummary(group: Self.sessionGroup(r, s), session: SessionInfo(session: try! unhex(s), parent: nil, agents: state.sessions[s]!.map { try! unhex($0) }), epoch: 1, leaves: [id] + state.sessions[s]!.map { try! unhex($0) }, archived: false, pending: false)
     }
   }
-  func contentKey(group: GroupId, epoch: UInt64) throws -> Bytes { Bytes(repeating: UInt8(truncatingIfNeeded: epoch), count: 32) }
+  func holdsKey(group: GroupId, epoch: UInt64) throws -> Bool { true }
   func keyPackagesToUpload(unusedAtHub: Int, nowMs: UInt64) throws -> UInt64? { nil }
   func keyPackage(nowMs: UInt64) throws -> Bytes { j(["key_package": state.id]) }
   func foundRoom(recoveryCode: Bytes, nowMs: UInt64) throws -> RoomId {
@@ -83,9 +83,8 @@ final class FakeDevice: CoreDevice {
     return room!
   }
   func foundSession(agent: DeviceId, keyPackages: [Bytes], nowMs: UInt64) throws -> SessionId { throw TrommiError("not-built") }
-  func addHumanDevice(_ device: DeviceId, keyPackage: Bytes, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func addToSession(group: GroupId, device: DeviceId, keyPackage: Bytes, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
-  func changeAgents(enrol: [DeviceId], remove: [DeviceId], nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
+  func removeAgents(_ remove: [DeviceId], nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func removeHumanDevices(_ cuts: [Cut], nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func cleanSession(group: GroupId, cuts: [Cut], replacement: (device: DeviceId, keyPackage: Bytes)?, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func update(group: GroupId, forced: Bool, nowMs: UInt64) throws -> UInt64? { nil }
@@ -116,31 +115,35 @@ final class FakeDevice: CoreDevice {
   func sendStrokePiece(board: BoardId, piece: Bytes) throws -> UInt64 { try queue(.relayMessage, group: room, parts: [piece]) }
   func outbox() -> [OutboxEntry] { isOwner ? box.keys.sorted().map { box[$0]! } : [] }
   func outboxAccepted(_ id: UInt64, change: UInt64?) throws { try write([], drop: [id]) }
-  func outboxRefused(_ id: UInt64, code: String, voided: Bool) throws { try write([], drop: [id]) }
+  /** An envelope's entry stays whatever the code (9.0.8); every other entry goes. */
+  func outboxRefused(_ id: UInt64, code: String) throws { if box[id]?.kind != .envelope { try write([], drop: [id]) } }
+  func outboxVoided(_ id: UInt64) throws { try write([], drop: [id]) }
+  func envelopeAbandon(_ id: UInt64) throws { try write([], drop: [id]) }
   func close() { isOwner = false }
-  func processRelay(group: GroupId, bytes: Bytes) throws -> ReceivedMessage { .strokePiece(from: id, board: ALL_DESKS_BOARD, piece: bytes) }
+  func receiveRelay(group: GroupId, message: Bytes, nowMs: UInt64) throws -> ReceivedMessage? { .strokePiece(from: id, board: ALL_DESKS_BOARD, piece: message) }
 
   /** An "envelope" here is JSON of its header and its body in the clear. */
-  func sendEnvelope(_ draft: EnvelopeDraft, nowMs: UInt64) throws -> SentEnvelope {
+  func seal(_ draft: EnvelopeDraft, files: [FileId], nowMs: UInt64) throws -> Sealed {
     guard let r = state.room else { throw TrommiError("no-key") }
-    var h: [String: Any] = ["sender": state.id, "time": nowMs, "role": ROLE.HUMAN]
-    var payload = Bytes(), group = try unhex(r), files = [FileId]()
+    var h: [String: Any] = ["sender": state.id, "time": nowMs]
+    var payload = Bytes(), group = try unhex(r)
     switch draft {
-    case let .sessionChat(session, p, f):
+    case let .sessionChat(session, p):
       guard state.sessions[hex(session)] != nil else { throw TrommiError("no-key", "not in that session") }
-      group = Self.sessionGroup(r, hex(session)); payload = p; files = f
+      group = Self.sessionGroup(r, hex(session)); payload = p
       h["kind"] = KIND.TIMELINE_ITEM; h["tk"] = TIMELINE.CHAT; h["ts"] = TIMELINE_SCOPE.SESSION; h["tr"] = hex(session); h["recipient"] = state.sessions[hex(session)]![0]
-    case let .boardItem(board, p, f):
-      payload = p; files = f; h["kind"] = KIND.TIMELINE_ITEM; h["tk"] = TIMELINE.CANVAS; h["ts"] = TIMELINE_SCOPE.DESK; h["tr"] = hex(board)
+    case let .boardItem(board, p):
+      payload = p; h["kind"] = KIND.TIMELINE_ITEM; h["tk"] = TIMELINE.CANVAS; h["ts"] = TIMELINE_SCOPE.DESK; h["tr"] = hex(board)
     case let .register(g, name, value):
       group = g
       let lamport = (state.registers.count + 1)
       payload = j(["name": name, "value": value.map { try! JSONSerialization.jsonObject(with: Data($0), options: [.fragmentsAllowed]) } ?? NSNull(), "lamport": lamport])
       state.registers["\(hex(g))/\(name)"] = value.map { String(decoding: $0, as: UTF8.self) }
       h["kind"] = KIND.STATUS; h["reg"] = hex(Bytes(name.utf8).prefix(16) + Bytes(repeating: 0, count: max(0, 16 - name.utf8.count)))
-    case let .note(object, p, closed, f):
-      payload = p; files = f; h["kind"] = KIND.OBJECT_VERSION; h["otype"] = OBJECT_TYPE.NOTE; h["ostate"] = closed ? CARD_STATE.CLOSED : CARD_STATE.OPEN
-      h["oid"] = object.map(hex) ?? hex(systemRandom(16))
+    case let .noteFirst(p):
+      payload = p; h["kind"] = KIND.OBJECT_VERSION; h["otype"] = OBJECT_TYPE.NOTE; h["ostate"] = CARD_STATE.OPEN; h["oid"] = hex(systemRandom(16))
+    case let .noteVersion(object, closed, p):
+      payload = p; h["kind"] = KIND.OBJECT_VERSION; h["otype"] = OBJECT_TYPE.NOTE; h["ostate"] = closed ? CARD_STATE.CLOSED : CARD_STATE.OPEN; h["oid"] = hex(object)
     default: throw TrommiError("not-built")
     }
     let key = "\(hex(group))/\(state.id)"
@@ -149,43 +152,63 @@ final class FakeDevice: CoreDevice {
     h["group"] = hex(group); h["seq"] = seq; h["files"] = files.map(hex)
     let bytes = j(["h": h, "p": hex(payload)])
     let id = try queue(.envelope, group: group, parts: [bytes])
-    return SentEnvelope(outboxId: id, hash: FakeDevice.hash(bytes), seq: seq, objectId: (h["oid"] as? String).map { try! unhex($0) })
+    return Sealed(outboxId: id, hash: FakeDevice.hash(bytes), seq: seq, group: group, objectId: (h["oid"] as? String).map { try! unhex($0) }, time: nowMs)
   }
   /** Not a hash anyone should trust: enough to tell two fake envelopes apart. */
   static func hash(_ b: Bytes) -> Hash32 { var h = Bytes(repeating: 0, count: 32); for (i, x) in b.enumerated() { h[i % 32] = h[i % 32] &* 31 &+ x }; return h }
 
-  func receiveEnvelope(_ bytes: Bytes, change: UInt64, source: EnvelopeSource, voidCode: String?, nowMs: UInt64) throws -> ReceivedEnvelope {
+  /**
+   * As Core.swift says of the real one: at its place an envelope moves the cursor, also when it is refused for its
+   * chain (`gap`, `replay`); one whose group this device does not hold yet is refused with `group-behind` and the
+   * cursor stays. Out of order nothing is touched: applied if the chain holds that number, else provisional.
+   */
+  func receiveEnvelope(_ bytes: Bytes, change: UInt64, ordered: Bool, voidCode: String?, nowMs: UInt64) throws -> ReceivedEnvelope {
     let e = parse(bytes)
     guard let h = e["h"] as? [String: Any], let group = (h["group"] as? String).flatMap({ try? unhex($0) }), let sender = h["sender"] as? String, let seq = (h["seq"] as? NSNumber)?.uint64Value else { throw TrommiError("bad-format") }
-    if group.count == 48, state.sessions[hex(group.suffix(16))] == nil { throw TrommiError("group-behind") }
-    let key = "\(hex(group))/\(sender)"
-    let own = sender == state.id
-    var standing = EnvelopeStanding.accepted
-    if source == .page { standing = (state.seqs[key] ?? 0) >= seq ? .accepted : .provisional }
-    else {
-      guard change > state.cursor else { throw TrommiError("replay") }
-      if own { state.seqs[key] = max(state.seqs[key] ?? 0, seq) }
-      if !own {
-        guard seq == (state.seqs[key] ?? 0) + 1 else { throw TrommiError(seq <= (state.seqs[key] ?? 0) ? "replay" : "gap") }
-        state.seqs[key] = seq
-      }
-      state.cursor = change
-      try write([])
-    }
     func n(_ k: String) -> Int? { (h[k] as? NSNumber)?.intValue }
     func b(_ k: String) -> Bytes? { (h[k] as? String).flatMap { try? unhex($0) } }
-    let header = EnvelopeHeader(kind: n("kind") ?? 0, group: group, epoch: group.count == 32 ? state.epoch : 1, sender: try unhex(sender), seq: seq, recipient: b("recipient"), time: (h["time"] as? NSNumber)?.uint64Value ?? 0,
-                                timelineKind: n("tk"), timelineScope: n("ts"), timelineRef: b("tr"), registerId: b("reg"), objectId: b("oid"), objectType: n("otype"), objectState: n("ostate"),
-                                urgency: n("urg"), answeredAt: nil, objectRef: nil, fileIds: (h["files"] as? [String] ?? []).map { try! unhex($0) })
-    if let v = voidCode { return ReceivedEnvelope(header: header, hash: Self.hash(bytes), standing: .notApplied(code: v), payload: nil, senderRole: n("role") ?? ROLE.AGENT) }
-    return ReceivedEnvelope(header: header, hash: Self.hash(bytes), standing: standing, payload: (e["p"] as? String).flatMap { try? unhex($0) }, senderRole: n("role") ?? ROLE.AGENT)
+    let kinds: [Int: EnvelopeKind] = [KIND.TIMELINE_ITEM: .item, KIND.OBJECT_VERSION: .version, KIND.ANSWER: .answer, KIND.PERMISSION_REQUEST: .request, KIND.VERDICT: .verdict, KIND.STATUS: .register, KIND.DECIDE_AGAIN: .takeBack]
+    var timeline: TimelineRef? = nil
+    if let ref = b("tr") { timeline = n("tk") == TIMELINE.CANVAS ? .board(ref) : n("ts") == TIMELINE_SCOPE.CARD ? .cardChat(ref) : .sessionChat(ref) }
+    let object = b("oid").map { ObjectHeader(objectId: $0, type: n("otype") == OBJECT_TYPE.NOTE ? .note : .card, state: n("ostate") == CARD_STATE.CLOSED ? .closed : .open) }
+    let header = EnvelopeHeader(group: group, sessionId: group.count == 48 ? Bytes(group.suffix(16)) : nil, epoch: group.count == 32 ? state.epoch : 1, sender: try unhex(sender), seq: seq,
+                                recipient: b("recipient"), time: (h["time"] as? NSNumber)?.uint64Value ?? 0, kind: kinds[n("kind") ?? 0] ?? .reserved(UInt8(n("kind") ?? 255)),
+                                timeline: timeline, registerId: b("reg"), object: object, fileIds: (h["files"] as? [String] ?? []).map { try! unhex($0) })
+    func made(_ outcome: EnvelopeOutcome, code: String? = nil) -> ReceivedEnvelope {
+      let payload = outcome == .applied || outcome == .provisional ? (e["p"] as? String).flatMap { try? unhex($0) } : nil
+      let name = header.kind == .register ? payload.flatMap { parse($0)["name"] as? String } : nil
+      return ReceivedEnvelope(change: change, hash: Self.hash(bytes), header: header, outcome: outcome, code: code, payload: payload, register: name.map { RegisterChange(name: $0, current: true) })
+    }
+    if group.count == 48, state.sessions[hex(group.suffix(16))] == nil { return made(.refused, code: "group-behind") }
+    let key = "\(hex(group))/\(sender)"
+    let have = state.seqs[key] ?? 0
+    guard ordered else { return made(voidCode != nil ? .void : have >= seq ? .applied : .provisional, code: voidCode) }
+    guard change > state.cursor else { return made(.refused, code: "replay") }
+    state.cursor = change
+    let own = sender == state.id
+    if !own && seq != have + 1 { try write([]); return made(.refused, code: seq <= have ? "replay" : "gap") }
+    state.seqs[key] = max(have, seq)
+    try write([])
+    return made(voidCode != nil ? .void : .applied, code: voidCode)
   }
   func register(group: GroupId, name: String) throws -> Bytes? { state.registers["\(hex(group))/\(name)"].map { Bytes($0.utf8) } }
-  func cut(group: GroupId, device: DeviceId) throws -> Cut { Cut(device: device, seq: state.seqs["\(hex(group))/\(hex(device))"] ?? 0, hash: ZERO32) }
-  func openInvite(role: Int, session: SessionId?, app: String, hub: String, nowMs: UInt64) throws -> OpenedInvite { throw TrommiError("not-built") }
-  func acceptInviteRequest(invite: Bytes, request: Bytes, mac: Bytes, signature: Bytes, nowMs: UInt64) throws -> InviteAccepted { throw TrommiError("not-built") }
-  func confirmInvite(invite: Bytes, numbers: [UInt8], nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
-  func burnInvite(invite: Bytes) throws {}
+  func cutOf(group: GroupId, device: DeviceId) throws -> Cut { Cut(device: device, seq: state.seqs["\(hex(group))/\(hex(device))"] ?? 0, hash: ZERO32) }
+  func headsDue(group: GroupId, nowMs: UInt64) throws -> Bytes? { nil }
+  func compareHeads(group: GroupId, writer: DeviceId) throws -> [(sender: DeviceId, standing: HeadStanding)] { [] }
+  func findings() throws -> [ChainFinding] { [] }
+  func findingsRead() throws {}
+  func boardLoad(board: BoardId, served: [WriterHead]) throws -> BoardLoaded { throw TrommiError("not-found") }
+  func inviteOpen(role: InviteRole, session: SessionId?, app: String, hub: String, nowMs: UInt64) throws -> InviteOpened { throw TrommiError("not-built") }
+  func inviteAccept(invite: Bytes, request: SignedRequest, nowMs: UInt64) throws -> InviteAccepted { throw TrommiError("not-built") }
+  func inviteConfirm(invite: Bytes, numbers: [UInt8], requestHash: Hash32, matches: Bool, nowMs: UInt64) throws -> InviteConfirmed? { throw TrommiError("not-built") }
+  func inviteSteps() throws -> [InviteStep] { [] }
+  func inviteHandover(invite: Bytes) throws -> [UInt64] { throw TrommiError("not-built") }
+  func inviteRecommit(invite: Bytes, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
+  func inviteForget(invite: Bytes) throws {}
+  func joinRequest(link: String, offer: SignedOffer, nowMs: UInt64) throws -> JoinRequest { throw TrommiError("not-built") }
+  func joinReveal(_ reveal: SignedReveal) throws -> CheckCode { throw TrommiError("not-built") }
+  func joinObserve(groupInfo: Bytes) throws { throw TrommiError("not-built") }
+  func joinInvited(_ welcome: Bytes, nowMs: UInt64) throws -> Joined { throw TrommiError("not-built") }
   func holdsRecoveryMac() throws -> Bool { true }
   func keyIsConfirmed(group: GroupId, epoch: UInt64) throws -> Bool { true }
   func sendRecoveryAuth(recipient: DeviceId?) throws -> UInt64? { throw TrommiError("not-built") }
@@ -212,9 +235,8 @@ final class FakeTools: CoreTools {
   func isFinalRefusal(_ code: String) -> Bool { !["internal", "overloaded", "rate-limited", "unauthorised"].contains(code) && !code.hasPrefix("http-") }
   func canonicalHub(_ text: String) throws -> String { text }
   func parseInviteLink(_ text: String) throws -> InviteLinkParts { throw TrommiError("not-built") }
-  func inviteRequest(link: String, offer: Bytes, offerSignature: Bytes, device: CoreDevice, nowMs: UInt64) throws -> JoinRequest { throw TrommiError("not-built") }
-  func inviteReveal(joiner: Bytes, reveal: Bytes, signature: Bytes) throws -> [UInt8] { throw TrommiError("not-built") }
-  func checkEmoji(_ numbers: [UInt8]) -> [(emoji: String, word: String)] { numbers.map { ("#", String($0)) } }
+  func checkEmoji() -> [(emoji: String, word: String)] { (0..<64).map { ("#", String($0)) } }
+  func boardReduce(snapshot: Bytes?, snapshotFrontier: [WriterHead], items: [BoardItemBody], frontier: [WriterHead]) throws -> Bytes { throw TrommiError("not-built") }
   func encryptFile(_ plain: Bytes) throws -> SealedFile { SealedFile(fileId: systemRandom(16), fileKey: [1], sha256: [2], stored: plain.reversed()) }
   func decryptFile(fileId: FileId, fileKey: Bytes, sha256: Bytes, stored: Bytes) throws -> Bytes { stored.reversed() }
   func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts { ShareLinkParts(link: app + "/a/x", shareId: systemRandom(16), secretHash: [3]) }
@@ -232,7 +254,7 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
     var items: [[String: Any]] = []            // as GET /v2/changes gives them
     var posted: [(path: String, body: [String: Any])] = []
     var envelopePosts: [String] = []           // every envelope as it was posted, repeats included
-    var refuse: [String: (status: Int, code: String)] = [:]   // path -> refusal
+    var refuse: [String: (status: Int, code: String, voided: Bool)] = [:]   // path -> refusal; `voided`: the hub kept the envelope's number as a void record
     var offline = false
     var rooms = 0
     func add(_ item: [String: Any]) -> UInt64 { change += 1; var i = item; i["change"] = change; items.append(i); return change }
@@ -244,7 +266,7 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
 
     func answer(_ method: String, _ path: String, _ query: [String: String], _ body: [String: Any]) -> (Int, Any) {
       lock.lock(); defer { lock.unlock() }
-      if let r = refuse[path] { return (r.status, ["error": r.code, "message": "refused"]) }
+      if let r = refuse[path] { return (r.status, ["error": r.code, "message": "refused", "voided": r.voided]) }
       posted.append((path, body))
       switch (method, path) {
       case ("POST", "/v2/rooms"):

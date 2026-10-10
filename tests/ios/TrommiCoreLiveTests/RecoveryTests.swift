@@ -24,7 +24,7 @@ final class PocketHub {
   var kinds: [UInt8] = []
 
   static func waiting(_ device: CoreDevice) -> [Posted] {
-    device.outbox().map { ($0.id, $0.kind.rawValue, $0.group, $0.epoch, $0.parts) } + ((device as? LiveDevice)?.heldBack() ?? [])
+    device.outbox().map { ($0.id, $0.kind.rawValue, $0.group, $0.epoch, $0.parts) }
   }
 
   /// Takes everything in the device's outbox, in order, and reports each entry as accepted; also what the device
@@ -152,9 +152,9 @@ final class RecoveryTests: XCTestCase {
     _ = try a.update(group: room, forced: true, nowMs: nowMs())
     try hub.post(a)
     // The agent device comes by invite, and its session is what the invite then asks for.
-    let invite = try exchangeInvite(from: a, to: agent, role: ROLE.AGENT, tools: tools)
+    let invite = try exchangeInvite(from: a, to: agent, role: .agent, tools: tools)
     try agent.joinObserve(groupInfo: try XCTUnwrap(hub.infos[room]?[1]))
-    _ = try a.confirmInvite(invite: invite.invite, numbers: invite.inviterShows, nowMs: nowMs())
+    _ = try a.inviteConfirm(invite: invite.invite, numbers: invite.inviterShows, requestHash: invite.requestHash, matches: true, nowMs: nowMs())
     try hub.post(a)
     guard case .foundSession(_, _, let keyPackage)? = try a.inviteSteps().first else { return XCTFail("the invite asks for no session") }
     let session = try a.foundSession(agent: agent.id, keyPackages: [keyPackage], nowMs: nowMs())
