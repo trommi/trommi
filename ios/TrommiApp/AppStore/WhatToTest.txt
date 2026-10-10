@@ -1,0 +1,13 @@
+This build is the first one on the new encryption core (MLS, one Rust core for all apps). It has never run on a phone. Expect it to fail early; what matters is WHERE.
+
+Please look at, in this order:
+1. Does it start, and do the screens look as before (sign-in, Desk, Settings)? Nothing in the looks was meant to change.
+2. Settings, last row "MLS proof": it should say OK with the steps and times. "Copy result" and send it, whatever it says.
+3. Creating an account or signing in. This build still speaks the account form of an older hub (e-mail in the field "email"); against today's hub it will most likely be refused. Tell us the exact words on screen.
+
+Known not to work in this build:
+- Signing in against the current hub (see 3), and with it everything behind the sign-in.
+- Chat, cards, notes, the Scribble Board and pairing a device are wired to the core and pass their tests on Linux, but have never met a real hub.
+- Content from before a device joined by link is not shown yet.
+- Notifications show the fixed text only ("A new question."), never a title.
+- Passkeys are switched off. Lost-device recovery and replacing the recovery code have no screen yet.

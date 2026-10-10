@@ -11,8 +11,8 @@
 //   ShareInbox       the Share Extension's sealed inbox in the App Group (local storage, Apple's CryptoKit).
 //   PushNotify       what the Notification Service Extension and the Live Activity widget need.
 //
-// Build the Rust library first: core/swift/build.sh (ios/README.md). Tests: the repository's one tests folder,
-// tests/ios. SwiftPM takes no target outside the package, so `Tests` here is a link to that folder.
+// Build the Rust library first: core/swift/build.sh (ios/README.md). The tests are a package of their own in the
+// repository's one tests folder: tests/ios (SwiftPM takes no target outside its package).
 import PackageDescription
 
 let package = Package(
@@ -35,11 +35,6 @@ let package = Package(
     .target(name: "NotifyCoreLive", dependencies: ["PushNotify", .product(name: "TrommiCoreRust", package: "TrommiCoreRust")]),
     .target(name: "ShareInbox", dependencies: [.product(name: "Crypto", package: "swift-crypto")]),
     .target(name: "PushNotify", dependencies: []),
-    .testTarget(name: "TrommiClientTests", dependencies: ["TrommiClient"], path: "Tests/TrommiClientTests", resources: [.copy("Fixtures")]),
-    .testTarget(name: "TrommiCoreLiveTests", dependencies: ["TrommiCoreLive"], path: "Tests/TrommiCoreLiveTests"),
-    .testTarget(name: "ShareInboxTests", dependencies: ["ShareInbox"], path: "Tests/ShareInboxTests"),
-    .testTarget(name: "PushNotifyTests", dependencies: ["PushNotify"], path: "Tests/PushNotifyTests"),
-    .testTarget(name: "NotifyCoreLiveTests", dependencies: ["NotifyCoreLive"], path: "Tests/NotifyCoreLiveTests"),
   ],
   swiftLanguageModes: [.v5]
 )
