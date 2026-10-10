@@ -178,10 +178,16 @@ fn joined_seats(
     seats
 }
 
-/// Whether the served history, read as MLS alone without Trommi's rules, arrives at `origin`: every Commit
-/// verifies against the state before it, and at the origin's epoch the GroupContext is the origin's. Then
-/// the Commits served are the group's own, whatever they did.
-fn arrives(founding: &[u8], commits: &[ServedCommit<'_>], origin: &Origin) -> bool {
+/// Whether the served history, read as MLS alone without Trommi's rules, arrives at `origin`: it begins at
+/// the founding GroupInfo of `group` (epoch 0), every Commit verifies against the state before it, and at
+/// the origin's epoch the GroupContext is the origin's. Then the Commits served are the group's own,
+/// whatever they did. A later GroupInfo as the start shows no history, and so nothing about one.
+fn arrives(
+    group: &GroupId,
+    founding: &[u8],
+    commits: &[ServedCommit<'_>],
+    origin: &Origin,
+) -> bool {
     let replay = || -> Result<Vec<u8>, Error> {
         let verifiable = observer::parse_group_info(founding)?;
         let tree = verifiable
@@ -199,6 +205,10 @@ fn arrives(founding: &[u8], commits: &[ServedCommit<'_>], origin: &Origin) -> bo
             ProposalStore::new(),
         )
         .map_err(|_| Error::BadSignature)?;
+        let context = public.group_context();
+        if context.group_id().as_slice() != group.as_bytes() || context.epoch().as_u64() != 0 {
+            return Err(Error::BadGroup);
+        }
         let mut served = commits.iter();
         while public.group_context().epoch().as_u64() < origin.epoch {
             let commit = served.next().ok_or(Error::BadGroup)?;
@@ -325,7 +335,7 @@ impl<S: Storage> Device<S> {
                 let origin = self.origin(group)?;
                 let own = !group.is_room()
                     && self.is_leaf_of(group)
-                    && origin.is_some_and(|origin| arrives(founding, commits, &origin));
+                    && origin.is_some_and(|origin| arrives(group, founding, commits, &origin));
                 if own {
                     self.transact(|this, batch| {
                         this.begin(0);
