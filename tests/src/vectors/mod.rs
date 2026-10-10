@@ -5,6 +5,7 @@
 //! `vectors` writes the files; the test `core_vectors` fails when a committed file differs from what the core
 //! produces now; each subject's own test reads its file back and checks it through the core's public interface.
 
+pub mod account;
 pub mod board;
 pub mod envelope;
 pub mod files;
@@ -24,6 +25,7 @@ pub type Generate = fn() -> Result<Value, Error>;
 
 /// Every vector file: its name without `.json`, and its generator. A subject adds its line here.
 pub const FILES: &[(&str, Generate)] = &[
+    (account::NAME, account::generate),
     (board::NAME, board::generate),
     (envelope::NAME, envelope::generate),
     (files::NAME, files::generate),
