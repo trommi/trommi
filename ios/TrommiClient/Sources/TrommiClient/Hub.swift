@@ -24,6 +24,19 @@ public struct HubError: Error, CustomStringConvertible {
   public var isOffline: Bool { status == 0 }
 }
 
+/**
+ * What of an error may go into a log: a code this app knows (the hub's table, the client's own transport codes, a
+ * TrommiError's code) and the status, never a message or a code the hub made up, which could carry what was sent.
+ */
+public func loggable(_ error: Error) -> String {
+  let local: Set<String> = ["offline", "too-large", "closed", "unauthorised", "rate-limited", "overloaded", "internal", "not-found", "not-member", "bad-format", "timeout", "pending"]
+  func plain(_ code: String) -> Bool { !code.isEmpty && code.count <= 40 && code.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") } }
+  func known(_ code: String) -> String { plain(code) && (local.contains(code) || (Core.isInstalled && Core.tools.isFinalRefusal(code))) ? code : "other" }
+  if let h = error as? HubError { return "\(known(h.code)) (\(h.status))" }
+  if let t = error as? TrommiError { return plain(t.code) ? t.code : "other" }
+  return "error"
+}
+
 public final class HubClient: @unchecked Sendable {
   public static let clientName = "ios/0.2.0"
   /** This app's version, as it names itself to the hub ("ios/<version>"). */

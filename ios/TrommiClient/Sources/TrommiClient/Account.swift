@@ -538,15 +538,29 @@ extension Room {
     let r = try await kitLogin(hubURL: hubURL, name: name, keys: keys)
     // The code is needed once more after the join, to seal it under the new password: it is kept for this call only.
     var code = Bytes()
-    let room = try await loginAnswer(r, hubURL: hubURL, base: base) { room, sealed in
-      code = try tools.openCode(sealed, room: room, way: .kit(wrapKey: keys.wrapKey))
-      return code
-    }.room
+    let room: Room
+    do {
+      room = try await loginAnswer(r, hubURL: hubURL, base: base) { room, sealed in
+        code = try tools.openCode(sealed, room: room, way: .kit(wrapKey: keys.wrapKey))
+        return code
+      }.room
+    } catch let e as TrommiError where e.code == "room-exists" && next != nil {
+      // An earlier try came into the room and then could not set the password: it is set now, on that device.
+      let first = try loginRoom(r)
+      code = try tools.openCode(first.sealed, room: first.room, way: .kit(wrapKey: keys.wrapKey))
+      room = try Room.open(base: base, roomId: hex(first.room))
+    }
     guard let next = next else { return room }
-    let st = try await room.status()
-    var body = try passwordPart(try tools.passwordKeys(email: next.email, password: next.password, kdf: nil), room: room.roomId, code: code)
-    body["revision"] = st.revision
-    try await room.hub.request("PUT", "/account/password", body: body)
+    do {
+      let st = try await room.status()
+      var body = try passwordPart(try tools.passwordKeys(email: next.email, password: next.password, kdf: nil), room: room.roomId, code: code)
+      body["revision"] = st.revision
+      try await room.hub.request("PUT", "/account/password", body: body)
+    } catch {
+      // (the device stays in the room; the same words again set the password on it: see above)
+      room.close()
+      throw error
+    }
     return room
   }
 

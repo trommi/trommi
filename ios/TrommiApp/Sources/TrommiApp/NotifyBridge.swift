@@ -34,7 +34,7 @@ final class NotifyBridge {
     let c = NotifyContext(pushKey: pushKey, rooms: [room.roomIdHex])
     guard c != lastContext else { return }
     // the error names a Keychain status at most, never a key
-    do { try NotifyGroup.writeContext(c); lastContext = c } catch { NSLog("trommi notify: context not written: %@", "\(error)") }
+    do { try NotifyGroup.writeContext(c); lastContext = c } catch { NSLog("trommi notify: context not written: %@", loggable(error)) }
     #endif
   }
 

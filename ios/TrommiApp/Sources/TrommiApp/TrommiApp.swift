@@ -88,6 +88,8 @@ final class BoardModel: ObservableObject {
   @Published var signing = false
   /** Said once on the start screen after a log out. */
   @Published var loggedOut = false
+  /** This device was removed by another device (removedHere): the start screen says so once. */
+  @Published var removed = false
   /** The Emergency Kit's page is up (KitScreen.swift); its words live here only, until "Open Trommi". */
   @Published var kit: KitGate?
   private var kitWriting = false
@@ -234,6 +236,8 @@ final class BoardModel: ObservableObject {
     Task { @MainActor in
       try? await Task.sleep(nanoseconds: 80_000_000)
       pendingUpdate = false
+      // (the room group's own Commit said that this device was removed: what is stored here goes, and the start says so)
+      if let r = room, r.removedAt != nil { removedHere(r); return }
       // a batch that changed nothing visible (a refresh with no news): no render at all
       if let r = room {
         let f = r.board.fingerprint
@@ -277,7 +281,10 @@ final class BoardModel: ObservableObject {
       let report = try await PerfLog.time("refresh sync") { try await room.sync() }
       if let w = report.warnings.first { error = w }
       if liveTask == nil && active { startLive() }
-    } catch { self.error = describe(error) }
+    } catch {
+      // (a confirmed removal is said on the start screen: removedHere)
+      if (error as? TrommiError)?.code != "removed" { self.error = describe(error) }
+    }
   }
   func scene(active: Bool) {
     self.active = active
@@ -297,7 +304,7 @@ final class BoardModel: ObservableObject {
 
   // ---- sign in -----------------------------------------------------------------------------------------
 
-  func go(_ p: Phase) { error = nil; signing = false; if p != .start { loggedOut = false }; phase = p }
+  func go(_ p: Phase) { error = nil; signing = false; if p != .start { loggedOut = false; removed = false }; phase = p }
 
   /** The states of these screens are only drawn in the demo: nothing is made, sent or asked. */
   private func drawnOnly() -> Bool {
@@ -774,6 +781,25 @@ final class BoardModel: ObservableObject {
       self.error = nil; self.loggedOut = true
       self.phase = .start
     }
+  }
+  /**
+   * This device was removed from the room by another of his devices, and its core confirmed it from the room
+   * group's own Commits (Room.checkRemoval): nothing of the room is kept here. Never on the hub's word alone.
+   */
+  private func removedHere(_ r: Room) {
+    liveTask?.cancel(); liveTask = nil
+    r.forgetHere()
+    NotifyBridge.shared.signedOut()
+    #if canImport(ActivityKit) && os(iOS)
+    LiveActivities.endAll()
+    #endif
+    room = nil; desk = nil; path = []
+    ShareImport.shared.signedOut()
+    kit = nil
+    UserDefaults.standard.removeObject(forKey: Self.kitMark)
+    error = nil; loggedOut = false; removed = true
+    phase = .start
+    version &+= 1
   }
   /** Desks: register desk/<id>. */
   func newDesk(name: String) {
