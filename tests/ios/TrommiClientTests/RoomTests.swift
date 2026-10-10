@@ -24,7 +24,7 @@ final class RoomTests: XCTestCase {
   /** A session with one agent, as a Commit in the room's log. */
   func addSession(_ room: Room) { FakeHub.shared.commit(group: room.roomId, ["session": session, "agent": agent]) }
   func agentSays(_ room: Room, seq: Int, _ text: String) {
-    FakeHub.shared.envelope(["sender": agent, "role": ROLE.AGENT, "group": hex(FakeDevice.sessionGroup(room.roomIdHex, session)), "seq": seq, "time": 1000 + seq, "kind": KIND.TIMELINE_ITEM,
+    FakeHub.shared.envelope(["sender": agent, "group": hex(FakeDevice.sessionGroup(room.roomIdHex, session)), "seq": seq, "time": 1000 + seq, "kind": KIND.TIMELINE_ITEM,
                              "tk": TIMELINE.CHAT, "ts": TIMELINE_SCOPE.SESSION, "tr": session, "files": [String]()], payload: ["content_type": "message", "text": text])
   }
   func texts(_ room: Room) -> [String] {
@@ -116,12 +116,31 @@ final class RoomTests: XCTestCase {
     let room = try await founded()
     addSession(room)
     _ = try await room.sync()
-    FakeHub.shared.refuse["/v2/envelopes"] = (403, "forbidden")
+    // The hub refuses the envelope and keeps its number as a void record: the entry is done with.
+    FakeHub.shared.refuse["/v2/envelopes"] = (403, "forbidden", true)
     do { try await room.sendMessage(sessionId: session, text: "no"); XCTFail("refused") }
     catch let e as HubError { XCTAssertEqual(e.code, "forbidden") }
     XCTAssertEqual(room.board.timelineOf("chat:session/\(session)").echoes.count, 0)
     let left = try await room.onCore { $0.outbox().count }
-    XCTAssertEqual(left, 0, "a refused entry is reported to the core and never sent again")
+    XCTAssertEqual(left, 0, "a voided entry is reported to the core and never sent again")
+    room.close()
+  }
+
+  /// A refusal that took no number for the envelope: this device signed that number and sends the same bytes again (9.0.8).
+  func testARefusedEnvelopeThatWasNotVoidedWaitsAndIsSentAgain() async throws {
+    let room = try await founded()
+    addSession(room)
+    _ = try await room.sync()
+    FakeHub.shared.refuse["/v2/envelopes"] = (403, "forbidden", false)
+    let sending = Task { try await room.sendMessage(sessionId: session, text: "waits") }
+    try await Task.sleep(nanoseconds: 700_000_000)
+    let waiting = try await room.onCore { $0.outbox() }
+    XCTAssertEqual(waiting.count, 1)
+    XCTAssertTrue(room.board.alerts.contains { $0.code == "forbidden" })
+    FakeHub.shared.lock.withLock { FakeHub.shared.refuse = [:] }
+    try await room.flush()
+    _ = try await sending.value
+    XCTAssertEqual(FakeHub.shared.envelopePosts, [b64u(waiting[0].parts[0])])
     room.close()
   }
 
@@ -219,10 +238,10 @@ final class RoomTests: XCTestCase {
     XCTAssertEqual(Records.registerName("device/" + hex(ZERO32), toWire: true), "device/" + b64u(ZERO32))
     XCTAssertEqual(Records.fileIds(wire), [file])
     // a body that names a file its signed header does not list is not shown
-    let h = EnvelopeHeader(kind: KIND.TIMELINE_ITEM, group: [], epoch: 0, sender: [], seq: 1, time: 0, fileIds: [])
+    let h = EnvelopeHeader(group: [], epoch: 0, sender: [], seq: 1, time: 0, kind: .item, fileIds: [])
     XCTAssertEqual(Records.decodePayload(wire.encoded(), header: h).state, "undecryptable")
     // a register becomes the one-name `values` the board reads; a board snapshot keeps its old name there
-    let reg = Records.fromWire(.obj(["name": "board_snapshot/00ff", "value": .obj(["change": 3]), "lamport": 4]), header: EnvelopeHeader(kind: KIND.STATUS, group: [], epoch: 0, sender: [], seq: 1, time: 0), sessionId: nil)
+    let reg = Records.fromWire(.obj(["name": "board_snapshot/00ff", "value": .obj(["change": 3]), "lamport": 4]), header: EnvelopeHeader(group: [], epoch: 0, sender: [], seq: 1, time: 0, kind: .register), sessionId: nil)
     XCTAssertEqual(reg["values"]["scribble_snapshot/desk/00ff"]["change"].int, 3)
     XCTAssertEqual(reg["lamport"].int, 4)
   }
