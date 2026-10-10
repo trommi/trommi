@@ -362,11 +362,8 @@ export async function startFakeHub(opts = {}) {
     const id = parseId(text)
     return id ? state.accounts.get(idText(id)) : undefined
   }
-  function kitForm(kit, has_email) {
-    if ((kit?.form == null || kit.form === 'email') && has_email) return 'email'
-    if ((kit?.form == null && !has_email) || kit?.form === 'id') return 'id'
-    throw refuse('bad-email', 'a kit under the e-mail\'s salt needs an account with an e-mail')
-  }
+  /** The kit's form follows from the account alone (v2.md 8.8.2): its e-mail where it has one, else its id. */
+  const kitForm = (_kit, has_email) => (has_email ? 'email' : 'id')
   const needsEmail = account => { if (account.email === null) throw refuse('bad-email', 'a password signs in under an e-mail: this account has none') }
   function passkeyChallenge(scope) {
     const challenge = randomBytes(32), c = b64(challenge)
@@ -436,9 +433,7 @@ export async function startFakeHub(opts = {}) {
     const account = accountOf(r, false)
     if (!account) { if (v === null || v === undefined) return; throw refuse('not-found', 'this room has no account') }
     if (v === null || v === undefined) throw refuse('incomplete', 'new recovery keys come with the account\'s new sealed copies')
-    let form
-    try { form = kitForm(v.kit, account.email !== null) } catch { throw refuse('incomplete', 'the account\'s new Emergency Kit copy') }
-    Object.assign(account, { kit_auth: authKey(v.kit), kit_copy: sealedCopy(v.kit, 'sealed_copy'), kit_form: form })
+    try { Object.assign(account, { kit_auth: authKey(v.kit), kit_copy: sealedCopy(v.kit, 'sealed_copy'), kit_form: kitForm(v.kit, account.email !== null) }) } catch { throw refuse('incomplete', 'the account\'s new Emergency Kit copy') }
     // one way in, every other removed: the one used just now with a new copy, or one set anew (hub accounts.rs replace_copies)
     if (v.password?.auth_key != null && !v.passkey) needsEmail(account)
     if (v.password?.auth_key != null && !v.passkey) Object.assign(account, { auth: authKey(v.password), password_copy: sealedCopy(v.password, 'sealed_copy'), kdf: kdfRecord(v.password), passkeys: [] })
@@ -612,7 +607,10 @@ export async function startFakeHub(opts = {}) {
       if (!email) throw refuse('bad-email', 'not an e-mail address this hub takes')
       if (account.email !== null) throw refuse('forbidden', 'the e-mail of an account is set once')
       if ([...state.accounts.values()].some(a => a.email === email)) throw refuse('account-exists', 'an account with this e-mail exists')
-      account.email = email
+      // with an e-mail the kit's keys are under the e-mail's salt: the kit comes anew in this request
+      let kit
+      try { kit = { kit_auth: authKey(body.kit), kit_copy: sealedCopy(body.kit, 'sealed_copy'), kit_form: 'email' } } catch { throw refuse('incomplete', 'an e-mail comes with the kit made anew under it') }
+      Object.assign(account, { email }, kit)
       account.revision += 1
       return { revision: account.revision }
     }
@@ -620,7 +618,8 @@ export async function startFakeHub(opts = {}) {
       // a human device, or the recovery key before it finishes; with the challenge the account's id
       const a = auth(rq)
       if (a.who !== 'human' && a.who !== 'recovery') throw refuse('forbidden', 'a human device or the recovery key')
-      return passkeyChallenge(scopeOf(accountOf(a.room)))
+      const account = accountOf(a.room)
+      return { ...passkeyChallenge(scopeOf(account)), email: account.email, kit_form: account.kit_form }
     }
     if (is('POST', 'account', 'passkeys')) {
       const account = accountOf(human(writer(rq)).room), added = passkey(body, scopeOf(account))

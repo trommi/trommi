@@ -7,7 +7,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { core, no_core, provisional, b64u, hex, unb64u, unhex, bytes } from './setup.mjs'
+import { core, no_core, b64u, hex, unb64u, unhex, bytes } from './setup.mjs'
 import { accountName, kitAddress, parseKitAddress } from '../../../app/web/core/account-name.ts'
 import * as page from '../../../app/web/core/passwords.ts'
 import { PASSKEY_PRF_INPUT } from '../../../app/web/core/passkey.ts'
@@ -182,38 +182,29 @@ test('codes and words: fresh each time, and what is shown is read back', { skip 
   assert.equal(core.generateUserHandle().length, 32)
 })
 
-// ---- an account without an e-mail: the kit under the account's id
+// ---- an account without an e-mail: the kit under the account's id (spec/vectors/account.json, the core's own)
 
-const ID = JSON.parse(await readFile(new URL('./id-kit-vectors.json', import.meta.url), 'utf8'))
+const ID = JSON.parse(await readFile(new URL('../../../spec/vectors/account.json', import.meta.url), 'utf8'))
 
-test(`the kit under an account id: the core's known answers (${provisional?.real ? 'the binding\'s own kitKeysFor and accountIdParse' : 'through the TEST DOUBLE of core-node.mjs, not the core'})`, { skip }, () => {
-  const id = core.accountIdParse(ID.account_id_text), room = unhex(ID.room_id)
-  assert.equal(hex(id), ID.account_id)
-  const keys = core.kitKeysFor({ kind: 'id', id }, ID.words)
+test('the kit under an account id: the core\'s known answers through the binding\'s kitKeysFor and accountIdParse', { skip }, () => {
+  const room = unhex(ID.room_id)
+  assert.equal(core.accountIdParse(ID.account_id_text), ID.account_id_text)
+  assert.equal(core.accountIdParse(ID.account_id.toUpperCase()), ID.account_id_text, 'typed in any case, without hyphens')
+  const keys = core.kitKeysFor({ id: ID.account_id_text }, ID.words)
   assert.deepEqual([hex(keys.authKey), hex(keys.wrapKey)], [ID.auth_key, ID.wrap_key])
-  // the copy the core sealed under that key opens, with the REAL core's opening, to the code
   assert.equal(hex(core.openRecoveryCode(keys.wrapKey, room, 'kit', null, unhex(ID.sealed))), ID.code)
   for (const c of ID.cases) {
-    const name = c.account.id ? { kind: 'id', id: core.accountIdParse(c.account.id) } : { kind: 'email', email: c.account.email }
-    const k = core.kitKeysFor(name, ID.words)
+    const k = core.kitKeysFor(c.account, ID.words)
     assert.deepEqual([hex(k.authKey), hex(k.wrapKey)], [c.auth_key, c.wrap_key], c.why)
     let result
     try { result = `opens: ${hex(core.openRecoveryCode(k.wrapKey, room, 'kit', null, unhex(ID.sealed)))}` } catch (e) { result = codeOf(e) }
     assert.equal(result, c.result, c.why)
   }
-  // for an e-mail it is the binding's kitKeys, which account.ts keeps calling
-  assert.deepEqual(core.kitKeysFor({ kind: 'email', email: V.password.email }, V.recovery.words), core.kitKeys(V.password.email, V.recovery.words))
-  assert.ok(ID.refused_id_texts.length >= 10)
-  for (const { text, why } of ID.refused_id_texts) refuses(() => core.accountIdParse(text), 'bad-format', why)
-})
-
-test('the provisional calls refuse with core-missing when the binding has none (as core-wasm.ts answers today)', { skip: skip || (provisional?.real ? 'the binding exports them' : false) }, () => {
-  provisional.missing = true
-  try {
-    refuses(() => core.accountIdParse(ID.account_id_text), 'core-missing')
-    refuses(() => core.kitKeysFor({ kind: 'id', id: unhex(ID.account_id) }, ID.words), 'core-missing')
-    assert.equal(core.errorCode(Object.assign(new Error('x'), { code: 'core-missing' })), 'core-missing')
-  } finally { provisional.missing = false }
+  // for an e-mail it is kitKeys, byte for byte: the kits accounts already hold stay readable
+  assert.deepEqual(core.kitKeysFor({ email: V.password.email }, V.recovery.words), core.kitKeys(V.password.email, V.recovery.words))
+  assert.equal(b64u(core.kitKeysFor({ email: V.password.email }, V.recovery.wordsAsTyped).authKey), V.recovery.recoveryAuthB64u)
+  // exactly one of the two names; an id only in its one text
+  for (const name of [{}, { email: 'a@example.org', id: ID.account_id_text }, { id: ID.account_id }, { id: ID.account_id_text.toUpperCase() }, { id: 'x' }]) assert.throws(() => core.kitKeysFor(name, ID.words), e => typeof codeOf(e) === 'string', JSON.stringify(name))
 })
 
 // ---- the one field, and the kit's address
@@ -228,7 +219,7 @@ test('the one field "E-mail or account ID": told apart by its form alone', { ski
     [id.replaceAll('-', ''), { kind: 'id', account: id }],
     [` 0F8FAD5B D9CB 469F A165 70867728950E `, { kind: 'id', account: id }],
     ['0f8f-ad5b-d9cb-469f-a165-7086-7728-950e', { kind: 'id', account: id }],
-    ['0f8fad5b\td9cb469fa165\n70867728950e', { kind: 'id', account: id }],
+    ['0f8fad5b\td9cb469fa165\n70867728950e', 'bad-account'], ['0f8fad5b\u00a0d9cb469fa16570867728950e', 'bad-account'],
     ['00000000000000000000000000000000', { kind: 'id', account: '00000000-0000-0000-0000-000000000000' }],
     // an `@` anywhere makes it an e-mail, and then it must be one
     [`${id}@`, 'bad-email'], ['@', 'bad-email'], ['ada@example', 'bad-email'], ['ada@@example.org', 'bad-email'], ['ädä@example.org', 'bad-email'], [`${id}@example.org`, { kind: 'email', email: `${id}@example.org` }],
@@ -241,8 +232,9 @@ test('the one field "E-mail or account ID": told apart by its form alone', { ski
     let got
     try { got = accountName(typed) } catch (e) { got = codeOf(e) }
     assert.deepEqual(got, expected, JSON.stringify(typed))
-    // the id's one text is what the core reads
-    if (got?.kind === 'id') assert.equal(hex(core.accountIdParse(got.account)), got.account.replaceAll('-', ''))
+    // the page and the core read an id alike, into the same one text
+    if (got?.kind === 'id') assert.equal(core.accountIdParse(String(typed)), got.account)
+    if (got === 'bad-account') assert.throws(() => core.accountIdParse(String(typed ?? '')), e => codeOf(e) === 'bad-format', JSON.stringify(typed))
     if (got?.kind === 'email') assert.equal(core.normaliseEmail(String(typed)), got.email)
   }
 })
