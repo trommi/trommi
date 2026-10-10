@@ -9,8 +9,9 @@
 // - One owner: a Web Lock on the state's name, taken before anything is read and held until close(). A second
 //   tab or worker that opens the same state gets StoreConflict (or waits, with { wait: true }). The database
 //   connection stays open as long, so nobody deletes or upgrades the state under a live device. A lock that is
-//   taken away (`steal`, which nothing of Trommi does) is noticed: the next write is a StoreConflict, which closes
-//   the device. What the device reads from memory until then is not fenced; the revision is the check behind it.
+//   taken away (`steal`, which nothing of Trommi does) is noticed: a write still under way is aborted, unless the
+//   browser already began to commit it, and the next write is a StoreConflict, which closes the device. What the
+//   device reads from memory until then is not fenced; the revision is the check behind it.
 //
 // One store object serves one device, once: after close() it stays closed.
 //
@@ -74,6 +75,7 @@ export class IdbStore {
   #lost = false                   // the lock was taken away
   #acquiring = null               // the request for the lock, while it is not yet answered
   #closing = null                 // the one closing, once it began
+  #writing = new Set()            // the write transactions under way: aborted when the lock is taken away
 
   /** `name` names the stored state: the IndexedDB database and the lock. One per device. */
   constructor(name, { wait = false } = {}) {
@@ -86,7 +88,7 @@ export class IdbStore {
     this.#state = 'loading'
     try {
       // A lock that is taken away ends this owner: nothing more is written.
-      this.#acquiring = lock(lockName(this.#name), this.#wait, this.#waiting.signal, () => { this.#lost = true })
+      this.#acquiring = lock(lockName(this.#name), this.#wait, this.#waiting.signal, () => this.#taken())
       this.#lock = await this.#acquiring
       if (this.#state !== 'loading') throw new Error('the store was closed while it loaded')
       const open = indexedDB.open(this.#name, 1)
@@ -118,6 +120,14 @@ export class IdbStore {
     }
   }
 
+  /** The lock was taken away: nothing more is written, and a write under way is aborted where it still can be. */
+  #taken() {
+    this.#lost = true
+    for (const transaction of this.#writing) {
+      try { transaction.abort() } catch { /* it is committing or done already: the browser no longer takes it back */ }
+    }
+  }
+
   apply(write) { return this.applyAll([write]) }
 
   /** Several writes, in order, in ONE transaction: all of them or none. Each names the revision the one before it
@@ -131,11 +141,14 @@ export class IdbStore {
       throw new Error('the browser does not grant a strict transaction')
     }
     const finished = committed(transaction)
+    this.#writing.add(transaction)
     const entries = transaction.objectStore(ENTRIES)
     const meta = transaction.objectStore(META)
     let conflict = false
     const stored = meta.get('revision')
     stored.onsuccess = () => {
+      // The lock may be taken away between the start of the transaction and this answer: nothing is put then.
+      if (this.#lost) { transaction.abort(); return }
       let revision = stored.result ?? 0
       for (const write of writes) {
         if (revision !== write.expectedRevision) { conflict = true; transaction.abort(); return }
@@ -148,7 +161,10 @@ export class IdbStore {
     try {
       await finished
     } catch (error) {
+      if (this.#lost) throw new StoreConflict('another tab or worker took this state over')
       throw conflict ? new StoreConflict() : error
+    } finally {
+      this.#writing.delete(transaction)
     }
   }
 

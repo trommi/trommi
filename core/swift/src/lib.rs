@@ -50,7 +50,7 @@ pub use invite::{
 pub use push::*;
 pub use records::*;
 pub use recovery::{
-    recovery_anchor, recovery_sign_in, Anchor, CodeJoin, Learned, RecoveryPlan, Removals,
+    recovery_anchor, recovery_sign_in, Anchor, CodeJoin, GroupPast, Learned, RecoveryPlan, Removals,
     ServedCommit, ServedEnvelope, ServedGroup, ServedRoom, UnverifiedSession,
 };
 pub use selftest::{self_test, versions, SelfTestReport, SelfTestStep, Versions};
