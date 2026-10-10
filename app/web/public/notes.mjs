@@ -7,7 +7,7 @@
 //                                  note is gone), /bin, /send (to the crown), /unsend (Undo of a send)
 //   boardNotes(model)              the board state's notes (app.mjs shape), from the core's model
 //   noteStore(client, board)       -> act(body): what the forms and the attachments (POST /note, JSON) do
-import { toast } from './ui.mjs'
+import { toast, sayError } from './ui.mjs'
 import { addressOf, crownOf, rememberRef, uploadFile } from './app.mjs'
 
 const holds = (text, files) => Boolean(String(text).trim() || files?.length)
@@ -56,7 +56,7 @@ export function register(t) {
       says = await WAYS[what](note, form, m, id)
     } catch (err) {
       if (!t.wantsStream(req)) return t.redirect(res, `${base}/`)
-      return t.sendStream(req, res, t.toast({ head: what === 'send' ? 'Not sent' : what === 'unsend' ? 'Not undone' : 'Not saved', line: err.message || 'the board did not take it', role: 'alert' }), err.status === 404 ? 404 : 422)
+      return t.sendStream(req, res, t.toast({ head: what === 'send' ? 'Not sent' : what === 'unsend' ? 'Not undone' : 'Not saved', line: sayError(err, 'the board did not take it'), role: 'alert' }), err.status === 404 ? 404 : 422)
     }
     if (!t.wantsStream(req)) return t.redirect(res, `${base}/`)
     // (the live stream brings the note itself to every page: sidebar.mjs; this answer is the passing line)
@@ -152,7 +152,7 @@ export function noteStore(client, board) {
     if (Array.isArray(body.attachments)) {
       const had = n?.attachments ?? []
       try { fields.attachments = await Promise.all(body.attachments.map(a => (a?.data != null ? upload(a, id) : had.find(r => attOf(r).url === a?.url))).filter(Boolean)) }
-      catch (err) { return answer(422, { error: `not attached: ${err.message}` }) }
+      catch (err) { return answer(422, { error: `not attached: ${sayError(err)}` }) }
     }
     if (body.send) {
       const to = (body.to ? dev(String(body.to)) : null) ?? m().human.crown?.session_id ?? m().human.crown?.agent_device_id ?? null
