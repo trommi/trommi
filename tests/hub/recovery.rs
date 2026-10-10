@@ -253,6 +253,13 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
         b64(&room),
         opened["recovery_id"].as_str().unwrap()
     );
+    // the recovery key may ask for the account's passkey challenge (a passkey made anew, 8.6): this room has no
+    // account; an agent device may not ask at all
+    rec.post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+        .refused(404, "not-found");
+    agent
+        .post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+        .refused(403, "forbidden");
     // the room takes nothing else while it runs
     let locked = w.ada.send(&w.hub, &room, &register(&random(), "x"));
     locked.refused(503, "overloaded");

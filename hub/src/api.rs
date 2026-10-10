@@ -510,7 +510,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("DELETE", ["token"]) => {
             let auth = read_auth()?;
             app.sessions.revoke(rq.bearer.as_deref());
-            app.live.end_where(&auth.room, |a| a.device == auth.device);
+            app.live.cut_where(&auth.room, |a| a.device == auth.device);
             Ok(json!({}))
         }
         ("POST", ["rooms", room, "tokens"]) => {
@@ -592,11 +592,16 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             app.write_as(&auth, rq.lease, |x, _| accounts::put_email(x.c, &auth.room, &rq.body, x.now))
         }
         ("POST", ["account", "passkeys", "challenge"]) => app.read(|x| {
+            // a human device, or the recovery key before it finishes (8.7: a passkey made anew): with the
+            // challenge the account's id, which that passkey must carry as its user handle
             let auth = rq.auth(app, x.c)?;
-            auth.human()?;
+            if !matches!(auth.who, Who::Human | Who::Recovery) {
+                return Err(refuse("forbidden", "a human device or the recovery key"));
+            }
             let account = accounts::account_of(x.c, &auth.room)?;
             let revision = accounts::revision_of(x.c, account)?;
-            Ok(json!({ "challenge": b64(&app.accounts.challenge(Some((account, revision)), x.now)) }))
+            let handle = accounts::handle_of(x.c, account)?;
+            Ok(json!({ "challenge": b64(&app.accounts.challenge(Some((account, revision)), x.now)), "account": accounts::id_text(&handle), "user_handle": b64(&handle) }))
         }),
         ("POST", ["account", "passkeys"]) => human_write(app, rq, |x, auth| app.accounts.add_passkey(x.c, &auth.room, &rq.body, x.now)),
         ("DELETE", ["account", "passkeys", credential]) => {
@@ -1290,6 +1295,7 @@ async fn stream(
     last_event_id: Option<&str>,
 ) -> Res<Answer> {
     let (a, bearer) = (app.clone(), bearer.map(str::to_string));
+    let token = bearer.clone();
     let (auth, until) =
         blocking(move || a.read(|x| a.sessions.authorise_until(x.c, bearer.as_deref(), x.now)))
             .await?;
@@ -1325,6 +1331,13 @@ async fn stream(
         app.live.close(&auth.room, registered.id);
         return Err(refuse("not-member", "this device is no longer in the room"));
     }
+    // or signed out meanwhile: a sign-out removes the token first and cuts the registered streams after, so
+    // either it found this stream or this check finds the token gone
+    if !app.sessions.holds(token.as_deref(), now()) {
+        registered.end();
+        app.live.close(&auth.room, registered.id);
+        return Err(refuse("unauthorised", "sign in"));
+    }
     // at the moment its token runs out the stream is over, whether anything is sent then or not
     let deadline = s.clone();
     let left = until.saturating_sub(now());
@@ -1346,6 +1359,7 @@ async fn stream(
     s.send_now(bytes::Bytes::from_static(b": trommi hub\n\n"));
     let catch_up = app.clone();
     let queued = s.queued.clone();
+    let gone = s.gone.clone();
     tokio::task::spawn_blocking(move || {
         let Some(mut cursor) = after else {
             // no cursor: live from here on
@@ -1387,7 +1401,7 @@ async fn stream(
         .header("content-type", "text/event-stream; charset=utf-8")
         .header("cache-control", "no-cache, no-transform")
         .header("x-accel-buffering", "no")
-        .body(Body::events(rx, queued, until).guard(guard))
+        .body(Body::events(rx, queued, until, gone).guard(guard))
         .expect("a valid response"))
 }
 
