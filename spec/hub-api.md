@@ -111,7 +111,7 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 | `GET /v2/account` | → `{ email (or null), account, kit_form, revision, has_password, kdf, password_copy, kit_copy, user_handle, passkeys: [ { credential_id, sealed_copy, … } ], rooms }` | a human device; no hash leaves the hub |
 | `PUT /v2/account/password` · `PUT /v2/account/kit` | `{ auth_key, sealed_copy, kdf?, revision }` → `{ revision }` | `account-changed` when `revision` is not the current one; a password on an account without e-mail: `bad-email` |
 | `PUT /v2/account/email` | `{ email, kit: { auth_key, sealed_copy }, revision }` → `{ revision }` | a human device; only for an account that has none (`forbidden` otherwise); the kit made anew under the e-mail (`incomplete` without); `bad-email`, `account-exists` |
-| `POST /v2/account/passkeys/challenge` · `POST /v2/account/passkeys` · `DELETE /v2/account/passkeys/{credential_id}` | a passkey body as above | a human device; the challenge is for that account; `last-way-in` |
+| `POST /v2/account/passkeys/challenge` · `POST /v2/account/passkeys` · `DELETE /v2/account/passkeys/{credential_id}` | → `{ challenge, account, user_handle, email, kit_form }` · a passkey body as above | a human device (the challenge also the recovery key, before `finish`); the challenge is for that account; `last-way-in` |
 | `POST /v2/account/login` | `{ account, auth_key }` → `{ rooms: [ { room_id, sealed_copy, challenge } ], kdf, account, email }` | no token; `wrong-login` for an unknown e-mail and a wrong key alike, at one cost; `challenge` is a sign-in challenge of that room (12.3) |
 | `POST /v2/account/recover` | `{ account, auth_key }` (the kit's) → the same with the kit's copy | `wrong-recovery` |
 | `POST /v2/account/passkey/challenge` · `POST /v2/account/passkey/login` | → `{ challenge }` · `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` → as login | every failure is `wrong-login` |
@@ -124,8 +124,9 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   login hash stays) or `passkey: { credential_id, sealed_copy }`. Or one set anew (after a recovery with the
   Emergency Kit words or the bare code): `password: { auth_key, sealed_copy, kdf }`, or `passkey` as in
   `POST /v2/account` (a registration on a challenge of `POST /v2/account/passkeys/challenge`, which a human
-  device or, before `finish`, the recovery key asks for: it answers `{ challenge, account, user_handle }`, the
-  id the new passkey carries as its user handle). A room without an account sends `null`.
+  device or, before `finish`, the recovery key asks for: it answers `{ challenge, account, user_handle, email, kit_form }`: the
+  id the new passkey carries as its user handle, and what the new kit is salted with, 8.8.2; a recovery
+  that brings no passkey asks all the same, for the kit). A room without an account sends `null`.
 - Sign-up is instant: there is no e-mail confirmation and the hub sends no mail (owner, 9 October 2026). Signing
   up with an e-mail that has an account is `account-exists`.
 - **Failed logins slow down whoever guesses wrong and lock nobody** (owner, 9 October 2026). The source is the
@@ -388,7 +389,8 @@ encrypted.
     most 2 048. The page is put together by one request at a time and kept five seconds (who asks meanwhile and finds none
     that fresh is told to try again); the
     listener holds 16 connections, each for a minute at most.
-41. A device keeps at most 100 single-use KeyPackages: an upload beyond that drops its oldest (a device that
+41. A device keeps at most 100 single-use KeyPackages: one upload holds at most 100, and what then exceeds 100
+    stored drops the device's oldest (a device that
     signs in again uploads a fresh set). A refusal that names a wait (`rate-limited`, `overloaded`) names it in
     the `retry-after` header and as `retry_after` in the body; `too-many` is a quota and names none.
     `POST /v2/account/passkey/challenge` is bounded like every tokenless route (600 a minute per address, then
