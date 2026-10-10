@@ -35,11 +35,14 @@ final class RoomPastTests: XCTestCase {
 
   /// A founds a room and writes `early`; B comes in by invite. `handover`: A hands B the old keys at once.
   /// `past`: what B's room record notes about the past (RoomAccount.swift notes the room group after an invite).
-  private func roomOfTwo(early: [String], handover: Bool = true, past: (RoomId) -> PastWork?) throws -> (a: LiveDevice, b: Room, room: RoomId, invite: Bytes) {
+  /// `before`: what A does after its Notes and before B comes.
+  private func roomOfTwo(early: [String], handover: Bool = true, before: (LiveDevice, RoomId) throws -> Void = { _, _ in },
+                         past: (RoomId) -> PastWork?) throws -> (a: LiveDevice, b: Room, room: RoomId, invite: Bytes) {
     let a = try newDevice()
     let room = try a.foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
     try hub.post(a)
     for text in early { try writeNote(a, text) }
+    try before(a, room)
     var invite = Bytes()
     let b = try pocketRoom(self, room: room, past: past(room), tools: tools) { b in
       let exchanged = try exchangeInvite(from: a, to: b, tools: self.tools)
@@ -82,6 +85,23 @@ final class RoomPastTests: XCTestCase {
     _ = try await b.sync()
     XCTAssertFalse(PocketRoutes.asked.contains { $0.hasSuffix("/log") })
     XCTAssertEqual(notes(b), ["one", "three", "two"])
+  }
+
+  /// A room group whose history is longer than one slice (256 Commits) and one page of the hub's log (200 items):
+  /// the walk reads the log page by page and hands it to the core in slices, and the old Note opens.
+  func testAPastLongerThanOneSliceIsLearnedInSlices() async throws {
+    let (_, b, room, _) = try roomOfTwo(early: ["one"], before: { a, room in
+      for _ in 0..<300 {
+        _ = try a.update(group: room, forced: true, nowMs: nowMs())
+        try self.hub.post(a)
+      }
+    }) { PastWork(toLearn: [hex($0)]) }
+    XCTAssertGreaterThan(hub.log.filter { $0.group == room }.count, Slices.maxCommits)
+    PocketRoutes.asked = []
+    _ = try await b.sync()
+    XCTAssertEqual(notes(b), ["one"])
+    XCTAssertEqual(b.record.past, PastWork())
+    XCTAssertGreaterThanOrEqual(PocketRoutes.asked.filter { $0.hasSuffix("/groups/\(b64u(room))/log") }.count, 2, "the log is read in pages")
   }
 
   /// A device that joined by invite has the room group noted from the start: its first sync shows the past. A hub

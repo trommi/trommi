@@ -125,7 +125,10 @@ final class FakeDevice: CoreDevice {
     }
   }
   /** Nothing to learn: this fake holds every group from its founding. */
-  func learnHistory(group: GroupId, founding: Bytes, commits: [PastCommit]) throws -> UInt64 { 0 }
+  func learnStart(group: GroupId, founding: Bytes) throws -> LearnProgress { LearnProgress(epoch: 0, upto: 0) }
+  func learnSlice(group: GroupId, commits: [PastCommit]) throws -> LearnProgress { LearnProgress(epoch: 0, upto: 0) }
+  func learnFinish(group: GroupId) throws -> UInt64 { 0 }
+  func learnAbandon(group: GroupId) {}
   func logFinding(_ error: Error) -> LogFinding {
     switch (error as? TrommiError)?.code { case "storage": return .local; case "wrong-epoch": return .duplicate; case "group-behind": return .early; default: return .badGroup }
   }
