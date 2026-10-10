@@ -356,8 +356,35 @@ export class Client {
       default:
     }
   }
+  /**
+   * A human register this device wrote and the hub has not taken yet, from before the page was loaded again (its
+   * envelope waits in the stored outbox): shown as written, pending, as it was before the reload; the hub's copy
+   * replaces it as for any write. Without this the model read from the cache showed the value before it until then
+   * (an Emergency Kit saved just before a reload came back as due).
+   */
+  private async restoreRegisters(): Promise<void> {
+    const entries = await this.engine.outbox()
+    const held = new Set(entries.map(e => e.id))
+    for (const [k] of await this.cache.range('client/register-out/').catch(() => [] as [string, unknown][])) {
+      const id = Number(k.slice('client/register-out/'.length))
+      if (!held.has(id)) void this.cache.delete(k).catch(() => {})
+    }
+    for (const entry of entries) {
+      if (entry.kind !== 'envelope' || this.sending.has(entry.id) || !entry.parts[0]) continue
+      const out = await this.cache.get(`client/register-out/${entry.id}`).catch(() => null) as { key?: unknown; value?: unknown } | null
+      if (!out || typeof out.key !== 'string') continue
+      let info: ReturnType<Core['envelopeHeader']>
+      try { info = this.core.envelopeHeader(entry.parts[0]) } catch { continue }
+      const local_id = `restored-${entry.id}`, key = out.key
+      const item: OutboxItem = { local_id, envelope_kind: 'register', object_id: null, timeline_key: null, recipient_device_id: null, outbox_state: 'sending', error: null, content: { key } } as OutboxItem
+      this.sending.set(entry.id, { local_id, item })
+      const sealed = { outboxId: entry.id, envelopeHash: info.envelopeHash, seq: info.header.seq, group: info.header.group, objectId: null, time: info.header.time } as Sealed
+      this.tell(ch => { M.echoRegisters(this.model, { local_id, values: { [key]: out.value ?? null } }, ch); this.model.outbox.push(item); ch.outbox = true; M.confirmEcho(this.model, local_id, sealed, ch) })
+    }
+  }
   /** The hub answered an outbox entry: its item leaves model.outbox; a refusal takes the echo back first. */
   private outboxDone(entry: OutboxEntry, refusal: string | null): void {
+    void this.cache.delete(`client/register-out/${entry.id}`).catch(() => {})
     const sent = this.sending.get(entry.id)
     if (!sent) return
     this.sending.delete(entry.id)
@@ -398,6 +425,8 @@ export class Client {
     if (this.started) return
     this.started = true
     if (this.rebuild !== null) await this.fromDesk().catch(() => {})
+    if (!this.started) return
+    await this.restoreRegisters().catch(() => {})
     if (!this.started) return
     await this.engine.start({ stream })
     if (!this.started) return     // stopped meanwhile: no timer is left behind
@@ -564,7 +593,11 @@ export class Client {
       const local_id = `local-${randomHex(8)}`
       if (!session_id && !key.startsWith('device/')) this.tell(ch => M.echoRegisters(this.model, { local_id, values: { [key]: values[key] ?? null } }, ch))
       const { name, value } = encodeRegister(key, values[key] ?? null)
-      last = await this.send(local_id, [{ draft: { kind: 'register', group, name, value }, files: fileIdsOf('register', { value: values[key] }), item: { content: { key } } }])
+      last = await this.send(local_id, [{ draft: { kind: 'register', group, name, value }, files: fileIdsOf('register', { value: values[key] }), item: { content: { key } } }], sealed => {
+        // (kept beside the outbox entry: a page loaded again before the hub took it shows the write, not the value
+        //  before it, until the hub's copy comes back; restoreRegisters)
+        if (!session_id && !key.startsWith('device/')) void this.cache.set(`client/register-out/${sealed.outboxId}`, { key, value: values[key] ?? null }, { durable: true }).catch(() => {})
+      })
       if (key.startsWith('session/') && (values[key] as { archived?: unknown } | null)?.archived === true) void this.archive(key.slice('session/'.length)).catch(() => {})
     }
     return last!

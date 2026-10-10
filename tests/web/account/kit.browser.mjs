@@ -33,19 +33,20 @@ export const steps = Object.entries(STORAGE).map(([how, script]) => [`localStora
   await ctx.closeProfile(`kit-${how}`)
 }])
 
-steps.push(['"Open Trommi", then a reload at once (the cache may still hold the kit as due): the kit screen does not stay', async ctx => {
+steps.push(['"Open Trommi", then a reload at once, before the hub took that write: the kit screen never shows again', async ctx => {
   const P = await ctx.profile('kit-reload')
   await ui.signUp(P, ctx.app.start(), `kit-reload-${Date.now().toString(36)}@example.org`)
-  await sleep(1500)
-  // (the write that clears the kit is slow to reach the hub, as on a real line: the reload comes before it)
-  const slow = ctx.fake.faults.add({ method: 'POST', path: '/v2/envelopes', delay_ms: 2500, times: 3 })
-  await ui.takeKit(P)
-  await P.reload()
+  await ui.readKit(P)
   await ui.live(P)
-  await sleep(6000)
-  ctx.fake.faults.clear(); void slow
-  const open = await P.js("return !!document.querySelector('#kit-gate[open]')")
-  ctx.run.check(!open, 'no Emergency Kit screen after the reload', await P.js("return document.body.innerText.slice(0, 120)"))
+  await sleep(1500)
+  // (the write that clears the kit is slow to reach the hub, as on a real line: the page is loaded again before it)
+  ctx.fake.faults.add({ method: 'POST', path: '/v2/envelopes', delay_ms: 3000, times: 5 })
+  await ui.leaveKit(P)
+  await P.reload()
+  const seen = []
+  for (let i = 0; i < 60; i++) { if (await P.js("return !!document.querySelector('#kit-gate[open]')").catch(() => false)) seen.push(i * 100); await sleep(100) }
+  ctx.fake.faults.clear()
+  ctx.run.check(!seen.length, 'no Emergency Kit screen at any moment of six seconds after the reload', seen.length ? `shown from ${seen[0]} ms to ${seen.at(-1)} ms` : undefined)
   await ctx.closeProfile('kit-reload')
 }])
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) await main('kit', { setUp: setUpKit, steps, tearDown }, {})
