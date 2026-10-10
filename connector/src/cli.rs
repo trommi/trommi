@@ -36,7 +36,7 @@ pub async fn join(given: Option<String>) -> Result<String> {
         return Err(Fault::plain(format!(
             "not joined: {}{}",
             e.text(),
-            if spent {
+            if spent && !e.text().contains("make a new") {
                 " (an invite link works once and for a limited time: make a new one in the app)"
             } else {
                 ""
