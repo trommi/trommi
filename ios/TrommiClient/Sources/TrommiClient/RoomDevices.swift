@@ -243,12 +243,14 @@ extension Room {
 
   /**
    * Sign out. An MLS member cannot commit its own removal, so this device asks nothing of the group: it forgets its
-   * state here, and its push registration at the hub. It stays a leaf until another device of the person removes it
-   * (Settings → Devices), which the next device to sign in is told by the list it shows.
+   * state here, and its push registration and its token at the hub (both best effort, before anything is forgotten
+   * here). It stays a leaf until another device of the person removes it (Settings → Devices), which the next device
+   * to sign in is told by the list it shows.
    */
   public func leaveRoom() async throws {
     _ = try? await flush(timeoutMs: 3000)
     _ = try? await hub.request("DELETE", "/push")
+    await hub.signOut()
     await shutdown()
     Store.lifecycle.withLock { store.wipe() }
   }

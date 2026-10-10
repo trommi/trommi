@@ -17,6 +17,8 @@ public struct HubError: Error, CustomStringConvertible {
   public let message: String
   /** The rest of the error body (minimum_version, voided, …). */
   public var extra: JSON = [:]
+  /** The seconds the hub asks to wait before the next try (`rate-limited`, `overloaded`); nil when it names none. */
+  public var retryAfter: Int?
   public var description: String { "\(code) (\(status)): \(message)" }
   /** The request never got an answer: nothing is known about whether the hub took it. */
   public var isOffline: Bool { status == 0 }
@@ -103,7 +105,9 @@ public final class HubClient: @unchecked Sendable {
     }
     if status < 200 || status >= 300 {   // (a redirect is not followed and is no success)
       let json = HubClient.json(data) ?? [:]
-      throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
+      // (a wait is named in the body and in the header alike, spec/hub-api.md point 41: either is taken)
+      let wait = (json["retry_after"] as? NSNumber)?.intValue ?? response?.value(forHTTPHeaderField: "retry-after").flatMap { Int($0) }
+      throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json, retryAfter: wait.map { max(1, $0) })
     }
     return (data, response)
   }
@@ -143,6 +147,19 @@ public final class HubClient: @unchecked Sendable {
   }
   private var shut = false
   public func forgetToken() { setToken(nil, expiresAt: 0) }
+  /**
+   * Signing out (spec/hub-api.md): `DELETE /v2/token` ends the token this client holds, at once, and the hub cuts
+   * the streams opened with it. Best effort: no token, no request; an answer is not waited on for anything.
+   */
+  public func signOut() async {
+    guard let held = tokenNow(validFor: 0) else { return }
+    var req = URLRequest(url: url("/token", [:]))
+    req.httpMethod = "DELETE"
+    req.setValue(Self.clientName, forHTTPHeaderField: "trommi-client")
+    req.setValue("Bearer \(held)", forHTTPHeaderField: "authorization")
+    _ = try? await send(req, cap: Self.maxJSON)
+    forgetToken()
+  }
   private func tokenNow(validFor ms: UInt64) -> String? { lock.withLock { token.flatMap { nowMs() + ms < tokenExpiresAt ? $0 : nil } } }
   private func setToken(_ t: String?, expiresAt: UInt64) { lock.withLock { if !shut || t == nil { token = t; tokenExpiresAt = expiresAt } } }
 

@@ -3,6 +3,10 @@
 // Start (Create account, Log in), Create account, Log in (with "Scan a code" as the quiet third way), New password
 // (the Emergency Kit's words), Scan a code, the six emoji. A device is never asked for its name: it calls itself
 // "iPhone" or "iPad" (UIDeviceName), renamed under Settings → Devices. The kit's page is KitScreen.swift.
+//
+// An account is named by ONE field at Log in and New password: "Email or account ID" (the id is printed on the
+// Emergency Kit). With passkeys switched on (`Passkeys.available`) the passkey comes first on Create account and Log
+// in, and needs no field: the email is optional beside it. Switched off, both screens are the password's alone.
 import SwiftUI
 import TrommiClient
 #if canImport(UIKit)
@@ -117,13 +121,28 @@ struct ObError: View {
 
 struct ObEmail: View {
   @Binding var text: String
+  /** What the field asks for: the email, or (Log in, New password) the email or the account id. */
+  var label = "Email"
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      obLabel("Email")
+      obLabel(label)
       TextField("", text: $text)
         .textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
-        .accessibilityLabel("Email")
+        .accessibilityLabel(label)
         .obInput()
+    }
+  }
+}
+/** The field that names an account by its email or its account id. */
+let ACCOUNT_FIELD = "Email or account ID"
+
+/** The line between two ways of one screen. */
+struct ObOr: View {
+  var body: some View {
+    HStack(spacing: 12) {
+      Rectangle().fill(Ink.line).frame(height: 1)
+      Text("or").font(Face.text(14)).foregroundStyle(Ink.muted)
+      Rectangle().fill(Ink.line).frame(height: 1)
     }
   }
 }
@@ -204,6 +223,13 @@ func copySecret(_ s: String) {
   if (try? normaliseEmail(e)) == nil { model.error = e.isEmpty ? "Enter your email." : "That is not an email address."; return nil }
   return e
 }
+/** A form's "Email or account ID", checked with a human word; nil (and the word said) when it is missing or neither. */
+@MainActor func checkedAccount(_ text: String, _ model: BoardModel) -> String? {
+  let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+  if looksLikeAccountId(t) || (try? normaliseEmail(t)) != nil { return t }
+  model.error = t.isEmpty ? "Enter your email or account ID." : "That is not an email address or an account ID."
+  return nil
+}
 
 // ---- the screens ----------------------------------------------------------------------------------------------
 
@@ -222,7 +248,11 @@ struct StartView: View {
   }
 }
 
-/** Create account: email and a new password. The device founds the account and its Emergency Kit is made at once. */
+/**
+ * Create account: email and a new password. The device founds the account and its Emergency Kit is made at once.
+ * With passkeys switched on the passkey comes first: the email, which is optional beside it, then "Create with
+ * passkey" as the screen's primary button, then the password as the second way (it needs the email).
+ */
 struct CreateView: View {
   @EnvironmentObject var model: BoardModel
   @State private var email = ""
@@ -230,15 +260,19 @@ struct CreateView: View {
   @State private var bad = false
   var body: some View {
     ObShell(title: "Create account") {
-      ObEmail(text: $email)
-      ObPassword(fresh: true, generated: model.demoOnboard == "create-generated", text: $password, bad: $bad)
-      ObError(text: model.error)
-      Button(model.signing ? "Creating…" : "Create account") {
-        guard let e = checkedEmail(email, model) else { return }
-        if passwordProblem(password) != nil { model.error = nil; bad = true; return }
-        Task { await model.create(email: e, password: password) }
+      if Passkeys.available {
+        ObEmail(text: $email, label: "Email (optional with a passkey)")
+        Button(model.signing ? "Creating…" : "Create with passkey") { createWithPasskey() }.buttonStyle(ObGo()).disabled(model.signing)
+        ObOr()
+        ObPassword(fresh: true, generated: model.demoOnboard == "create-generated", text: $password, bad: $bad)
+        ObError(text: model.error)
+        Button(model.signing ? "Creating…" : "Create account") { create() }.buttonStyle(ObSecond()).disabled(model.signing)
+      } else {
+        ObEmail(text: $email)
+        ObPassword(fresh: true, generated: model.demoOnboard == "create-generated", text: $password, bad: $bad)
+        ObError(text: model.error)
+        Button(model.signing ? "Creating…" : "Create account") { create() }.buttonStyle(ObGo()).disabled(model.signing)
       }
-      .buttonStyle(ObGo()).disabled(model.signing)
       HStack(spacing: 6) {
         Text("Have an account?").font(Face.text(16)).foregroundStyle(Ink.muted)
         Button("Log in") { model.go(.email) }.buttonStyle(ObLink())
@@ -257,33 +291,44 @@ struct CreateView: View {
     .onChange(of: email) { _, _ in model.error = nil }
     .onChange(of: password) { _, _ in model.error = nil }
   }
+  private func create() {
+    guard let e = checkedEmail(email, model) else { return }
+    if passwordProblem(password) != nil { model.error = nil; bad = true; return }
+    Task { await model.create(email: e, password: password) }
+  }
+  /** An empty field is no email; one that is typed must be an address. */
+  private func createWithPasskey() {
+    var e = email.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !e.isEmpty { guard let checked = checkedEmail(e, model) else { return }; e = checked }
+    Task { await model.createWithPasskey(email: e) }
+  }
 }
 
-/** Log in with email and password; "Scan a code" is the quiet third way. */
+/**
+ * Log in with password; "Scan a code" is the quiet third way. One field names the account: its email or its account
+ * id. With passkeys switched on "Log in with passkey" comes first, as the screen's primary button and with no field
+ * (the passkey names its account itself); the password is then the second way.
+ */
 struct EmailView: View {
   @EnvironmentObject var model: BoardModel
   @State private var email = ""
   @State private var password = ""
   var body: some View {
     ObShell(title: "Log in") {
-      ObEmail(text: $email)
+      if Passkeys.available {
+        Button("Log in with passkey") { Task { await model.loginWithPasskey() } }.buttonStyle(ObGo()).disabled(model.signing)
+        ObOr()
+      }
+      ObEmail(text: $email, label: ACCOUNT_FIELD)
       ObPassword(text: $password, bad: .constant(false)) { Button("Forgot?") { model.go(.forgot) }.buttonStyle(ObLink()).frame(height: 20) }
       ObError(text: model.error)
-      Button(model.signing ? "Logging in…" : "Log in") {
-        guard let e = checkedEmail(email, model) else { return }
-        if password.isEmpty { model.error = "Enter your password."; return }
-        Task { await model.login(email: e, password: password) }
-      }
-      .buttonStyle(ObGo()).disabled(model.signing)
-      HStack(spacing: 12) {
-        Rectangle().fill(Ink.line).frame(height: 1)
-        Text("or").font(Face.text(14)).foregroundStyle(Ink.muted)
-        Rectangle().fill(Ink.line).frame(height: 1)
-      }
-      Button("Scan a code") { model.go(.scan) }.buttonStyle(ObSecond()).disabled(model.signing)
       if Passkeys.available {
-        Button("Log in with passkey") { Task { await model.loginWithPasskey() } }.buttonStyle(ObLink()).frame(maxWidth: .infinity).disabled(model.signing)
+        Button(model.signing ? "Logging in…" : "Log in") { login() }.buttonStyle(ObSecond()).disabled(model.signing)
+      } else {
+        Button(model.signing ? "Logging in…" : "Log in") { login() }.buttonStyle(ObGo()).disabled(model.signing)
       }
+      ObOr()
+      Button("Scan a code") { model.go(.scan) }.buttonStyle(ObSecond()).disabled(model.signing)
       HStack(spacing: 6) {
         Text("New here?").font(Face.text(16)).foregroundStyle(Ink.muted)
         Button("Create account") { model.go(.create) }.buttonStyle(ObLink())
@@ -294,9 +339,18 @@ struct EmailView: View {
       if model.demoOnboard == "login-error" { password = "not my password" }
     }
   }
+  private func login() {
+    guard let a = checkedAccount(email, model) else { return }
+    if password.isEmpty { model.error = "Enter your password."; return }
+    Task { await model.login(account: a, password: password) }
+  }
 }
 
-/** New password: email, the twelve words of the Emergency Kit, a new password (auth.mjs forgotFlow). */
+/**
+ * New password: the account's email or account id, the twelve words of the Emergency Kit, a new password (auth.mjs
+ * forgotFlow). Named by its account id, the account is one without an email: it has no password, so none is asked
+ * for and the words log this device in.
+ */
 struct ForgotView: View {
   @EnvironmentObject var model: BoardModel
   @State private var email = ""
@@ -304,8 +358,9 @@ struct ForgotView: View {
   @State private var password = ""
   @State private var bad = false
   var body: some View {
+    let byId = looksLikeAccountId(email)
     ObShell(title: "New password", lead: "With the words of your Emergency Kit.") {
-      ObEmail(text: $email)
+      ObEmail(text: $email, label: ACCOUNT_FIELD)
       VStack(alignment: .leading, spacing: 6) {
         obLabel("Twelve words")
         TextField("", text: $words, axis: .vertical).lineLimit(3...5)
@@ -313,13 +368,13 @@ struct ForgotView: View {
           .accessibilityLabel("Twelve words")
           .padding(.vertical, 12).obInput()
       }
-      ObPassword(label: "New password", fresh: true, text: $password, bad: $bad)
+      if !byId { ObPassword(label: "New password", fresh: true, text: $password, bad: $bad) }
       ObError(text: model.error)
-      Button(model.signing ? "Setting…" : "Set password") {
-        guard let e = checkedEmail(email, model) else { return }
+      Button(model.signing ? (byId ? "Logging in…" : "Setting…") : (byId ? "Log in" : "Set password")) {
+        guard let a = checkedAccount(email, model) else { return }
         if (try? parseRecoveryWords(words)) == nil { model.error = "Check the twelve words."; return }
-        if passwordProblem(password) != nil { model.error = nil; bad = true; return }
-        Task { await model.forgot(email: e, words: words, password: password) }
+        if !byId && passwordProblem(password) != nil { model.error = nil; bad = true; return }
+        Task { await model.forgot(account: a, words: words, password: byId ? nil : password) }
       }
       .buttonStyle(ObGo()).disabled(model.signing)
       Button("Back to log in") { model.go(.email) }.buttonStyle(ObLink()).frame(maxWidth: .infinity)
