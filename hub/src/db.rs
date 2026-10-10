@@ -31,7 +31,17 @@ CREATE TABLE IF NOT EXISTS welcome_ids (
   one            INTEGER PRIMARY KEY CHECK (one = 1),
   last           INTEGER NOT NULL
 ) STRICT;
-INSERT OR IGNORE INTO welcome_ids (one, last) VALUES (1, (SELECT coalesce(max(id), 0) FROM welcomes));
+";
+
+/// The first id the counter of `welcome_ids` starts above, in a database the hub wrote before it had one: above
+/// every id SQLite can have given. Without AUTOINCREMENT SQLite gives the largest id there is plus one, so no id
+/// was larger than the number of rows ever written; each row was written for one Add of a Commit, a Commit is
+/// never deleted from the log and adds at most `MAX_LEAVES` devices.
+const WELCOME_IDS_SEED: &str = "
+INSERT OR IGNORE INTO welcome_ids (one, last) VALUES (1, max(
+  (SELECT coalesce(max(id), 0) FROM welcomes),
+  (SELECT count(*) FROM group_log WHERE kind = 'commit') * 1024
+));
 ";
 
 pub const SCHEMA: &str = r#"
@@ -678,9 +688,15 @@ impl Db {
             if has_epoch == 0 {
                 writer.execute_batch("ALTER TABLE welcomes ADD COLUMN epoch INTEGER;")?;
             }
+            let seeded: i64 =
+                writer.query_row("SELECT count(*) FROM welcome_ids", [], |r| r.get(0))?;
+            if seeded == 0 {
+                writer.execute_batch(WELCOME_IDS_SEED)?;
+            }
             writer.execute_batch(
                 "CREATE INDEX IF NOT EXISTS welcomes_by_epoch ON welcomes(group_id, epoch) WHERE epoch IS NOT NULL;
-                 CREATE INDEX IF NOT EXISTS welcomes_by_group ON welcomes(group_id, device);",
+                 CREATE INDEX IF NOT EXISTS welcomes_by_group ON welcomes(group_id, device);
+                 CREATE INDEX IF NOT EXISTS groups_by_founding ON groups(room_id, founded_change);",
             )
         })();
         match added {
