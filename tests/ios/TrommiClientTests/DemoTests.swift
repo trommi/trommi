@@ -6,7 +6,9 @@ import XCTest
 
 final class DemoTests: XCTestCase {
   func fixtureData() throws -> Data {
-    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..").standardizedFileURL
+    // The repository's root: the first folder above this file that holds demo/data.
+    var repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while repo.path != "/", !FileManager.default.fileExists(atPath: repo.appendingPathComponent("demo/data/fixture.json").path) { repo = repo.deletingLastPathComponent() }
     return try Data(contentsOf: repo.appendingPathComponent("demo/data/fixture.json"))
   }
 

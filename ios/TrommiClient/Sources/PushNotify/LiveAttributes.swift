@@ -16,7 +16,7 @@ public struct LiveCounts: Codable, Hashable {
   }
 }
 
-#if canImport(ActivityKit)
+#if canImport(ActivityKit) && os(iOS)   // (the framework exists on macOS, where the type is unavailable)
 import ActivityKit
 
 public struct TrommiActivityAttributes: ActivityAttributes {

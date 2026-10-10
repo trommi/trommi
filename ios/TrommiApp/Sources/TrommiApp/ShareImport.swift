@@ -89,6 +89,8 @@ final class ShareImport {
 
   private func take(_ r: ShareRequest, inbox: ShareInbox, model m: BoardModel) async {
     guard let room = m.room else { inbox.release(r.id); return }
+    // What was shared while signed in to another room is not carried into this one: dropped before anything is uploaded.
+    if let from = r.room, from != room.record.roomId { inbox.finish(r.id); return }
     // the files first: encrypted and uploaded; an upload that fails leaves the share in the inbox for the next time
     var atts = [JV]()
     for i in r.items where i.kind == .image || i.kind == .file {
