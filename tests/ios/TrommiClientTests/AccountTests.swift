@@ -98,7 +98,26 @@ final class AccountTools: CoreTools {
   }
   func isFinalRefusal(_ code: String) -> Bool { base.isFinalRefusal(code) }
   func recoverySigner(code: Bytes) throws -> CoreSigner { AccountSigner(id: fold([code], 32)) }
-  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (missingLink: Bytes?, notJoined: [(group: GroupId, code: String)]) { joinedWith = code; return (nil, []) }
+  func joinRoomWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> Bytes? { joinedWith = code; return nil }
+  /** What the second step of a join answers, and how often it was asked. */
+  var sessionsLeft: (notJoined: [(group: GroupId, code: String)], again: Bool) = ([], false)
+  var sessionJoins = 0
+  func joinSessionsWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (notJoined: [(group: GroupId, code: String)], again: Bool) {
+    sessionJoins += 1
+    guard code == joinedWith else { throw TrommiError("wrong-recovery") }
+    return sessionsLeft
+  }
+  /** The recovery of a double: it removes two devices, makes a new code and keeps the account's copies it was given. */
+  var recoveredWith: Bytes?
+  var recoveryCopies: [String: Any]?
+  func recoverWithCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64, confirm: @escaping ([DeviceId]) async -> Bool,
+                       account: @escaping (Bytes) async throws -> Bytes) async throws -> (removed: [DeviceId], missingLink: Bytes?) {
+    let removed: [DeviceId] = [Bytes(repeating: 1, count: 32), Bytes(repeating: 2, count: 32)]
+    guard await confirm(removed) else { throw TrommiError("cancelled") }
+    recoveryCopies = parse(try await account(try generateRecoveryCode()))
+    recoveredWith = code
+    return (removed, nil)
+  }
 
   // ---- everything else: FakeCore.swift -------------------------------------------------------------------------
   var version: String { base.version }
@@ -370,6 +389,85 @@ final class AccountTests: XCTestCase {
     XCTAssertNotEqual(second.deviceIdHex, room.deviceIdHex)
     XCTAssertEqual(Store.rooms(base: device("second")), [room.roomIdHex])
     room.close(); second.close()
+  }
+
+  /** A sign-in whose session joins did not all go through keeps the device and the code, and the next try finishes it. */
+  func testAnUnfinishedCodeJoinKeepsTheDeviceAndGoesOn() async throws {
+    let (room, _) = try await created()
+    tools.sessionsLeft = ([], true)
+    let second = try await Room.loginWithPassword(hubURL: hubURL, account: email, password: password, base: device("second"))
+    let item = Room.joinCodeItem(second.store.dir)
+    XCTAssertEqual(Store.rooms(base: device("second")), [room.roomIdHex], "the device is kept")
+    XCTAssertEqual(try second.store.load().codeJoin, true)
+    XCTAssertEqual(try LocalKey.read(item, dir: second.store.dir), tools.codes.last, "the code is kept until the join has finished")
+    await second.finishCodeJoin()
+    XCTAssertEqual(second.record.codeJoin, true, "still not finished: nothing is forgotten")
+    // after a restart it goes on from what room.json and the Keychain hold
+    await second.shutdown()
+    let again = try Room.open(base: device("second"), roomId: room.roomIdHex)
+    tools.sessionsLeft = ([], false)
+    await again.finishCodeJoin()
+    XCTAssertEqual(tools.sessionJoins, 3)
+    XCTAssertNil(again.record.codeJoin)
+    XCTAssertNil(try again.store.load().codeJoin)
+    XCTAssertNil(try LocalKey.read(item, dir: again.store.dir), "the code is forgotten once the join has finished")
+    room.close(); again.close()
+  }
+
+  /** A finished sign-in keeps no code. */
+  func testAFinishedCodeJoinKeepsNoCode() async throws {
+    let (room, _) = try await created()
+    let second = try await Room.loginWithPassword(hubURL: hubURL, account: email, password: password, base: device("second"))
+    XCTAssertNil(second.record.codeJoin)
+    XCTAssertNil(try LocalKey.read(Room.joinCodeItem(second.store.dir), dir: second.store.dir))
+    room.close(); second.close()
+  }
+
+  /** When every device is lost: the kit's words open the account, and the request carries a new kit and a password set anew. */
+  func testARecoveryCarriesANewKitAndAPasswordSetAnew() async throws {
+    let (room, words) = try await created()
+    let founding = try XCTUnwrap(tools.codes.last)
+    var asked: Int?
+    let done = try await Room.recoverAccount(hubURL: hubURL, account: email, words: words, newPassword: other, base: device("second")) { asked = $0; return true }
+    XCTAssertEqual(asked, 2)
+    XCTAssertEqual(done.removed, 2)
+    XCTAssertEqual(tools.recoveredWith, founding, "the recovery got the code the kit's words opened")
+    XCTAssertNil(tools.joinedWith, "no ordinary join beside it")
+    XCTAssertEqual(Store.rooms(base: device("second")), [room.roomIdHex])
+    // a new kit, and one way in set anew: the password with its login key and derivation record
+    let copies = try XCTUnwrap(tools.recoveryCopies)
+    XCTAssertEqual(Set(copies.keys), ["kit", "password"])
+    let kit = try XCTUnwrap(copies["kit"] as? [String: Any]), pw = try XCTUnwrap(copies["password"] as? [String: Any])
+    XCTAssertEqual(Set(kit.keys), ["auth_key", "sealed_copy"])
+    XCTAssertEqual(Set(pw.keys), ["auth_key", "sealed_copy", "kdf"])
+    let next = try XCTUnwrap(tools.codes.last)
+    XCTAssertNotEqual(next, founding)
+    XCTAssertNotEqual(done.kit.words, words)
+    XCTAssertEqual(done.kit.email, "ada@example.org")
+    XCTAssertEqual(done.kit.accountId, hub.id)
+    let kitKeys = try tools.kitKeysFor(.email("ada@example.org"), words: done.kit.words), keys = try tools.passwordKeys(email: "ada@example.org", password: other, kdf: nil)
+    XCTAssertEqual(kit["auth_key"] as? String, kitKeys.authKey)
+    XCTAssertEqual(pw["auth_key"] as? String, keys.authKey)
+    XCTAssertEqual(try tools.openCode(try unb64u(kit["sealed_copy"] as! String), room: room.roomId, way: .kit(wrapKey: kitKeys.wrapKey)), next)
+    XCTAssertEqual(try tools.openCode(try unb64u(pw["sealed_copy"] as! String), room: room.roomId, way: .password(wrapKey: keys.wrapKey)), next)
+    room.close(); done.room.close()
+  }
+
+  /** A recovery the person does not confirm, or that cannot set a way in, leaves nothing on the device. */
+  func testARecoveryThatIsNotConfirmedLeavesNothing() async throws {
+    let (room, words) = try await created()
+    let no = await failure { _ = try await Room.recoverAccount(hubURL: self.hubURL, account: self.email, words: words, newPassword: self.other, base: self.device("second")) { _ in false } }
+    XCTAssertEqual(code(of: try XCTUnwrap(no)), "cancelled")
+    let weak = await failure { _ = try await Room.recoverAccount(hubURL: self.hubURL, account: self.email, words: words, newPassword: "short", base: self.device("second")) { _ in true } }
+    XCTAssertEqual(code(of: try XCTUnwrap(weak)), "weak-password")
+    // an account named by its id has no password to set: without the system's passkey step nothing is asked
+    let before = hub.paths("POST").count
+    let byId = await failure { _ = try await Room.recoverAccount(hubURL: self.hubURL, account: self.hub.id, words: words, newPassword: nil, base: self.device("second")) { _ in true } }
+    XCTAssertEqual(code(of: try XCTUnwrap(byId)), "not-built")
+    XCTAssertEqual(hub.paths("POST").count, before)
+    XCTAssertNil(tools.recoveredWith)
+    XCTAssertEqual(Store.rooms(base: device("second")), [])
+    room.close()
   }
 
   func testAPasswordWithAnAccountIdSendsNothing() async throws {

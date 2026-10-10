@@ -152,7 +152,7 @@ final class RecoveryTests: XCTestCase {
     try XCTUnwrap(try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: systemRandom(32))) as? LiveDevice)
   }
 
-  /// A new device joins the room group with the code, as LiveCore.joinWithRecoveryCode does it against a hub.
+  /// A new device joins the room group with the code, as LiveCore.joinRoomWithRecoveryCode does it against a hub.
   private func join(_ device: LiveDevice, code: Bytes, room: RoomId, hub: PocketHub) throws {
     let joined = try device.joinRoomWithCode(code, served: try hub.served(room: room, code: code, tools: tools), nowMs: nowMs())
     XCTAssertEqual(joined.outbox.count, 1)
