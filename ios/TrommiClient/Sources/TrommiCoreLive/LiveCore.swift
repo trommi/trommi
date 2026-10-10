@@ -2,37 +2,33 @@
 // (core/swift, built by core/swift/build.sh). The app installs it once at launch: `Core.tools = LiveCore()`.
 // The device is LiveDevice.swift; the store, errors and bytes at the edge are LiveStore.swift.
 //
-// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src (the facade's calls, one for one):
+// WHAT IS REAL AND WHAT IS STUBBED, against the binding of core/swift/src at v2-bindings 286f595. Nothing is stubbed:
+// every call of Core.swift is one call into the binding, with the shapes changed and nothing else.
 //
-//   real, CoreTools     version, selfTest, createDevice, openDevice,
-//                       normaliseEmail, checkPassword, passwordKeys, kitAuthKey, generateKitWords, parseKitWords,
-//                       generateRecoveryCode, formatRecoveryCode, parseRecoveryCode, sealCode, openCode,
-//                       encryptFile, decryptFile, createShareLink, generatePushKey, isFinalRefusal, canonicalHub,
-//                       recoverySigner, parseInviteLink, inviteRequest, checkEmoji
-//   real, CoreDevice    id, room, cursor, isOwner, groups, keyPackagesToUpload, keyPackage, foundRoom,
-//                       foundSession, addToSession, changeAgents (removing only: the core's removeAgents),
-//                       removeHumanDevices, cleanSession, update, archive, joinWelcome, processLogEntry, logFinding,
-//                       processRelay, sendHandover, sendStrokePiece, outbox, outboxAccepted, outboxRefused,
-//                       signHubAuth, close, sendEnvelope, receiveEnvelope, register, cut,
-//                       openInvite, acceptInviteRequest, confirmInvite, burnInvite
-//   real by a detour    recoverySigner's id  the recovery key's public half is read out of a `HubAuth` it signed
-//   real, and not in    Recovery (section 8) as the core has it, which Core.swift's two awaited calls cannot say
-//   Core.swift yet      (LiveRecovery.swift): LiveCore.recoveryAnchor, LiveCore.joinWithRecoveryCode(device:code:
-//                       hub:nowMs:); LiveDevice.joinRoomWithCode, joinSessionWithCode, newRecoveryCode, replaceCode,
-//                       prepareRecovery, recover, holdsRecoveryMac, keyIsConfirmed, sendRecoveryAuth, postSealedKey,
-//                       verifyFounding, heldBack. Also LiveDevice.isHuman, disallowed, roomRoles, holdsKey.
-//                       Invites (12.1): LiveDevice.inviteSteps, inviteHandover, inviteRecommit, inviteForget (what
-//                       follows a confirmed invite), joinRequest, joinReveal, joinObserve, joinInvited (the new
-//                       device); LiveCore.inviteReveal(device:reveal:signature:).
-//   stubbed, CoreTools  inviteReveal(joiner:reveal:signature:)   (the core checks a Reveal on the device),
-//                       joinWithRecoveryCode(device:code:groupInfos:sealedKeys:nowMs:)   (the core needs more of the
-//                                            hub than this call hands over, and the hub's answer between its steps)
-//   stubbed, CoreDevice contentKey           (gone from the binding: a content key never leaves the core),
-//                       addHumanDevice, changeAgents(enrol:)   (gone from the core: a device comes by invite only),
-//                       replaceRecoveryCode(nowMs:)   (the core needs the code in force and the account's new copies)
-//
-// A stubbed call throws `TrommiError("not-built", "<call>: not in this build of the core binding")`. To make a call
-// real, replace the body of its line with the call into TrommiCoreRust and move its name up in the list above.
+//   CoreTools    version, selfTest, createDevice, openDevice,
+//                normaliseEmail, checkPassword, passwordKeys, kitAuthKey, generateKitWords, parseKitWords,
+//                generateRecoveryCode, formatRecoveryCode, parseRecoveryCode, sealCode, openCode,
+//                encryptFile, decryptFile, createShareLink, generatePushKey, isFinalRefusal (the core's table, held
+//                by a test), canonicalHub (`hub_address`), parseInviteLink (`invite_link_parse`), checkEmoji,
+//                boardReduce, recoverySigner, joinWithRecoveryCode (LiveRecovery.swift)
+//   CoreDevice   id, room, cursor, isOwner, groups, holdsKey, keyPackagesToUpload, keyPackage, foundRoom,
+//                foundSession, addToSession, removeAgents, removeHumanDevices, cleanSession, update, archive,
+//                joinWelcome, processLogEntry, logFinding, sendHandover, sendStrokePiece, receiveRelay,
+//                outbox, outboxAccepted, outboxRefused, outboxVoided, envelopeAbandon, signHubAuth (`hub_sign_in`), close,
+//                seal, receiveEnvelope, register, cutOf, headsDue, compareHeads, findings, findingsRead, boardLoad,
+//                inviteOpen, inviteAccept, inviteConfirm, inviteSteps, inviteHandover, inviteRecommit, inviteForget,
+//                joinRequest, joinReveal, joinObserve, joinInvited,
+//                holdsRecoveryMac, keyIsConfirmed, sendRecoveryAuth, newRecoveryCode, replaceCode
+//   real, beside Core.swift (the client has no call for them yet): LiveCore.recoveryAnchor; LiveDevice.joinRoomWithCode,
+//                joinSessionWithCode, prepareRecovery, recover, postSealedKey, verifyFounding, isHuman, disallowed,
+//                roomRoles.
+//   in the binding and bound nowhere here, because a human device never calls them: the command gate (command,
+//                commandFinished, commandsPending, commandsUncertain), an agent's drafts (cardFirst, cardVersion,
+//                permissionRequest, artifactFirst, artifactVersion), foundHelper, readmitHelper, observeRoom,
+//                observeSession, sendWorkTrail, handoversSent, handoverRead; and chainHead, chainCut, object, objects,
+//                objectOwner, registerOf, which the engine does not need: it reads each of them off the received
+//                envelope (`objectAfter`, `register`) or keeps it in the board's own reducer.
+//   recoverySigner's id is real by a detour: the recovery key's public half is read out of a `HubAuth` it signed.
 import Foundation
 import TrommiClient
 import TrommiCoreRust
@@ -144,48 +140,26 @@ open class LiveCore: CoreTools {
   static let notOfAHub: Set<String> = ["storage", "entropy", "busy", "bad-email", "weak-password", "bad-kdf", "bad-recovery-words", "bad-recovery-code", "no-prf",
                                        "withheld", "hub-voided-other", "bad-group", "no-key", "pruned", "decrypt-failed", "code-not-confirmed", "hash-mismatch", "cut"]
 
-  // invite, the joining side (12.1): the joining side's state is the device's, kept in its store
-  /// The hub, the room and the invite's id a link names. The link's secret is not among them.
+  // invite (12.1): what needs no device
+  /// The app's origin, the hub, the room and the invite's id a link names. The link's secret is not among them.
   public func parseInviteLink(_ text: String) throws -> TrommiClient.InviteLinkParts {
     let parts = try core { try inviteLinkParse(text: text) }
-    return TrommiClient.InviteLinkParts(hub: parts.hub, room: parts.roomId.bytes, invite: parts.inviteId.bytes)
+    return TrommiClient.InviteLinkParts(app: parts.app, hub: parts.hub, room: parts.roomId.bytes, invite: parts.inviteId.bytes)
   }
-  public func inviteRequest(link: String, offer: Bytes, offerSignature: Bytes, device: TrommiClient.CoreDevice, nowMs: UInt64) throws -> TrommiClient.JoinRequest {
-    try live(device).joinRequest(link: link, offer: offer, offerSignature: offerSignature, nowMs: nowMs)
-  }
-  /// Checks the Reveal against the Request `device` made; the six numbers 0 to 63.
-  public func inviteReveal(device: TrommiClient.CoreDevice, reveal: Bytes, signature: Bytes) throws -> [UInt8] {
-    try live(device).joinReveal(reveal: reveal, signature: signature)
-  }
-  /// The emoji and word of each number, from the core's list of 64. A number that is none of them is "?" without a
-  /// word: this call cannot throw.
-  public func checkEmoji(_ numbers: [UInt8]) -> [(emoji: String, word: String)] {
-    let all = TrommiCoreRust.checkEmoji()
-    return numbers.map { Int($0) < all.count ? (emoji: all[Int($0)].emoji, word: all[Int($0)].word) : (emoji: "?", word: "") }
-  }
-  private func live(_ device: TrommiClient.CoreDevice) throws -> LiveDevice {
-    guard let live = device as? LiveDevice else { throw TrommiError("bad-format", "not a device of this core") }
-    return live
+  public func checkEmoji() -> [(emoji: String, word: String)] { TrommiCoreRust.checkEmoji().map { ($0.emoji, $0.word) } }
+
+  // the Scribble Board (10.7, 10.8)
+  public func boardReduce(snapshot: Bytes?, snapshotFrontier: [TrommiClient.WriterHead], items: [BoardItemBody], frontier: [TrommiClient.WriterHead]) throws -> Bytes {
+    func heads(_ list: [TrommiClient.WriterHead]) -> [TrommiCoreRust.WriterHead] { list.map { TrommiCoreRust.WriterHead(writer: $0.writer.data, seq: $0.seq, hash: $0.hash.data) } }
+    return try core {
+      try TrommiCoreRust.boardReduce(snapshot: snapshot?.data, snapshotFrontier: heads(snapshotFrontier),
+                                     items: items.map { BoardItem(sender: $0.sender.data, seq: $0.seq, payload: $0.payload.data) }, frontier: heads(frontier))
+    }.bytes
   }
 
   /// `text` itself when it is a hub's canonical address (https, lower-case host, an optional port; http only for
   /// localhost and 127.0.0.1), `bad-format` otherwise. Nothing is normalised: the core refuses, it does not repair.
   public func canonicalHub(_ text: String) throws -> String { try core { try hubAddress(text: text) } }
-
-  // =========================================================================================================
-  // STUBBED: not in this build of the core binding. One line per call.
-  // =========================================================================================================
-
-
-  // invite, the joining side (12.1)
-  // the binding checks a Reveal on the device that made the Request: `inviteReveal(device:reveal:signature:)`
-  public func inviteReveal(joiner: Bytes, reveal: Bytes, signature: Bytes) throws -> [UInt8] { try notBuilt() }
-
-  // recovery (section 8): the call the core cannot serve in this shape. The real ones are in LiveRecovery.swift.
-  public func joinWithRecoveryCode(device: TrommiClient.CoreDevice, code: Bytes, groupInfos: [(group: GroupId, groupInfo: Bytes)], sealedKeys: [Bytes], nowMs: UInt64) throws -> Bytes { try notBuilt() }
-
-  /// The code every stubbed call refuses with.
-  public static let notBuiltCode = "not-built"
 
   // ---- the Swift half of the self-test ----------------------------------------------------------------------
 

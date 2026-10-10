@@ -11,9 +11,9 @@
 // What a human does is in RoomActions.swift, devices and invites in RoomDevices.swift, signing in and recovery in
 // RoomAccount.swift, the record cache in RoomCache.swift.
 //
-// Threads: the room is used from the main actor; its operations run one after the other (`serial`). The core is not
-// thread-safe and is only called inside `onCore`, which runs on one queue of its own, so a long catch-up does not
-// hold the main thread.
+// Threads: the room is used from the main actor; its operations run one after the other (`serial`). The core is
+// only called inside `onCore`, which runs on one queue of its own: that keeps the order of its operations, and a
+// long catch-up does not hold the main thread.
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -28,7 +28,8 @@ public struct RoomRecord: Codable {
   public var deviceRegisterSent: Bool
 }
 
-public struct SyncReport { public var envelopes = 0, opened = 0, headerOnly = 0, undecryptable = 0, voids = 0, refused = 0; public var warnings: [String] = [] }
+/** `beforeJoining`: envelopes of an epoch before this device came into their group, which it cannot take (passed over). */
+public struct SyncReport { public var envelopes = 0, opened = 0, headerOnly = 0, undecryptable = 0, voids = 0, refused = 0, beforeJoining = 0; public var warnings: [String] = [] }
 
 /** The hub said this app is too old to be served. */
 public struct UpgradeNotice: Equatable { public var minimumVersion: String?; public var message: String }
@@ -139,8 +140,10 @@ public final class Room {
   var roomGroup: GroupId?
   /** The hub's last word on how many of this device's KeyPackages are unused; nil before it said so in this run. */
   var keyPackagesAtHub: Int?
-  /** Which session an envelope of a group belongs to: group id (hex) to session id (hex). */
+  /** Which session a message of a group belongs to: group id (hex) to session id (hex). */
   var sessionIdOfGroup: [String: String] = [:]
+  /** Findings about a sender's chain that were shown in this run ("<group>/<sender>/<code>"): each is said once. */
+  var findingsSaid = Set<String>()
   var synced = false
   var queueTail: Task<Void, Never>?
   var echoSeq = 0
@@ -342,8 +345,10 @@ public final class Room {
     var change = Change()
     try await takeWelcomes(&change)
     try await readChanges(&report, &change)
-    // (stocking KeyPackages is upkeep: a failure there does not keep the board from showing; the next sync tries again)
+    // (stocking KeyPackages and writing `heads` are upkeep: a failure there does not keep the board from showing;
+    // the next sync tries again)
     try? await publishKeyPackages()
+    await writeHeads()
     synced = true
     Task { await self.refreshPresence() }
     board.project()
@@ -366,6 +371,21 @@ public final class Room {
       catch { board.pushAlert(&change, code: "welcome", message: "a Welcome was refused: \(Self.codeOf(error))") }
     }
     try await refreshGroups(&change)
+  }
+
+  /**
+   * `heads` (9.0.7): in each live group the last envelope of every chain this device accepted there, written when
+   * the core says it is due (coming online with a changed head, then at most every ten minutes). Another device
+   * that holds less than a head named here knows that the hub withholds something.
+   */
+  func writeHeads() async {
+    for g in groups.values where !g.archived {
+      let group = g.group
+      _ = try? await onCore { device -> Void in
+        guard let value = try device.headsDue(group: group, nowMs: nowMs()) else { return }
+        _ = try device.seal(.register(group: group, name: "heads", value: value), files: [], nowMs: nowMs())
+      }
+    }
   }
 
   /** Keeps the hub stocked with this device's KeyPackages (spec 14.2). */
@@ -394,7 +414,7 @@ public final class Room {
       let page = try await noted { try await hub.changes(after: cursor) }
       let raw = page["items"] as? [JSON] ?? []
       let items = try Self.ordered(raw, after: cursor)
-      try await process(items, source: .catchUp, report: &report, change: &change)
+      try await process(items, report: &report, change: &change)
       // The hub moves the cursor over what this device may not see: forwards only, and only when the whole page
       // was taken (process throws otherwise).
       if let upTo = Wire.uint(page["change"]), upTo > cursor { cursor = upTo; board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, Int(upTo)) }
@@ -451,7 +471,8 @@ public final class Room {
   /** What the core made of one item. */
   enum Outcome {
     case processed(Processed)
-    case envelope(ReceivedEnvelope, change: UInt64)
+    /** `heads`: for a `heads` register of another device, how its heads compare with this device's chains. */
+    case envelope(ReceivedEnvelope, heads: [(sender: DeviceId, standing: HeadStanding)])
     case refused(change: UInt64, code: String)
     /** The run ends before this item; the cursor stays in front of it. */
     case stopped(code: String)
@@ -462,40 +483,61 @@ public final class Room {
    * item the core refuses changes nothing and is counted; a local failure (the store, a lost owner) stops the run
    * with the cursor before it, so it is read again.
    */
-  func process(_ parsed: [Item], source: EnvelopeSource, report: inout SyncReport, change: inout Change) async throws {
+  func process(_ parsed: [Item], report: inout SyncReport, change: inout Change) async throws {
     guard !parsed.isEmpty else { return }
-    let (outcomes, coreAt): ([Outcome], UInt64) = try await onCore { device in
+    let (outcomes, coreAt, findings): ([Outcome], UInt64, [ChainFinding]) = try await onCore { device in
       var out = [Outcome]()
+      var commits = false
+      /// The findings the core made while it processed Commits (a Cut that names another envelope than the one
+      /// accepted): taken once, then cleared there.
+      func done() -> ([Outcome], UInt64, [ChainFinding]) {
+        let found = commits ? ((try? device.findings()) ?? []) : []
+        if !found.isEmpty { try? device.findingsRead() }
+        return (out, device.cursor, found)
+      }
       // What the core processed already and the board's cache has not (the app ended before the cache was written):
       // an envelope is read again without touching any state, a log entry is done with.
-      let done = device.cursor
+      let before = device.cursor
       for item in parsed {
         do {
           switch item {
-          case .log(_, let entry): out.append(entry.change <= done ? .processed(.skipped) : .processed(try device.processLogEntry(entry)))
+          case .log(_, let entry):
+            if entry.change <= before { out.append(.processed(.skipped)); continue }
+            let p = try device.processLogEntry(entry)
+            if case .message = p {} else { commits = true }
+            out.append(.processed(p))
           case .envelope(let c, let bytes, let void):
-            out.append(.envelope(try device.receiveEnvelope(bytes, change: c, source: c <= done ? .page : source, voidCode: void, nowMs: nowMs()), change: c))
+            let e = try device.receiveEnvelope(bytes, change: c, ordered: c > before, voidCode: void, nowMs: nowMs())
+            // Refused with `group-behind` and the cursor left where it was: the group's next Commits are still to
+            // come. Stop before it, so that it is read again with what it needs, instead of being passed over.
+            if e.outcome == .refused, c > before, device.cursor < c { out.append(.stopped(code: e.code ?? "group-behind")); return done() }
+            var heads = [(sender: DeviceId, standing: HeadStanding)]()
+            if e.outcome == .applied, e.register?.name == "heads", e.header.sender != device.id {
+              heads = (try? device.compareHeads(group: e.header.group, writer: e.header.sender)) ?? []
+            }
+            out.append(.envelope(e, heads: heads))
           }
         } catch {
           // A local failure is not the item's fault: stop here, nothing after it is processed out of order.
           if !device.isOwner { throw error }
           switch device.logFinding(error) {
           // The store failed: not the item's fault. Stop here; nothing after it is processed out of order.
-          case .local: out.append(.stopped(code: Room.codeOf(error))); return (out, device.cursor)
+          case .local: out.append(.stopped(code: Room.codeOf(error))); return done()
           // Something this item builds on has not come yet (its group is behind): stop before it, so that it is
           // read again with what it needs, instead of being passed over.
-          case .early: out.append(.stopped(code: Room.codeOf(error))); return (out, device.cursor)
+          case .early: out.append(.stopped(code: Room.codeOf(error))); return done()
           // Processed before: nothing to do.
           case .duplicate: out.append(.processed(.skipped))
-          // It does not verify or cannot be merged (13.4): the device keeps its last good state, the finding is
-          // shown and, for a Commit, reported to the hub (14.7). Later items of other groups go on.
+          // It does not verify or cannot be merged (13.4), or its bytes are no envelope: the device keeps its
+          // last good state, the finding is shown and, for a Commit, reported to the hub (14.7). Later items go on.
           case .badGroup: out.append(.refused(change: item.change, code: Room.codeOf(error)))
           }
         }
       }
-      return (out, device.cursor)
+      return done()
     }
     coreCursor = coreAt
+    for f in findings { board.pushAlert(&change, code: f.code, message: "a removal names another last item of a device than the one this device holds", sender: hex(f.sender)) }
     // The groups are read again from the core after a Commit and before the next item is shown: an envelope right
     // behind the Commit that founded its session must find that session on the board.
     var groupsStale = false, groupsChanged = false
@@ -511,15 +553,16 @@ public final class Room {
         case .commit(_, _, _, let removed):
           groupsStale = true
           if removed { board.pushAlert(&change, code: "removed", message: "this device was removed from a group") }
-        case .ownCommit, .observed: groupsStale = true
+        case .ownCommit, .observed, .joinSuperseded: groupsStale = true
         case .message(let m):
           try await freshGroups()
           if case .log(_, let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
         case .skipped: break
         }
-      case .envelope(let e, let c):
+      case .envelope(let e, let heads):
         try await freshGroups()
-        apply(e, change: c, report: &report, &change)
+        apply(e, report: &report, &change)
+        for h in heads { applyHead(h.standing, of: h.sender, group: e.header.group, saidBy: e.header.sender, &change) }
       case .refused(let c, let code):
         report.refused += 1
         if report.refused <= 5 { report.warnings.append("change \(c) refused: \(code)") }
@@ -532,6 +575,25 @@ public final class Room {
     try await freshGroups()
     if groupsChanged { notifyKeysChanged?() }
     if let code = stopped { throw TrommiError(code, "the catch-up stopped before a change it could not take yet") }
+  }
+  /**
+   * What another device's `heads` say of one sender's chain, against this device's own (9.0.7). Another envelope
+   * under the same number is `equivocation`. Holding less than the head named is `withheld`: `heads` come in the
+   * hub's order, behind everything their writer had accepted, so what they name should be here already. Not said
+   * of a sender whose chain this device could not take from its start (it came into the group later): there the
+   * core holds nothing to compare, and the `gap` shown for that sender says so.
+   */
+  private func applyHead(_ standing: HeadStanding, of sender: DeviceId, group: GroupId, saidBy: DeviceId, _ change: inout Change) {
+    let code: String
+    switch standing {
+    case .held, .unknown: return
+    case .equivocation: code = "equivocation"
+    case .behind(let have):
+      if have == 0 || findingsSaid.contains("\(hex(group))/\(hex(sender))/gap") { return }
+      code = "withheld"
+    }
+    guard findingsSaid.insert("\(hex(group))/\(hex(sender))/\(code)").inserted else { return }
+    board.pushAlert(&change, code: code, message: code == "withheld" ? "another device holds more items of a device than the hub gave this one" : "two different items under one number of a device's chain", sender: hex(sender))
   }
   /** Tells the hub that a Commit of its log cannot be merged (14.7); the hub withdraws nothing, it notes it. */
   private func reportBadCommit(_ group: GroupId, _ n: UInt64) {
@@ -559,16 +621,44 @@ public final class Room {
   /** A piece of a stroke another device is drawing (relayed, never stored): sender, board timeline id, the piece's JSON. */
   public var onStrokePiece: ((String, String, Bytes) -> Void)?
 
+  /** "human" or "agent", as the room names a device: a leaf of the room group is a human device; one that was, stays one. */
+  func roleOf(_ device: DeviceId) -> String {
+    if let known = board.members[hex(device)]?.deviceRole { return known }
+    return roomGroup.flatMap { groups[hex($0)] }?.leaves.contains(device) == true ? "human" : "agent"
+  }
+
   /** One received envelope into the board. */
-  func apply(_ e: ReceivedEnvelope, change n: UInt64, report: inout SyncReport, _ change: inout Change) {
+  func apply(_ e: ReceivedEnvelope, report: inout SyncReport, _ change: inout Change) {
+    let n = e.change, sender = hex(e.header.sender)
     report.envelopes += 1
-    if case .notApplied(let code) = e.standing, code != "pruned" {
-      // Chained and never applied. Why is a finding (a void of another sender the core could not re-check, an
-      // equivocation, a body that does not open): shown, never swallowed (section 16).
-      board.pushAlert(&change, code: code, message: "an item was not applied", envelopeNumber: Int(n), sender: hex(e.header.sender))
-      if e.payload == nil, code != "no-key", code != "decrypt-failed" { report.voids += 1; return }
+    if let f = e.finding { board.pushAlert(&change, code: f, message: "the hub set an item of another device aside for a reason this device cannot check", envelopeNumber: Int(n), sender: sender) }
+    // What was shown of this place in the sender's chain before the chain came is another envelope: dropped.
+    if e.confirmed == false { dropProvisional(sender: sender, seq: e.header.seq, keep: hex(e.hash), &change) }
+    switch e.outcome {
+    case .refused:
+      // It consumed nothing. An epoch before this device came into the group is nothing it can take, and no
+      // finding. Everything else is one (a forged or replayed item, a chain that does not link): shown, once
+      // per sender and code, since every later item of a broken chain is refused the same way (section 16).
+      let code = e.code ?? "bad-format"
+      if code == "group-behind" { report.beforeJoining += 1; return }
+      report.refused += 1
+      if report.refused <= 5 { report.warnings.append("change \(n) refused: \(code)") }
+      if findingsSaid.insert("\(hex(e.header.group))/\(sender)/\(code)").inserted {
+        board.pushAlert(&change, code: code, message: code == "gap" ? "items of a device cannot be read: its chain started before this device came" : "an item from the hub was refused", envelopeNumber: Int(n), sender: sender)
+      }
+      return
+    case .void:
+      report.voids += 1
+      return
+    case .chained:
+      // Chained and never applied. A body that did not open still counts for its object's state (9.2.1) and goes
+      // on as a header; a refusal by who may write it or by its epoch (checks 7 and 8) shows nothing.
+      if e.code != "pruned" { board.pushAlert(&change, code: e.code ?? "forbidden", message: "an item was not applied", envelopeNumber: Int(n), sender: sender) }
+    case .applied, .provisional: break
     }
-    guard var rec = Records.record(e, change: n, sessionId: sessionIdOfGroup[hex(e.header.group)]) else { return }
+    // `heads` is the devices' own bookkeeping (9.0.7), compared in the core: nothing of it is on the board.
+    if e.header.kind == .register, e.register?.name == "heads" { return }
+    guard var rec = Records.record(e, senderRole: roleOf(e.header.sender)) else { report.voids += 1; return }
     // A lamport far above every one seen is not counted (9.3.2: the core counts it as 0; so does the board).
     if rec.causal.lamport > 0, !lamportAccepted(rec.causal.lamport, lamport) {
       board.pushAlert(&change, code: "lamport-inflated", message: "a write claims a lamport far above every one seen: counted as 0", envelopeNumber: Int(n), sender: rec.senderDeviceId)
@@ -581,7 +671,7 @@ public final class Room {
     }
     rec.localId = ownEchoes.removeValue(forKey: rec.envelopeHash)
     // The core checked who may write what (9.2); the board's reducer checks again and needs to know the devices.
-    if e.standing == .accepted, let sid = rec.sessionId {
+    if e.outcome == .applied, let sid = rec.sessionId {
       if rec.senderRole == "agent" { board.sawAgent(sid, rec.senderDeviceId, epoch: rec.epoch) }
       else if let to = rec.recipientDeviceId { board.sawAgent(sid, to, epoch: rec.epoch) }
     }
@@ -592,6 +682,16 @@ public final class Room {
     log[n] = kept
     sinceSnapshot += 1
     cacheSoon(n)
+  }
+  /** Takes out of every conversation what was shown as not yet confirmed under that number of a sender's chain, except the envelope `keep`. */
+  private func dropProvisional(sender: String, seq: UInt64, keep: String, _ change: inout Change) {
+    for t in board.timelines.values {
+      for (n, item) in t.items where item.pending && item.senderDeviceId == sender && item.senderSequence == seq && item.envelopeHash != keep {
+        t.items.removeValue(forKey: n)
+        t.numbers.removeAll { $0 == n }
+        change.timelines.insert(t.key)
+      }
+    }
   }
 
   static func codeOf(_ error: Error) -> String {
@@ -615,14 +715,14 @@ public final class Room {
       _ = try? await serial { [self] in
         var report = SyncReport(), change = Change()
         defer { self.board.project(change); self.emit(change); self.pumpOutbox() }
-        if let i = item, i.change > self.cursor { do { try await self.process([i], source: .live, report: &report, change: &change); return } catch {} }
+        if let i = item, i.change > self.cursor { do { try await self.process([i], report: &report, change: &change); return } catch {} }
         try await self.readChanges(&report, &change)
       }
     case "relay":
       // A message the hub only passes on (a piece of a stroke being drawn): no change number, not in the log.
       guard let group = data["group_id"].string.flatMap({ try? unb64u($0) }), let bytes = data["message"].string.flatMap({ try? unb64u($0) }) else { return }
       _ = try? await serial { [self] in
-        if case let .strokePiece(from, boardId, piece) = try await self.onCore({ try $0.processRelay(group: group, bytes: bytes) }) { self.onStrokePiece?(hex(from), "desk/\(hex(boardId))", piece) }
+        if case let .strokePiece(from, boardId, piece)? = try await self.onCore({ try $0.receiveRelay(group: group, message: bytes, nowMs: nowMs()) }) { self.onStrokePiece?(hex(from), "desk/\(hex(boardId))", piece) }
       }
     case "welcome":
       _ = try? await serial { [self] in var ch = Change(); try await self.takeWelcomes(&ch); self.board.project(); self.emit(ch) }
@@ -691,15 +791,21 @@ public final class Room {
 
   /**
    * Posts the core's outbox in order and reports each answer back. A network failure is retried with a growing
-   * pause (the entry stays stored); a refusal is the hub's last word on those bytes and goes to the core, which
-   * drops the entry or holds it back until the log decided (an own Commit that lost its epoch).
+   * pause (the entry stays stored). A refusal that is the hub's last word goes to the core, which undoes what the
+   * entry was for or holds a Commit back until the log decided (an own Commit that lost its epoch).
+   *
+   * An ENVELOPE is different (9.0.1, 9.0.8): this device signed its number and gives it to no other envelope. It
+   * leaves the outbox when the hub took it, when the hub kept its number as a void record (`voided`), or when this
+   * device is out of the group (`not-member`, `removed-sender`). After any other refusal the same bytes are sent
+   * again, and an alert says that something waits.
    */
   func pumpOutbox() {
     if pumping { return }
     pumping = true
     Task { @MainActor in
       defer { pumping = false }
-      var backoff: UInt64 = 300_000_000, unknown = 0
+      var backoff: UInt64 = 300_000_000, unknown = 0, stuck: UInt64? = nil
+      func pause() async { try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 30_000_000_000) }
       while !Task.isCancelled && !closed {
         guard let entry = try? await onCore({ $0.outbox().first }) else { return }
         do {
@@ -725,10 +831,27 @@ public final class Room {
               unknown += 1
               if unknown == 3 { var ch = Change(); board.pushAlert(&ch, code: "hub-answer", message: "the hub answers something this app does not know (\(e.status)): what was written waits to be sent"); emit(ch) }
             }
-            try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 30_000_000_000); continue
+            await pause(); continue
           }
-          do { try await onCore { try $0.outboxRefused(entry.id, code: e.code, voided: e.extra["voided"] as? Bool == true) } }
-          catch { var ch = Change(); board.pushAlert(&ch, code: Room.codeOf(error), message: "a refusal of the hub could not be taken: sending stopped"); emit(ch); return }
+          let voided = e.extra["voided"] as? Bool == true
+          let gone = entry.kind == .envelope && (voided || e.code == "not-member" || e.code == "removed-sender")
+          do {
+            try await onCore { device in
+              if entry.kind != .envelope { try device.outboxRefused(entry.id, code: e.code) }
+              else if voided { try device.outboxVoided(entry.id) }
+              else if gone { try device.envelopeAbandon(entry.id) }
+              else { try device.outboxRefused(entry.id, code: e.code) }
+            }
+          } catch { var ch = Change(); board.pushAlert(&ch, code: Room.codeOf(error), message: "a refusal of the hub could not be taken: sending stopped"); emit(ch); return }
+          if entry.kind == .envelope && !gone {
+            // Said once per entry; then the same bytes again, with a growing pause. The writer is not told "refused":
+            // what it wrote still waits and may yet be taken.
+            if stuck != entry.id {
+              stuck = entry.id
+              var ch = Change(); board.pushAlert(&ch, code: e.code, message: "the hub refused an item and took no number for it: it waits and is sent again (\(e.message))"); emit(ch)
+            }
+            await pause(); continue
+          }
           outcome[entry.id] = .failure(e)
           var ch = Change()
           board.pushAlert(&ch, code: e.code, message: entry.kind == .envelope ? "the hub refused an item: \(e.message)" : "the hub refused a change to a group: \(e.message)")
@@ -779,22 +902,10 @@ public final class Room {
   public var openCards: [Card] { board.stack.compactMap { board.cards[$0] } }
 
   /**
-   * What the notification extension may get (PushNotify): of every live session group the content key of its
-   * current epoch and the one before, and its agent devices. Never the room group's key.
+   * What the notification extension may get of the sessions' content keys: nothing. A content key never leaves
+   * the core (the binding hands none out), so the extension opens no envelope.
    */
-  public func notifyKeys() -> [(group: Bytes, session: Bytes, epoch: UInt64, key: Bytes, agents: [Bytes])] {
-    var out = [(group: Bytes, session: Bytes, epoch: UInt64, key: Bytes, agents: [Bytes])]()
-    let list = groups.values.filter { $0.session != nil && !$0.archived }
-    coreQueue.sync {
-      for g in list {
-        guard let s = g.session else { continue }
-        for epoch in [g.epoch, g.epoch &- 1] where epoch <= g.epoch {
-          if let key = try? device.contentKey(group: g.group, epoch: epoch) { out.append((g.group, s.session, epoch, key, s.agents)) }
-        }
-      }
-    }
-    return out
-  }
+  public func notifyKeys() -> [(group: Bytes, session: Bytes, epoch: UInt64, key: Bytes, agents: [Bytes])] { [] }
 }
 
 /** Signs hub challenges as the room's device, on the queue the core is called from; gone once the room is closed. */

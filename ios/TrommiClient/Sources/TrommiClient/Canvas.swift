@@ -223,6 +223,8 @@ public final class CanvasState {
   static let WIDTH = ["pen": 4.0, "marker": 18.0]
   public private(set) var shapes: [String: CanvasShape] = [:]
   public private(set) var erased = Set<String>()
+  /** Moves of shapes that have not arrived yet (10.7): added to the shape when its item comes. */
+  private var early: [String: (dx: Double, dy: Double)] = [:]
   public private(set) var frontier: [String: (seq: UInt64, hash: String?)] = [:]
   public private(set) var lastEnvelopeNumber = 0
   public private(set) var applied = 0
@@ -304,11 +306,15 @@ public final class CanvasState {
         }
         let id = "\(sender)/\(seq)/\(i)"
         if erased.contains(id) || shapes[id] != nil { continue }
-        if let s = CanvasState.shapeOf(e, id: id, by: sender) { shapes[id] = s; changed.insert(id) }
+        if var s = CanvasState.shapeOf(e, id: id, by: sender) {
+          if let m = early.removeValue(forKey: id) { CanvasState.move(&s, m.dx, m.dy) }
+          shapes[id] = s; changed.insert(id)
+        }
       }
     case "erase", "send_away":
       for id in (content["stroke_ids"].array ?? []).compactMap({ $0.string }) where may(id) {
         erased.insert(id)
+        early.removeValue(forKey: id)
         if shapes.removeValue(forKey: id) != nil { changed.insert(id) }
       }
     case "move":
@@ -316,9 +322,11 @@ public final class CanvasState {
       let dx = off.count > 0 ? off[0] : 0, dy = off.count > 1 ? off[1] : 0
       if dx != 0 || dy != 0 {
         for id in (content["stroke_ids"].array ?? []).compactMap({ $0.string }) where may(id) {
-          guard var s = shapes[id] else { continue }
-          for k in stride(from: 0, to: s.pts.count, by: 2) { s.pts[k] += dx; s.pts[k + 1] += dy }
-          if s.ink != nil { s.ink!.pts = s.pts }
+          guard var s = shapes[id] else {
+            if !erased.contains(id) { let m = early[id] ?? (0, 0); early[id] = (m.dx + dx, m.dy + dy) }
+            continue
+          }
+          CanvasState.move(&s, dx, dy)
           shapes[id] = s
           changed.insert(id)
         }
@@ -328,9 +336,20 @@ public final class CanvasState {
     return changed
   }
 
-  /** Start from a snapshot (v2: the entries with id and by). */
+  private static func move(_ s: inout CanvasShape, _ dx: Double, _ dy: Double) {
+    for k in stride(from: 0, to: s.pts.count - 1, by: 2) { s.pts[k] += dx; s.pts[k + 1] += dy }
+    if s.ink != nil { s.ink!.pts = s.pts }
+  }
+
+  /**
+   * Start from a snapshot: the entries with id and by, the frontier; and of a snapshot file of spec/v2.md 10.8
+   * (as `Records.boardSnapshot` hands it over) `gone`, the ids erased beyond their writer's frontier, and `moved`,
+   * the summed moves of shapes still to come.
+   */
   public func load(snapshot j: JV) {
-    shapes = [:]; erased = []; frontier = [:]
+    shapes = [:]; erased = []; frontier = [:]; early = [:]
+    for id in j["gone"].array ?? [] { if let id = id.string { erased.insert(id) } }
+    for m in j["moved"].array ?? [] { if let id = m[0].string, let dx = m[1].double, let dy = m[2].double { early[id] = (dx, dy) } }
     for e in j["shapes"].array ?? [] {
       if let id = e["id"].string, let by = e["by"].string, let s = CanvasState.shapeOf(e, id: id, by: by) { shapes[id] = s }
     }
