@@ -396,8 +396,8 @@ export const steps = [
     const A = await ctx.profile('A')
     await ui.openSettings(A)
     await A.click('#settings-invite-agent')
-    await arrives(A, "location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy code')", 'the agent invite page')
-    const command = await A.js("return document.querySelector('[data-state=open] .clip-copy code').textContent")
+    await arrives(A, "location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy[data-line=connect] code')", 'the agent invite page')
+    const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
     ctx.run.check(/'http\S+\/join#v2\.[^']+'/.test(command), 'the connect command carries a join link', command.replace(/#v2\.\S+/, '#v2.…'))
     await A.shot('real-14-agent-invite')
   }],
