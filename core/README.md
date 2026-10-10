@@ -96,6 +96,11 @@ its finish, and the device's state changes only when the hub accepted the finish
 Newest first. The interface grows by adding; these are the additions that an exhaustive `match` or a caller's
 assumptions have to take in.
 
+- Chat to an empty seat (spec 9.2). While a session has no agent leaf (a helper session: no opener) a human
+  device's Chat on `session/<S>` or `card/<X>` is taken with `recipient` zeros, where it was `forbidden`
+  before; `seal` with `recipient: None` addresses it so. With a seat the recipient must be the seat. Such a
+  message is stored and read and is never a command: the gate answers `Refusal::NotAddressed` for a
+  `recipient` of zeros on every device.
 - A helper session that lacks its opener is stale (spec 5.2.8). `GroupSummary` gains `missing_opener` and
   `is_stale()`: a group is stale when `disallowed` is not empty or `missing_opener` is set (its main session
   has an agent leaf that is no leaf here). Every call that writes into such a group answers `stale-session`
