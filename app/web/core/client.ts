@@ -862,7 +862,11 @@ export class Client {
       await this.settle({ timeout_ms: 3000 }).catch(() => {})
       const humans_left = [...this.model.members.values()].filter(m => m.is_active && m.device_role === 'human' && m.device_id !== this.my_device_id).length
       return { key_epoch: this.model.room.key_epoch, humans_left, removed: false }
-    } finally { await this.stop().catch(() => {}) }
+    } finally {
+      await this.stop().catch(() => {})
+      // the token ends at the hub now, not when it runs out (spec/hub-api.md "Signing out")
+      await this.hub.signOut().catch(() => {})
+    }
   }
 
   /** Each live main session on a desk carries that desk's goals for its agent (9.3.4): written when they differ. */

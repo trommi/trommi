@@ -12,43 +12,11 @@
 // Nothing here derives a key. The Emergency Kit's words are made by the core (generateKitWords), never here.
 import { WORDS } from './wordlist.ts'
 
+export { normaliseEmail } from './account-name.ts'
+
 export const PASSWORD_MIN = 12
 
 const refusal = (code: string, message: string): Error => Object.assign(new Error(message), { code })
-
-/**
- * An e-mail address as the account keeps it; `bad-email` for anything else. The rule is spelled out over single
- * characters and uses no Unicode table:
- *   1. Leading and trailing space, tab, line feed, vertical tab, form feed and carriage return are dropped.
- *   2. Every character left is printable ASCII, U+0021 to U+007E. Anything else is refused, never mapped: an address
- *      with other characters is written in its ASCII form (a domain as punycode).
- *   3. A to Z become a to z.
- *   4. At most 254 characters; exactly one "@"; 1 to 64 characters before it; after it a "." with 1 to 190 characters
- *      before and 2 to 63 after.
- */
-export function normaliseEmail(email: unknown): string {
-  const bad = (): Error => refusal('bad-email', 'not an email address')
-  const s = String(email ?? '')
-  const blank = (c: number): boolean => c === 0x20 || (c >= 0x09 && c <= 0x0d)
-  let from = 0, to = s.length
-  while (from < to && blank(s.charCodeAt(from))) from++
-  while (to > from && blank(s.charCodeAt(to - 1))) to--
-  if (to - from > 254) throw bad()
-  let e = '', at = -1
-  for (let i = from; i < to; i++) {
-    const c = s.charCodeAt(i)
-    if (c < 0x21 || c > 0x7e) throw bad()
-    if (c === 0x40) { if (at >= 0) throw bad(); at = e.length }
-    e += String.fromCharCode(c >= 0x41 && c <= 0x5a ? c + 0x20 : c)
-  }
-  if (at < 1 || at > 64) throw bad()
-  const domain = e.slice(at + 1)
-  for (let dot = domain.indexOf('.'); dot >= 0; dot = domain.indexOf('.', dot + 1)) {
-    const after = domain.length - dot - 1
-    if (dot >= 1 && dot <= 190 && after >= 2 && after <= 63) return e
-  }
-  throw bad()
-}
 
 /** null if the password may be set, else why not. The only rule: its NFC form has at least 12 code points. */
 export function passwordProblem(password: unknown): string | null {

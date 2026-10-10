@@ -5,7 +5,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { b64u, hex } from '../../../app/web/core/ids.ts'
-import { scene, client, received, envelope, id, utf8, txt } from './helpers.mjs'
+import { scene, client, received, envelope, id, utf8, txt, until } from './helpers.mjs'
 
 const copy = () => { const c = new Uint8Array(randomBytes(61)); c[0] = 2; return c }
 const KDF = { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 }
@@ -164,9 +164,10 @@ test('the Reveal reaches the new device as the inviter put it', async t => {
 test('the account: sign-up with the founding, login, the Emergency Kit, the password, passkeys', async t => {
   const { fake } = await scene(t)
   const room_id = id(32), device = id(32), outside = client(fake, null)
-  const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
+  const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), form: 'email' }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
   await outside.foundRoom({ group_info: utf8({ group: room_id, epoch: 0, leaves: [device] }), sealed_key: utf8('s'), account: { email: 'Ada@Example.com', kit, password } })
   assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account).sort(), ['email', 'kit', 'password'])
+  assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account.kit).sort(), ['auth_key', 'form', 'sealed_copy'])
 
   const wrong = await outside.login('ada@example.com', new Uint8Array(32)).catch(e => e)
   const nobody = await outside.login('nobody@example.com', password.auth_key).catch(e => e)
@@ -174,43 +175,120 @@ test('the account: sign-up with the founding, login, the Emergency Kit, the pass
   assert.deepEqual([nobody.code, nobody.hub_message], [wrong.code, wrong.hub_message])
   assert.equal(received(fake, /\/challenge$/).length, 0, 'a wrong login is no reason to sign in to a room')
   const login = await outside.login('ada@example.com', password.auth_key)
-  assert.deepEqual([login.rooms.length, login.rooms[0].room_id, login.rooms[0].sealed_copy, login.kdf], [1, room_id, password.sealed_copy, KDF])
+  assert.deepEqual(received(fake, '/v2/account/login').at(-1).body, { account: 'ada@example.com', auth_key: b64u(password.auth_key) }, 'the one field `account`')
+  assert.deepEqual([login.rooms.length, login.rooms[0].room_id, login.rooms[0].sealed_copy, login.kdf, login.email], [1, room_id, password.sealed_copy, KDF, 'ada@example.com'])
+  assert.match(login.account, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   assert.equal(login.rooms[0].challenge.length, 32)
   const recovered = await outside.recover('ada@example.com', kit.auth_key)
   assert.deepEqual(recovered.rooms[0].sealed_copy, kit.sealed_copy)
   await assert.rejects(outside.recover('ada@example.com', password.auth_key), e => e.code === 'wrong-recovery' && e.status === 401)
+  // the id names the same account, typed in any case, with or without dashes and spaces; an id nobody has is a wrong key
+  for (const name of [login.account, login.account.toUpperCase(), login.account.replaceAll('-', ''), ` ${login.account.replaceAll('-', ' ')} `]) assert.equal((await outside.recover(name, kit.auth_key)).account, login.account, name)
+  assert.equal((await outside.login(login.account, password.auth_key)).email, 'ada@example.com')
+  for (const name of ['00000000-0000-4000-8000-000000000000', 'neither', `${login.account}0`]) {
+    const e = await outside.recover(name, kit.auth_key).catch(x => x)
+    assert.deepEqual([e.code, e.status, e.hub_message], ['wrong-recovery', 401, 'e-mail or secret is wrong'], name)
+  }
+  await assert.rejects(outside.login('', password.auth_key), { code: 'bad-argument' })
 
   const hub = client(fake, room_id, device)
   await hub.signIn(login.rooms[0].challenge)             // the login's challenge saves the round trip
   assert.equal(received(fake, /\/challenge$/).length, 0)
   const account = await hub.account()
-  assert.deepEqual([account.email, account.revision, account.has_password, account.kdf, account.password_copy, account.kit_copy, account.passkeys, account.rooms], ['ada@example.com', 1, true, KDF, password.sealed_copy, kit.sealed_copy, [], [room_id]])
+  assert.deepEqual([account.email, account.account, account.kit_form, account.revision, account.has_password, account.kdf, account.password_copy, account.kit_copy, account.passkeys, account.rooms], ['ada@example.com', login.account, 'email', 1, true, KDF, password.sealed_copy, kit.sealed_copy, [], [room_id]])
+  assert.equal(Buffer.from(account.user_handle).toString('hex'), login.account.replaceAll('-', ''), 'the id\'s 16 bytes are the user handle')
   await assert.rejects(hub.createAccount({ email: 'other@example.com', kit, password }), e => e.code === 'account-exists' && e.status === 409)
+  await assert.rejects(hub.putEmail({ email: 'new@example.com', revision: 1 }), e => e.code === 'forbidden' && e.status === 403, 'an e-mail is set once')
 
   const next = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
   assert.deepEqual(await hub.putPassword({ ...next, revision: 1 }), { revision: 2 })
-  const stale = await hub.putKit({ auth_key: kit.auth_key, sealed_copy: copy(), revision: 1 }).catch(e => e)
+  const stale = await hub.putKit({ ...kit, sealed_copy: copy(), revision: 1 }).catch(e => e)
   assert.deepEqual([stale.code, stale.status], ['account-changed', 409])
-  assert.deepEqual(await hub.putKit({ auth_key: kit.auth_key, sealed_copy: copy(), revision: 2 }), { revision: 3 })
+  assert.deepEqual(await hub.putKit({ ...kit, sealed_copy: copy(), revision: 2 }), { revision: 3 })
+  await assert.rejects(hub.putKit({ auth_key: kit.auth_key, sealed_copy: copy(), revision: 3 }), { code: 'bad-argument' }, 'a kit says its form')
   await outside.login('ada@example.com', next.auth_key)
 
   const challenge = await hub.accountPasskeyChallenge()
-  const client_data_json = utf8({ type: 'webauthn.create', challenge: b64u(challenge), origin: 'https://app.trommi.com' })
+  assert.deepEqual([challenge.account, challenge.user_handle, challenge.challenge.length], [account.account, account.user_handle, 32], 'the account\'s challenge names the account\'s id')
+  const client_data_json = utf8({ type: 'webauthn.create', challenge: b64u(challenge.challenge), origin: 'https://app.trommi.com' })
   const added = await hub.addPasskey({ attestation_object: new Uint8Array(randomBytes(120)), client_data_json, sealed_copy: copy(), transports: ['internal'] })
   assert.deepEqual((await hub.account()).passkeys.map(p => [p.credential_id, p.transports]), [[added.credential_id, ['internal']]])
   const sign_in = await outside.passkeyChallenge()
-  const assertion = { credential_id: added.credential_id, authenticator_data: new Uint8Array(37), signature: new Uint8Array(70), client_data_json: utf8({ type: 'webauthn.get', challenge: b64u(sign_in), origin: 'https://app.trommi.com' }) }
-  assert.deepEqual((await outside.passkeyLogin(assertion)).rooms[0].room_id, room_id)
+  const assertion = { credential_id: added.credential_id, authenticator_data: new Uint8Array(37), signature: new Uint8Array(70), client_data_json: utf8({ type: 'webauthn.get', challenge: b64u(sign_in.challenge), origin: 'https://app.trommi.com' }) }
+  const by_passkey = await outside.passkeyLogin(assertion)
+  assert.deepEqual([by_passkey.rooms[0].room_id, by_passkey.account, by_passkey.email], [room_id, account.account, 'ada@example.com'])
   await assert.rejects(outside.passkeyLogin(assertion), e => e.code === 'wrong-login', 'a passkey challenge is used once')
   await hub.removePasskey(added.credential_id)
   assert.deepEqual((await hub.account()).passkeys, [])
 
-  for (const answer of [a => ({ ...a, kit_copy: 'AAAA' }), a => ({ ...a, revision: -1 }), a => ({ ...a, rooms: ['x'] }), a => ({ ...a, kdf: { alg: { nested: true } } })]) {
+  for (const answer of [a => ({ ...a, kit_copy: 'AAAA' }), a => ({ ...a, revision: -1 }), a => ({ ...a, rooms: ['x'] }), a => ({ ...a, kdf: { alg: { nested: true } } }), a => ({ ...a, account: a.account.toUpperCase() }), a => ({ ...a, account: '00000000-0000-4000-8000-000000000000' }), a => ({ ...a, kit_form: 'words' }), a => ({ ...a, email: 7 }), a => ({ ...a, user_handle: b64u(new Uint8Array(32)) })]) {
     fake.faults.add({ path: '/v2/account', method: 'GET', answer })
     await assert.rejects(hub.account(), e => e.code === 'bad-answer')
   }
-  fake.faults.add({ path: '/v2/account/login', answer: a => ({ ...a, rooms: [{ ...a.rooms[0], challenge: 'AAAA' }] }) })
-  await assert.rejects(outside.login('ada@example.com', next.auth_key), e => e.code === 'bad-answer')
+  for (const answer of [a => ({ ...a, rooms: [{ ...a.rooms[0], challenge: 'AAAA' }] }), ({ account: _, ...a }) => a, a => ({ ...a, account: `{${a.account}}` })]) {
+    fake.faults.add({ path: '/v2/account/login', answer })
+    await assert.rejects(outside.login('ada@example.com', next.auth_key), e => e.code === 'bad-answer')
+  }
+  for (const answer of [a => ({ ...a, account: '00000000-0000-4000-8000-000000000000' }), ({ user_handle: _, ...a }) => a, a => ({ ...a, challenge: 'AAAA' })]) {
+    fake.faults.add({ path: '/v2/account/passkey/challenge', answer })
+    await assert.rejects(outside.passkeyChallenge(), e => e.code === 'bad-answer', 'a challenge whose id is not its user handle is no answer')
+  }
+})
+
+test('an account without an e-mail: made with a passkey on the challenge that names its id; an e-mail once, then a password', async t => {
+  const { fake } = await scene(t)
+  const room_id = id(32), device = id(32), outside = client(fake, null)
+  const named = await outside.passkeyChallenge()
+  const registration = c => ({ attestation_object: new Uint8Array(randomBytes(120)), client_data_json: utf8({ type: 'webauthn.create', challenge: b64u(c), origin: 'https://app.trommi.com' }), sealed_copy: copy() })
+  const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), form: 'id' }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
+  const founding = { group_info: utf8({ group: room_id, epoch: 0, leaves: [device] }), sealed_key: utf8('s') }
+  // a password needs an e-mail; a kit under an e-mail's salt needs one too
+  await assert.rejects(outside.foundRoom({ ...founding, account: { kit, password } }), e => e.code === 'bad-email' && e.status === 400)
+  await assert.rejects(outside.foundRoom({ ...founding, account: { kit: { ...kit, form: 'email' }, passkey: registration((await outside.passkeyChallenge()).challenge) } }), e => e.code === 'bad-email')
+  await outside.foundRoom({ ...founding, account: { kit, passkey: registration(named.challenge) } })
+  assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account).sort(), ['kit', 'passkey'], 'no e-mail and no user handle are sent')
+
+  const hub = client(fake, room_id, device)
+  const view = await hub.account()
+  assert.deepEqual([view.email, view.account, view.user_handle, view.kit_form, view.has_password, view.passkeys.length], [null, named.account, named.user_handle, 'id', false, 1], 'the account has the id of its challenge')
+  const recovered = await outside.recover(named.account.toUpperCase(), kit.auth_key)
+  assert.deepEqual([recovered.account, recovered.email, recovered.rooms[0].sealed_copy], [named.account, null, kit.sealed_copy])
+  await assert.rejects(hub.putPassword({ ...password, revision: 1 }), e => e.code === 'bad-email', 'a password on an account without e-mail')
+
+  await assert.rejects(hub.putEmail({ email: 'not an address', revision: 1 }), e => e.code === 'bad-email')
+  await assert.rejects(hub.putEmail({ email: 'ada@example.com', revision: 0 }), e => e.code === 'account-changed')
+  assert.deepEqual(await hub.putEmail({ email: 'Ada@Example.com', revision: 1 }), { revision: 2 })
+  assert.deepEqual(received(fake, '/v2/account/email', 'PUT').at(-1).body, { email: 'Ada@Example.com', revision: 2 - 1 })
+  const after = await hub.account()
+  assert.deepEqual([after.email, after.kit_form, after.account], ['ada@example.com', 'id', named.account], 'the kit keeps its form')
+  assert.equal((await outside.recover('ada@example.com', kit.auth_key)).account, named.account, 'both names lead to the account')
+  assert.deepEqual(await hub.putPassword({ ...password, revision: 2 }), { revision: 3 })
+  assert.equal((await outside.login('ada@example.com', password.auth_key)).account, named.account)
+})
+
+test('signing out: DELETE /v2/token ends that token at once and cuts the device\'s stream; the next call signs in anew', async t => {
+  const { fake, hub, signs } = await scene(t)
+  await hub.signOut()
+  assert.equal(received(fake, '/v2/token').length, 0, 'a client without a token asks nothing')
+  await hub.desk()
+  assert.deepEqual([signs.n, fake.tokens], [1, 1])
+  let state = null
+  const close = hub.stream(() => 0, () => {}, s => { state = s })
+  t.after(close)
+  await until(() => state === 'live' && fake.streams === 1)
+  await hub.signOut()
+  assert.deepEqual(received(fake, '/v2/token').map(r => [r.method, r.status]), [['DELETE', 200]])
+  assert.equal(fake.tokens, 0, 'the token is dead at the hub')
+  await until(() => fake.streams === 0)
+  close()
+  await hub.desk()
+  assert.deepEqual([signs.n >= 2, fake.tokens], [true, 1], 'a later call signs in again')
+  // the hub not reached: the token is forgotten here all the same
+  fake.faults.add({ method: 'DELETE', path: '/v2/token', drop: 'before' })
+  await assert.rejects(hub.signOut(), { code: 'offline' })
+  const before = signs.n
+  await hub.desk()
+  assert.equal(signs.n, before + 1)
 })
 
 test('a recovery (8.7): opened by the recovery key, parts kept, published all at once, the answer repeatable', async t => {

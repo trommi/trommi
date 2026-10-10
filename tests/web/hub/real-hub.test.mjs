@@ -132,8 +132,9 @@ function checks(name, start, skip, kind) {
     await assert.rejects(hub.login('nobody@example.com', new Uint8Array(5)), refused('bad-format', 400))
   })
   on('a passkey challenge is 32 bytes; a passkey nobody registered is wrong-login', async hub => {
-    const challenge = await hub.passkeyChallenge()
-    assert.equal(challenge.length, 32)
+    const { challenge, account, user_handle } = await hub.passkeyChallenge()
+    assert.deepEqual([challenge.length, user_handle.length], [32, 16])
+    assert.equal(account.replaceAll('-', ''), Buffer.from(user_handle).toString('hex'), 'the id an account made on this challenge will have')
     const client_data_json = utf8({ type: 'webauthn.get', challenge: b64u(challenge), origin: 'https://app.trommi.com' })
     await assert.rejects(hub.passkeyLogin({ credential_id: new Uint8Array(16), authenticator_data: new Uint8Array(37), client_data_json, signature: new Uint8Array(70) }), refused('wrong-login', 401))
   })
@@ -230,7 +231,7 @@ test('real hub, real core: a room with its account, a second device by the code,
   const password = core.passwordKeys(email, PASSWORD)
   const copiesOf = (room, code) => {
     const kit = core.kitKeys(email, core.generateKitWords())
-    return { kit, copies: { kit: { auth_key: kit.authKey, sealed_copy: core.sealRecoveryCode(kit.wrapKey, room, 'kit', null, code) }, password: { sealed_copy: core.sealRecoveryCode(password.wrapKey, room, 'password', null, code) } } }
+    return { kit, copies: { kit: { auth_key: kit.authKey, sealed_copy: core.sealRecoveryCode(kit.wrapKey, room, 'kit', null, code), form: 'email' }, password: { sealed_copy: core.sealRecoveryCode(password.wrapKey, room, 'password', null, code) } } }
   }
   const byCode = (room, code) => async (address, challenge) => core.recoverySignIn(code, room, address, challenge)
 
@@ -342,15 +343,15 @@ test('real hub, real core: a room with its account, a second device by the code,
   await t.test('the account made with the room: read by the device, login with the password and with the kit, the copies open', async () => {
     const view = await hub.account()
     assert.deepEqual([view.email, view.revision, view.has_password, view.kdf, view.passkeys, view.rooms], [email, 1, true, kdf, [], [room]])
-    await assert.rejects(hub.createAccount({ email: `other-${email}`, kit: { auth_key: kit.authKey, sealed_copy: view.kit_copy }, password: { auth_key: password.authKey, sealed_copy: view.kit_copy, kdf } }), refused('account-exists', 409))
+    await assert.rejects(hub.createAccount({ email: `other-${email}`, kit: { auth_key: kit.authKey, sealed_copy: view.kit_copy, form: 'email' }, password: { auth_key: password.authKey, sealed_copy: view.kit_copy, kdf } }), refused('account-exists', 409))
     await assert.rejects(outside.login(email, kit.authKey), refused('wrong-login', 401))
     const login = await outside.login(email, password.authKey)
     assert.deepEqual([login.rooms.length, login.rooms[0].room_id, login.kdf], [1, room, kdf])
     assert.deepEqual(core.openRecoveryCode(password.wrapKey, room, 'password', null, login.rooms[0].sealed_copy), code)
     const recovered = await outside.recover(email, kit.authKey)
     assert.deepEqual(core.openRecoveryCode(kit.wrapKey, room, 'kit', null, recovered.rooms[0].sealed_copy), code)
-    await assert.rejects(hub.putKit({ auth_key: kit.authKey, sealed_copy: view.kit_copy, revision: 0 }), refused('account-changed', 409))
-    assert.equal((await hub.accountPasskeyChallenge()).length, 32)
+    await assert.rejects(hub.putKit({ auth_key: kit.authKey, sealed_copy: view.kit_copy, form: 'email', revision: 0 }), refused('account-changed', 409))
+    assert.deepEqual([(await hub.accountPasskeyChallenge()).account, view.kit_form, login.account, login.email], [view.account, 'email', view.account, email])
   })
 
   const second = await newDevice('second'), second_hub = newHub()

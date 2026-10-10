@@ -73,9 +73,10 @@ test('the account against the real hub', { skip }, async t => {
   await t.test('create account (password): room and account in one founding; the status; an e-mail twice is account-exists', async () => {
     const mail = email()
     const { client, kit } = await A.createAccount({ ...device('a1'), email: mail.toUpperCase(), password: PASSWORD })
-    assert.equal(kit.email, mail)
+    assert.deepEqual([kit.email, kit.form], [mail, 'email'])
+    assert.match(kit.account, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, 'the id the hub minted, read once the device was in')
     const st = await A.accountStatus(client)
-    assert.deepEqual([st.email, st.revision, st.has_password, st.has_recovery, st.passkeys], [mail, 1, true, true, []])
+    assert.deepEqual([st.email, st.account, st.kit_form, st.revision, st.has_password, st.has_recovery, st.passkeys], [mail, kit.account, 'email', 1, true, true, []])
     const e = await refused(A.createAccount({ ...device('a2'), email: mail, password: OTHER }), 'account-exists')
     assert.equal(e.status, 409)
     assert.ok(!stage.stores.has('real-a2'))
@@ -84,11 +85,11 @@ test('the account against the real hub', { skip }, async t => {
   const { client, mail, code } = t.account
 
   await t.test('log in with the password and with the kit\'s words: the hub hands out the copy, it opens to the room\'s code', async () => {
-    await reaches(A.loginWithPassword({ ...device('b1'), email: mail, password: PASSWORD }), code)
-    await reaches(A.recoverWithKit({ ...device('b2'), email: mail, words: t.account.kit.words }), code)
-    await refused(A.loginWithPassword({ ...device('b3'), email: mail, password: 'not the right password' }), 'wrong-login')
-    await refused(A.loginWithPassword({ ...device('b3'), email: email(), password: PASSWORD }), 'wrong-login')
-    await refused(A.recoverWithKit({ ...device('b3'), email: mail, words: core.generateKitWords() }), 'wrong-recovery')
+    await reaches(A.loginWithPassword({ ...device('b1'), account: mail, password: PASSWORD }), code)
+    await reaches(A.recoverWithKit({ ...device('b2'), account: mail, words: t.account.kit.words }), code)
+    await refused(A.loginWithPassword({ ...device('b3'), account: mail, password: 'not the right password' }), 'wrong-login')
+    await refused(A.loginWithPassword({ ...device('b3'), account: email(), password: PASSWORD }), 'wrong-login')
+    await refused(A.recoverWithKit({ ...device('b3'), account: mail, words: core.generateKitWords() }), 'wrong-recovery')
   })
 
   await t.test('the ways in given again on the signed-in device; a new password; a new kit', async () => {
@@ -96,11 +97,11 @@ test('the account against the real hub', { skip }, async t => {
     await A.checkUnlock(client, { words: t.account.kit.words })
     await refused(A.checkUnlock(client, { password: 'a wrong password, long enough' }), 'wrong-login')
     assert.deepEqual(await A.changePassword(client, { current: PASSWORD, next: OTHER }), { kit: null })
-    await reaches(A.loginWithPassword({ ...device('c1'), email: mail, password: OTHER }), code)
-    await refused(A.loginWithPassword({ ...device('c2'), email: mail, password: PASSWORD }), 'wrong-login')
+    await reaches(A.loginWithPassword({ ...device('c1'), account: mail, password: OTHER }), code)
+    await refused(A.loginWithPassword({ ...device('c2'), account: mail, password: PASSWORD }), 'wrong-login')
     const kit = await A.makeEmergencyKit(client, { password: OTHER })
-    await reaches(A.recoverWithKit({ ...device('c3'), email: mail, words: kit.words }), code)
-    await refused(A.recoverWithKit({ ...device('c4'), email: mail, words: t.account.kit.words }), 'wrong-recovery')
+    await reaches(A.recoverWithKit({ ...device('c3'), account: mail, words: kit.words }), code)
+    await refused(A.recoverWithKit({ ...device('c4'), account: mail, words: t.account.kit.words }), 'wrong-recovery')
     assert.equal((await A.accountStatus(client)).revision, 3)
     t.account.kit = kit
   })
@@ -122,8 +123,8 @@ test('the account against the real hub', { skip }, async t => {
       assert.equal(e.status, 409)
       await refused(A.makeEmergencyKit(client, { password: OTHER }), 'account-changed')
     } finally { client.hub = before }
-    await reaches(A.loginWithPassword({ ...device('d1'), email: mail, password: OTHER }), code)
-    await reaches(A.recoverWithKit({ ...device('d2'), email: mail, words: t.account.kit.words }), code)
+    await reaches(A.loginWithPassword({ ...device('d1'), account: mail, password: OTHER }), code)
+    await reaches(A.recoverWithKit({ ...device('d2'), account: mail, words: t.account.kit.words }), code)
   })
 
   await t.test('passkeys under the hub\'s WebAuthn checks: add one, log in with it, last-way-in, remove', async () => {
@@ -133,41 +134,42 @@ test('the account against the real hub', { skip }, async t => {
     assert.deepEqual(added, { credential_id: b64u(key.credential_id), kit: null })
     const listed = await A.accountStatus(client)
     assert.deepEqual([listed.passkeys.map(p => p.credential_id), listed.passkeys[0].transports, listed.user_handle], [[b64u(key.credential_id)], ['internal', 'hybrid'], st.user_handle])
-    await reaches(A.loginWithPasskey({ ...device('e1'), assertion: key.get(b64u(await outside().passkeyChallenge())) }), code)
+    await reaches(A.loginWithPasskey({ ...device('e1'), assertion: key.get(b64u((await outside().passkeyChallenge()).challenge)) }), code)
     // a challenge of another kind, a challenge used twice, a passkey the hub does not know, a wrong prf output
-    const once = b64u(await outside().passkeyChallenge())
+    const once = b64u((await outside().passkeyChallenge()).challenge)
     await reaches(A.loginWithPasskey({ ...device('e2'), assertion: key.get(once) }), code)
     await refused(A.loginWithPasskey({ ...device('e3'), assertion: key.get(once) }), 'wrong-login')
-    await refused(A.loginWithPasskey({ ...device('e3'), assertion: softPasskey(ORIGIN).get(b64u(await outside().passkeyChallenge())) }), 'wrong-login')
-    await refused(A.loginWithPasskey({ ...device('e3'), assertion: { ...key.get(b64u(await outside().passkeyChallenge())), prf: bytes(32) } }), 'wrong-login')
-    await refused(A.addPasskey(client, { unlock: { password: OTHER }, passkey: softPasskey(ORIGIN).create(b64u(await outside().passkeyChallenge())) }), 'bad-passkey')
+    await refused(A.loginWithPasskey({ ...device('e3'), assertion: softPasskey(ORIGIN).get(b64u((await outside().passkeyChallenge()).challenge)) }), 'wrong-login')
+    await refused(A.loginWithPasskey({ ...device('e3'), assertion: { ...key.get(b64u((await outside().passkeyChallenge()).challenge)), prf: bytes(32) } }), 'wrong-login')
+    await refused(A.addPasskey(client, { unlock: { password: OTHER }, passkey: softPasskey(ORIGIN).create(b64u((await outside().passkeyChallenge()).challenge)) }), 'bad-passkey')
     await refused(A.addPasskey(client, { unlock: { password: OTHER }, passkey: softPasskey('https://evil.example').create(await A.passkeyChallengeFor(client)) }), 'bad-passkey')
     // the passkey as the way in given again: a new kit with it
     t.account.kit = await A.makeEmergencyKit(client, key.unlock())
     await A.removePasskey(client, added.credential_id)
-    await refused(A.loginWithPasskey({ ...device('e4'), assertion: key.get(b64u(await outside().passkeyChallenge())) }), 'wrong-login')
+    await refused(A.loginWithPasskey({ ...device('e4'), assertion: key.get(b64u((await outside().passkeyChallenge()).challenge)) }), 'wrong-login')
     assert.deepEqual((await A.accountStatus(client)).passkeys, [])
   })
 
   await t.test('create account with a passkey: the registration travels in the founding; its only passkey is the last way in', async () => {
-    const mail2 = email(), key = softPasskey(ORIGIN), user_handle = bytes(32)
-    const made = await A.createAccountWithPasskey({ ...device('f1'), email: mail2, passkey: { ...key.create(b64u(await outside().passkeyChallenge())), user_handle } })
+    const mail2 = email(), key = softPasskey(ORIGIN), named = await outside().passkeyChallenge(), user_handle = named.user_handle
+    const made = await A.createAccountWithPasskey({ ...device('f1'), email: mail2, account: named.account, passkey: key.create(b64u(named.challenge)) })
+    assert.deepEqual([made.kit.account, made.kit.form, made.kit.email], [named.account, 'email', mail2])
     const code2 = last('foundRoom').code
     const st = await A.accountStatus(made.client)
-    assert.deepEqual([st.email, st.has_password, st.user_handle, st.passkeys.map(p => p.credential_id)], [mail2, false, b64u(user_handle), [b64u(key.credential_id)]])
-    await reaches(A.loginWithPasskey({ ...device('f2'), assertion: key.get(b64u(await outside().passkeyChallenge()), user_handle) }), code2)
-    await refused(A.loginWithPasskey({ ...device('f3'), assertion: key.get(b64u(await outside().passkeyChallenge()), bytes(32)) }), 'wrong-login')
-    await reaches(A.recoverWithKit({ ...device('f4'), email: mail2, words: made.kit.words }), code2)
+    assert.deepEqual([st.email, st.account, st.has_password, st.user_handle, st.passkeys.map(p => p.credential_id)], [mail2, named.account, false, b64u(user_handle), [b64u(key.credential_id)]], 'the account has the id its challenge named')
+    await reaches(A.loginWithPasskey({ ...device('f2'), assertion: key.get(b64u((await outside().passkeyChallenge()).challenge), user_handle) }), code2)
+    await refused(A.loginWithPasskey({ ...device('f3'), assertion: key.get(b64u((await outside().passkeyChallenge()).challenge), bytes(16)) }), 'wrong-login')
+    await reaches(A.recoverWithKit({ ...device('f4'), account: mail2, words: made.kit.words }), code2)
     const e = await refused(A.removePasskey(made.client, b64u(key.credential_id)), 'last-way-in')
     assert.equal(e.status, 409)
     await refused(A.checkUnlock(made.client, { password: PASSWORD }), 'no-password')
     // "Add a password" with the passkey; then the passkey may go
     assert.deepEqual(await A.setPassword(made.client, { unlock: key.unlock(), next: PASSWORD }), { kit: null })
-    await reaches(A.loginWithPassword({ ...device('f5'), email: mail2, password: PASSWORD }), code2)
+    await reaches(A.loginWithPassword({ ...device('f5'), account: mail2, password: PASSWORD }), code2)
     await A.removePasskey(made.client, b64u(key.credential_id))
     // a passkey whose registration was made for another kind of challenge makes no account, and no room
     const stray = softPasskey(ORIGIN)
-    await refused(A.createAccountWithPasskey({ ...device('f6'), email: email(), passkey: { ...stray.create(b64u(bytes(32))), user_handle: bytes(32) } }), 'bad-passkey')
+    await refused(A.createAccountWithPasskey({ ...device('f6'), email: email(), account: named.account, passkey: stray.create(b64u(bytes(32))) }), 'bad-passkey')
     assert.ok(!stage.stores.has('real-f6'))
   })
 
