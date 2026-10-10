@@ -39,10 +39,10 @@ CREATE TABLE IF NOT EXISTS welcome_ids (
 /// was larger than the number of rows ever written; each row was written for one Add of a Commit, a Commit is
 /// never deleted from the log and adds at most `MAX_LEAVES` devices.
 const WELCOME_IDS_SEED: &str = "
-INSERT OR IGNORE INTO welcome_ids (one, last) VALUES (1, max(
+INSERT INTO welcome_ids (one, last) VALUES (1, max(
   (SELECT coalesce(max(id), 0) FROM welcomes),
   (SELECT count(*) FROM group_log WHERE kind = 'commit') * 1024
-));
+)) ON CONFLICT (one) DO UPDATE SET last = max(last, excluded.last);
 ";
 
 pub const SCHEMA: &str = r#"
@@ -698,11 +698,9 @@ impl Db {
             if has_mac == 0 {
                 writer.execute_batch("ALTER TABLE invites ADD COLUMN offer_mac BLOB;")?;
             }
-            let seeded: i64 =
-                writer.query_row("SELECT count(*) FROM welcome_ids", [], |r| r.get(0))?;
-            if seeded == 0 {
-                writer.execute_batch(WELCOME_IDS_SEED)?;
-            }
+            // on every open, never lowering it: also a counter an earlier build seeded too low is raised (the
+            // ids it skips cost nothing)
+            writer.execute_batch(WELCOME_IDS_SEED)?;
             writer.execute_batch(
                 "CREATE INDEX IF NOT EXISTS welcomes_by_epoch ON welcomes(group_id, epoch) WHERE epoch IS NOT NULL;
                  CREATE INDEX IF NOT EXISTS welcomes_by_group ON welcomes(group_id, device);
