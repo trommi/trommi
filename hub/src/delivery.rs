@@ -1331,16 +1331,17 @@ pub fn put_key_packages(
     if let Some(kp) = last_resort {
         insert(kp, true)?;
     }
+    // A device keeps at most 100 single-use KeyPackages: with more, the oldest go. (A device that signs in again
+    // uploads a fresh set beside what was left of the last; that is no fault of its.)
+    x.c.prepare_cached(
+        "DELETE FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 0 AND id NOT IN
+           (SELECT id FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 0 ORDER BY id DESC LIMIT ?3)",
+    )?
+    .execute(params![&auth.room[..], &auth.device[..], x.cfg.key_packages as i64])?;
     let unused: i64 = x
         .c
         .prepare_cached("SELECT count(*) FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 0 AND expires_at > ?3")?
         .query_row(params![&auth.room[..], &auth.device[..], x.now as i64], |r| r.get(0))?;
-    if unused as usize > x.cfg.key_packages {
-        return Err(refuse(
-            "too-many",
-            "a device keeps at most 100 single-use KeyPackages",
-        ));
-    }
     Ok(json!({ "unused": unused }))
 }
 

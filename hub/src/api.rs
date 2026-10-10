@@ -589,7 +589,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let auth = read_auth()?;
             auth.human()?;
             heavy_limit(&auth)?;
-            app.write_as(&auth, rq.lease, |x, _| accounts::put_email(x.c, &auth.room, &rq.body, x.now))
+            let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["kit"]]))?;
+            app.write_as(&auth, rq.lease, |x, _| accounts::put_email(x.c, &auth.room, &rq.body, x.now, &pre))
         }
         ("POST", ["account", "passkeys", "challenge"]) => app.read(|x| {
             // a human device, or the recovery key before it finishes (8.7: a passkey made anew): with the
