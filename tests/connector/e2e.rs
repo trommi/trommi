@@ -455,3 +455,74 @@ async fn the_opener_admits_a_helper_device_and_lets_it_back_in_after_it_lost_its
     human.sync().await;
     assert!(human.findings.is_empty(), "{:?}", human.findings);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_agent_reads_an_object_two_senders_wrote_in_turns() {
+    let (_hub, mut human, mut first, group) = room().await;
+    let options = json!([{ "key": "a", "label": "A" }, { "key": "b", "label": "B" }]);
+    let card = first
+        .client
+        .send_card(
+            fields(json!({
+                "card_type": "decision", "title": "A or B?", "body": "first", "urgency": "normal",
+                "options": options, "allows_multiple": false,
+            })),
+            None,
+        )
+        .await
+        .expect("a card");
+    // In turns: the human answers, takes it back; the agent revises; the human answers the new version.
+    human.sync().await;
+    human
+        .answer(
+            &card,
+            json!({ "answer_action": "answer", "choices": ["a"] }),
+            &["a"],
+            false,
+        )
+        .await
+        .expect("answered");
+    assert_eq!(first.command().await.choices, ["a"]);
+    human.take_back(&card).await.expect("taken back");
+    assert_eq!(first.command().await.command, "decide_again");
+    first
+        .client
+        .revise(&card, fields(json!({ "body": "second" })), None)
+        .await
+        .expect("revised");
+    human.sync().await;
+    human
+        .answer(
+            &card,
+            json!({ "answer_action": "answer", "choices": ["b"] }),
+            &["b"],
+            false,
+        )
+        .await
+        .expect("answered again");
+    assert_eq!(first.command().await.choices, ["b"]);
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+
+    // Another connector takes the session over and reads its past: every envelope in the hub's one order.
+    let session = group.session_id().expect("a session group");
+    let second = join(&mut human, Some(session)).await;
+    human
+        .take_over(&group, first.client.device_id(), &second.admitted)
+        .await;
+    let client = second.client.clone();
+    eventually(
+        "the new agent holds the card as the turns left it",
+        || async {
+            let core = client.core.lock().await;
+            core.model.cards.get(&card).is_some_and(|c| {
+                c.object_state == "answered"
+                    && c.object_version == 2
+                    && c.s("body") == "second"
+                    && c.answer.as_ref().is_some_and(|a| a.choice_strs() == ["b"])
+                    && c.answers.len() == 2
+            })
+        },
+    )
+    .await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+}
