@@ -301,16 +301,34 @@ fn the_database_is_copied_before_another_release_starts() {
     assert!(hub.prestart());
     assert_eq!(hub.copies().len(), 1);
 
-    // another release, also the one before coming back: one copy each; the three newest stay
-    for release in ["hub-v6", "hub-v5", "hub-v7", "hub-v8"] {
+    // a newer release: one copy each; the one before coming back (a rollback): none, so that it pushes no copy out
+    for (release, count) in [
+        ("hub-v6", 2),
+        ("hub-v5", 2),
+        ("hub-v6", 3),
+        ("hub-v7", 4),
+        ("hub-v8", 5),
+    ] {
         std::thread::sleep(std::time::Duration::from_millis(1100));
         hub.current(&format!("releases/{release}"));
         assert!(hub.prestart());
+        assert_eq!(hub.copies().len(), count.min(3), "after {release}");
     }
+    // the three newest stay
     let copies = hub.copies();
     assert_eq!(copies.len(), 3, "{copies:?}");
-    assert!(copies.iter().any(|c| c.starts_with("before-hub-v8-")));
-    assert!(!copies.iter().any(|c| c.starts_with("before-hub-v6-")));
+    for (release, kept) in [
+        ("hub-v5", false),
+        ("hub-v6", true),
+        ("hub-v7", true),
+        ("hub-v8", true),
+    ] {
+        let n = copies
+            .iter()
+            .filter(|c| c.starts_with(&format!("before-{release}-")))
+            .count();
+        assert_eq!(n > 0, kept, "{release}: {copies:?}");
+    }
 
     // a link that names no release: nothing is copied, nothing fails (the hub will not start anyway)
     for odd in [
