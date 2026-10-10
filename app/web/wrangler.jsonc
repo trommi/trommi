@@ -7,6 +7,6 @@
   // root first. It installs and writes only in Cloudflare's build (WORKERS_CI=1).
   "build": { "command": "node dev/build.mjs" },
   // The app is static: every navigation that is not a file gets index.html (the app routes in the page).
-  // The worker runs first: http to https, /connect, the universal links' file, /favicon.ico.
+  // The worker runs first: http to https, the universal links' file, /favicon.ico.
   "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": true }
 }
