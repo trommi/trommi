@@ -422,13 +422,36 @@ struct AccountPage: View {
           } else {
             VStack(alignment: .leading, spacing: 10) {
               Text(st.hasRecovery ? "Make a New Kit" : "Make the Emergency Kit").font(Face.text(17, .medium))
-              HStack {
-                SecureField("Your Password", text: $kitPassword).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
-                Button("Make") { run { let r = try await model.room?.makeEmergencyKit(password: kitPassword); kit = r?.words; kitPassword = ""; await load() } }.buttonStyle(QuietWay()).disabled(kitPassword.isEmpty)
+              if st.hasPassword {
+                HStack {
+                  SecureField("Your Password", text: $kitPassword).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
+                  Button("Make") { run { let r = try await model.room?.makeEmergencyKit(password: kitPassword); kit = r?.words; kitPassword = ""; await load() } }.buttonStyle(QuietWay()).disabled(kitPassword.isEmpty)
+                }
+              } else {
+                // (an account without a password: one of its passkeys opens it)
+                Button("Make with Passkey") { run(passkey: true) { guard let r = model.room else { return }; kit = try await r.makeEmergencyKit(way: try await model.wayIn(r, password: nil)).words; await load() } }.buttonStyle(QuietWay())
               }
             }.padding(16)
           }
         }
+        if !st.hasPassword {
+          SettingsGroup(header: "Passkeys", footer: "This account opens with a passkey; it has no password. If you lose your passkeys and your Emergency Kit, nobody (not even Trommi) can recover your data.") {
+            SettingsRow(title: st.passkeys.count == 1 ? "1 Passkey" : "\(st.passkeys.count) Passkeys") { Sketch("key") }
+          }
+          if model.passkeysOn {
+            SettingsGroup(footer: "For after you removed a device that is lost or no longer yours. You get a new Emergency Kit; the old kit stops working, and your other passkeys have to be added again.") {
+              Button { codeAsk = true } label: { SettingsRow(title: "New Recovery Code…") { Sketch("key") } }.buttonStyle(.plain)
+            }
+            .alert("New Recovery Code", isPresented: $codeAsk) {
+              Button("Use Passkey") { run(passkey: true) { guard let r = model.room else { return }; kit = try await r.replaceRecoveryCode(way: try await model.wayIn(r, password: nil)).words; said = "New recovery code made. Save your new Emergency Kit."; await load() } }
+              Button("Cancel", role: .cancel) {}
+            } message: { Text("Your passkey opens the account. Then save or print the new Emergency Kit.") }
+            SettingsGroup {
+              // (a passkey of the account opens its key, which the new passkey then holds too)
+              Button { run(passkey: true) { guard let r = model.room else { return }; let way = try await model.wayIn(r, password: nil); try await r.addPasskey(way: way) { try await Passkeys.make($0) }; said = "Passkey added."; await load() } } label: { SettingsRow(title: "Add Passkey") { Sketch("key") } }.buttonStyle(.plain)
+            }
+          }
+        } else {
         SettingsGroup(header: "Password", footer: "If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.") {
           VStack(alignment: .leading, spacing: 8) {
             SecureField("Current Password", text: $current).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
@@ -456,7 +479,7 @@ struct AccountPage: View {
             Button("Cancel", role: .cancel) { codePassword = "" }
           } message: { Text("Your password opens the account. Then save or print the new Emergency Kit.") }
         }
-        if Passkeys.available && st.hasPassword {
+        if model.passkeysOn && st.hasPassword {
           SettingsGroup {
             Button { passkeyAsk = true } label: { SettingsRow(title: "Add Passkey") { Sketch("key") } }.buttonStyle(.plain)
           }
@@ -470,6 +493,7 @@ struct AccountPage: View {
             }
             Button("Cancel", role: .cancel) { passkeyPassword = "" }
           }
+        }
         }
       } else {
         SettingsGroup(footer: "This account was made before email and password: add a login at app.trommi.com → Settings → Account (it needs the recovery code shown when you started).") {

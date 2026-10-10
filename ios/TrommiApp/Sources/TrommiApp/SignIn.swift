@@ -5,7 +5,7 @@
 // "iPhone" or "iPad" (UIDeviceName), renamed under Settings → Devices. The kit's page is KitScreen.swift.
 //
 // An account is named by ONE field at Log in and New password: "Email or account ID" (the id is printed on the
-// Emergency Kit). With passkeys switched on (`Passkeys.available`) the passkey comes first on Create account and Log
+// Emergency Kit). With passkeys switched on (`model.passkeysOn`, Passkeys.swift: on by itself once the domain names this app) the passkey comes first on Create account and Log
 // in, and needs no field: the email is optional beside it. Switched off, both screens are the password's alone.
 import SwiftUI
 import TrommiClient
@@ -260,7 +260,7 @@ struct CreateView: View {
   @State private var bad = false
   var body: some View {
     ObShell(title: "Create account") {
-      if Passkeys.available {
+      if model.passkeysOn {
         ObEmail(text: $email, label: "Email (optional with a passkey)")
         Button(model.signing ? "Creating…" : "Create with passkey") { createWithPasskey() }.buttonStyle(ObGo()).disabled(model.signing)
         ObOr()
@@ -315,14 +315,14 @@ struct EmailView: View {
   @State private var password = ""
   var body: some View {
     ObShell(title: "Log in") {
-      if Passkeys.available {
+      if model.passkeysOn {
         Button("Log in with passkey") { Task { await model.loginWithPasskey() } }.buttonStyle(ObGo()).disabled(model.signing)
         ObOr()
       }
       ObEmail(text: $email, label: ACCOUNT_FIELD)
       ObPassword(text: $password, bad: .constant(false)) { Button("Forgot?") { model.go(.forgot) }.buttonStyle(ObLink()).frame(height: 20) }
       ObError(text: model.error)
-      if Passkeys.available {
+      if model.passkeysOn {
         Button(model.signing ? "Logging in…" : "Log in") { login() }.buttonStyle(ObSecond()).disabled(model.signing)
       } else {
         Button(model.signing ? "Logging in…" : "Log in") { login() }.buttonStyle(ObGo()).disabled(model.signing)
@@ -385,7 +385,7 @@ struct ForgotView: View {
       .buttonStyle(ObGo()).disabled(model.signing)
       Button("Back to log in") { model.go(.email) }.buttonStyle(ObLink()).frame(maxWidth: .infinity)
       // (spec/v2.md 8.7: every device is lost. An account without an email gets a new passkey for it, where passkeys are on.)
-      if !byId || Passkeys.available {
+      if !byId || model.passkeysOn {
         Button("All my devices are lost") { if checked(byId: byId) != nil { lostAll = true } }
           .buttonStyle(ObLink()).frame(maxWidth: .infinity).disabled(model.signing)
       }
