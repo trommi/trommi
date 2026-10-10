@@ -46,6 +46,9 @@ core/swift/build.sh                                 # the Rust core: lib/linux a
 (cd ios/TrommiApp && ulimit -n 65536 && xtool dev build --configuration release)   # xtool/TrommiApp.app
 ```
 
+The tests are in the repository's one tests folder, `tests/ios` (one folder per test target). SwiftPM takes no
+target outside its package, so `ios/TrommiClient/Tests` is a link to it; `swift test` is run in `ios/TrommiClient`.
+
 ### The Rust core
 
 `core/swift/build.sh` (`host`, `ios`, or both without an argument) writes into `core/swift/TrommiCoreRust/`:
