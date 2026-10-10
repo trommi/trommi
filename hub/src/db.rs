@@ -13,7 +13,8 @@ use rusqlite::{Connection, OpenFlags};
 
 pub const SCHEMA_VERSION: i64 = 5;
 
-/// Added to schema 5 in place (Welcomes stored once, ids never given twice, an index for deleting by group), on every open (a fresh database and one that holds data alike): nothing is
+/// Added to schema 5 in place (Welcomes stored once, ids never given twice, an index for deleting by group, the
+/// Offer's MAC, an index for paging the groups), on every open (a fresh database and one that holds data alike): nothing is
 /// rewritten, rows written before keep working. A Welcome is stored once per group and epoch in
 /// `welcome_bytes`; a row of `welcomes` with `epoch` set points to it and keeps an empty `bytes`, a row without
 /// `epoch` (written before) holds its own. At 1000 human devices a founding's Welcome is some 0.3 MB, and it is
@@ -687,6 +688,15 @@ impl Db {
             )?;
             if has_epoch == 0 {
                 writer.execute_batch("ALTER TABLE welcomes ADD COLUMN epoch INTEGER;")?;
+            }
+            // the Offer's MAC (12.1.2), stored and served with it; none for an invite stored before
+            let has_mac: i64 = writer.query_row(
+                "SELECT count(*) FROM pragma_table_info('invites') WHERE name = 'offer_mac'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_mac == 0 {
+                writer.execute_batch("ALTER TABLE invites ADD COLUMN offer_mac BLOB;")?;
             }
             let seeded: i64 =
                 writer.query_row("SELECT count(*) FROM welcome_ids", [], |r| r.get(0))?;
