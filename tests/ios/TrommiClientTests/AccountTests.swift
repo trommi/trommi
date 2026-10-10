@@ -676,6 +676,18 @@ final class AccountTests: XCTestCase {
     XCTAssertEqual(hub.posted.count, before)
   }
 
+  /// Logging out is bounded: a queued operation that hangs (a catch-up waiting on the hub) does not keep the person
+  /// from leaving; it is over within seconds and nothing of the room is left.
+  func testLoggingOutDoesNotWaitForAHangingOperation() async throws {
+    let (room, _) = try await created()
+    Task { _ = try? await room.serial { try await Task.sleep(nanoseconds: 120_000_000_000) } }
+    try await Task.sleep(nanoseconds: 100_000_000)
+    let t0 = Date()
+    try await room.leaveRoom()
+    XCTAssertLessThan(Date().timeIntervalSince(t0), 20)
+    XCTAssertEqual(Store.rooms(base: device("first")), [])
+  }
+
   func testTheKitsQRTextAndFile() throws {
     // https://<app>/#k1.<hub address, base64url of its UTF-8>.<account id, 32 hex digits>
     XCTAssertEqual(kitQRText(hubURL: "https://hub.trommi.com", accountId: hub.id), "https://app.trommi.com/#k1.aHR0cHM6Ly9odWIudHJvbW1pLmNvbQ.0f8fad5bd9cb469fa16570867728950e")
