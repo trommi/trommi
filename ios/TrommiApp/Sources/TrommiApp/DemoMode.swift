@@ -111,7 +111,7 @@ extension BoardModel {
     case "scan": phase = .scan
     case "join": phase = .asking
     case "join-emoji": phase = .checkCode("03-17-08-42-25-11")
-    case "join-expired": phase = .pairFailed("This code has run out.")
+    case "join-expired": phase = .pairFailed("This code has run out. Make a new one on the other device.")
     case "join-burned": phase = .pairFailed("The emoji did not match there.")
     default: demoOnboard = nil; say("Demo", "“\(state)” is a screen of the web app only.")
     }

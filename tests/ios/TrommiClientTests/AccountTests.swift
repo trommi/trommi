@@ -126,6 +126,9 @@ final class AccountTools: CoreTools {
   func openDevice(store: CoreStorage) throws -> CoreDevice { try base.openDevice(store: store) }
   func canonicalHub(_ text: String) throws -> String { try base.canonicalHub(text) }
   func parseInviteLink(_ text: String) throws -> InviteLinkParts { try base.parseInviteLink(text) }
+  func inviteLinkCheck(_ text: String, nowMs: UInt64) throws -> InviteLinkParts { try base.inviteLinkCheck(text, nowMs: nowMs) }
+  func inviteLifeMs(_ role: InviteRole) -> UInt64 { base.inviteLifeMs(role) }
+  func inviteClockToleranceMs() -> UInt64 { base.inviteClockToleranceMs() }
   func checkEmoji() -> [(emoji: String, word: String)] { base.checkEmoji() }
   func boardReduce(snapshot: Bytes?, snapshotFrontier: [WriterHead], items: [BoardItemBody], frontier: [WriterHead]) throws -> Bytes { try base.boardReduce(snapshot: snapshot, snapshotFrontier: snapshotFrontier, items: items, frontier: frontier) }
   func encryptFile(_ plain: Bytes) throws -> SealedFile { try base.encryptFile(plain) }

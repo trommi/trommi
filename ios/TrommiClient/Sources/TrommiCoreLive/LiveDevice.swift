@@ -343,7 +343,7 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   public func inviteOpen(role: TrommiClient.InviteRole, session: SessionId?, app: String, hub: String, nowMs: UInt64) throws -> TrommiClient.InviteOpened {
     let opened = try core { try device.inviteOpen(role: role == .human ? .human : .agent, sessionId: session?.data, app: app, hub: hub, nowMs: nowMs) }
     return TrommiClient.InviteOpened(inviteId: opened.inviteId.bytes, link: opened.link, expiresAt: opened.expiresAt,
-                                     offer: TrommiClient.SignedOffer(offer: opened.offer.bytes, signature: opened.signature.bytes))
+                                     offer: TrommiClient.SignedOffer(offer: opened.offer.bytes, signature: opened.signature.bytes, mac: opened.mac.bytes))
   }
   public func inviteAccept(invite: Bytes, request: TrommiClient.SignedRequest, nowMs: UInt64) throws -> TrommiClient.InviteAccepted {
     let signed = TrommiCoreRust.SignedRequest(request: request.request.data, mac: request.mac.data, signature: request.signature.data)
@@ -388,8 +388,12 @@ public final class LiveDevice: TrommiClient.CoreDevice {
 
   // ---- real: invites by link (12.1), the new device ---------------------------------------------------------
 
+  public func joinLink(_ link: String, nowMs: UInt64) throws -> TrommiClient.JoinLink {
+    let l = try core { try device.joinLink(link: link, nowMs: nowMs) }
+    return TrommiClient.JoinLink(hub: l.hub, room: l.roomId.bytes, invite: l.inviteId.bytes, expiresAt: l.expiresAt)
+  }
   public func joinRequest(link: String, offer: TrommiClient.SignedOffer, nowMs: UInt64) throws -> TrommiClient.JoinRequest {
-    let made = try core { try device.joinRequest(link: link, offer: TrommiCoreRust.SignedOffer(offer: offer.offer.data, signature: offer.signature.data), nowMs: nowMs) }
+    let made = try core { try device.joinRequest(link: link, offer: TrommiCoreRust.SignedOffer(offer: offer.offer.data, signature: offer.signature.data, mac: offer.mac.data), nowMs: nowMs) }
     return TrommiClient.JoinRequest(inviteId: made.inviteId.bytes, request: TrommiClient.SignedRequest(request: made.request.bytes, mac: made.mac.bytes, signature: made.signature.bytes),
                                     role: Self.role(made.role), inviter: made.inviter.bytes, expiresAt: made.expiresAt, sessionId: made.sessionId?.bytes,
                                     roomId: made.roomId.bytes, roomEpoch: made.roomEpoch, roomState: made.roomState.bytes)
