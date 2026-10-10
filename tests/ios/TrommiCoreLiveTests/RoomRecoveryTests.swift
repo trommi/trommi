@@ -108,4 +108,149 @@ final class RoomRecoveryTests: XCTestCase {
     let fourth = try newDevice()
     XCTAssertEqual(refusedCode { _ = try fourth.joinRoomWithCode(old, served: try self.hub.served(room: room, code: old, tools: self.tools), nowMs: nowMs()) }, "wrong-recovery")
   }
+
+  /// A room whose two human devices are lost, each with Notes that interleave in the hub's order, and its account.
+  private func lostRoom() throws -> (first: LiveDevice, second: LiveDevice, room: RoomId, code: Bytes, words: String) {
+    let code = try tools.generateRecoveryCode()
+    let first = try newDevice(), second = try newDevice()
+    let room = try first.foundRoom(recoveryCode: code, nowMs: nowMs())
+    try hub.post(first)
+    _ = try second.joinRoomWithCode(code, served: try hub.served(room: room, code: code, tools: tools), nowMs: nowMs())
+    try hub.post(second)
+    try hub.deliver(to: first)
+    for round in 0..<2 {
+      for device in [first, second] {
+        _ = try device.seal(.noteFirst(payload: utf8(#"{"schema_version":1,"text":"note \#(round)","previous_version_hash":"\#(b64u(ZERO32))"}"#)), files: [], nowMs: nowMs())
+        try hub.post(device)
+      }
+    }
+    return (first, second, room, code, try account(room: room, code: code))
+  }
+
+  /// Every device is lost (8.7), from the reset path: the kit's words open the code, and the new device removes the
+  /// two lost ones, replaces the code and gets a new kit, all through the recovery's routes.
+  func testAWholeRecoveryFromTheEmergencyKit() async throws {
+    let (first, second, room, code, words) = try lostRoom()
+    let base = try scratchFolder(self)
+    var asked: Int?
+    let done = try await Room.recoverAccount(hubURL: PocketRoutes.url, account: email, words: words, newPassword: "a brand new password", base: base) { asked = $0; return true }
+    addTeardownBlock { await done.room.shutdown() }
+    XCTAssertEqual(asked, 2, "the person is told how many devices go before anything is posted")
+    XCTAssertEqual(done.removed, 2)
+    XCTAssertEqual(Store.rooms(base: base), [hex(room)])
+
+    // What went to the hub, in order: the recovery is opened, the chains of both lost devices are read, the parts
+    // are posted into the recovery, and the finish comes last.
+    let recovery = "/rooms/\(b64u(room))/recovery"
+    let posts = PocketRoutes.asked.filter { $0.hasPrefix("POST \(recovery)") }
+    XCTAssertEqual(posts.first, "POST \(recovery)")
+    XCTAssertTrue(posts.last?.hasSuffix("/finish") == true)
+    XCTAssertEqual(posts.filter { $0.hasSuffix("/commits") }.count, posts.count - 2)
+    for lost in [first, second] { XCTAssertTrue(PocketRoutes.asked.contains("GET /groups/\(b64u(room))/chains/\(b64u(lost.id))")) }
+    XCTAssertFalse(PocketRoutes.asked.contains { $0.hasPrefix("DELETE \(recovery)") })
+    XCTAssertEqual(Array(hub.kinds.suffix(3)), [11, 11, 12])
+
+    // The new device is the room's one human device, under a new code.
+    let mine = try XCTUnwrap(done.room.device as? LiveDevice)
+    XCTAssertEqual(mine.room, room)
+    XCTAssertEqual(try mine.roomRoles()?.humans, [mine.id])
+    XCTAssertTrue(try mine.holdsRecoveryMac())
+    XCTAssertTrue(mine.outbox().isEmpty)
+    XCTAssertNotEqual(try mine.recoveryKeys()?.signatureKey, try tools.recoverySigner(code: code).id)
+    // The account's new copies: a new kit and the password set anew, both holding the new code.
+    let sent = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(try XCTUnwrap(hub.account))) as? JSON)
+    XCTAssertEqual(Set(sent.keys), ["kit", "password"])
+    let sentKit = try XCTUnwrap(sent["kit"] as? JSON), sentPassword = try XCTUnwrap(sent["password"] as? JSON)
+    XCTAssertEqual(Set(sentPassword.keys), ["auth_key", "sealed_copy", "kdf"])
+    XCTAssertNotEqual(done.kit.words, words)
+    let kitKeys = try tools.kitKeysFor(.email(email), words: done.kit.words)
+    XCTAssertEqual(sentKit["auth_key"] as? String, kitKeys.authKey)
+    let next = try tools.openCode(try unb64u(try XCTUnwrap(sentKit["sealed_copy"] as? String)), room: room, way: .kit(wrapKey: kitKeys.wrapKey))
+    XCTAssertEqual(try mine.recoveryKeys()?.signatureKey, try tools.recoverySigner(code: next).id)
+    // A lost device, should it turn up, learns that it is out; and the new one reads on.
+    XCTAssertTrue(try hub.deliver(to: first).contains { if case .commit(_, _, _, true) = $0 { return true } else { return false } })
+    _ = try await done.room.sync()
+    XCTAssertEqual(done.room.state.humans, 1)
+  }
+
+  /// THE ORDER OF THE CHAINS. The core reads the removed devices' envelopes in the order handed in and does not sort
+  /// them: they go in as one list rising by change number across devices, never chain after chain. This holds down
+  /// what the client hands in. (With both devices' envelopes in one epoch, as here, the core takes either order;
+  /// the order decides once Commits lie between them.)
+  func testTheRemovedDevicesChainsAreHandedInInTheHubsOrder() async throws {
+    let (first, second, room, code, _) = try lostRoom()
+    let client = try HubClient(hubURL: PocketRoutes.url, room: room, signer: try tools.recoverySigner(code: code))
+    let chains = try await ServedByHub(hub: client).chains([(room, [first.id, second.id])])
+    XCTAssertEqual(chains.count, 4)
+    XCTAssertEqual(chains.map(\.change), chains.map(\.change).sorted(), "one list, rising by change number")
+    // The two devices' envelopes interleave in it, as they did at the hub.
+    let senders = chains.map { e in hub.chains.first { $0.change == e.change }?.sender }
+    XCTAssertEqual(senders, [first.id, second.id, first.id, second.id])
+
+    // In that order the recovery builds: the join, the removal of both with the new code, the finish.
+    let served = try hub.served(room: room, code: code, tools: tools)
+    let device = try newDevice()
+    _ = try device.prepareRecovery(code, served: served)
+    XCTAssertEqual(try device.recover(code, served: served, chains: chains, account: utf8("{}"), nowMs: nowMs()).outbox.count, 3)
+  }
+
+  /// A recovery the person does not confirm is dropped at the hub, and nothing of the device is left.
+  func testARecoveryThatIsNotConfirmedIsDropped() async throws {
+    let (first, _, room, _, words) = try lostRoom()
+    let base = try scratchFolder(self)
+    let kinds = hub.kinds
+    let no = await failure { _ = try await Room.recoverAccount(hubURL: PocketRoutes.url, account: self.email, words: words, newPassword: "a brand new password", base: base) { _ in false } }
+    XCTAssertEqual(code(of: no), "cancelled")
+    XCTAssertTrue(PocketRoutes.asked.contains { $0.hasPrefix("DELETE /rooms/\(b64u(room))/recovery/") })
+    XCTAssertEqual(hub.kinds, kinds, "nothing was posted")
+    XCTAssertEqual(Store.rooms(base: base), [])
+    XCTAssertEqual(try first.roomRoles()?.humans.count, 2)
+  }
+
+  /// SIGNING IN WITH THE CODE, INTERRUPTED (8.4). Before the hub accepted the join of the room group a failure
+  /// leaves nothing. Once it did, the device is kept: a session join the hub did not answer is finished by the
+  /// next sync, also after the app was ended in between, and only then is the code forgotten.
+  func testAnInterruptedSignInKeepsTheDeviceOnceItIsInTheRoom() async throws {
+    let secret = try tools.generateRecoveryCode()
+    let a = try newDevice(), agent = try newDevice()
+    let room = try a.foundRoom(recoveryCode: secret, nowMs: nowMs())
+    try hub.post(a)
+    let invite = try exchangeInvite(from: a, to: agent, role: .agent, tools: tools)
+    try agent.joinObserve(groupInfo: try XCTUnwrap(hub.infos[room]?[0]))
+    _ = try a.inviteConfirm(invite: invite.invite, numbers: invite.inviterShows, requestHash: invite.requestHash, matches: true, nowMs: nowMs())
+    try hub.post(a)
+    guard case .foundSession(_, _, let keyPackage)? = try a.inviteSteps().first else { return XCTFail("the invite asks for no session") }
+    let session = room + (try a.foundSession(agent: agent.id, keyPackages: [keyPackage], nowMs: nowMs()))
+    try hub.post(a)
+    let base = try scratchFolder(self)
+
+    // The hub refuses the join of the room group: nothing is left.
+    PocketRoutes.refuseOnce["POST /groups/\(b64u(room))/commits"] = "bad-commit"
+    let refused = await failure { _ = try await Room.joinWithRecoveryCode(hubURL: PocketRoutes.url, roomId: hex(room), code: secret, base: base) }
+    XCTAssertEqual(code(of: refused), "bad-commit")
+    XCTAssertEqual(Store.rooms(base: base), [])
+
+    // The hub takes the join of the room group and fails on the session's: the device is in, and kept.
+    PocketRoutes.refuseOnce["POST /groups/\(b64u(session))/commits"] = "internal"
+    let joined = try await Room.joinWithRecoveryCode(hubURL: PocketRoutes.url, roomId: hex(room), code: secret, base: base)
+    XCTAssertEqual(Store.rooms(base: base), [hex(room)])
+    XCTAssertEqual(try joined.store.load().codeJoin, true)
+    let item = Room.joinCodeItem(joined.store.dir), folder = joined.store.dir
+    XCTAssertEqual(try LocalKey.read(item, dir: folder), secret)
+    XCTAssertEqual(try (joined.device as? LiveDevice)?.groups().map(\.group), [room])
+    let id = joined.deviceIdHex
+    // The app is ended, and opened again: the same device goes on.
+    await joined.shutdown()
+    let again = try Room.open(base: base, roomId: hex(room))
+    addTeardownBlock { await again.shutdown() }
+    XCTAssertEqual(again.deviceIdHex, id)
+    _ = try await again.sync()
+    try await again.flush()
+    _ = try await again.sync()
+    let device = try XCTUnwrap(again.device as? LiveDevice)
+    XCTAssertEqual(Set(try device.groups().map(\.group)), [room, session])
+    XCTAssertNil(again.record.codeJoin)
+    XCTAssertNil(try again.store.load().codeJoin)
+    XCTAssertNil(try LocalKey.read(item, dir: folder), "the code is forgotten once the join has finished")
+  }
 }

@@ -1,6 +1,6 @@
 // RoomAccount.swift: how this device comes into a room: founding one, joining by link (the six emoji), or signing in
 // with the recovery code (which the account keeps sealed under the password, the Emergency Kit words or a passkey:
-// Account.swift). spec/v2.md 5.1.1, 12.1, 8.4 and 8.7.
+// Account.swift), or, when every device is lost, the whole recovery with it. spec/v2.md 5.1.1, 12.1, 8.4 and 8.7.
 import Foundation
 
 extension Room {
@@ -130,11 +130,72 @@ extension Room {
     } catch { abandon(made); throw error }
   }
 
+  /** The Keychain item that holds the recovery code while a sign-in with it is not finished. */
+  static func joinCodeItem(_ dir: URL) -> String { "join-\(dir.lastPathComponent)" }
+
   /**
    * Sign in on this device with the recovery code (8.4): the code's key signs in to the hub, and this device joins
-   * the room group and every live session group from outside, authorised by that key. Every other human device sees the new leaf. `challenge`: one a login answer carried.
+   * the room group and every live session group from outside, authorised by that key. Every other human device sees
+   * the new leaf. `challenge`: one a login answer carried.
+   *
+   * Until the hub accepted the join of the room group, a failure throws and nothing is left of the device. From
+   * then on the device is a leaf of the room and is kept whatever happens: the room record is written at once, and
+   * the session groups are joined after it. What is left of them when this returns (the hub did not answer, the app
+   * was ended) is finished by the next sync (`finishCodeJoin`). The code is kept in the Keychain for exactly that
+   * long (8.5: forgotten once the join has finished).
    */
   public static func joinWithRecoveryCode(hubURL: String, roomId: String, code: Bytes, base: URL = Store.defaultBase(), challenge: Bytes? = nil) async throws -> Room {
+    let tools = Core.tools
+    let hubURL = try tools.canonicalHub(hubURL)
+    let room = try unhex(roomId)
+    let made = try newDevice(base: base, roomId: roomId)
+    let hub: HubClient, joined: Room
+    do {
+      hub = try HubClient(hubURL: hubURL, room: room, signer: try tools.recoverySigner(code: code))
+      _ = try await hub.signIn(challenge: challenge)
+      // The core reads the room from the hub under the recovery key's token, checks it, and posts the join.
+      _ = try await tools.joinRoomWithRecoveryCode(device: made.device, code: code, hub: hub, nowMs: nowMs())
+      try? LocalKey.write(joinCodeItem(made.store.dir), code, dir: made.store.dir)
+      let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false, codeJoin: true)
+      try made.store.save(record)
+      joined = try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
+    } catch { abandon(made); throw error }
+    await joined.finishCodeJoin(as: hub)
+    return joined
+  }
+
+  /**
+   * Joins the session groups a sign-in with the recovery code has left (see `joinWithRecoveryCode`), and forgets the
+   * code once nothing is left that another try could mend. `recoveryHub`: the hub client of the sign-in itself,
+   * signed in as the recovery key; later this device's own. A session the core or the hub refused for good is said
+   * as an alert: another device of the person can add this one to it. (The core is called from here directly: the
+   * binding lets one caller in at a time, and this runs before the first catch-up or inside it.)
+   */
+  func finishCodeJoin(as recoveryHub: HubClient? = nil) async {
+    guard record.codeJoin == true else { return }
+    let item = Room.joinCodeItem(store.dir)
+    if let code = (try? LocalKey.read(item, dir: store.dir)) ?? nil {
+      guard let left = try? await Core.tools.joinSessionsWithRecoveryCode(device: device, code: code, hub: recoveryHub ?? hub, nowMs: nowMs()), !left.again else { return }
+      var change = Change()
+      for session in left.notJoined { board.pushAlert(&change, code: session.code, message: "a session could not be joined when this device signed in: another device of yours can add it") }
+      try? await refreshGroups(&change)
+      emit(change)
+    }
+    LocalKey.delete(item, dir: store.dir)
+    record.codeJoin = nil
+    try? store.save(record)
+  }
+
+  /**
+   * The recovery when every device is lost (8.7): a new device signs in to the hub with the code's key and runs the
+   * whole recovery (`CoreTools.recoverWithCode`): it joins the room group and every live session group, removes
+   * every other human device and replaces the code, all published by the hub at once or not at all. `confirm` is
+   * asked with the human devices that will be removed, before anything is posted that changes the room; `account`
+   * gives the account's new sealed copies for the new code (Account.swift; `hub` is the recovery key's client, for
+   * a passkey's challenge). A failure, or a `confirm` that says no (`cancelled`), leaves nothing of the device.
+   */
+  public static func recoverWithCode(hubURL: String, roomId: String, code: Bytes, base: URL = Store.defaultBase(), challenge: Bytes? = nil,
+                                     confirm: @escaping ([DeviceId]) async -> Bool, account: @escaping (HubClient, Bytes) async throws -> Bytes) async throws -> (room: Room, removed: [DeviceId]) {
     let tools = Core.tools
     let hubURL = try tools.canonicalHub(hubURL)
     let room = try unhex(roomId)
@@ -142,11 +203,10 @@ extension Room {
     do {
       let hub = try HubClient(hubURL: hubURL, room: room, signer: try tools.recoverySigner(code: code))
       _ = try await hub.signIn(challenge: challenge)
-      // The core reads the room from the hub under the recovery key's token, checks it, and posts the joins.
-      _ = try await tools.joinWithRecoveryCode(device: made.device, code: code, hub: hub, nowMs: nowMs())
+      let done = try await tools.recoverWithCode(device: made.device, code: code, hub: hub, nowMs: nowMs(), confirm: confirm) { try await account(hub, $0) }
       let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
       try made.store.save(record)
-      return try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
+      return (try Room(store: made.store, record: record, deviceStore: made.state, device: made.device), done.removed)
     } catch { abandon(made); throw error }
   }
 }

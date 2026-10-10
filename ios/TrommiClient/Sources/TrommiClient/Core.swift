@@ -719,15 +719,34 @@ public protocol CoreTools: AnyObject {
   // push (15.2)
   func generatePushKey() throws -> Bytes
 
-  // recovery (section 8). Signing in on a new device with the code: a join from outside into the room
-  // group and every live session group, authorised by the recovery key, published all or nothing (8.4, 8.7).
+  // recovery (section 8). `hub` is signed in as the recovery key (`recoverySigner`) unless a call says otherwise:
+  // the calls read from it what the core checks, and post what the core built.
   func recoverySigner(code: Bytes) throws -> CoreSigner
   /**
-   * Joins the room group and every live session group from outside, authorised by the recovery key, and takes the
-   * old content keys from the sealed copies. The Commits are in the device's outbox as `externalCommit`, in the
-   * order to post them; the `RecoveryLink` for `finish` is returned.
+   * Signing in on a new device with the code, first step (8.4, 8.5): checks the room the hub serves and joins the
+   * room group from outside, authorised by the recovery key. Until it returns the device is in no room, and a
+   * failure leaves it so. Returns a recovery key whose link to the code it replaced the hub did not serve (the
+   * content of the older codes' time stays closed), or nil.
    */
-  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (missingLink: Bytes?, notJoined: [(group: GroupId, code: String)])
+  func joinRoomWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> Bytes?
+  /**
+   * Second step, for a device that is in the room group: joins every live session group it is not a leaf of yet the
+   * same way, main sessions before helper sessions. `hub` may be signed in as the device itself. `notJoined`: the
+   * sessions left out, each with its code. `again`: one of them may be joined by calling this once more (the hub
+   * did not answer, a join waits in the outbox, a Commit came in between); until then the caller keeps the code.
+   */
+  func joinSessionsWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (notJoined: [(group: GroupId, code: String)], again: Bool)
+  /**
+   * The whole recovery when every device is lost (8.7), on a new device that is in no room: opens the recovery at
+   * the hub (the room takes nothing else meanwhile), checks the room, and asks `confirm` with the human devices it
+   * will remove (false: nothing is published, `cancelled`). Then it reads the removed devices' chains, asks
+   * `account` for the account's new sealed copies of the new code it hands over (the JSON of the hub's `account`
+   * object), builds the joins, the removals and the replacement of the code, and posts them through the recovery's
+   * routes; the hub publishes all of it at the end or none of it. A failure throws, the recovery is dropped at the
+   * hub, and the device is in no room. `removed`: the human devices that are out.
+   */
+  func recoverWithCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64, confirm: @escaping ([DeviceId]) async -> Bool,
+                       account: @escaping (Bytes) async throws -> Bytes) async throws -> (removed: [DeviceId], missingLink: Bytes?)
 }
 
 /** Who signs a hub challenge (12.3): a device, or the recovery key while it joins. */
