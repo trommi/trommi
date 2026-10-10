@@ -176,7 +176,10 @@ struct ObPassword<Side: View>: View {
         Group {
           if shown { TextField("", text: $text) } else { SecureField("", text: $text) }
         }
-        .textContentType(fresh ? .newPassword : .password).textInputAutocapitalization(.never).autocorrectionDisabled()
+        // (.password, not .newPassword, also for a new one: with .newPassword iOS's strong-password AutoFill took the
+        // focus after the first key, as this view is drawn anew on every key (the rule's line), and the field kept one
+        // character. Generate gives a strong one; a password manager still offers to save it.)
+        .textContentType(.password).textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityLabel(label)
         Button(shown ? "Hide" : "Show") { shown.toggle() }.buttonStyle(ObLink())
       }
