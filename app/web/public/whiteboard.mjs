@@ -8,7 +8,7 @@
 // live thumbnail (whiteboardDesks, controller "whiteboard" thumbs); a click opens that desk's board. The pad runs on
 // the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's scribble.mjs).
-import { Controller, controller, html, isTyping, letterKeysOn, markArt, raw, sk } from './ui.mjs'
+import { Controller, controller, html, isTyping, letterKeysOn, markArt, raw, sk, sayError } from './ui.mjs'
 import { SCRIBBLE_FILE, addressOf, attachmentBlob, scribbleWire } from './app.mjs'
 // The core's stroke format, shape and palette (scribble.mjs with ink.mjs and palette.mjs), loaded with this view.
 /** The core's scribble.mjs as this view loaded it. */
@@ -2175,7 +2175,7 @@ function mountPad(main, { canvasId: PAD, client }) {
       $('send-dialog').close()
       note(`Sent to ${session.name}`)
     } catch (err) {
-      out.textContent = `Not sent. ${err.message}`
+      out.textContent = `Not sent. ${sayError(err)}`
       out.hidden = false
       $('send-go').textContent = 'Try again'
       $('send-go').disabled = false
@@ -2378,7 +2378,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     } catch (err) {
       area = null
       $('area-menu').hidden = true
-      note(`Not sent. ${err.message}`, 'error', 6000)
+      note(`Not sent. ${sayError(err)}`, 'error', 6000)
     }
     refresh()
   }
