@@ -96,7 +96,7 @@ jobs:
           part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$|THIRD-PARTY\.md$|\.github/scripts/third_party\.mjs$'
           part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
           part connector 'connector/|release/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
-          part ios 'ios/|tests/ios/|\.github/scripts/ios_testflight\.sh$|\.github/workflows/deploy_ios\.yml$'
+          part ios 'ios/|tests/ios/|\.github/scripts/ios_(testflight\.sh|archive\.sh|entitlements\.py)$|\.github/workflows/deploy_ios\.yml$'
           part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$|\.github/workflows/deploy_hub\.yml$'
 
   # The shared core's own tests: the crates' unit tests and the scenario tests under tests/core and tests/bindings.
@@ -376,9 +376,9 @@ jobs:
       - name: Test
         run: swift test --package-path tests/bindings/swift
       # A pull request delivers nothing, so the app itself would first be compiled when its commit is on main
-      # (deploy_ios.yml archives it). Here it is built for a device once, unsigned and without any secret, so what does
-      # not compile on macOS shows before the merge.
-      - name: The app compiles for a device (pull requests only, unsigned)
+      # (deploy_ios.yml archives it). Here it is archived for a device once, as the delivery does (signed ad hoc, without
+      # any secret, entitlements checked), so what does not compile or sign shows before the merge.
+      - name: The app archives for a device (pull requests only, signed ad hoc)
         if: github.event_name == 'pull_request'
         env:
           XCODEGEN_VERSION: 2.46.0
@@ -390,9 +390,7 @@ jobs:
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
           appstore=ios/TrommiApp/AppStore
           "$RUNNER_TEMP/xcodegen/bin/xcodegen" generate --spec "$appstore/project.yml"
-          xcodebuild build -project "$appstore/Trommi.xcodeproj" -scheme Trommi -configuration Release \
-            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+          bash .github/scripts/ios_archive.sh "$RUNNER_TEMP/Trommi.xcarchive" "$RUNNER_TEMP/DerivedData"
       # What deploy_ios.yml takes: the iOS library and UniFFI's two files, with their hashes and the commit.
       - name: Put the release together
         run: |
