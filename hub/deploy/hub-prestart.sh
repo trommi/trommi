@@ -2,7 +2,7 @@
 # Runs before every start of the hub (ExecCondition of trommi-hub.service), as the hub's user:
 #   hub-prestart.sh <deploy folder> <data folder> <backups folder> <runtime folder>
 #
-# When the release about to start is another one than the last one that was copied for, it copies the database
+# When the release about to start is newer than the last one that started, it copies the database
 # (hub.db with its -wal and -shm files: the hub stands still at this moment, so the three are one consistent state)
 # and the hub's own keys (*.key) into <backups>/before-<release>-<time>/ and keeps the three newest copies. Not the
 # files people uploaded.
@@ -12,7 +12,7 @@
 #   tells systemd to skip the start (no retry by itself); the updater then puts the release before back.
 #   Asked a second time for the same release, it lets it start without a copy and says so: a full disk must not
 #   keep the hub down for good. (The note of the first try lies in the runtime folder, which is memory.)
-# - the release before coming back (a rollback), or the same one, always starts.
+# The release before coming back (a rollback), or the same one, always starts, and no copy is made for it.
 set -u
 deploy=${1:-/srv/trommi/deploy} data=${2:-/srv/trommi/data} backups=${3:-/srv/trommi/backups} run=${4:-/run/trommi-hub}
 umask 077
@@ -28,6 +28,12 @@ case "$last_number" in ''|*[!0-9]*) last_number=0 ;; esac
 
 # written whole and flushed, or not at all
 note() { printf '%s\n' "$2" > "$backups/$1.part" && sync "$backups/$1.part" && mv -f "$backups/$1.part" "$backups/$1" && sync "$backups"; }
+# going back (a rollback): no copy, so that the copies made before newer releases are not pushed out by it
+if [ "$number" -lt "$last_number" ]; then
+  note last-release "$release" || true
+  exit 0
+fi
+
 set -- "$data"/hub.db* "$data"/*.key
 found=''
 for f in "$@"; do [ -f "$f" ] && found=1; done
@@ -48,10 +54,6 @@ done
 [ -n "$ok" ] && { note last-release "$release" || ok=''; }
 if [ -z "$ok" ]; then
   rm -rf "${dir:?}.part" "${dir:?}"
-  if [ "$number" -lt "$last_number" ]; then
-    echo "hub-prestart: no copy could be made before $release comes back; starting it all the same"
-    exit 0
-  fi
   if [ "$(cat "$run/copy-failed" 2>/dev/null)" = "$release" ]; then
     echo "hub-prestart: the copy before $release failed again; starting without it"
     exit 0

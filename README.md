@@ -153,6 +153,14 @@ and nothing to unpack; the server says the SHA-256 of what it runs, to compare w
 version is the build's run number (plus `RELEASE_BASE` in `build.yml`): a whole number that only grows. A published
 release is never replaced.
 
+The manifest may carry fields an updater does not know (they are signed all the same and ignored), so a later
+release can say more without an older updater refusing it. Proposed for one complete release per shipped change:
+`"inputs": {"hub": "<sha256>", "updater": "<sha256>"}`, per program a SHA-256 over everything its build reads.
+The updater already reads it: whether a program is started anew is decided in one place
+(`changes` in `hub/updater/src/lib.rs`), by the inputs when both releases name them, otherwise by the SHA-256 of
+the program in the two manifests. Today that decides whether the updater is replaced; the hub is still started
+anew with every release that is not the one running.
+
 **Why the deploy call needs no secret.** The call carries no code and no address, only the name of a release. What
 the server then runs must be signed with the release key, be the hub of this repository, and not be older than what
 it already accepted; a caller can therefore at most ask for the newest release a little earlier than CI would
@@ -211,7 +219,7 @@ pre-start scripts are installed once and are the fixed point; a change to one of
     updater, updater-previous        the same for the updater
     state.json                       the highest version ever accepted
 /srv/trommi/data/                trommi's: the database (hub.db), the hub's own keys (vapid.key, push-ticket.key), files/
-/srv/trommi/backups/             trommi's: the three newest copies of database and keys, one before each other release starts
+/srv/trommi/backups/             trommi's: the three newest copies of database and keys, one before each newer release starts
 /etc/trommi/                     root's: release-public-key.pem (pinned), hub.env, hub-secrets.env, apns-key.p8, updater.env
 /etc/systemd/system/             trommi-hub.service, trommi-hub-updater.service, trommi-hub-ctl.socket, trommi-hub-ctl@.service
 /usr/local/lib/trommi/           hub-ctl.sh, hub-prestart.sh, updater-prestart.sh
