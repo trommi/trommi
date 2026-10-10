@@ -753,31 +753,24 @@ fn a_takeover_reaches_every_helper_session_and_survives_a_restart() {
     assert_eq!(steps.len(), 1);
     assert!(matches!(&steps[0].1, InviteStep::TakeOver { group, .. } if *group == helper));
 
-    // A clean-up of the stale helper session that only removes the old opener (5.2.8) does not strand it:
-    // the session stands without an opener, and the step now adds the new one.
+    // The main session has its new agent leaf, so the helper session is stale for its outdated opener
+    // leaf and for the opener it lacks (5.2.8): the Remove alone is not taken, the step's one Commit removes
+    // and adds.
     let (_, InviteStep::TakeOver { cuts, .. }) = &steps[0] else {
         unreachable!()
     };
-    a.clean_session(&helper, cuts, None, now()).unwrap();
-    post_ok(&mut hub, &mut a);
-    sync_all(&hub, &mut a);
-    assert!(a.group(&helper).unwrap().disallowed.is_empty());
-    let steps = a.invite_steps().unwrap();
+    let summary = a.group(&helper).unwrap();
     assert_eq!(
-        steps,
-        vec![(
-            id,
-            InviteStep::TakeOver {
-                group: helper,
-                cuts: Vec::new(),
-                agent: new.id(),
-                key_package: None,
-            }
-        )]
+        (summary.disallowed, summary.missing_opener),
+        (vec![old.id()], Some(new.id()))
+    );
+    assert_eq!(
+        a.clean_session(&helper, cuts, None, now()),
+        Err(Error::StaleSession)
     );
     publish_some(&mut hub, &mut new, 2);
     let package = hub.claim(&[new.id()]).unwrap().remove(0);
-    a.clean_session(&helper, &[], Some((&new.id(), &package)), now())
+    a.clean_session(&helper, cuts, Some((&new.id(), &package)), now())
         .unwrap();
     assert_eq!(a.invite_steps().unwrap(), vec![(id, InviteStep::Wait)]);
     post_ok(&mut hub, &mut a);

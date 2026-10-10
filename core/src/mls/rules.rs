@@ -548,8 +548,8 @@ impl Allowed<'_> {
     }
 }
 
-/// The leaves of a session group that the room state does not allow (5.2.8): a group with one is stale. For a
-/// helper session `parent` is its main session at that place.
+/// The leaves of a session group that the room state does not allow (5.2.8): a group with one is stale
+/// ([`staleness`] is the whole predicate). For a helper session `parent` is its main session at that place.
 pub fn disallowed_leaves(
     history: &RoomHistory,
     room: &RoomState,
@@ -582,6 +582,47 @@ pub fn disallowed_leaves(
         }
     }
     unfit
+}
+
+/// Why a session group is stale (5.2.8): nobody writes into it, and it takes nothing but a join by 8.4 and
+/// the Commit that removes the leaves named here and adds the opener named here.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Staleness {
+    /// The leaves the room state does not allow, ascending.
+    pub disallowed: Vec<DeviceId>,
+    /// The opener a helper session lacks: its main session's agent leaf, an agent device of the room, that
+    /// is no leaf of the helper session. None for a main session, and while the main session has no agent
+    /// leaf (5.2.3, 5.3.3): the helper session then waits without an opener and is not stale for that.
+    pub missing_opener: Option<DeviceId>,
+}
+
+impl Staleness {
+    /// Whether the group is stale.
+    pub fn is_stale(&self) -> bool {
+        !self.disallowed.is_empty() || self.missing_opener.is_some()
+    }
+}
+
+/// Whether a session group with these leaves is stale under `room`, and why (5.2.8). The one predicate of
+/// the hub, of every member and of every observer. For a helper session `parent` is its main session at that
+/// place.
+pub fn staleness(
+    history: &RoomHistory,
+    room: &RoomState,
+    session: &TrommiSession,
+    parent: Parent,
+    leaves: &BTreeSet<DeviceId>,
+) -> Staleness {
+    let missing_opener = match parent {
+        Parent::Seat(Some(seat)) if !session.parent.is_zero() => {
+            Some(seat).filter(|seat| room.is_agent(seat) && !leaves.contains(seat))
+        }
+        _ => None,
+    };
+    Staleness {
+        disallowed: disallowed_leaves(history, room, session, parent, leaves),
+        missing_opener,
+    }
 }
 
 /// The helper devices among a helper session's leaves (5.2.3): those that are neither human devices nor the
@@ -723,10 +764,12 @@ pub fn check_session_commit(
         refuse(unseats_enrolled, Error::BadCommit)?;
     }
 
-    // 5.2.8: a leaf the room state does not allow makes the group stale. Only the Commit that removes every
-    // such leaf is taken, and a join by 8.4, which leaves them for that one Commit.
-    let unfit = disallowed_leaves(history, room, session, parent, &leaves);
-    if !unfit.is_empty() && !facts.external {
+    // 5.2.8: a leaf the room state does not allow makes the group stale, and so does a helper session's
+    // missing opener. Only the Commit that removes every such leaf and adds that opener is taken, and a join
+    // by 8.4, which leaves the group as stale as it was for that one Commit.
+    let stale = staleness(history, room, session, parent, &leaves);
+    if stale.is_stale() && !facts.external {
+        let unfit = &stale.disallowed;
         let brought = unfit.iter().any(|leaf| !before.leaves.contains(leaf));
         return Err(if brought {
             Error::BadCommit
