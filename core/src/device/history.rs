@@ -949,7 +949,9 @@ impl<S: Storage> Device<S> {
         past: &[WalkedEpoch],
         sessions: &dyn SessionsAt,
     ) -> Result<(), Error> {
-        let mut cuts: Vec<(Cut, u64)> = Vec::new();
+        // Per key, the Cut of its last removal in the past with the epoch that began, and the epoch its
+        // first removal began.
+        let mut cuts: BTreeMap<DeviceId, (Cut, u64, u64)> = BTreeMap::new();
         for (number, epoch) in (0u64..).zip(past) {
             let end = epoch
                 .end
@@ -968,20 +970,24 @@ impl<S: Storage> Device<S> {
                 codec::encode(&facts)?,
             );
             let began = number.saturating_add(1);
-            cuts.extend(end.cuts.iter().map(|cut| (*cut, began)));
+            for cut in &end.cuts {
+                let first = cuts.get(&cut.device).map_or(began, |held| held.2);
+                cuts.insert(cut.device, (*cut, began, first));
+            }
         }
-        // A Cut of the past is earlier than any this device took from a Commit it processed itself. They are
-        // taken in the order of their Commits, as a device that processed them did: the Cut of a key's last
-        // removal stands for its chain, its first removal for what it owned (9.0.10, 9.2).
-        for (cut, began) in cuts {
-            // A removal this device processed itself is held already, with what it did to the chain.
+        // The Cut of a key's last removal stands for its chain, its first removal for what it owned (9.0.10,
+        // 9.2): an earlier Cut of the same key names a part of the chain the later one names too, and is not
+        // applied on its own, which would drop what the key signed after it came back.
+        for (device, (cut, began, first)) in cuts {
+            // A later removal this device processed itself is held already, with what it did to the chain.
             if self
-                .removal(group, &cut.device)?
+                .removal(group, &device)?
                 .is_some_and(|held| held.epoch >= began)
             {
+                self.removed_first(batch, group, &device, first)?;
                 continue;
             }
-            self.end_chain(batch, group, &cut, began)?;
+            self.end_chain(batch, group, &cut, began, first)?;
         }
         Ok(())
     }
@@ -1048,7 +1054,10 @@ impl<S: Storage> Device<S> {
         if origin.epoch < join {
             // A device that was removed from the group joins it again (5.2.7): its knowledge begins anew
             // at the join, and the walk is the group's whole past before it, the epochs it held then
-            // included.
+            // included. A join into a state older than one it held is no join of this group's present.
+            if self.newest_epoch(group) != Some(join) {
+                return Err(Error::WrongEpoch);
+            }
             self.put_origin(batch, group, join)?;
             origin = self
                 .origin(group)?

@@ -159,7 +159,12 @@ assumptions have to take in.
   `join_session_checked(&keys, &group, current_group_info, now_ms)`. A walk is held in memory only: after a
   restart, and after any refusal but `too-large`, it is gone (`not-found`) and the caller starts again; a
   slice twice, out of turn or from another history is `bad-group`. A walk follows at most 65 536 Commits of
-  one group. The one-call forms (`learn_history`, `join_room_with_code`, `join_session_with_code`, `recover`,
+  one group. A device holds one unfinished walk of a group's past at a time: `learn_start` replaces the one
+  held, of whatever group. `code_check_start` refuses a GroupInfo above 1 MiB (`too-large`) and a session
+  named twice (`bad-format`); `join_room_checked` and `recover_checked` refuse a `ServedEnd` whose
+  `sessions` are not one per session named at the start (`bad-format`). A finish refuses a session Commit
+  whose place the device's own log has put in another room epoch since its slice (`bad-group`, or
+  `room-behind` where it cannot tell). The one-call forms (`learn_history`, `join_room_with_code`, `join_session_with_code`, `recover`,
   `recovery::check_room`, `check_session`) are unchanged and are these steps.
 - Places in the hub's order. A helper session's Commit is judged against its main session's agent leaf at the
   Commit's change number, not at the room epoch it names: `Observer::process_commit_at(commit, auth, &context,
@@ -169,7 +174,8 @@ assumptions have to take in.
   `change`. Serve every Commit with its real change number: a walk whose numbers do not ascend, or whose
   places of the room's epochs contradict the device's own, is `bad-group`.
 - `recover` reads `chains` in the hub's order itself: hand them in any order (it sorts by change number, reads
-  an envelope handed twice once, and answers `bad-format` to two different envelopes under one change number).
+  an envelope handed twice once, and answers `bad-format` to two different envelopes under one change number,
+  and to one envelope handed with two different void markers).
   `receive_envelope` takes one envelope and keeps the caller's order: ordered envelopes go in ascending by
   change number across senders and groups, never sender after sender.
 - `receive_envelope` with `ordered: false` on an envelope the chain holds returns `register` for a register
