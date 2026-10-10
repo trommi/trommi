@@ -1153,7 +1153,7 @@ fn removal_at(
     device: &Device,
     group_id: &[u8],
     now: u64,
-) -> Res<Option<i64>> {
+) -> Res<Option<(i64, i64)>> {
     let epoch: Option<i64> = if group_id == &room[..] {
         c.prepare_cached("SELECT removed_epoch FROM devices WHERE room_id = ?1 AND device = ?2")?
             .query_row(params![&room[..], &device[..]], |r| r.get(0))
@@ -1180,7 +1180,7 @@ fn removal_at(
         .optional()?;
     Ok(found
         .filter(|(_, at)| (*at as u64).saturating_add(REMOVAL_KEPT_MS) > now)
-        .map(|(n, _)| n))
+        .map(|(n, _)| (n, epoch - 1)))
 }
 
 /// Whether a key that has no standing in the room was removed from it, or from a group of it, so recently that
@@ -1210,7 +1210,7 @@ pub fn removal(
     after: i64,
     now: u64,
 ) -> Res<Value> {
-    let Some(last) = removal_at(c, room, device, group_id, now)? else {
+    let Some((last, last_epoch)) = removal_at(c, room, device, group_id, now)? else {
         return Err(refuse("not-found", "no removal to show"));
     };
     // The Commits are read by their own index, by epoch: what lies between two Commits in the log (messages,
@@ -1224,9 +1224,16 @@ pub fn removal(
         .unwrap_or(0);
     let mut s = c.prepare_cached(
         "SELECT n, change, epoch, at, kind, bytes, recovery_auth, sender FROM group_log INDEXED BY group_log_one_commit
-         WHERE group_id = ?1 AND kind = 'commit' AND epoch >= ?5 AND n > ?2 AND n <= ?3 ORDER BY epoch LIMIT ?4",
+         WHERE group_id = ?1 AND kind = 'commit' AND epoch >= ?5 AND epoch <= ?6 AND n > ?2 AND n <= ?3 ORDER BY epoch LIMIT ?4",
     )?;
-    let mut rows = s.query(params![group_id, after, last, REMOVAL_PAGE + 1, from])?;
+    let mut rows = s.query(params![
+        group_id,
+        after,
+        last,
+        REMOVAL_PAGE + 1,
+        from,
+        last_epoch
+    ])?;
     let (mut items, mut bytes, mut more) = (Vec::new(), 0usize, false);
     while let Some(r) = rows.next()? {
         let item = log_item(group_id, r)?;
