@@ -1264,3 +1264,62 @@ fn a_recovery_cuts_every_chain_where_it_verified_it() {
         Err(Error::RemovedSender)
     );
 }
+
+/// A human device added to the room group and both sessions of `w`, which has learned the room's past and
+/// the main session's: the helper session's is still to learn.
+fn late_in_both(w: &mut World) -> (TestDevice, MemoryStorage) {
+    let (mut late, store) = newcomer(w);
+    publish_some(&mut w.hub, &mut late, 4);
+    for group in [w.main, w.side] {
+        add_to_session(&mut w.hub, &mut w.old, &mut late, &group);
+        w.sync();
+    }
+    assert_eq!(settle_joining(&w.hub, &mut late).len(), 2);
+    learn(&w.hub, &mut late, &w.room).unwrap();
+    learn(&w.hub, &mut late, &w.main).unwrap();
+    (late, store)
+}
+
+/// Whether `device` still holds `group` as a good session: it hands out the key and holds no finding.
+fn assert_open(device: &TestDevice, group: &GroupId) {
+    let epoch = device.group(group).unwrap().epoch;
+    assert!(device.content_key(group, epoch).is_ok());
+    assert!(device.findings().unwrap().is_empty());
+}
+
+#[test]
+fn a_later_group_info_served_as_the_founding_closes_nothing() {
+    let mut w = world(1);
+    let side = w.side;
+    let (mut late, store) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    let from = late.group(&side).unwrap().own_from;
+    let before = store.entries();
+
+    // The GroupInfo of the epoch the device joined at, with no Commit: it stands in the device's own state
+    // without any history.
+    let mut served = real.clone();
+    served.founding = w.hub.group_info_at(&side, from).unwrap().clone();
+    served.commits.clear();
+    assert_eq!(
+        served.served(|served| late.verify_founding(&side, served)),
+        Err(Error::BadGroup)
+    );
+    assert!(store.entries() == before);
+    assert_open(&late, &side);
+
+    // A later start with the Commits that follow it.
+    let mut served = real.clone();
+    served.founding = w.hub.group_info_at(&side, 1).unwrap().clone();
+    served.commits.remove(0);
+    assert_eq!(
+        served.served(|served| late.verify_founding(&side, served)),
+        Err(Error::BadGroup)
+    );
+    assert!(store.entries() == before);
+    assert_open(&late, &side);
+
+    assert!(real
+        .served(|served| late.verify_founding(&side, served))
+        .is_ok());
+}
