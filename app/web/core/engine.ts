@@ -94,7 +94,7 @@ export interface EngineEvents {
   /** The device was opened again from its store: everything derived from the old object is to be built again. */
   reopened: null
   /** Over: `removed` (this device is no member any more), `device-closed` (another owner, or the store does not open). */
-  closed: { code: 'removed' | 'device-closed' }
+  closed: { code: 'removed' | 'device-closed' | 'unreachable' }
 }
 type Listener<K extends keyof EngineEvents> = (data: EngineEvents[K]) => void
 
@@ -230,6 +230,8 @@ export class Engine {
     })
     // the signer asks whatever device the engine holds at that moment: a reopened one signs as the same key
     if (this.room_id) this.hub.useSigner(this.room_id, (hub, challenge) => this.device.hubSignIn(hub, challenge))
+    // every sign-in says what the hub takes this key for: a removed one is checked by the device itself
+    this.hub.onRole = role => { if (role === 'removed') this.lost() }
     return this
   }
 
@@ -762,7 +764,7 @@ export class Engine {
       }
     } catch (e) {
       if (e instanceof Halt && this.running) this.later(this.timing.halted_retry, () => { void this.catchUp().catch(() => {}) })
-      if (e instanceof HubError && e.code === 'not-member') this.end('removed')
+      if (e instanceof HubError && e.code === 'not-member') this.lost()
       // a page that breaks the hub's own order (hub.ts refuses it whole): nothing of it was taken
       if (e instanceof HubError && e.code === 'bad-answer') this.alert('bad-answer', 'the hub answered a catch-up with something the protocol does not allow: nothing of it was taken')
       throw e
@@ -828,7 +830,7 @@ export class Engine {
       this.streamLive = state === 'live'
       if (state === 'live') { for (const wake of [...this.sleepers]) wake(); this.keepSoon(0) }
       if (!this.catching) this.setConnection(state === 'live' ? 'live' : state === 'connecting' && this.connection !== 'live' ? 'connecting' : state === 'offline' ? 'offline' : this.connection)
-    }, e => { if (e instanceof HubError && e.code === 'not-member') this.end('removed') })
+    }, e => { if (e instanceof HubError && e.code === 'not-member') this.lost() })
   }
   private async onStream(event: StreamEvent): Promise<void> {
     switch (event.event) {
@@ -1126,7 +1128,50 @@ export class Engine {
     }
     throw new EngineError('timeout', 'the outbox did not settle in time')
   }
-  private end(code: 'removed' | 'device-closed'): void {
+  /**
+   * The hub no longer takes this device: it answered `not-member`, or signed the key in as `removed`. The hub's word
+   * alone wipes nothing. The device asks for the Commits that removed it (hub-api.md 42: the room group's, after
+   * `after=0` in pages, the ones it has taken already passed over) and processes them itself: only when the core
+   * says this device is out (`removed`, through `processed`) is it told as removed, and the app wipes it. A key the
+   * hub signs in as anything else, a key it gives no token, a page or a Commit that does not hold: `unreachable`,
+   * everything kept (a reload tries again).
+   */
+  private lost(): void {
+    if (this.over || this.losing) return
+    const run = this.losing = this.checkRemoval().catch(() => { this.end('unreachable') }).finally(() => { if (this.losing === run) this.losing = null })
+  }
+  private losing: Promise<void> | null = null
+  private async checkRemoval(): Promise<void> {
+    // nothing else is asked of the hub meanwhile: no stream, no pump, no upkeep
+    this.halt()
+    if (this.hub.role !== 'removed') {
+      // (the token in hand may be from before: a sign-in now says what the key is to the hub today)
+      this.hub.forgetToken()
+      try { await this.hub.signIn() } catch { return this.end('unreachable') }
+    }
+    if (this.over) return
+    if (this.hub.role !== 'removed' || !this.room_id) return this.end('unreachable')
+    const group = this.core.roomGroupId(this.room_id)
+    try {
+      for (let after = 0; !this.over;) {
+        const page = await this.hub.removal(group, after)
+        await this.serial(async () => {
+          for (const item of page.items) {
+            if (this.over) return
+            if (item.change <= this.position) continue
+            const done = await this.process(item)
+            if (done) await this.processed(item, done)
+          }
+          this.emit('batch', null)
+        })
+        const last = page.items.at(-1)?.n ?? after
+        if (!page.more || last <= after) break
+        after = last
+      }
+    } catch { /* the hub's word alone: below */ }
+    this.end('unreachable')
+  }
+  private end(code: 'removed' | 'device-closed' | 'unreachable'): void {
     if (this.over) return
     this.over = true
     this.emit('closed', { code })

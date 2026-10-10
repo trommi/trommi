@@ -236,6 +236,8 @@ export async function startFakeHub(opts = {}) {
     for (const d of facts.removed ?? []) {
       g.leaves.delete(d)
       if (g.kind === 'room') { r.devices.delete(d); for (const s of [...streams]) if (s.room === r && s.device === d) endStream(s) }
+      // what the key may still read, for thirty days: the group's Commits up to this one (hub-api.md 42)
+      if (opts.serves_removal !== false) { r.removed ??= new Map(); if (!r.removed.has(d)) r.removed.set(d, new Map()); r.removed.get(d).set(g.group_id, entry.n) }
     }
     g.log.push(entry)
     joined(r, g, a.device)
@@ -479,7 +481,7 @@ export async function startFakeHub(opts = {}) {
     if (!known || known.room !== room_id || known.expires_at <= now()) throw refuse('bad-challenge', 'the challenge is unknown, used or ran out')
     if (a.room_id !== room_id) throw refuse('wrong-room', 'signed for another room')
     if (a.hub !== url) throw refuse('bad-format', 'signed for another hub address')
-    const r = room(room_id), who = r && standing(r, a.device)
+    const r = room(room_id), who = r && (standing(r, a.device) ?? (r.removed?.has(a.device) ? 'removed' : null))
     if (!who) throw refuse('not-member', 'this key has no standing in the room')
     const token = b64(randomBytes(32)), expires_at = now() + (opts.token_ms ?? 600_000)
     session.tokens.set(token, { room: room_id, device: a.device, expires_at })
@@ -684,6 +686,19 @@ export async function startFakeHub(opts = {}) {
       const [after, limit] = [number(rq, 'after') ?? 0, clamp(number(rq, 'limit'), 200, 1000)]
       const found = g.log.filter(e => e.n > after && (rq.query.get('kind') !== 'commit' || e.kind === 'commit'))
       return { items: found.slice(0, limit), more: found.length > limit }
+    }
+    // a removed key's one read (hub-api.md 42): the group's Commits up to and including the one that removed it
+    if (is('GET', 'groups', null, 'removal')) {
+      const token = /^Bearer ([A-Za-z0-9_-]{16,200})$/.exec(rq.headers.authorization ?? '')?.[1]
+      const held = token && session.tokens.get(token)
+      if (!held || held.expires_at <= now()) throw refuse('unauthorised', 'sign in')
+      const r = room(held.room), g = group(r, groupId(segs[1]))
+      const removed_at = standing(r, held.device) ? undefined : r.removed?.get(held.device)?.get(g.group_id)
+      if (!removed_at) throw refuse('not-found', 'nothing to show this key')
+      rq.log.device = held.device
+      const after = number(rq, 'after') ?? 0
+      const found = g.log.filter(e => e.kind === 'commit' && e.n > after && e.n <= removed_at)
+      return { items: found.slice(0, 200), more: found.length > 200, removed_at }
     }
     if (is('POST', 'groups', null, 'messages')) {
       const a = writer(rq), g = group(a.room, groupId(segs[1])), message = field(body, 'message')

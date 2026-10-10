@@ -631,8 +631,11 @@ export class Hub {
   hub_url: string
   /** `<kind>/<major>.<minor>.<patch>`, sent as `Trommi-Client` on every request (`client-too-old`). */
   client_name: string | null
-  /** What the hub called the signed-in key: 'human', 'agent', 'helper' or 'recovery'. */
+  /** What the hub called the signed-in key: 'human', 'agent', 'helper', 'recovery', or 'removed' (a key taken out of
+   *  the room within thirty days: its token reads `removal` alone, hub-api.md 42). */
   role: string | null = null
+  /** Told the role of every sign-in, as it comes (the engine checks a `removed` one itself). */
+  onRole: ((role: string) => void) | null = null
   /** Times in milliseconds; a test shortens them. `get_retry`: the waits before a GET is tried again after "not
    *  reached" or 502 to 504. `backoff_*`: between tries of the stream, doubling, with jitter. `stale`: a stream
    *  silent for so long is dead (the hub pings every 25 s). `stream_stood`: a stream open for so long worked. `renew_before`: a token is renewed so long before its end. */
@@ -711,7 +714,7 @@ export class Hub {
     const token = text(answer.token, 'token', 200)
     if (!TOKEN.test(token)) bad('token')
     const expires_at = int(answer.expires_at, 'expires_at')
-    const role = oneOf(answer.role, 'role', 'human', 'agent', 'helper', 'recovery')
+    const role = oneOf(answer.role, 'role', 'human', 'agent', 'helper', 'recovery', 'removed')
     if (this.signer !== signer) return
     // The hub's clock is not this one's: the token is taken to live at least two renewal spans and at most the ten
     // minutes of 12.3.1. One that ended earlier is found out by its 401.
@@ -720,7 +723,11 @@ export class Hub {
     this.token = token
     this.renew_at = now + life - this.timing.renew_before
     this.role = role
+    try { this.onRole?.(role) } catch {}
   }
+  /** Forgets the token this client holds, without asking the hub: the next request signs in anew (and so learns the
+   *  key's role as the hub has it now). */
+  forgetToken(): void { this.token = null; this.role = null }
   private async bearer(): Promise<string> {
     // twice at most: a sign-in that ended under a signer replaced meanwhile leaves no token
     for (let i = 0; i < 2 && (!this.token || Date.now() >= this.renew_at); i++) await this.signIn()
@@ -1075,6 +1082,22 @@ export class Hub {
       return item
     })
     return { items, more: bool(o.more, 'more') }
+  }
+  /** `GET /v2/groups/{group}/removal?after=`: for a key the hub took out of the room (role `removed`, thirty days),
+   *  the group's Commits after `after` up to and including the one that removed it, whose log number is
+   *  `removed_at` (hub-api.md 42); at most 200 a page. `not-found` where the key was not removed from that group. */
+  async removal(group: Uint8Array, after = 0): Promise<{ items: Extract<LogItem, { kind: 'commit' }>[]; more: boolean; removed_at: number }> {
+    const g = own(group, 'group', ...GROUP)
+    const o = obj(await this.get(`/v2/groups/${g}/removal`, { after: ownInt(after, 'after') }, CAP_LIST), 'a removal page')
+    const removed_at = int(o.removed_at, 'removed_at', 1)
+    let n = after
+    const items = list(o.items, 'items', 200).map(x => {
+      const item = logItem(obj(x, 'a log entry'))
+      if (!same(item.group, g) || item.kind !== 'commit' || item.n <= n || item.n > removed_at) bad('a removal entry out of place')
+      n = item.n
+      return item as Extract<LogItem, { kind: 'commit' }>
+    })
+    return { items, more: bool(o.more, 'more'), removed_at }
   }
   /** `POST /v2/groups/{group}/messages`: an application message; `relay`: passed on, not stored (7.2). */
   async postMessage(group: Uint8Array, epoch: number, message: Uint8Array, relay: boolean): Promise<{ n: number | null }> {

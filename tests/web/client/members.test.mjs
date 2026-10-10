@@ -27,9 +27,13 @@ test('a removed human device reads nothing new, and every session is cleaned of 
   assert.equal(room.devices.has(b64(b.my_device_id)), false, 'the hub ended its access')
   assert.equal(session.leaves.has(b64(b.my_device_id)), false, 'the session group was cleaned (5.2.8)')
   assert.equal(a.model.sessions.get(agent.session_id).stale, false)
+  const since = fake.requests.length
   await b.catchUp().catch(() => {})
   await until(() => b.model.room.connection === 'removed', 'the removed device learns it')
   assert.equal(b.model.alerts.filter(x => x.code === 'removed').length, 1, 'and says so, once')
+  // not on the hub's word: it fetched the Commits that removed it and processed them itself
+  const asked = fake.requests.slice(since).filter(r => r.path.endsWith('/removal'))
+  assert.ok(asked.length >= 1 && asked.every(r => r.status === 200), 'the removal route was read')
 
   const after = await a.saveNote({ text: 'only for those who stayed' })
   const card = await agent.askCard({ title: 'After the removal', options: [{ key: 'ok', label: 'OK' }] })
@@ -81,4 +85,34 @@ test('a new agent device takes a session over: the old one is out, the new one r
   await old.client.settle({ timeout_ms: 1500 }).catch(() => {})
   await a.settle()
   assert.equal([...a.model.timelines.get(`chat:session/${session_id}`).items.values()].some(i => i.content?.text === 'still here?'), false)
+})
+
+test('the hub says not-member and shows no removal: the device says it cannot reach the room, keeps everything, and says nothing of a removal', async t => {
+  const { fake, R, a } = await scene(t, { hubOpts: { serves_removal: false } })
+  const b = await addHuman(t, R, a, 'b', { stream: false })
+  const note = await a.saveNote({ text: 'kept on b' })
+  await a.settle(); await b.catchUp()
+  assert.equal(b.model.notes.get(note).text, 'kept on b')
+  await a.removeDevices([b.my_device_id])
+  await a.settle()
+  const since = fake.requests.length
+  await b.catchUp().catch(() => {})
+  await until(() => b.model.room.connection === 'unreachable', 'the device stops with the neutral word')
+  assert.equal(b.model.alerts.filter(x => x.code === 'removed').length, 0, 'no removal is said on the hub\'s word')
+  assert.equal(b.model.notes.get(note).text, 'kept on b', 'what it held stays')
+  assert.ok(fake.requests.slice(since).some(r => r.path.endsWith('/tokens') && r.status === 403), 'it asked the hub once more what its key is')
+  assert.equal(await b.engine.device.cursor() > 0, true, 'its device is still there')
+})
+
+test('a hub that drops a device without any Commit: the device is told nothing to verify and wipes nothing', async t => {
+  // no token for a key with no standing and no removal (`not-member`): the device stays unreachable, nothing said
+  const { fake, R, a } = await scene(t)
+  const b = await addHuman(t, R, a, 'b', { stream: false })
+  await a.settle(); await b.catchUp()
+  const room = [...fake.state.rooms.values()][0]
+  // the hub forgets b's standing without any Commit (a hub that lies): b reads no removal for itself
+  room.devices.delete(Buffer.from(b.my_device_id, 'hex').toString('base64url'))
+  await b.catchUp().catch(() => {})
+  await until(() => b.model.room.connection === 'unreachable', 'the hub\'s word alone')
+  assert.equal(b.model.alerts.filter(x => x.code === 'removed').length, 0)
 })

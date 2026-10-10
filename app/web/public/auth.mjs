@@ -696,6 +696,22 @@ const KIT_MARK = 'trommi-kit-pending'
 let gate = null, freshKit = null
 /** Is the kit of this account still to be saved? (app.mjs asks at the start and on every change of the register) */
 const kitDue = client => client?.model?.room?.my_role === 'human' && Boolean(client.hub) && (read(KIT_MARK) === '1' || client.model.human?.raw?.get('kit')?.value?.pending === true)
+/** This device processed the Commit that removed it (engine.ts `lost`: never on the hub's word alone). Its keys
+ *  and everything Trommi kept on this origin are wiped, and one screen says so: the account and the person's other
+ *  devices stay; logging in again makes this a new device. Once per page. */
+let removedShown = false
+export async function removedScreen(client) {
+  if (removedShown) return
+  removedShown = true
+  try { await client?.stop?.() } catch {}
+  await wipeLocal(client)
+  const root = Object.assign(document.createElement('div'), { id: 'room-screen' })
+  document.body.replaceChildren(root)
+  document.title = 'Removed · Trommi'
+  root.innerHTML = String(obShell('This device was removed', html`<p class="ob-said" role="status" id="removed-said">Another of your devices removed this one from your account. What Trommi kept on this device is deleted.</p>
+<div class="ob-stack"><a class="ob-go" id="removed-login" href="/?way=login" data-turbo="false">Log in again</a></div>`, { lead: 'Your account and your other devices are as they were.', home: false }))
+  root.querySelector('#removed-login')?.focus({ preventScroll: true })
+}
 export function kitGate(client, { fresh = false } = {}) {
   if (gate || !client || !(fresh || kitDue(client))) return
   const root = document.getElementById('room-screen') ?? Object.assign(document.createElement('div'), { id: 'room-screen' })

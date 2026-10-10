@@ -28,7 +28,8 @@ export type AnswerAction = 'answer' | 'read' | 'shred'
 export type ContentType = 'message' | 'strokes' | 'erase' | 'move' | 'send_away' | 'stroke_piece'
 /** What is known of a body: read ('ok'), only the header is left ('pruned'), or it cannot be read here. */
 export type ContentState = 'ok' | 'pruned' | 'newer_schema' | 'undecryptable' | 'header'
-export type Connection = 'offline' | 'connecting' | 'catching_up' | 'live'
+/** `removed`: this device processed the Commit that took it out; `unreachable`: the hub no longer takes it and nothing confirmed why (everything kept). */
+export type Connection = 'offline' | 'connecting' | 'catching_up' | 'live' | 'removed' | 'unreachable'
 
 // ---- bodies as the model holds them (codec.ts decodeBody / encodeBody) --------------------------------------------
 
