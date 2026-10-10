@@ -22,14 +22,49 @@ const SIGN_OFFER: &str = "TrommiInviteOffer";
 const SIGN_REQUEST: &str = "TrommiInviteRequest";
 const SIGN_REVEAL: &str = "TrommiInviteReveal";
 
-/// `mac_key` as whoever holds the link derives it: from the secret behind the link's last dot.
-fn mac_key(link: &InviteLink) -> Secret<32> {
+/// The secret as whoever holds the link reads it: the part before the deadline.
+fn secret_of(link: &InviteLink) -> Secret<32> {
     let text = String::from_utf8(link.to_text().expose().to_vec()).expect("utf-8");
-    let secret = text.rsplit('.').next().expect("the secret");
-    let secret =
-        Secret::from_slice(&ids::base64url_decode(secret).expect("base64url")).expect("32 bytes");
-    crypto::expand_with_label(&secret, "trommi invite mac", link.room_id.as_bytes())
+    let secret = text.rsplit('.').nth(1).expect("the secret");
+    Secret::from_slice(&ids::base64url_decode(secret).expect("base64url")).expect("32 bytes")
+}
+
+/// `room_id ‖ uint64 expires_at`: the context of the three derivations.
+fn context(link: &InviteLink) -> Vec<u8> {
+    [
+        link.room_id.as_bytes().as_slice(),
+        &link.expires_at.to_be_bytes(),
+    ]
+    .concat()
+}
+
+/// `mac_key` as whoever holds the link derives it.
+fn mac_key(link: &InviteLink) -> Secret<32> {
+    crypto::expand_with_label(&secret_of(link), "trommi invite mac", &context(link))
         .expect("expands")
+}
+
+/// `offer_mac_key` as whoever holds the link derives it.
+fn offer_mac_key(link: &InviteLink) -> Secret<32> {
+    crypto::expand_with_label(&secret_of(link), "trommi invite offer", &context(link))
+        .expect("expands")
+}
+
+/// An Offer signed by device `signer` with the MAC of `link`: what a holder of the link and of that key sends.
+fn signed_for(link: &InviteLink, offer: &Offer, signer: u8) -> SignedOffer {
+    let offer = codec::encode(offer).expect("encodes");
+    let signature = crypto::sign_with_label(&key(signer), SIGN_OFFER, &offer).expect("signs");
+    let mac = crypto::hmac_sha256(
+        &offer_mac_key(link),
+        &[offer.as_slice(), &signature].concat(),
+    )
+    .expect("macs")
+    .to_vec();
+    SignedOffer {
+        offer,
+        signature,
+        mac,
+    }
 }
 
 /// `Request ‖ mac`.
@@ -135,7 +170,8 @@ fn ceremony(role: Role, session_id: SessionId) -> ConfirmedInvite {
     assert_eq!(offer.inviter, device(1));
     assert_eq!(offer.role, role);
     assert_eq!(offer.session_id, session_id);
-    assert_eq!(offer.expires_at, NOW + INVITE_LIFE_MS);
+    assert_eq!(offer.expires_at, NOW + role.invite_life_ms());
+    assert_eq!(handed_over(&inviter).expires_at, offer.expires_at);
 
     let (joiner, request) = requested(&inviter);
     hub_check_request(inviter.signed_offer(), &request, &hub()).expect("the hub takes the request");
@@ -240,13 +276,34 @@ fn an_agent_device_joins_for_a_new_session_or_a_takeover() {
 #[test]
 fn the_derivations_are_the_ones_given() {
     let secret = Secret::new([0x11; 32]);
-    let link = InviteLink::new(APP, hub(), ROOM, secret.duplicate()).expect("a link");
-    let id = crypto::expand_with_label::<16>(&secret, "trommi invite id", ROOM.as_bytes())
-        .expect("expands");
+    let deadline = 0x0102_0304_0506_0708u64;
+    let link = InviteLink::new(APP, hub(), ROOM, secret.duplicate(), deadline).expect("a link");
+    let context = [ROOM.as_bytes().as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8]].concat();
+    let id =
+        crypto::expand_with_label::<16>(&secret, "trommi invite id", &context).expect("expands");
     assert_eq!(link.invite_id().expect("derives").as_bytes(), id.expose());
-    let mac = crypto::expand_with_label::<32>(&secret, "trommi invite mac", ROOM.as_bytes())
-        .expect("expands");
+    let mac =
+        crypto::expand_with_label::<32>(&secret, "trommi invite mac", &context).expect("expands");
     assert_eq!(mac_key(&link).expose(), mac.expose());
+    let offer_mac =
+        crypto::expand_with_label::<32>(&secret, "trommi invite offer", &context).expect("expands");
+    assert_eq!(offer_mac_key(&link).expose(), offer_mac.expose());
+    // Each part of the context counts: another room, another deadline, another invite and other keys.
+    let later =
+        InviteLink::new(APP, hub(), ROOM, secret.duplicate(), deadline + 1).expect("a link");
+    let moved = InviteLink::new(
+        APP,
+        hub(),
+        RoomId::new([8; 32]),
+        secret.duplicate(),
+        deadline,
+    )
+    .expect("a link");
+    for other in [&later, &moved] {
+        assert_ne!(other.invite_id(), link.invite_id());
+        assert_ne!(mac_key(other).expose(), mac.expose());
+        assert_ne!(offer_mac_key(other).expose(), offer_mac.expose());
+    }
 
     let inviter = opened(Role::Human);
     let (_, request) = requested(&inviter);
@@ -260,6 +317,17 @@ fn the_derivations_are_the_ones_given() {
     assert_eq!(
         request.mac,
         crypto::hmac_sha256(&mac_key(&handed), &request.request).expect("macs")
+    );
+    // The Offer's MAC: over the Offer and its 64-byte signature, 32 bytes.
+    let signed = inviter.signed_offer();
+    assert_eq!(signed.signature.len(), 64);
+    assert_eq!(
+        signed.mac,
+        crypto::hmac_sha256(
+            &offer_mac_key(&handed),
+            &[offer.as_slice(), &signed.signature].concat()
+        )
+        .expect("macs")
     );
     let with_mac = [request.request.as_slice(), &request.mac].concat();
     assert_eq!(
@@ -450,18 +518,34 @@ fn messages_of_another_form_are_refused_without_a_panic() {
 
 #[test]
 fn a_link_is_built_and_read() {
-    let link = InviteLink::new(APP, hub(), ROOM, Secret::new([0x33; 32])).expect("a link");
+    let link = InviteLink::new(
+        APP,
+        hub(),
+        ROOM,
+        Secret::new([0x33; 32]),
+        0x0102_0304_0506_0708,
+    )
+    .expect("a link");
     let text = String::from_utf8(link.to_text().expose().to_vec()).expect("utf-8");
     assert_eq!(
         text,
         "https://app.example.org/join#v2.aHR0cHM6Ly9odWIuZXhhbXBsZS5vcmc.\
-         BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc.MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM"
+         BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc.MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM.AQIDBAUGBwg"
     );
     let read = InviteLink::parse(&text).expect("parses");
     assert_eq!(read, link);
     assert_eq!(read.app(), APP);
     assert_eq!(read.hub, hub());
     assert_eq!(read.room_id, ROOM);
+    assert_eq!(read.expires_at, 0x0102_0304_0506_0708);
+    // The deadline is 8 bytes as 11 characters, whatever its value.
+    for deadline in [0, u64::MAX] {
+        let link =
+            InviteLink::new(APP, hub(), ROOM, Secret::new([0x33; 32]), deadline).expect("a link");
+        let text = String::from_utf8(link.to_text().expose().to_vec()).expect("utf-8");
+        assert_eq!(text.rsplit('.').next().map(str::len), Some(11));
+        assert_eq!(InviteLink::parse(&text).expect("parses"), link);
+    }
     assert!(!format!("{link:?} {:?}", link.to_text()).contains("MzMz"));
     assert!(!format!("{link:?}").contains("3333"));
 }
@@ -470,9 +554,10 @@ fn a_link_is_built_and_read() {
 fn a_link_of_any_other_form_is_refused() {
     let hub_part = "aHR0cHM6Ly9odWIuZXhhbXBsZS5vcmc";
     let room = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
-    let secret = "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM";
+    let secret = "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM.AQIDBAUGBwg";
     let good = format!("{APP}/join#v2.{hub_part}.{room}.{secret}");
     assert!(InviteLink::parse(&good).is_ok());
+    let only_secret = "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM";
 
     // "https://Hub.example.org", "https://hub.example.org/" and "hub.example.org" as the hub part.
     let capital = ids::base64url_encode(b"https://Hub.example.org");
@@ -506,7 +591,18 @@ fn a_link_of_any_other_form_is_refused() {
         format!("{APP}/join#v2.{hub_part}.{room}A.{secret}"),
         format!("{APP}/join#v2.{hub_part}.{room}.{}", &secret[1..]),
         format!("{APP}/join#v2.{hub_part}.{room}.{secret}A"),
-        format!("{APP}/join#v2.{hub_part}.{room}.{}N", &secret[..42]),
+        format!(
+            "{APP}/join#v2.{hub_part}.{room}.{}N.AQIDBAUGBwg",
+            &only_secret[..42]
+        ),
+        // Four parts: a link without its deadline.
+        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}"),
+        // A deadline of another length, or whose last character carries bits beyond its 8 bytes.
+        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBw"),
+        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBwgA"),
+        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBwh"),
+        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBw="),
+        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}."),
         format!("{APP}/join#v2.{hub_part}.{room}.{secret} "),
         format!("{APP}/join#v2.{hub_part}.{room}.{secret}#"),
         format!("{APP}/join/#v2.{hub_part}.{room}.{secret}"),
@@ -537,7 +633,7 @@ fn a_link_of_any_other_form_is_refused() {
         );
     }
     assert_eq!(
-        InviteLink::new("app.example.org", hub(), ROOM, Secret::new([0; 32])).err(),
+        InviteLink::new("app.example.org", hub(), ROOM, Secret::new([0; 32]), NOW).err(),
         Some(Error::BadFormat)
     );
 }
@@ -585,58 +681,53 @@ fn the_new_device_refuses_an_offer_that_is_not_the_links() {
     let ask =
         |offer: &SignedOffer, now: u64| Joiner::request(&link, offer, &key(2), &own, now).err();
     assert_eq!(ask(inviter.signed_offer(), NOW), None);
-    assert_eq!(ask(inviter.signed_offer(), NOW + INVITE_LIFE_MS), None);
 
-    // Expired.
-    assert_eq!(
-        ask(inviter.signed_offer(), NOW + INVITE_LIFE_MS + 1),
-        Some(Error::InviteExpired)
-    );
-    // The Offer of another invite, validly signed.
+    // The Offer of another invite, validly signed and with the MAC of its own link.
     let other = opened(Role::Human);
     assert_eq!(ask(other.signed_offer(), NOW), Some(Error::BadInvite));
-    // The same invite id in another room.
+    // The same invite id in another room, signed by the inviter and with the MAC of this link.
     let mut moved = inviter.offer().clone();
     moved.room_id = RoomId::new([8; 32]);
-    let moved = codec::encode(&moved).expect("encodes");
-    let resigned = SignedOffer {
-        signature: crypto::sign_with_label(&key(1), SIGN_OFFER, &moved).expect("signs"),
-        offer: moved,
-    };
-    assert_eq!(ask(&resigned, NOW), Some(Error::BadInvite));
-    // Signed by another key than the inviter it names; a changed field under the old signature.
-    let forged = SignedOffer {
-        offer: inviter.signed_offer().offer.clone(),
-        signature: crypto::sign_with_label(&key(3), SIGN_OFFER, &inviter.signed_offer().offer)
-            .expect("signs"),
-    };
-    assert_eq!(ask(&forged, NOW), Some(Error::BadSignature));
-    let mut later = inviter.offer().clone();
-    later.expires_at += 1;
-    let changed = SignedOffer {
-        offer: codec::encode(&later).expect("encodes"),
-        signature: inviter.signed_offer().signature.clone(),
-    };
-    assert_eq!(ask(&changed, NOW), Some(Error::BadSignature));
-    // A hub that puts itself in the inviter's place needs the invite id, which it knows, and gets a
-    // Request; but that Request names the hub's Offer, and the real inviter refuses it.
-    let mut hubs = inviter.offer().clone();
-    hubs.inviter = device(9);
-    let hubs = codec::encode(&hubs).expect("encodes");
-    let hubs = SignedOffer {
-        signature: crypto::sign_with_label(&key(9), SIGN_OFFER, &hubs).expect("signs"),
-        offer: hubs,
-    };
-    let (_, request) = Joiner::request(&link, &hubs, &key(2), &own, NOW).expect("requests");
-    let mut inviter = inviter;
     assert_eq!(
-        inviter.accept(&key(1), &request, NOW).err(),
+        ask(&signed_for(&link, &moved, 1), NOW),
         Some(Error::BadInvite)
     );
+    // Signed by another key than the inviter it names; a changed field under the old signature. Only a
+    // holder of the link gets this far: the MAC is right.
+    let mut forged = inviter.signed_offer().clone();
+    forged.signature = crypto::sign_with_label(&key(3), SIGN_OFFER, &forged.offer).expect("signs");
+    forged.mac = crypto::hmac_sha256(
+        &offer_mac_key(&link),
+        &[forged.offer.as_slice(), &forged.signature].concat(),
+    )
+    .expect("macs")
+    .to_vec();
+    assert_eq!(ask(&forged, NOW), Some(Error::BadSignature));
+    let mut changed = inviter.offer().clone();
+    changed.room_epoch += 1;
+    let mut changed = signed_for(&link, &changed, 1);
+    changed.signature = inviter.signed_offer().signature.clone();
+    changed.mac = crypto::hmac_sha256(
+        &offer_mac_key(&link),
+        &[changed.offer.as_slice(), &changed.signature].concat(),
+    )
+    .expect("macs")
+    .to_vec();
+    assert_eq!(ask(&changed, NOW), Some(Error::BadSignature));
+    // An Offer whose deadline is not the link's, signed by the inviter and with the link's MAC.
+    for shift in [1i64, -1] {
+        let mut moved_deadline = inviter.offer().clone();
+        moved_deadline.expires_at = moved_deadline.expires_at.saturating_add_signed(shift);
+        assert_eq!(
+            ask(&signed_for(&link, &moved_deadline, 1), NOW),
+            Some(Error::BadInvite)
+        );
+    }
     // Not an Offer; no KeyPackage.
     let junk = SignedOffer {
         offer: vec![1, 2, 3],
         signature: vec![],
+        mac: vec![],
     };
     assert_eq!(ask(&junk, NOW), Some(Error::BadFormat));
     for key_package in [vec![], vec![0; MAX_KEY_PACKAGE_LEN + 1]] {
@@ -656,12 +747,197 @@ fn the_new_device_refuses_an_offer_that_is_not_the_links() {
 }
 
 #[test]
+fn an_offer_without_the_links_mac_is_refused_before_anything_else() {
+    let inviter = opened(Role::Human);
+    let link = handed_over(&inviter);
+    let own = key_package(2);
+    let ask =
+        |offer: &SignedOffer, now: u64| Joiner::request(&link, offer, &key(2), &own, now).err();
+    let good = inviter.signed_offer();
+    assert_eq!(good.mac.len(), MAC_LEN);
+
+    // Missing, short, long, one bit off, and under another secret.
+    let with_mac = |mac: Vec<u8>| SignedOffer {
+        mac,
+        ..good.clone()
+    };
+    let mut flipped = good.mac.clone();
+    flipped[31] ^= 1;
+    let guessed = InviteLink::new(APP, hub(), ROOM, Secret::new([0x99; 32]), link.expires_at)
+        .expect("a link");
+    let elsewhere = crypto::hmac_sha256(
+        &offer_mac_key(&guessed),
+        &[good.offer.as_slice(), &good.signature].concat(),
+    )
+    .expect("macs")
+    .to_vec();
+    for mac in [
+        vec![],
+        good.mac[..31].to_vec(),
+        [good.mac.as_slice(), &[0]].concat(),
+        flipped,
+        elsewhere,
+    ] {
+        assert_eq!(ask(&with_mac(mac), NOW), Some(Error::BadInvite));
+    }
+    // The MAC covers the signature, and a signature of another length than 64 bytes is no MAC input.
+    let mut resigned = good.clone();
+    resigned.signature[0] ^= 1;
+    assert_eq!(ask(&resigned, NOW), Some(Error::BadInvite));
+    for signature in [
+        good.signature[..63].to_vec(),
+        [good.signature.as_slice(), &[0]].concat(),
+    ] {
+        let cut = SignedOffer {
+            signature,
+            ..good.clone()
+        };
+        assert_eq!(ask(&cut, NOW), Some(Error::BadInvite));
+    }
+    // A bad MAC is refused before the signature is looked at.
+    let unsigned = SignedOffer {
+        signature: vec![0; 64],
+        ..good.clone()
+    };
+    assert_eq!(ask(&unsigned, NOW), Some(Error::BadInvite));
+
+    // The swap: a hub puts itself in the inviter's place with an Offer of its own (its key, its commitment)
+    // under the invite id it knows. It cannot make the MAC, so the new device sends no Request at all.
+    let mut hubs = inviter.offer().clone();
+    hubs.inviter = device(9);
+    hubs.commitment = Hash32::new([9; 32]);
+    let hubs = codec::encode(&hubs).expect("encodes");
+    let hub_signature = crypto::sign_with_label(&key(9), SIGN_OFFER, &hubs).expect("signs");
+    for mac in [vec![], good.mac.clone(), vec![0; 32]] {
+        let swapped = SignedOffer {
+            offer: hubs.clone(),
+            signature: hub_signature.clone(),
+            mac,
+        };
+        // The hub itself would take it: it can check the MAC's length only.
+        if swapped.mac.len() == MAC_LEN {
+            assert!(hub_check_offer(&swapped).is_ok());
+        }
+        assert_eq!(ask(&swapped, NOW), Some(Error::BadInvite));
+    }
+    assert_eq!(ask(good, NOW), None);
+}
+
+#[test]
+fn a_link_with_another_deadline_names_another_invite() {
+    let inviter = opened(Role::Human);
+    let link = handed_over(&inviter);
+    let text = String::from_utf8(link.to_text().expose().to_vec()).expect("utf-8");
+    let (head, _) = text.rsplit_once('.').expect("a deadline");
+    for deadline in [
+        link.expires_at + 60_000,
+        link.expires_at - 60_000,
+        link.expires_at + 1,
+    ] {
+        let altered = format!("{head}.{}", ids::base64url_encode(&deadline.to_be_bytes()));
+        let altered = InviteLink::parse(&altered).expect("parses");
+        assert_eq!(altered.expires_at, deadline);
+        // The hub holds no Offer under that id; served the real one, its id and MAC are not the link's.
+        assert_ne!(altered.invite_id(), link.invite_id());
+        assert_ne!(
+            offer_mac_key(&altered).expose(),
+            offer_mac_key(&link).expose()
+        );
+        assert_eq!(
+            Joiner::request(
+                &altered,
+                inviter.signed_offer(),
+                &key(2),
+                &key_package(2),
+                NOW
+            )
+            .err(),
+            Some(Error::BadInvite)
+        );
+        // Nor does an Offer under the altered link's id carry its MAC: the hub has not the secret.
+        let mut renamed = inviter.offer().clone();
+        renamed.invite_id = altered.invite_id().expect("derives");
+        renamed.expires_at = deadline;
+        let renamed = SignedOffer {
+            mac: inviter.signed_offer().mac.clone(),
+            ..signed_for(&link, &renamed, 1)
+        };
+        assert_eq!(
+            Joiner::request(&altered, &renamed, &key(2), &key_package(2), NOW).err(),
+            Some(Error::BadInvite)
+        );
+    }
+}
+
+#[test]
+fn the_new_device_holds_the_deadline_against_its_own_clock() {
+    for role in [Role::Human, Role::Agent] {
+        let inviter = opened(role);
+        let link = handed_over(&inviter);
+        let deadline = inviter.offer().expires_at;
+        assert_eq!(deadline, NOW + role.invite_life_ms());
+        let ask = |now: u64| {
+            Joiner::request(&link, inviter.signed_offer(), &key(2), &key_package(2), now).err()
+        };
+        // Two minutes after the deadline at most, by the new device's clock.
+        assert_eq!(ask(deadline + CLOCK_TOLERANCE_MS), None);
+        assert_eq!(
+            ask(deadline + CLOCK_TOLERANCE_MS + 1),
+            Some(Error::InviteExpired)
+        );
+        assert_eq!(link.check_deadline(deadline + CLOCK_TOLERANCE_MS), Ok(()));
+        assert_eq!(
+            link.check_deadline(deadline + CLOCK_TOLERANCE_MS + 1),
+            Err(Error::InviteExpired)
+        );
+        // A deadline at most the invite life of the Offer's kind and two minutes ahead of the clock.
+        let earliest = deadline - role.invite_life_ms() - CLOCK_TOLERANCE_MS;
+        assert_eq!(ask(earliest), None);
+        assert_eq!(ask(earliest - 1), Some(Error::BadInvite));
+        // Before the Offer is fetched its kind is not known: the link alone is held to the longest life.
+        let longest = deadline - AGENT_INVITE_LIFE_MS - CLOCK_TOLERANCE_MS;
+        assert_eq!(link.check_deadline(longest), Ok(()));
+        assert_eq!(link.check_deadline(longest - 1), Err(Error::BadInvite));
+        assert_eq!(ask(longest - 1), Some(Error::BadInvite));
+    }
+    assert_eq!(HUMAN_INVITE_LIFE_MS, 10 * 60 * 1000);
+    assert_eq!(AGENT_INVITE_LIFE_MS, 15 * 60 * 1000);
+    assert_eq!(CLOCK_TOLERANCE_MS, 2 * 60 * 1000);
+}
+
+#[test]
+fn an_agent_invite_lives_fifteen_minutes_for_a_new_session_and_a_takeover() {
+    for session in [SessionId::ZERO, SessionId::new([0x5E; 16])] {
+        let mut inviter = Inviter::open(
+            &key(1),
+            terms(Role::Agent, session),
+            NOW,
+            &mut SystemEntropy,
+        )
+        .expect("opens");
+        assert_eq!(inviter.offer().expires_at, NOW + AGENT_INVITE_LIFE_MS);
+        assert_eq!(handed_over(&inviter).expires_at, NOW + AGENT_INVITE_LIFE_MS);
+        let (_, request) = requested(&inviter);
+        // The inviter set the deadline: by its own clock, no tolerance.
+        assert_eq!(
+            inviter
+                .accept(&key(1), &request, NOW + AGENT_INVITE_LIFE_MS + 1)
+                .err(),
+            Some(Error::InviteExpired)
+        );
+        assert!(inviter
+            .accept(&key(1), &request, NOW + AGENT_INVITE_LIFE_MS)
+            .is_ok());
+    }
+}
+
+#[test]
 fn a_request_with_a_wrong_mac_is_refused_and_does_not_use_the_invite() {
     let mut inviter = opened(Role::Human);
     let (_, good) = requested(&inviter);
 
     // Made without the link: with another secret for the same room and invite id.
-    let guessed = InviteLink::new(APP, hub(), ROOM, Secret::new([0x99; 32])).expect("a link");
+    let guessed = InviteLink::new(APP, hub(), ROOM, Secret::new([0x99; 32]), NOW).expect("a link");
     let mut request = Request::decode(&good.request).expect("decodes");
     request.key_package = b"the hub's key package".to_vec();
     let bytes = codec::encode(&request).expect("encodes");
@@ -824,14 +1100,16 @@ fn an_invite_is_used_once() {
 fn an_invite_expires_after_ten_minutes() {
     let mut inviter = opened(Role::Human);
     let (_, request) = requested(&inviter);
+    // The inviter takes no Request after the deadline by its own clock, though the new device's tolerance
+    // would still let it send one.
     assert_eq!(
         inviter
-            .accept(&key(1), &request, NOW + INVITE_LIFE_MS + 1)
+            .accept(&key(1), &request, NOW + HUMAN_INVITE_LIFE_MS + 1)
             .err(),
         Some(Error::InviteExpired)
     );
     assert!(inviter
-        .accept(&key(1), &request, NOW + INVITE_LIFE_MS)
+        .accept(&key(1), &request, NOW + HUMAN_INVITE_LIFE_MS)
         .is_ok());
 }
 
@@ -1179,13 +1457,14 @@ fn a_joiner_goes_through_the_store() {
     let (other_joiner, _) = requested(&other);
     let stored_with = |request: &SignedRequest| {
         let mut writer = Writer::new();
-        writer.u8(1);
+        writer.u8(2);
         writer
             .opaque(&inviter.signed_offer().offer)
             .expect("writes");
         writer
             .opaque(&inviter.signed_offer().signature)
             .expect("writes");
+        writer.opaque(&inviter.signed_offer().mac).expect("writes");
         writer.opaque(&request.request).expect("writes");
         writer.opaque(&request.mac).expect("writes");
         writer.opaque(&request.signature).expect("writes");
@@ -1204,17 +1483,31 @@ fn the_hub_checks_what_it_can() {
     let offer = inviter.signed_offer().clone();
     let (_, request) = requested(&inviter);
 
-    // Offer: signed by the inviter it names.
+    // Offer: signed by the inviter it names, with a MAC of 32 bytes, which the hub cannot check further.
+    assert!(hub_check_offer(&offer).is_ok());
     let forged = SignedOffer {
-        offer: offer.offer.clone(),
         signature: crypto::sign_with_label(&key(3), SIGN_OFFER, &offer.offer).expect("signs"),
+        ..offer.clone()
     };
     assert_eq!(hub_check_offer(&forged).err(), Some(Error::BadSignature));
     let junk = SignedOffer {
         offer: vec![0; 10],
         signature: vec![],
+        mac: vec![0; 32],
     };
     assert_eq!(hub_check_offer(&junk).err(), Some(Error::BadFormat));
+    for mac in [vec![], vec![0; 31], vec![0; 33]] {
+        let cut = SignedOffer {
+            mac,
+            ..offer.clone()
+        };
+        assert_eq!(hub_check_offer(&cut).err(), Some(Error::BadFormat));
+    }
+    let unkeyed_offer = SignedOffer {
+        mac: vec![0; 32],
+        ..offer.clone()
+    };
+    assert!(hub_check_offer(&unkeyed_offer).is_ok());
 
     // Request: for this Offer, this hub, with a KeyPackage that verifies, signed by that KeyPackage's key.
     // The hub learns the new device from the KeyPackage and from nothing else.
@@ -1450,15 +1743,36 @@ fn the_vectors_read_back() {
             text(invite, "invite_id")
         );
         let secret = Secret::<32>::from_slice(&bytes(invite, "secret")).unwrap();
-        let remade = InviteLink::new(APP, hub.clone(), room, secret.duplicate()).unwrap();
+        let remade = InviteLink::new(
+            APP,
+            hub.clone(),
+            room,
+            secret.duplicate(),
+            number(invite, "expires_at"),
+        )
+        .unwrap();
         assert_eq!(remade, link);
         assert_eq!(hex(mac_key(&link).expose()), text(invite, "mac_key"));
+        assert_eq!(
+            hex(offer_mac_key(&link).expose()),
+            text(invite, "offer_mac_key")
+        );
 
-        // The Offer: signed by the inviter, committing to the nonce.
+        // The Offer: signed by the inviter, committing to the nonce, bound to the link by its MAC.
         let offer = SignedOffer {
             offer: bytes(invite, "offer"),
             signature: bytes(invite, "offer_signature"),
+            mac: bytes(invite, "offer_mac"),
         };
+        assert_eq!(
+            crypto::hmac_sha256(
+                &offer_mac_key(&link),
+                &[offer.offer.as_slice(), &offer.signature].concat()
+            )
+            .unwrap()
+            .as_slice(),
+            offer.mac
+        );
         let decoded = hub_check_offer(&offer).unwrap();
         assert_eq!(codec::encode(&decoded).unwrap(), offer.offer);
         assert_eq!(decoded.inviter, inviter_id);
@@ -1470,8 +1784,9 @@ fn the_vectors_read_back() {
         assert_eq!(decoded.expires_at, number(invite, "expires_at"));
         assert_eq!(
             decoded.expires_at,
-            number(invite, "opened_at") + INVITE_LIFE_MS
+            number(invite, "opened_at") + decoded.role.invite_life_ms()
         );
+        assert_eq!(decoded.expires_at, link.expires_at);
         assert_eq!(decoded.room_epoch, number(invite, "room_epoch"));
         assert_eq!(
             hex(decoded.room_state.as_bytes()),
