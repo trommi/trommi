@@ -425,6 +425,26 @@ function parentClaim(m, s) {
   const parent = m.sessions.get(want)
   return parent && parent !== s && (parent.agent_device_ids ?? []).some(a => a === s.creator_device_id || (s.agent_device_ids ?? []).includes(a)) ? want : null
 }
+/**
+ * One agent slot (a folder on a machine), one entry. A connector that is paired again in its folder (its key was lost,
+ * the invite link used anew) is a new agent device, and the app founds a new main session for it; the older session of
+ * the same slot stays in the room with its history. While one session of the slot is connected (else: the newest),
+ * the others go to the archive as replaced: never one with an open question, never one he fetched back himself.
+ * Their helpers go with them. Settings, Sessions, Archive lists them (Fetch Back shows one again).
+ */
+export function replaceInSlots(agents) {
+  const bySlot = new Map()
+  for (const a of agents) if (a.slot && !a.archived) { const l = bySlot.get(a.slot); if (l) l.push(a); else bySlot.set(a.slot, [a]) }
+  const gone = new Set()
+  for (const same of bySlot.values()) {
+    if (same.length < 2) continue
+    const live = same.filter(a => a.online)
+    const keep = live.length ? live : [same.reduce((x, y) => (y.born > x.born || (y.born === x.born && y.active > x.active) ? y : x))]
+    for (const a of same) if (!keep.includes(a) && !a.online && !a.waiting && !a.fetched) { a.archived = true; a.replaced = true; gone.add(a.id) }
+  }
+  for (const a of agents) if (a.parent && gone.has(a.parent) && !a.archived && !a.online && !a.waiting && !a.fetched) { a.archived = true; a.replaced = true }
+  return agents
+}
 const agentIdOf = s => (s.agent_session_id && !/^[0-9a-f]{12,}$/.test(s.agent_session_id) ? s.agent_session_id : sessionKey(s).slice(0, SESSION_ID_LEN))
 
 /**
@@ -605,16 +625,25 @@ export class BoardState {
       const claimed = parentClaim(m, s)
       const wanted = 'parent' in set ? set.parent : claimed && this.devToAgent.has(claimed) ? this.devToAgent.get(claimed) : claimed
       const parent = wanted && this.agentToDev.has(wanted) ? wanted : null
+      // Hidden (Archive, Delete, a closed helper); a main session whose agent is connected again shows, whatever hid it.
+      const chosen = 'archived' in set ? Boolean(set.archived) : closedChild(s)
+      const back = Boolean(s.is_online) && s.is_active !== false && !s.parent_session_id && !parent
+      // The agent's slot: the folder on its machine (its device register). A connector paired again there is a new
+      // device with a new session; the older one of the same slot is replaced (replaceInSlots), never a second entry.
+      const dev = m.members.get(s.agent_device_id)
       return {
         id, device_id: key, session_id: s.session_id ?? null, agent_device_id: s.agent_device_id, name: p.agent_name || s.device_name || id, label: set.name || '', icon: set.icon || p.icon || '', icon_by: set.icon ? 'human' : 'agent',
         online: Boolean(s.is_online), offline_since: s.offline_since ?? null, model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === key || crown === s.agent_device_id, parent, main: Boolean(p.is_main),
-        desk: set.desk ?? null, archived: 'archived' in set ? Boolean(set.archived) : closedChild(s), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0, device_active: lastOfDevice.get(s.agent_device_id) ?? 0,
+        desk: set.desk ?? null, archived: chosen && !back, replaced: false, group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0, device_active: lastOfDevice.get(s.agent_device_id) ?? 0,
         removed: s.is_active === false,
         // (a session on a person's own device, not an agent's: it is never deleted from the board: session.mjs Delete)
         own: s.agent_device_id === m.room.my_device_id || m.members.get(s.agent_device_id)?.device_role === 'human',
         link: s.link ?? null, heard_up_to: s.heard_up_to ?? null,
+        slot: !s.parent_session_id && dev?.folder ? `${dev.host ?? ''}\n${dev.folder}` : null, born: dev?.added_entry_number ?? 0,
+        waiting: s.open_card_ids?.length ?? 0, fetched: 'archived' in set && !set.archived,
       }
     })
+    replaceInSlots(out)
     // A sub-session stands on its main's desk, always (it has no desk of its own: a main that moves takes its subs and
     // all their cards along); a session without a desk stands on the first one.
     const byId = new Map(out.map(a => [a.id, a]))
