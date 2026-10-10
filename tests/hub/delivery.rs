@@ -427,6 +427,8 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
             .ok()["mac"],
         Value::Null
     );
+    // a `mac` that is there but null is not a missing one
+    w.ada.post(&w.hub, "/v2/invites", &json!({ "offer": b64(&bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &bytes)), "mac": null })).refused(400, "bad-format");
     with_mac(Some(&[9u8; 31])).refused(400, "bad-format");
     with_mac(Some(&[9u8; 33])).refused(400, "bad-format");
     // 12.1.2: a human device's invite lives 10 minutes, an agent device's 15; 2 minutes for the clocks

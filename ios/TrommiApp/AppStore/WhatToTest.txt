@@ -2,6 +2,8 @@ This build is the first one on the new encryption core (MLS, one Rust core for a
 
 This build's core stores its state in a newer form: what an earlier build stored on this phone does not open. Log out (or delete the app) and sign in again; an account made with an earlier build of this kind may need a new test account.
 
+New in this build: a pairing code or agent link carries its deadline. A device code holds 10 minutes, an agent link 15; the screen says how long it is still valid. A code past its deadline is refused at once with "This code has run out". The new core stores invites in a newer form: what an earlier build stored does not open (log in again).
+
 Please look at, in this order:
 1. Does it start, and do the screens look as before (sign-in, Desk, Settings)? Nothing in the looks was meant to change.
 2. Settings, last row "MLS proof": it should say OK with the steps and times. "Copy result" and send it, whatever it says.

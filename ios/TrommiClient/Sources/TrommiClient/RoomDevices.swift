@@ -52,7 +52,7 @@ extension Room {
       if !self.synced { _ = try await self.catchUp() }
       let hubURL = self.hubURL
       let made = try await self.onCore { try $0.inviteOpen(role: role, session: session, app: app, hub: hubURL, nowMs: nowMs()) }
-      try await self.noted { try await self.hub.postInvite(offer: made.offer.offer, signature: made.offer.signature) }
+      try await self.noted { try await self.hub.postInvite(offer: made.offer.offer, signature: made.offer.signature, mac: made.offer.mac) }
       return Pairing(inviteId: hex(made.inviteId), link: made.link, expiresAt: made.expiresAt, invite: made.inviteId)
     }
   }
@@ -259,4 +259,15 @@ extension Room {
     close()
     Store.lifecycle.withLock { store.wipe() }
   }
+}
+
+/**
+ * What a person types on the computer of an agent, in order (the web's invite-an-agent page): the connector once
+ * per machine, its setup once per program (`codex`: for Codex instead of Claude Code), then the connection per
+ * folder with this invite's link. The link stands in single quotes; a link never holds one.
+ */
+public func agentConnectSteps(link: String, codex: Bool = false) -> [(title: String, command: String)] {
+  [("Once per machine", "curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh"),
+   ("Once per program", "trommi-connector setup \(codex ? "codex" : "claude")"),
+   ("In the project folder", "trommi-connector connect '\(link)'")]
 }

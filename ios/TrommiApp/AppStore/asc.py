@@ -247,7 +247,7 @@ def pick_code(rows):
     state, date). None when none is approved."""
     def date(r):
         a = r.get("attributes") or {}
-        return a.get("uploadedDate") or a.get("createdDate") or ""
+        return a.get("createdDate") or a.get("uploadedDate") or ""
     approved = [r for r in rows if (r.get("attributes") or {}).get("appEncryptionDeclarationState") == "APPROVED"
                 and (r.get("attributes") or {}).get("codeValue")]
     if not approved:
@@ -261,7 +261,9 @@ def export_code():
     if not aid:
         print("::error::no app record", file=sys.stderr, flush=True)
         sys.exit(1)
-    rows, path = [], f"/v1/apps/{aid}/appEncryptionDeclarations?limit=200"
+    # (the top-level collection filtered by the app: /v1/apps/{id} has no relationship of that name)
+    fields = "appEncryptionDeclarationState,codeValue,createdDate,uploadedDate"
+    rows, path = [], f"/v1/appEncryptionDeclarations?filter[app]={q(aid)}&fields[appEncryptionDeclarations]={fields}&limit=200"
     while path:
         page = call("GET", path)
         rows += page["data"]
@@ -270,7 +272,7 @@ def export_code():
     picked = pick_code(rows)
     if not picked:
         listed = ", ".join(f"{(r.get('attributes') or {}).get('appEncryptionDeclarationState', '?')} "
-                           f"({(r.get('attributes') or {}).get('uploadedDate') or (r.get('attributes') or {}).get('createdDate') or 'no date'})"
+                           f"({(r.get('attributes') or {}).get('createdDate') or (r.get('attributes') or {}).get('uploadedDate') or 'no date'})"
                            for r in rows) or "none"
         # (on stderr: stdout is the code the script takes)
         print(f"::error::no APPROVED export compliance documentation for {os.environ['BUNDLE_ID']} in App Store Connect "

@@ -196,6 +196,9 @@ public final class Room {
   var readingBack = false
   /** Something came that the past waits for (a Welcome, keys): `tendPast` is due after what is being processed. */
   var pastDue = false
+  /** Counts the times the board was built anew from the hub's changes (a read-back, after a Cut): a Scribble Board
+   *  on screen loads itself again when it changed. */
+  public internal(set) var boardsReset = 0
   /** The highest lamport this device has seen or written (9.3.2): what an echo of an own write is ordered by. */
   var lamport = 0
   // the record cache (RoomCache.swift)

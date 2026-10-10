@@ -235,8 +235,6 @@ public final class CanvasState {
    */
   public internal(set) var reduced: Bytes?
   public internal(set) var reducedFrontier: [WriterHead] = []
-  /** The hub's change number up to which the board's items were read into `reduced`. */
-  public internal(set) var heldChange: UInt64 = 0
   public init() {}
   public func covered(_ sender: String, _ seq: UInt64) -> Bool { (frontier[sender]?.seq ?? 0) >= seq }
 

@@ -26,4 +26,13 @@ final class HubJSONTests: XCTestCase {
     XCTAssertEqual(loggable(TrommiError("a code with spaces", "")), "other")
     XCTAssertEqual(loggable(CocoaError(.fileNoSuchFile)), "error")
   }
+  /// The three lines of an agent's invite, as the web's page has them, the link in the third.
+  func testTheAgentsThreeLines() {
+    let link = "https://app.trommi.com/join#v2.a.b.c.d"
+    XCTAssertEqual(agentConnectSteps(link: link).map(\.command), [
+      "curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh",
+      "trommi-connector setup claude",
+      "trommi-connector connect 'https://app.trommi.com/join#v2.a.b.c.d'"])
+    XCTAssertEqual(agentConnectSteps(link: link, codex: true)[1].command, "trommi-connector setup codex")
+  }
 }

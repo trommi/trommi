@@ -175,13 +175,15 @@ export function roomsOn(env: RoomEnv): Rooms {
     }
     const client = (async (): Promise<Client> => {
       const core = await env.core()
-      const link = core.inviteLinkParse(o.link)
-      const hub = hubOf(o, link.hub)
+      // the link held against this clock before anything is fetched: an expired one is refused here
+      const checked = core.inviteLinkCheck(o.link, Date.now())
+      const hub = hubOf(o, checked.hub)
       const device = await fresh(o, core)
       let engine: Engine | null = null
       try {
+        const link = await device.joinLink(o.link, Date.now())
         const invite = await hub.getInvite(link.inviteId)
-        const request = await device.joinRequest(o.link, { offer: invite.offer, signature: invite.signature }, Date.now())
+        const request = await device.joinRequest(o.link, { offer: invite.offer, signature: invite.signature, mac: invite.mac }, Date.now())
         await hub.postInviteRequest(link.inviteId, { request: request.request, mac: request.mac, signature: request.signature })
         // the inviter's Reveal: with it both sides hold the same six numbers
         let reveal = null

@@ -43,15 +43,17 @@ pub use device::{log_finding, CoreDevice};
 pub use error::{error_code_from_text, error_code_text, CoreError, ErrorCode};
 pub use files::*;
 pub use invite::{
-    check_emoji, hub_address, invite_link_parse, CheckCode, EmojiWord, InviteAccepted,
-    InviteConfirmed, InviteLinkParts, InviteOpened, InviteRole, InviteStep, InviteStepKind,
-    JoinRequest, SignedOffer, SignedRequest, SignedReveal,
+    check_emoji, hub_address, invite_clock_tolerance_ms, invite_life_ms, invite_link_check,
+    invite_link_parse, CheckCode, EmojiWord, InviteAccepted, InviteConfirmed, InviteLinkParts,
+    InviteOpened, InviteRole, InviteStep, InviteStepKind, JoinLink, JoinRequest, SignedOffer,
+    SignedRequest, SignedReveal,
 };
 pub use push::*;
 pub use records::*;
 pub use recovery::{
-    recovery_anchor, recovery_sign_in, Anchor, CodeJoin, GroupPast, Learned, RecoveryPlan,
-    Removals, ServedCommit, ServedEnvelope, ServedGroup, ServedRoom, UnverifiedSession,
+    recovery_anchor, recovery_sign_in, Anchor, CodeJoin, GroupPast, LearnProgress, Learned,
+    PlacedCommit, RecoveryPlan, Removals, ServedCommit, ServedEnd, ServedEnvelope, ServedGroup,
+    ServedRoom, ServedStart, UnverifiedSession,
 };
 pub use selftest::{self_test, versions, SelfTestReport, SelfTestStep, Versions};
 pub use store::{StoreEntry, StoreWrite, StoredState};

@@ -176,6 +176,8 @@ struct ScribbleScreen: View {
   static let draws = false
   @State private var canvas = CanvasState()
   @State private var loaded = false
+  /** The room's `boardsReset` this board was loaded at: when it moves on, the board loads again. */
+  @State private var loadedAt = 0
   @State private var tool: Tool = ScribbleScreen.draws ? .pen : .view
   @State private var penColor = "ink"
   @State private var markerColor = "yellow"
@@ -325,6 +327,7 @@ struct ScribbleScreen: View {
     // another board (the desk in view changed): nothing of the one before stays
     let tl = timeline
     loaded = false
+    loadedAt = room.boardsReset
     canvas = CanvasState(); pending = []; gone = []; selection = []; selRect = nil
     tick += 1
     do {
@@ -337,6 +340,8 @@ struct ScribbleScreen: View {
   }
   private func takeNew() {
     guard let room = model.room, loaded else { return }
+    // (the board was built anew after a Cut: loaded again from its snapshot, by the core)
+    if room.boardsReset != loadedAt { Task { await load() }; return }
     let changed = room.applyCanvasItems(canvas, timelineKeyOf("scribble", timeline))
     if !changed.isEmpty {
       // an own stroke came back from the hub: its pending copy goes
@@ -422,6 +427,7 @@ struct BoardDesks: View {
   /** The desks' boards, by desk id: opened like the pad's own (snapshot + tail), then fed by what the room brings. */
   @State private var boards: [String: CanvasState] = [:]
   @State private var tick = 0
+  @State private var loadedAt = 0
 
   var body: some View {
     let _ = tick
@@ -467,6 +473,7 @@ struct BoardDesks: View {
 
   private func load(_ desks: [DeskDesc]) async {
     guard let room = model.room else { return }
+    if boards.isEmpty { loadedAt = room.boardsReset }
     boards = boards.filter { b in desks.contains { $0.id == b.key } }
     for d in desks where boards[d.id] == nil {
       guard let st = try? await room.loadCanvas(deskBoard(d.id)), !Task.isCancelled else { continue }
@@ -476,6 +483,8 @@ struct BoardDesks: View {
   }
   private func takeNew() {
     guard let room = model.room else { return }
+    // (the boards were built anew after a Cut: each loads again, by the core)
+    if room.boardsReset != loadedAt { loadedAt = room.boardsReset; boards = [:]; Task { await load(model.desk?.desks ?? []) }; return }
     var changed = false
     for (id, st) in boards where !room.applyCanvasItems(st, timelineKeyOf("scribble", deskBoard(id))).isEmpty { changed = true }
     if changed { tick += 1 }
