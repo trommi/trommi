@@ -11,7 +11,7 @@
 //!
 //! ```text
 //! salt           = SHA-256("trommi/v1/account-salt" 0x00 ‖ email)                 an account with an e-mail
-//!                = SHA-256("trommi/v2/account-salt/id" 0x00 ‖ account_id(16))     an account without one
+//!                = SHA-256("trommi/v1/account-salt/id" 0x00 ‖ account_id(16))     an account without one
 //! master         = Argon2id(password as NFC UTF-8, salt, m = 64 MiB, t = 3, p = 1, 32 bytes)
 //! K(ikm, label)  = HKDF-SHA-256(ikm, salt, info = label 0x00, 32 bytes)
 //! auth key       = K(master, "trommi/v1/account-auth")        wrap key     = K(master, "trommi/v1/account-wrap-key")
@@ -52,7 +52,7 @@ use unicode_normalization::UnicodeNormalization;
 use zeroize::{Zeroize, Zeroizing};
 
 const LABEL_SALT: &str = "trommi/v1/account-salt";
-const LABEL_ID_SALT: &str = "trommi/v2/account-salt/id";
+const LABEL_ID_SALT: &str = "trommi/v1/account-salt/id";
 const LABEL_AUTH: &str = "trommi/v1/account-auth";
 const LABEL_WRAP_KEY: &str = "trommi/v1/account-wrap-key";
 const LABEL_KIT_AUTH: &str = "trommi/v1/recovery-auth";
@@ -358,7 +358,7 @@ pub enum AccountName<'a> {
 }
 
 /// The salt of the account `name` names: the e-mail's for an account with one (`bad-email` for an address that
-/// is none), else `SHA-256("trommi/v2/account-salt/id" 0x00 ‖ account_id)`.
+/// is none), else `SHA-256("trommi/v1/account-salt/id" 0x00 ‖ account_id)`.
 fn salt_of(name: AccountName<'_>) -> Result<[u8; 32], AccountError> {
     match name {
         AccountName::Email(email) => Ok(account_salt(&normalise_email(email)?)?),
@@ -1434,13 +1434,20 @@ mod tests {
             .expect("aad"),
             hex(text(&v, &["aad"]))
         );
-        // No e-mail has the id's salt: the two are hashes of texts that differ before either name begins.
-        let shared = LABEL_SALT
-            .bytes()
-            .zip(LABEL_ID_SALT.bytes())
+        // No e-mail has the id's salt: the two are hashes of texts that differ before either name begins. The
+        // id's label is the e-mail's with more behind it, so the inputs differ at the byte after the e-mail's
+        // label: its closing 0x00 against the `/` that goes on.
+        let (for_email, for_id) = (labelled(LABEL_SALT, &[]), labelled(LABEL_ID_SALT, &[]));
+        let shared = for_email
+            .iter()
+            .zip(&for_id)
             .take_while(|(a, b)| a == b)
             .count();
-        assert!(shared < LABEL_SALT.len() && shared < LABEL_ID_SALT.len());
+        assert_eq!(shared, LABEL_SALT.len());
+        assert_eq!(
+            (for_email.get(shared), for_id.get(shared)),
+            (Some(&0), Some(&b'/'))
+        );
     }
 
     #[test]

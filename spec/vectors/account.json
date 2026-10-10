@@ -3,25 +3,25 @@
   "about": "The Emergency Kit of an account without an e-mail (spec/v2.md section 8.8). salt = SHA-256(label_salt 0x00 account_id), over the id's 16 bytes; everything behind the salt as for an account with an e-mail (spec/account-vectors.json): r = the words joined by one space, auth_key = HKDF-SHA-256(r, salt, info = \"trommi/v1/recovery-auth\" 0x00, 32), wrap_key the same with \"trommi/v1/recovery-wrap-key\", sealed = 0x02, nonce(12), AES-256-GCM(wrap_key, nonce, aad, code) with aad = \"trommi/v1/account-wrap\" 0x00 room_id \"recovery\". account_id_text is the id as every kit prints it. cases: the keys the same words give for the account named, and what opening sealed under that wrap key gives: 'opens: <code>' or the code of the refusal. refused_id_texts: texts that are no account id (bad-format). Hex throughout.",
   "account_id": "1fe5edc0f8bcc75528be0ea06ba13efb",
   "account_id_text": "1fe5edc0-f8bc-c755-28be-0ea06ba13efb",
-  "auth_key": "5c8de31e756ca6db5eafda75d035f5601d9b84951341a03bf3bb5ece85cf7eb6",
+  "auth_key": "abcd5ee0117a0fc7dca82248ad6aee560bec852c8eb3c6ae741ed3d4f0c6bc79",
   "cases": [
     {
       "account": {
         "id": "1fe5edc0-f8bc-c755-28be-0ea06ba13efb"
       },
-      "auth_key": "5c8de31e756ca6db5eafda75d035f5601d9b84951341a03bf3bb5ece85cf7eb6",
+      "auth_key": "abcd5ee0117a0fc7dca82248ad6aee560bec852c8eb3c6ae741ed3d4f0c6bc79",
       "result": "opens: 4c86e725e6ec477f57f64689563cc545d215157df1948e5b35bdcd45ba0dc0ed",
       "why": "the account itself",
-      "wrap_key": "373fe98336edad40de22aa17b0112a0fce049ec55a81f3f0538889ded03df267"
+      "wrap_key": "2c4963771754cb6394a2bdc132484bad79c763468cda7929c84a74a23b4b7273"
     },
     {
       "account": {
         "id": "ec3e25b2-b7bc-ab3c-6da7-200f844ce546"
       },
-      "auth_key": "66182af9bc80f074fb1f4a51d5786c943a17ac58af0a1b00f7be15d7985749a2",
+      "auth_key": "8c372422be56b8826f8ce5e119e5fa3094b61822f13f9d6b51d686abab887485",
       "result": "wrong-recovery",
       "why": "the same words under another account id",
-      "wrap_key": "b78fe50421adf09c24008795ca7e437060f033a30a9d1dde071efe26f7ad213e"
+      "wrap_key": "365f50a49b8916c9faaa5b5b92df75f2513defb23c789f46e8adb69e7e1d68a7"
     },
     {
       "account": {
@@ -34,7 +34,7 @@
     }
   ],
   "code": "4c86e725e6ec477f57f64689563cc545d215157df1948e5b35bdcd45ba0dc0ed",
-  "label_salt": "trommi/v2/account-salt/id",
+  "label_salt": "trommi/v1/account-salt/id",
   "nonce": "d1097b96387e2a8f9b1973e0",
   "refused_id_texts": [
     {
@@ -95,9 +95,9 @@
     }
   ],
   "room_id": "a5cf9f73df10c559e60d53e3450bad0e61dc849a75c55935e2f4b8a0393d8cf8",
-  "salt": "5ed2e9cfbbe913e704df402ae6566179b0671a914eb7e9cfd0b7be6e05719721",
-  "salt_input": "74726f6d6d692f76322f6163636f756e742d73616c742f6964001fe5edc0f8bcc75528be0ea06ba13efb",
-  "sealed": "02d1097b96387e2a8f9b1973e0f9e1329ba7084aa6e7a72cefc031428a54806e10422818b1df2436d717bafee14f342994a13801a08a46045511ad91d7",
+  "salt": "99deb70fc414386d8d27e1ace019f8bd77d717876e648db1f7fa2fcd3010ca3c",
+  "salt_input": "74726f6d6d692f76312f6163636f756e742d73616c742f6964001fe5edc0f8bcc75528be0ea06ba13efb",
+  "sealed": "02d1097b96387e2a8f9b1973e06ffb05bbb8506620b532b047c3c4f57c42cd57ae25bb4330d4341f339e2df0a722105d99242746c5aad28681dc64ff8c",
   "words": "moneybags stiffness platinum companion gender tycoon mahogany nappy reborn said scale outdoors",
-  "wrap_key": "373fe98336edad40de22aa17b0112a0fce049ec55a81f3f0538889ded03df267"
+  "wrap_key": "2c4963771754cb6394a2bdc132484bad79c763468cda7929c84a74a23b4b7273"
 }
