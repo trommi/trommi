@@ -731,8 +731,22 @@ export async function startFakeHub(opts = {}) {
       const found = (a.room.chains.get(`${g.group_id} ${sender}`) ?? []).filter((_, i) => i + 1 > after)
       return { items: found.slice(0, limit).map(e => ({ ...paged(e), seq: e.header.seq })), more: found.length > limit }
     }
-    if (is('GET', 'rooms', null, 'groups')) { const a = ownRoom(auth(rq), segs[1]); return groupList(a) }
-    if (is('GET', 'welcomes')) { const a = auth(rq); return a.room.welcomes.filter(w => w.device === a.device).map(({ group_id, welcome, at }) => ({ group_id, welcome, at })) }
+    if (is('GET', 'rooms', null, 'groups')) {
+      const a = ownRoom(auth(rq), segs[1]), all = groupList(a)
+      // paged as the hub pages it (point 43): in the order of founding, `after` the answer's own cursor; bare without `limit`
+      const limit = number(rq, 'limit')
+      if (limit === null || limit === undefined || opts.bare_lists) return all
+      const after = number(rq, 'after') ?? 0, size = opts.groups_page ?? clamp(limit, 1000, 1000)
+      const items = all.slice(after, after + size)
+      return { items, more: after + size < all.length, after: after + items.length }
+    }
+    if (is('GET', 'welcomes')) {
+      // numbered, oldest first, after the one numbered `after`; `welcomes_page` (default all) per answer, as the 8 MiB do
+      const a = auth(rq), after = number(rq, 'after') ?? 0
+      const mine = a.room.welcomes.filter(w => w.device === a.device && (w.id ??= (state.welcome_ids = (state.welcome_ids ?? 0) + 1)) > after).sort((x, y) => x.id - y.id)
+      if (opts.bare_lists) return a.room.welcomes.filter(w => w.device === a.device).map(({ group_id, welcome, at }) => ({ group_id, welcome, at }))
+      return mine.slice(0, opts.welcomes_page ?? mine.length).map(({ id, group_id, welcome, at }) => ({ id, group_id, welcome, at }))
+    }
     if (is('PUT', 'key-packages')) {
       const a = member(writer(rq)), single = body.single_use ?? []
       if (!Array.isArray(single) || single.length > 100 || single.some(k => !unb64(k))) throw refuse('bad-format', 'single_use: at most 100 KeyPackages')

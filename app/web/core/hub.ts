@@ -163,7 +163,7 @@ export interface DeskObject {
 }
 export interface Desk {
   cards: DeskObject[]; notes: DeskObject[]; permission_requests: DeskObject[]; artifacts: DeskObject[]
-  registers: EnvelopeItem[]; groups: GroupRow[]
+  registers: EnvelopeItem[]; groups?: GroupRow[]
   /** The Desk was cut short: the rest comes by `changes`. */
   truncated: boolean
   change: number
@@ -951,7 +951,20 @@ export class Hub {
   }
   /** `GET /v2/rooms/{room}/groups`: what the asker may see of the room's groups. */
   async roomGroups(): Promise<GroupRow[]> {
-    return list(await this.get(this.roomPath('/groups'), undefined, CAP_DESK), 'groups', 10_000).map(groupRow)
+    // in pages of up to 1000 (and 8 MiB), the next from the answer's `after`; a hub that answers the bare list of
+    // every group (before point 43) is read as one page
+    const out: GroupRow[] = []
+    let after: string | null = null
+    for (let pages = 0; pages < 1000; pages++) {
+      const v = await this.get(this.roomPath('/groups'), { limit: 1000, after: after ?? undefined }, CAP_DESK)
+      if (Array.isArray(v)) return list(v, 'groups', 10_000).map(groupRow)
+      const o = obj(v, 'a page of groups')
+      out.push(...list(o.items, 'items', 1000).map(groupRow))
+      const next = o.after === undefined || o.after === null ? null : String(o.after)
+      if (!bool(o.more, 'more') || next === null || next === after) break
+      after = next
+    }
+    return out
   }
   /** `POST /v2/rooms/{room}/recovery` (8.7): locks the room for ten minutes. */
   async openRecovery(): Promise<{ recovery_id: Uint8Array; expires_at: number }> {
@@ -1114,10 +1127,20 @@ export class Hub {
   }
   /** `GET /v2/welcomes`: for this device; one is deleted when the device has joined. */
   async welcomes(): Promise<{ group: Uint8Array; welcome: Uint8Array; at: number }[]> {
-    return list(await this.get('/v2/welcomes', undefined, CAP_LIST), 'welcomes', 10_000).map(w => {
-      const o = obj(w, 'a welcome')
-      return { group: id(o.group_id, 'group_id', ...GROUP), welcome: bytes(o.welcome, 'welcome', 1, MAX_MLS), at: int(o.at, 'at') }
-    })
+    // an answer holds at most 8 MiB: asked again after the last one's `id` until an answer is empty (a hub whose
+    // Welcomes carry no id answers all of them at once)
+    const out: { group: Uint8Array; welcome: Uint8Array; at: number }[] = []
+    let after: number | null = null
+    for (let pages = 0; pages < 10_000; pages++) {
+      const page = list(await this.get('/v2/welcomes', after === null ? undefined : { after }, CAP_LIST), 'welcomes', 10_000).map(w => obj(w, 'a welcome'))
+      for (const o of page) out.push({ group: id(o.group_id, 'group_id', ...GROUP), welcome: bytes(o.welcome, 'welcome', 1, MAX_MLS), at: int(o.at, 'at') })
+      const last = page.at(-1)?.id
+      if (!page.length || last === undefined || last === null) break
+      const n = int(last, 'id')
+      if (after !== null && n <= after) bad('Welcomes out of order')
+      after = n
+    }
+    return out
   }
   /** `PUT /v2/key-packages` (14.2): answers how many single-use ones the hub now holds unused. */
   async putKeyPackages(k: { single_use: Uint8Array[]; last_resort?: Uint8Array | null }): Promise<{ unused: number }> {
@@ -1180,7 +1203,7 @@ export class Hub {
     })
     return {
       cards: objects(o.cards), notes: objects(o.notes), permission_requests: objects(o.permission_requests), artifacts: objects(o.artifacts),
-      registers: list(o.registers, 'registers', 20_000).map(envelopeItem), groups: list(o.groups, 'groups', 10_000).map(groupRow),
+      registers: list(o.registers, 'registers', 20_000).map(envelopeItem), ...(o.groups === undefined ? {} : { groups: list(o.groups, 'groups', 10_000).map(groupRow) }),
       truncated: bool(o.truncated, 'truncated'), change: int(o.change, 'change'),
     }
   }
