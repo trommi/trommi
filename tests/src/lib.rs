@@ -24,6 +24,7 @@ use trommi_core::device::{Draft, ReceivedEnvelope, Sealed};
 use trommi_core::ids::{DeviceId, GroupId};
 use trommi_core::mls::profile::Cut;
 use trommi_core::recovery::{select_anchor, RecoveryKeys, ServedCommit, ServedGroup, ServedRoom};
+use trommi_core::store::OutboxKind;
 use trommi_core::Error;
 
 /// The recovery code of every room the tests found.
@@ -79,9 +80,20 @@ pub fn post_all(hub: &mut Hub, device: &mut TestDevice) -> Vec<Result<Accepted, 
             }
             let answer = hub.post(&device.id(), &entry);
             match &answer {
-                Ok(accepted) => device
-                    .outbox_accepted(entry.id, *accepted)
-                    .expect("the accepted entry is applied"),
+                Ok(accepted) => {
+                    device
+                        .outbox_accepted(entry.id, *accepted)
+                        .expect("the accepted entry is applied");
+                    // An accepted Commit is merged where the log shows it: the device processes the log
+                    // up to it, as a client does that follows the hub's stream.
+                    let commit = matches!(
+                        entry.kind,
+                        OutboxKind::Commit | OutboxKind::GroupFounding | OutboxKind::RecoveryCode
+                    );
+                    if let Some(place) = accepted.change.filter(|_| commit) {
+                        process_up_to(hub, device, place);
+                    }
+                }
                 // 9.0.8: an envelope refused with `voided: true` keeps its number; refused otherwise, it
                 // stays in the outbox, and is not posted again in this round.
                 Err(_) if hub.voided(&entry) => device
@@ -98,6 +110,18 @@ pub fn post_all(hub: &mut Hub, device: &mut TestDevice) -> Vec<Result<Accepted, 
         }
     }
     answers
+}
+
+/// Processes the hub's log after the device's cursor up to the entry with the change number `place`, taking
+/// the Welcomes on the way. An entry that does not process is left to the test, which sees its effect.
+pub fn process_up_to(hub: &Hub, device: &mut TestDevice, place: u64) {
+    for item in hub.log_after(device.cursor()) {
+        if item.change > place {
+            break;
+        }
+        let _ = process(device, &item);
+        take_welcomes(hub, device, item.change);
+    }
 }
 
 /// Posts the outbox and expects every entry to be accepted.
@@ -153,11 +177,19 @@ pub fn take_welcomes(hub: &Hub, device: &mut TestDevice, change: u64) -> Vec<Joi
         room,
         committer: None,
     };
-    hub.welcomes
+    let joined: Vec<Joined> = hub
+        .welcomes
         .iter()
         .filter(|welcome| welcome.change == change)
         .filter_map(|welcome| device.join_welcome(&welcome.bytes, &expected, now()).ok())
-        .collect()
+        .collect();
+    // The Commit that made the Welcome is handed again: it gives the join its place in the hub's order.
+    if !joined.is_empty() {
+        for item in hub.log.iter().filter(|item| item.change == change) {
+            let _ = process(device, item);
+        }
+    }
+    joined
 }
 
 fn hub_room(hub: &Hub) -> trommi_core::ids::RoomId {
@@ -509,6 +541,27 @@ impl Fetched {
             })
         })
     }
+}
+
+/// `device` learns the past of `group` from what the hub holds of it (4.4, 9.0.6).
+pub fn learn(
+    hub: &Hub,
+    device: &mut TestDevice,
+    group: &GroupId,
+) -> Result<trommi_core::device::Learned, Error> {
+    fetch_group(hub, group)
+        .served(|served| device.learn_history(group, served.founding, served.commits))
+}
+
+/// Every envelope the hub serves on its chain routes, in the order of its change numbers: what lies beyond a
+/// Cut is left out.
+pub fn served_chains(hub: &Hub) -> Vec<StoredEnvelope> {
+    hub.content
+        .envelopes
+        .iter()
+        .filter(|stored| !stored.cut)
+        .cloned()
+        .collect()
 }
 
 /// `device` signs in with the code `keys` (8.4): it builds its join of the room group from what the hub

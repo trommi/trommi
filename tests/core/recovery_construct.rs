@@ -7,7 +7,7 @@ use trommi_core::crypto::{
     self, derive_hpke_keypair, encrypt_with_label, expand_with_label, hmac_sha256, Secret,
     SeededEntropy, SigningKey, SystemEntropy,
 };
-use trommi_core::device::{Accepted, Device};
+use trommi_core::device::{Accepted, Device, LogEntry, LogKind};
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId, SessionId};
 use trommi_core::mls::observer::{Context, NoSessions, Observer};
 use trommi_core::mls::profile::{CommitNote, TrommiRoom, MAX_HUMAN_DEVICES};
@@ -1661,6 +1661,20 @@ impl Room {
                 Accepted {
                     change: Some(change),
                 },
+            )
+            .unwrap();
+        // The Commit is merged where the log shows it.
+        self.device
+            .process_log_entry(
+                &LogEntry {
+                    change,
+                    group: self.group,
+                    kind: LogKind::Commit {
+                        bytes: &entry.parts[0],
+                        recovery_auth: None,
+                    },
+                },
+                now(),
             )
             .unwrap();
         self.commits.push(entry.parts[0].clone());

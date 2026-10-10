@@ -116,6 +116,8 @@ pub fn chains_of(heads: &[(DeviceId, Head)], counts: &[(u64, u64)]) -> Chains {
     writer.u64(0);
     writer.vector(&heads).expect("the heads");
     writer.vector(&counts).expect("the counts");
+    // No chain began at a frontier.
+    writer.vector::<Count>(&[]).expect("the starts");
     Chains::from_bytes(&writer.into_bytes()).expect("a chain state")
 }
 

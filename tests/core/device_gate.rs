@@ -181,8 +181,12 @@ fn a_helper_device_acts_on_the_answer_to_its_own_card_and_its_opener_does_not() 
 fn a_helper_device_removed_and_added_again_under_its_key_owns_its_card_no_more() {
     let mut w = world();
     let (mut helper, mut other) = (new_device(), new_device());
+    // A helper device follows the room group and its main session's group (section 3).
     for device in [&mut helper, &mut other] {
         observe(&w.hub, device);
+        device
+            .observe_session(w.hub.group_info(&w.main).unwrap())
+            .unwrap();
     }
     let group = found_helper(&mut w.hub, &mut w.agent, &w.main, &mut [&mut helper]);
     for device in [&mut w.a, &mut w.agent, &mut helper] {
