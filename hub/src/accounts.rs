@@ -632,18 +632,10 @@ pub fn put_password(
     Ok(json!({ "revision": v["revision"].as_i64().unwrap_or(0) + 1 }))
 }
 
-/// Which salt a kit's keys were derived with, as its maker says: `email` (v1 §16) or `id` (the account's id; the
-/// only form for an account without e-mail). The hub cannot check it; it keeps it so that the device can print
-/// it on the kit and derive the same keys again. Unsaid: `email` where the account has one.
-fn kit_form(kit: &Value, has_email: bool) -> Res<&'static str> {
-    match (kit["form"].as_str(), has_email) {
-        (None, true) | (Some("email"), true) => Ok("email"),
-        (None, false) | (Some("id"), _) => Ok("id"),
-        _ => Err(refuse(
-            "bad-email",
-            "a kit under the e-mail's salt needs an account with an e-mail",
-        )),
-    }
+/// Which salt a kit's keys are derived with follows from the account alone (v2.md 8.8.2): the e-mail's where it
+/// has one, else the account id's. The hub cannot check a kit; it says which form the account's kit has.
+fn kit_form(_kit: &Value, has_email: bool) -> Res<&'static str> {
+    Ok(if has_email { "email" } else { "id" })
 }
 
 /// How a request names an account: by e-mail or by the account's id.
@@ -740,8 +732,8 @@ fn needs_email(c: &Connection, account: i64) -> Res<()> {
 }
 
 /// `PUT /v2/account/email`: an account that has no e-mail is given one. It is set once: the keys of a password,
-/// and of a kit made under an e-mail, are derived from it.
-pub fn put_email(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<Value> {
+/// and of the kit of an account that has one, are derived from it; the kit is made anew in the same request.
+pub fn put_email(c: &Connection, room: &Room, v: &Value, now: u64, pre: &Prehashed) -> Res<Value> {
     let account = account_of(c, room)?;
     check_revision(c, account, v)?;
     let email = normalise_email(v["email"].as_str().unwrap_or(""))?;
@@ -762,6 +754,14 @@ pub fn put_email(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<Value>
     }
     c.prepare_cached("UPDATE accounts SET email = ?1 WHERE account_id = ?2")?
         .execute(params![email, account])?;
+    // 8.8.2: with an e-mail the kit's keys are under the e-mail's salt, so the kit comes anew in this request
+    // (the same words may stay; the keys do not)
+    set_kit(c, account, &v["kit"], pre).map_err(|_| {
+        refuse(
+            "incomplete",
+            "an e-mail comes with the kit made anew under it",
+        )
+    })?;
     bump(c, account, now)?;
     Ok(json!({ "revision": v["revision"].as_i64().unwrap_or(0) + 1 }))
 }
