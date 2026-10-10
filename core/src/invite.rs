@@ -4,10 +4,11 @@
 //! them and could put a device of its own in the new one's place, so both sides show six emoji computed from
 //! everything exchanged, and the person compares them:
 //!
-//! 1. The inviter makes a link with a secret, and publishes an **Offer** that commits to a nonce it keeps
-//!    ([`Inviter::open`]).
-//! 2. The new device, which has the link, checks the Offer and answers with a **Request** that carries its
-//!    KeyPackage and a MAC under a key from the link's secret ([`Joiner::request`]).
+//! 1. The inviter makes a link with a secret and a deadline, and publishes an **Offer** that commits to a nonce
+//!    it keeps, with a MAC under a key from the link's secret ([`Inviter::open`]).
+//! 2. The new device, which has the link, checks the Offer's MAC, so that the Offer is the one of the link's
+//!    inviter and no Offer a hub made, and answers with a **Request** that carries its KeyPackage and a MAC
+//!    under another key from the link's secret ([`Joiner::request`]).
 //! 3. The inviter accepts the first Request with a valid MAC and publishes the **Reveal** with the nonce
 //!    ([`Inviter::accept`]). The new device checks it against the commitment ([`Joiner::reveal`]).
 //! 4. Both show the [`CheckCode`]. Only when the person says they match does the inviter get a
@@ -35,8 +36,11 @@
 //!
 //! # Time
 //!
-//! An invite lives ten minutes, is used by one Request, and is confirmed within five minutes of that Request.
-//! The inviter enforces all three with the `now_ms` it is given; "they don't match" burns the invite.
+//! An invite for a human device lives ten minutes, one for an agent device fifteen ([`Role::invite_life_ms`]);
+//! the deadline is the inviter's clock plus that, and stands in the link. An invite is used by one Request and
+//! is confirmed within five minutes of that Request. The inviter enforces all three with the `now_ms` it is
+//! given; "they don't match" burns the invite. The new device holds the deadline against its own clock with
+//! [`CLOCK_TOLERANCE_MS`] either way ([`InviteLink::check_deadline`], [`Joiner::request`]).
 
 use crate::codec::{self, Decode, Encode, Reader, Writer};
 use crate::crypto::{self, Entropy, Secret, SecretBytes, SigningKey};
@@ -46,20 +50,29 @@ use crate::ids::{self, DeviceId, Hash32, InviteId, RoomId, SessionId};
 use crate::mls::key_package::{verify_key_package, verify_key_package_of};
 use zeroize::Zeroizing;
 
-/// How long an invite may be answered.
-pub const INVITE_LIFE_MS: u64 = 10 * 60 * 1000;
+/// How long an invite for a human device may be answered.
+pub const HUMAN_INVITE_LIFE_MS: u64 = 10 * 60 * 1000;
+/// How long an invite for an agent device, for a new session or a takeover, may be answered.
+pub const AGENT_INVITE_LIFE_MS: u64 = 15 * 60 * 1000;
+/// How far the new device's clock may stand from the inviter's, which set the deadline: the allowance the
+/// format uses for freshness (section 9.0.5).
+pub const CLOCK_TOLERANCE_MS: u64 = 2 * 60 * 1000;
 /// How long the person has to confirm the code once a Request was accepted.
 pub const CONFIRM_MS: u64 = 5 * 60 * 1000;
 /// The longest KeyPackage a Request carries, in bytes.
 pub const MAX_KEY_PACKAGE_LEN: usize = 8192;
-/// The length of the MAC over a Request.
+/// The length of the MAC over a Request, and of the MAC over an Offer.
 pub const MAC_LEN: usize = 32;
+/// The length of the inviter's signature over an Offer, as the Offer's MAC covers it.
+pub const OFFER_SIGNATURE_LEN: usize = 64;
 /// The length of the inviter's nonce.
 pub const NONCE_LEN: usize = 32;
 
-/// The longest hub address as base64url, and the length of 32 bytes (the room id, the secret) as base64url.
+/// The longest hub address as base64url, the length of 32 bytes (the room id, the secret) and of 8 bytes (the
+/// deadline) as base64url.
 const MAX_HUB_PART_LEN: usize = (512usize * 4).div_ceil(3);
 const SECRET_PART_LEN: usize = 43;
+const DEADLINE_PART_LEN: usize = 11;
 /// The version a link names.
 const LINK_VERSION: &str = "2";
 /// The path of a join link under the app's origin.
@@ -70,12 +83,13 @@ const MAX_REQUEST_LEN: usize = 32 + 16 + 2 + 512 + 1 + 4 + MAX_KEY_PACKAGE_LEN +
 const OFFER_LEN: usize = 32 + 16 + 1 + 16 + 8 + 32 + 32 + 8 + 32;
 const REVEAL_LEN: usize = 16 + 32 + 32;
 /// The version byte of an inviter's or a joiner's stored state.
-const STORED_VERSION: u8 = 1;
+const STORED_VERSION: u8 = 2;
 /// The longest stored state: an Offer, a Request, their signatures and a link.
 const MAX_STORED_LEN: usize = 4 * MAX_REQUEST_LEN;
 
 const LABEL_INVITE_ID: &str = "trommi invite id";
 const LABEL_MAC_KEY: &str = "trommi invite mac";
+const LABEL_OFFER_MAC_KEY: &str = "trommi invite offer";
 const LABEL_COMMITMENT: &str = "Trommi Invite Commitment";
 const LABEL_OFFER_HASH: &str = "Trommi Invite Offer";
 const LABEL_REQUEST_HASH: &str = "Trommi Invite Request";
@@ -110,6 +124,17 @@ impl Decode for Role {
     }
 }
 
+impl Role {
+    /// How long an invite for this kind of device may be answered: [`HUMAN_INVITE_LIFE_MS`] or
+    /// [`AGENT_INVITE_LIFE_MS`].
+    pub fn invite_life_ms(self) -> u64 {
+        match self {
+            Role::Human => HUMAN_INVITE_LIFE_MS,
+            Role::Agent => AGENT_INVITE_LIFE_MS,
+        }
+    }
+}
+
 /// What the inviter publishes: who invites whom into which room, until when, and the commitment to its nonce.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
@@ -121,7 +146,7 @@ pub struct Offer {
     pub role: Role,
     /// Zeros; or, for an agent, the session it shall take over.
     pub session_id: SessionId,
-    /// The last moment a Request is accepted.
+    /// The last moment a Request is accepted, by the inviter's clock: the link's deadline.
     pub expires_at: u64,
     /// `RefHash("Trommi Invite Commitment", invite_id ‖ nonce)`.
     pub commitment: Hash32,
@@ -265,13 +290,16 @@ impl Reveal {
     }
 }
 
-/// An Offer as it travels: its encoding and `SignWithLabel(inviter, "TrommiInviteOffer", Offer)`.
+/// An Offer as it travels: its encoding, `SignWithLabel(inviter, "TrommiInviteOffer", Offer)` and
+/// `HMAC-SHA-256(offer_mac_key, Offer ‖ signature)` under the key from the link's secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedOffer {
     /// The encoded [`Offer`].
     pub offer: Vec<u8>,
-    /// The inviter's signature.
+    /// The inviter's signature: 64 bytes.
     pub signature: Vec<u8>,
+    /// The MAC that binds the Offer to the link: 32 bytes. The hub stores and serves it and cannot check it.
+    pub mac: Vec<u8>,
 }
 
 /// A Request as it travels: its encoding, `HMAC-SHA-256(mac_key, Request)` and
@@ -409,13 +437,13 @@ impl PartialEq for CheckCode {
 
 impl Eq for CheckCode {}
 
-fn invite_id(secret: &Secret<32>, room_id: &RoomId) -> Result<InviteId, Error> {
-    let id = crypto::expand_with_label::<16>(secret, LABEL_INVITE_ID, room_id.as_bytes())?;
-    Ok(InviteId::new(*id.expose()))
-}
-
-fn mac_key(secret: &Secret<32>, room_id: &RoomId) -> Result<Secret<32>, Error> {
-    crypto::expand_with_label(secret, LABEL_MAC_KEY, room_id.as_bytes())
+/// `Offer ‖ signature`: what the Offer's MAC covers. `bad-invite` unless the signature has its 64 bytes and
+/// the Offer the length of one, so that the two parts cannot be cut elsewhere.
+fn offer_with_signature(offer: &SignedOffer) -> Result<Vec<u8>, Error> {
+    if offer.signature.len() != OFFER_SIGNATURE_LEN || offer.offer.len() != OFFER_LEN {
+        return Err(Error::BadInvite);
+    }
+    Ok([offer.offer.as_slice(), &offer.signature].concat())
 }
 
 fn commitment(invite_id: &InviteId, nonce: &[u8; NONCE_LEN]) -> Result<Hash32, Error> {
@@ -474,9 +502,27 @@ fn verified_offer(offer: &SignedOffer) -> Result<Offer, Error> {
     Ok(decoded)
 }
 
-/// The link the inviter hands over: `<app>/join#v2.<hub>.<room_id>.<secret>`, where `<app>` is the app's origin
-/// in the canonical spelling of a hub address and the three parts are base64url (the hub as the UTF-8 of its
-/// address). The secret reaches only who gets the link; the hub never sees it.
+/// The new device's check of a deadline against its own clock: `invite-expired` when its clock is more than
+/// [`CLOCK_TOLERANCE_MS`] past it, `bad-invite` when it lies more than `life` and that tolerance ahead.
+fn check_deadline(expires_at: u64, life: u64, now_ms: u64) -> Result<(), Error> {
+    if now_ms > expires_at.saturating_add(CLOCK_TOLERANCE_MS) {
+        return Err(Error::InviteExpired);
+    }
+    if expires_at
+        > now_ms
+            .saturating_add(life)
+            .saturating_add(CLOCK_TOLERANCE_MS)
+    {
+        return Err(Error::BadInvite);
+    }
+    Ok(())
+}
+
+/// The link the inviter hands over: `<app>/join#v2.<hub>.<room_id>.<secret>.<expires_at>`, where `<app>` is the
+/// app's origin in the canonical spelling of a hub address and the four parts are base64url (the hub as the
+/// UTF-8 of its address, the deadline as a uint64 of milliseconds, big-endian). The secret reaches only who gets
+/// the link; the hub never sees it. The deadline enters every key and id the secret gives: a link whose
+/// deadline was changed names another invite.
 #[derive(Debug, PartialEq, Eq)]
 pub struct InviteLink {
     app: String,
@@ -485,6 +531,8 @@ pub struct InviteLink {
     /// The room.
     pub room_id: RoomId,
     secret: Secret<32>,
+    /// The last moment the inviter accepts a Request, by its clock.
+    pub expires_at: u64,
 }
 
 impl InviteLink {
@@ -494,6 +542,7 @@ impl InviteLink {
         hub: HubAddress,
         room_id: RoomId,
         secret: Secret<32>,
+        expires_at: u64,
     ) -> Result<Self, Error> {
         if !is_canonical_origin(app) {
             return Err(Error::BadFormat);
@@ -503,6 +552,7 @@ impl InviteLink {
             hub,
             room_id,
             secret,
+            expires_at,
         })
     }
 
@@ -526,18 +576,25 @@ impl InviteLink {
             _ if is_number => return Err(Error::NewerVersion),
             _ => return Err(Error::BadFormat),
         }
-        let (Some(hub), Some(room_id), Some(secret), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
+        let (Some(hub), Some(room_id), Some(secret), Some(deadline), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
             return Err(Error::BadFormat);
         };
         // Parts of another length than theirs are refused unread.
         if hub.len() > MAX_HUB_PART_LEN
             || room_id.len() != SECRET_PART_LEN
             || secret.len() != SECRET_PART_LEN
+            || deadline.len() != DEADLINE_PART_LEN
         {
             return Err(Error::BadFormat);
         }
+        let mut deadline_bytes = [0u8; 8];
+        ids::base64url_decode_into(deadline, &mut deadline_bytes)?;
         // The secret goes straight into a place that is wiped: no buffer on the heap holds it on the way.
         let mut secret_bytes = Zeroizing::new([0u8; 32]);
         ids::base64url_decode_into(secret, secret_bytes.as_mut_slice())?;
@@ -546,6 +603,7 @@ impl InviteLink {
             HubAddress::from_bytes(&ids::base64url_decode(hub)?)?,
             RoomId::from_base64url(room_id)?,
             Secret::new(*secret_bytes),
+            u64::from_be_bytes(deadline_bytes),
         )
     }
 
@@ -569,16 +627,59 @@ impl InviteLink {
         text.push_str(&self.room_id.to_base64url());
         text.push('.');
         text.push_str(&Zeroizing::new(ids::base64url_encode(self.secret.expose())));
+        text.push('.');
+        text.push_str(&ids::base64url_encode(&self.expires_at.to_be_bytes()));
         SecretBytes::new(text.as_bytes().to_vec())
     }
 
-    /// `ExpandWithLabel(secret, "trommi invite id", room_id, 16)`: what the hub knows the invite by.
-    pub fn invite_id(&self) -> Result<InviteId, Error> {
-        invite_id(&self.secret, &self.room_id)
+    /// `room_id ‖ uint64 expires_at`: the context of every derivation from the secret.
+    fn context(&self) -> [u8; 40] {
+        let mut context = [0u8; 40];
+        let (room, deadline) = context.split_at_mut(32);
+        room.copy_from_slice(self.room_id.as_bytes());
+        deadline.copy_from_slice(&self.expires_at.to_be_bytes());
+        context
     }
 
+    /// `ExpandWithLabel(secret, "trommi invite id", room_id ‖ expires_at, 16)`: what the hub knows the invite by.
+    pub fn invite_id(&self) -> Result<InviteId, Error> {
+        let id = crypto::expand_with_label::<16>(&self.secret, LABEL_INVITE_ID, &self.context())?;
+        Ok(InviteId::new(*id.expose()))
+    }
+
+    /// `ExpandWithLabel(secret, "trommi invite mac", room_id ‖ expires_at, 32)`: the key of the Request's MAC.
     fn mac_key(&self) -> Result<Secret<32>, Error> {
-        mac_key(&self.secret, &self.room_id)
+        crypto::expand_with_label(&self.secret, LABEL_MAC_KEY, &self.context())
+    }
+
+    /// `HMAC-SHA-256(ExpandWithLabel(secret, "trommi invite offer", room_id ‖ expires_at, 32), Offer ‖ signature)`:
+    /// the MAC that binds an Offer to this link. `bad-invite` for a signature of another length than 64 bytes.
+    fn offer_mac(&self, offer: &SignedOffer) -> Result<[u8; MAC_LEN], Error> {
+        let key = crypto::expand_with_label(&self.secret, LABEL_OFFER_MAC_KEY, &self.context())?;
+        crypto::hmac_sha256(&key, &offer_with_signature(offer)?)
+    }
+
+    /// Whether `offer` carries this link's MAC, compared in constant time: `bad-invite` for a MAC that is
+    /// missing, of another length or wrong.
+    fn check_offer_mac(&self, offer: &SignedOffer) -> Result<(), Error> {
+        if offer.mac.len() != MAC_LEN {
+            return Err(Error::BadInvite);
+        }
+        let key = crypto::expand_with_label(&self.secret, LABEL_OFFER_MAC_KEY, &self.context())?;
+        if crypto::hmac_verify(&key, &offer_with_signature(offer)?, &offer.mac)? {
+            Ok(())
+        } else {
+            Err(Error::BadInvite)
+        }
+    }
+
+    /// The new device's check of the link before it fetches anything (12.1.2), by its own clock `now_ms`:
+    /// `invite-expired` when that is more than [`CLOCK_TOLERANCE_MS`] past the deadline, `bad-invite` when the
+    /// deadline lies further ahead than the longest invite life ([`AGENT_INVITE_LIFE_MS`]: the Offer, which
+    /// says the kind, is not known yet) and that tolerance. [`Joiner::request`] checks again with the Offer's
+    /// kind.
+    pub fn check_deadline(&self, now_ms: u64) -> Result<(), Error> {
+        check_deadline(self.expires_at, AGENT_INVITE_LIFE_MS, now_ms)
     }
 }
 
@@ -652,9 +753,10 @@ impl std::fmt::Debug for Inviter {
 }
 
 impl Inviter {
-    /// Opens an invite: a fresh link secret and nonce, and the signed Offer, which expires ten minutes after
-    /// `now_ms`. `key` is the inviting device's signature key. `bad-format` for terms no Offer may carry (an app
-    /// origin that is not canonical, a session to take over for a human device).
+    /// Opens an invite: a fresh link secret and nonce, and the signed Offer with its MAC, which expires the
+    /// invite life of its role after `now_ms` ([`Role::invite_life_ms`]); the link carries that deadline. `key`
+    /// is the inviting device's signature key. `bad-format` for terms no Offer may carry (an app origin that is
+    /// not canonical, a session to take over for a human device).
     pub fn open(
         key: &SigningKey,
         terms: InviteTerms,
@@ -664,11 +766,13 @@ impl Inviter {
         if terms.role == Role::Human && !terms.session_id.is_zero() {
             return Err(Error::BadFormat);
         }
+        let expires_at = now_ms.saturating_add(terms.role.invite_life_ms());
         let link = InviteLink::new(
             &terms.app,
             terms.hub,
             terms.room_id,
             Secret::random(entropy)?,
+            expires_at,
         )?;
         let nonce = Secret::random(entropy)?;
         let invite_id = link.invite_id()?;
@@ -677,7 +781,7 @@ impl Inviter {
             invite_id,
             role: terms.role,
             session_id: terms.session_id,
-            expires_at: now_ms.saturating_add(INVITE_LIFE_MS),
+            expires_at,
             commitment: commitment(&invite_id, nonce.expose())?,
             inviter: DeviceId::new(key.public()),
             room_epoch: terms.room_epoch,
@@ -685,14 +789,17 @@ impl Inviter {
         };
         let encoded = codec::encode(&offer)?;
         let signature = crypto::sign_with_label(key, SIGN_OFFER, &encoded)?;
+        let mut signed_offer = SignedOffer {
+            offer: encoded,
+            signature,
+            mac: Vec::new(),
+        };
+        signed_offer.mac = link.offer_mac(&signed_offer)?.to_vec();
         Ok(Self {
             link,
             nonce,
             offer,
-            signed_offer: SignedOffer {
-                offer: encoded,
-                signature,
-            },
+            signed_offer,
             state: InviterState::Open,
         })
     }
@@ -702,7 +809,7 @@ impl Inviter {
         &self.link
     }
 
-    /// The Offer to publish.
+    /// The Offer to publish, with its signature and MAC.
     pub fn signed_offer(&self) -> &SignedOffer {
         &self.signed_offer
     }
@@ -722,7 +829,8 @@ impl Inviter {
     /// included); `invite-expired`; `bad-format` (not a Request with a 32-byte MAC); `bad-invite` (the MAC is
     /// not the link's, or room, invite, hub, role or offer hash are not this invite's); `bad-key-package`;
     /// `bad-signature`. A refused Request leaves the invite as it was: junk cannot use it up. The MAC is
-    /// checked before the KeyPackage is parsed: without the link nobody gets that far.
+    /// checked before the KeyPackage is parsed: without the link nobody gets that far. The deadline is the
+    /// inviter's own: after `expires_at` by `now_ms` no Request is taken, with no tolerance.
     pub fn accept(
         &mut self,
         key: &SigningKey,
@@ -895,7 +1003,8 @@ impl Inviter {
         }
     }
 
-    /// The invite for the device's store. It holds the link's secret and the nonce.
+    /// The invite for the device's store. It holds the link's secret and the nonce; the Offer's MAC is computed
+    /// from them again when it is read back, the link's deadline is the Offer's.
     pub fn to_stored(&self) -> Result<SecretBytes, Error> {
         // Room for all of it, so that the secret and the nonce are written once and never moved.
         let mut writer = Writer::with_capacity(MAX_STORED_LEN);
@@ -944,9 +1053,10 @@ impl Inviter {
         let hub: HubAddress = reader.value()?;
         let secret = Secret::new(reader.fixed()?);
         let nonce = Secret::new(reader.fixed()?);
-        let signed_offer = SignedOffer {
+        let mut signed_offer = SignedOffer {
             offer: reader.opaque()?.to_vec(),
             signature: reader.opaque()?.to_vec(),
+            mac: Vec::new(),
         };
         let state = match reader.u8()? {
             1 => InviterState::Open,
@@ -966,12 +1076,16 @@ impl Inviter {
         reader.finish()?;
 
         let offer = verified_offer(&signed_offer).map_err(|_| Error::BadFormat)?;
-        let link = InviteLink::new(app, hub, offer.room_id, secret)?;
+        let link = InviteLink::new(app, hub, offer.room_id, secret, offer.expires_at)?;
         if offer.invite_id != link.invite_id()?
             || offer.commitment != commitment(&offer.invite_id, nonce.expose())?
         {
             return Err(Error::BadFormat);
         }
+        signed_offer.mac = link
+            .offer_mac(&signed_offer)
+            .map_err(|_| Error::BadFormat)?
+            .to_vec();
         if let InviterState::Accepted {
             request,
             new_device,
@@ -1067,7 +1181,8 @@ impl ConfirmedInvite {
 }
 
 /// One invite on the new device, from its Request to the code. It holds no secret: the link's secret is used
-/// once, for the MAC, and dropped.
+/// for the two MACs, of the Offer and of the Request, and dropped. It exists only for an Offer whose MAC
+/// verified.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Joiner {
     offer: Offer,
@@ -1077,12 +1192,18 @@ pub struct Joiner {
 
 impl Joiner {
     /// Checks the Offer served for `link` and answers it. `key` is the new device's signature key and
-    /// `key_package` a fresh KeyPackage of that key, as the TLS-encoded `MLSMessage`.
+    /// `key_package` a fresh KeyPackage of that key, as the TLS-encoded `MLSMessage`; `now_ms` is this device's
+    /// clock.
     ///
-    /// Refusals: `bad-format` (not an Offer; a KeyPackage that is empty or above [`MAX_KEY_PACKAGE_LEN`]);
-    /// `bad-invite` (the Offer is for another room or another invite than the link's); `bad-signature` (not
-    /// signed by the `inviter` it names); `invite-expired`; `bad-key-package` (the KeyPackage does not verify
-    /// by section 4.5, or is not `key`'s: the Request would be signed by another key than its KeyPackage's).
+    /// In this order: the link's deadline against the clock ([`InviteLink::check_deadline`]); the Offer decodes
+    /// (`bad-format`); it is for the link's room and invite (`bad-invite`); its MAC is the link's, compared in
+    /// constant time (`bad-invite` for a MAC that is missing, of another length or wrong, or a signature of
+    /// another length than 64 bytes); it is signed by the `inviter` it names (`bad-signature`); its
+    /// `expires_at` is the link's (`bad-invite`), the clock is at most [`CLOCK_TOLERANCE_MS`] past it
+    /// (`invite-expired`) and it lies at most the invite life of the Offer's role and that tolerance ahead
+    /// (`bad-invite`). Then the KeyPackage: `bad-format` when it is empty or above [`MAX_KEY_PACKAGE_LEN`],
+    /// `bad-key-package` when it does not verify by section 4.5 or is not `key`'s (the Request would be signed
+    /// by another key than its KeyPackage's). A refused Offer is refused here, and nothing is sent.
     ///
     /// That `inviter` is a human device of the room is not known here: a human device learns it from the
     /// Welcome, an agent device from the room group it observes (12.1.5, 12.1.6), for which [`Joiner::offer`]
@@ -1094,19 +1215,22 @@ impl Joiner {
         key_package: &[u8],
         now_ms: u64,
     ) -> Result<(Self, SignedRequest), Error> {
+        link.check_deadline(now_ms)?;
         let decoded = Offer::decode(&offer.offer)?;
         if decoded.room_id != link.room_id || decoded.invite_id != link.invite_id()? {
             return Err(Error::BadInvite);
         }
+        link.check_offer_mac(offer)?;
         crypto::verify_with_label(
             decoded.inviter.as_bytes(),
             SIGN_OFFER,
             &offer.offer,
             &offer.signature,
         )?;
-        if now_ms > decoded.expires_at {
-            return Err(Error::InviteExpired);
+        if decoded.expires_at != link.expires_at {
+            return Err(Error::BadInvite);
         }
+        check_deadline(decoded.expires_at, decoded.role.invite_life_ms(), now_ms)?;
         if key_package.is_empty() || key_package.len() > MAX_KEY_PACKAGE_LEN {
             return Err(Error::BadFormat);
         }
@@ -1165,12 +1289,13 @@ impl Joiner {
         &self.request
     }
 
-    /// The invite for the device's store.
+    /// The invite for the device's store, with the Offer's MAC as it verified.
     pub fn to_stored(&self) -> Result<Vec<u8>, Error> {
         let mut writer = Writer::new();
         writer.u8(STORED_VERSION);
         writer.opaque(&self.signed_offer.offer)?;
         writer.opaque(&self.signed_offer.signature)?;
+        writer.opaque(&self.signed_offer.mac)?;
         writer.opaque(&self.request.request)?;
         writer.opaque(&self.request.mac)?;
         writer.opaque(&self.request.signature)?;
@@ -1178,7 +1303,9 @@ impl Joiner {
     }
 
     /// The invite a store gave back. `bad-format` unless the bytes are a stored invite whose parts belong
-    /// together: the Offer is signed by its inviter and the Request answers that Offer.
+    /// together: the Offer is signed by its inviter, carries a MAC of 32 bytes, and the Request answers that
+    /// Offer. The MAC is not verified again (the secret is gone): it was verified before the state was first
+    /// written, and the store is the device's own.
     pub fn from_stored(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() > MAX_STORED_LEN {
             return Err(Error::BadFormat);
@@ -1190,7 +1317,11 @@ impl Joiner {
         let signed_offer = SignedOffer {
             offer: reader.opaque()?.to_vec(),
             signature: reader.opaque()?.to_vec(),
+            mac: reader.opaque()?.to_vec(),
         };
+        if signed_offer.mac.len() != MAC_LEN {
+            return Err(Error::BadFormat);
+        }
         let request = SignedRequest {
             request: reader.opaque()?.to_vec(),
             mac: reader.opaque()?.to_vec(),
@@ -1222,12 +1353,17 @@ impl Reveal {
     }
 }
 
-/// Hub side, `POST /v2/invites`: the Offer a device posts. `bad-format`, then `bad-signature` unless the
-/// `inviter` it names signed it.
+/// Hub side, `POST /v2/invites`: the Offer a device posts. `bad-format` unless it is an Offer with a MAC of 32
+/// bytes, then `bad-signature` unless the `inviter` it names signed it. The MAC is stored and served with the
+/// Offer; the hub cannot check more than its length, its key follows from the link's secret.
 ///
 /// Left to the hub's own state: the posting device is that `inviter` and a human device now; `room_id`,
 /// `room_epoch` and `room_state` are the room's current ones; the invite id is new; the limit of open invites.
 pub fn hub_check_offer(offer: &SignedOffer) -> Result<Offer, Error> {
+    Offer::decode(&offer.offer)?;
+    if offer.mac.len() != MAC_LEN {
+        return Err(Error::BadFormat);
+    }
     verified_offer(offer)
 }
 
