@@ -117,6 +117,7 @@ fn main() {
         .collect();
     names.push("reload_connector".into());
     names.push("inbox".into());
+    names.push("connect".into());
     for n in &names {
         let Some(d) = p.get(&format!("## {n}")) else {
             panic!("connector/prompt.md has no section \"## {n}\"")

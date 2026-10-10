@@ -124,7 +124,9 @@ impl Bench {
         std::fs::create_dir_all(&folder).expect("a release folder");
         executable(
             &folder.join(&self.asset),
-            &format!("#!/bin/sh\necho 'trommi-connector 0.0.0 (stand-in; {words})'\n"),
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = setup ]; then echo \"setup $2\" >> \"$HOME/setup-calls\"; [ ! -f \"$HOME/setup-fails\" ]; exit; fi\necho 'trommi-connector 0.0.0 (stand-in; {words})'\n"
+            ),
         );
         let manifest = Command::new("sh")
             .arg(root().join("release/manifest.sh"))
@@ -154,13 +156,14 @@ impl Bench {
     }
 
     /// Runs the installer with nothing of this machine but its PATH.
+    /// The machine's own claude and codex are never reached: the folders that hold them are left out.
     fn install(&self, args: &[&str], path_first: Option<&Path>) -> Output {
-        let mut path = std::env::var_os("PATH").unwrap_or_default();
-        if let Some(first) = path_first {
-            let mut dirs = vec![first.to_path_buf()];
-            dirs.extend(std::env::split_paths(&path));
-            path = std::env::join_paths(dirs).expect("a PATH");
-        }
+        let mut dirs: Vec<PathBuf> = path_first.into_iter().map(Path::to_path_buf).collect();
+        dirs.extend(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .filter(|dir| !dir.join("claude").exists() && !dir.join("codex").exists()),
+        );
+        let path = std::env::join_paths(dirs).expect("a PATH");
         Command::new("sh")
             .arg(self.dir.path().join("install.sh"))
             .args(args)
@@ -514,6 +517,66 @@ esac
         !calls.contains("hub-v"),
         "a release of another part is not asked for a connector: {calls}"
     );
+}
+
+/// After the program is in place the installer sets up claude and codex, those of them that are on the PATH,
+/// through `trommi-connector setup`; with none it says how to do it later. A setup that fails leaves the
+/// connector installed.
+#[test]
+fn the_installer_sets_up_the_programs_it_finds() {
+    let Some(bench) = Bench::new() else { return };
+    let release = bench.release("seven", "trommi-connector", 7, &verified(7), None);
+    let from = ["--from", release.to_str().expect("plain")];
+    let calls = || {
+        let file = bench.home().join("setup-calls");
+        let said = std::fs::read_to_string(&file).unwrap_or_default();
+        let _ = std::fs::remove_file(&file);
+        said.lines().map(String::from).collect::<Vec<_>>()
+    };
+    let programs = |names: &[&str]| {
+        let dir = bench
+            .dir
+            .path()
+            .join(format!("programs-{}", names.join("-")));
+        std::fs::create_dir_all(&dir).expect("a folder");
+        for name in names {
+            executable(&dir.join(name), "#!/bin/sh\nexit 0\n");
+        }
+        dir
+    };
+
+    // both
+    let output = bench.install(&from, Some(&programs(&["claude", "codex"])));
+    let text = said(&output);
+    assert!(output.status.success(), "{text}");
+    assert_eq!(calls(), ["setup claude", "setup codex"], "{text}");
+    assert!(
+        text.contains("Setting up claude:") && text.contains("Setting up codex:"),
+        "{text}"
+    );
+    assert!(text.contains("/trommi:connect"), "{text}");
+    // one
+    let output = bench.install(&from, Some(&programs(&["codex"])));
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(calls(), ["setup codex"]);
+    // none: how to do it later
+    let output = bench.install(&from, Some(&programs(&[])));
+    let text = said(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(calls().is_empty(), "{text}");
+    assert!(
+        text.contains("Neither claude nor codex is on your PATH"),
+        "{text}"
+    );
+    assert!(text.contains("trommi-connector setup claude"), "{text}");
+    // a setup that fails (a marketplace of another source, say) leaves the connector installed
+    std::fs::write(bench.home().join("setup-fails"), "").expect("written");
+    let output = bench.install(&from, Some(&programs(&["claude"])));
+    let text = said(&output);
+    assert!(output.status.success(), "{text}");
+    assert_eq!(calls(), ["setup claude"]);
+    assert!(text.contains("claude was not set up"), "{text}");
+    assert!(bench.installed("trommi-connector").is_file());
 }
 
 // ---- the plugin's files ------------------------------------------------------------------------------------

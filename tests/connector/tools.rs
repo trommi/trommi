@@ -811,3 +811,121 @@ async fn of_two_processes_of_one_device_only_the_lease_holder_streams() {
     assert!(sent.starts_with("sent"), "{sent}");
     new.close().await;
 }
+
+fn tool_names(listed: &Value) -> Vec<String> {
+    listed["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+/// A session whose folder is in no room starts unconnected and offers the connect tool alone. A bad or expired
+/// link is a tool error; a good one answers with the six emoji, and once the human confirmed them the same
+/// process goes online, says its tools changed, and lists the board tools. A restart after that ignores keys
+/// of an earlier format and, with keys of two rooms, takes the room the folder joined; without that note the
+/// error names both rooms.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unconnected_session_connects_by_the_connect_tool_without_a_restart() {
+    let hub = HubProc::start().await;
+    let mut human = Human::found(&hub.url).await;
+    let seat = Seat::new(&hub.url);
+    let mut mcp = seat.serve().await;
+
+    let listed = mcp.request("tools/list", json!({})).await;
+    assert_eq!(tool_names(&listed), ["connect"], "{listed}");
+    let (said, failed) = mcp.call("reply", json!({ "text": "hello" })).await;
+    assert!(failed && said.contains("/trommi:connect"), "{said}");
+
+    let (said, failed) = mcp.call("connect", json!({ "link": "not a link" })).await;
+    assert!(failed && said.starts_with("not connected"), "{said}");
+    let expired = human.expired_link(20 * 60 * 1000).await;
+    let (said, failed) = mcp.call("connect", json!({ "link": expired })).await;
+    assert!(failed && said.contains("expired"), "{said}");
+
+    let mut invite = human.invite(None).await;
+    let link = invite.link.clone();
+    let connect = mcp.call("connect", json!({ "link": link }));
+    let admit = async {
+        let admitted = human.admit(&mut invite).await;
+        human.found_session(&admitted).await
+    };
+    let ((said, failed), _group) = tokio::join!(connect, admit);
+    assert!(!failed, "{said}");
+    assert!(said.starts_with("Check code:"), "{said}");
+    let code: Vec<&str> = said.lines().skip(1).take_while(|l| !l.is_empty()).collect();
+    assert_eq!(code.len(), 6, "{said}");
+    assert!(
+        code.iter().all(|l| l.split_whitespace().count() >= 2),
+        "{said}"
+    );
+    assert!(said.contains("They match"), "{said}");
+
+    mcp.notification("notifications/tools/list_changed").await;
+    let listed = mcp.request("tools/list", json!({})).await;
+    let names = tool_names(&listed);
+    assert!(
+        names.iter().any(|n| n == "reply") && names.iter().any(|n| n == "create_decision"),
+        "{names:?}"
+    );
+    assert!(!names.iter().any(|n| n == "connect"), "{names:?}");
+    mcp.ok("list_cards", json!({})).await;
+    let (said, failed) = mcp
+        .call(
+            "connect",
+            json!({ "link": "https://example.invalid/join#x" }),
+        )
+        .await;
+    assert!(
+        failed && said.contains("connected to Trommi already"),
+        "{said}"
+    );
+    mcp.close().await;
+
+    // The room this folder joined is noted in the folder.
+    let noted = std::fs::read_to_string(seat.folder.join(".trommi/room"))
+        .expect("the joined room is noted");
+    let room = noted.trim().to_string();
+    let base =
+        std::fs::read_to_string(seat.folder.join(".trommi/slot-base")).expect("the slot base");
+    let keys = seat.home.path().join("keys");
+    // a room of an earlier format (a hex id) with a key of this folder, and a second room of this protocol
+    let old = keys.join("0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&old).expect("a folder");
+    std::fs::write(old.join(format!("{}-1.key", base.trim())), "{\"old\":true}").expect("written");
+    let other = trommi_core::ids::RoomId::new([7; trommi_core::ids::RoomId::LEN]).to_base64url();
+    std::fs::create_dir_all(keys.join(&other)).expect("a folder");
+    std::fs::write(
+        keys.join(&other).join(format!("{}-1.key", base.trim())),
+        trommi_connector::slotstore::KEY_MARKER,
+    )
+    .expect("written");
+
+    let mut mcp = seat.serve().await;
+    mcp.ready().await;
+    mcp.close().await;
+
+    std::fs::remove_file(seat.folder.join(".trommi/room")).expect("removed");
+    let output = seat
+        .command(&["whoami"])
+        .output()
+        .await
+        .expect("whoami runs");
+    let told = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{told}");
+    let error = told
+        .lines()
+        .find(|l| l.contains("Trommi rooms"))
+        .unwrap_or_default();
+    assert!(
+        error.contains("2 Trommi rooms") && error.contains(&room) && error.contains(&other),
+        "{told}"
+    );
+    assert!(!error.contains("0123456789abcdef"), "{told}");
+    assert!(
+        told.lines()
+            .any(|l| l.contains("ignored") && l.contains("0123456789abcdef")),
+        "{told}"
+    );
+}

@@ -22,8 +22,9 @@
 #        ~/.local/bin/trommi-connector -> the first
 #   6. says the version that was verified and the SHA-256 of its manifest.
 #
-# It refuses to run as root, asks for nothing, changes nothing outside the two folders named above, and does not
-# touch Claude Code or Codex: `trommi-connector setup claude` and `trommi-connector setup codex` do that.
+# It refuses to run as root, asks for nothing and changes nothing outside the two folders named above, except:
+#   7. for claude and codex, where they are on the PATH, it runs `trommi-connector setup <program>` (Claude Code's
+#      plugin, Codex's MCP server; nothing that is someone else's is changed). Later: trommi-connector setup <program>.
 #
 # Who vouches for this script itself: on the first run only TLS and GitHub. Whoever wants more downloads a
 # release by hand, checks it with release/sign.sh (verify, then files) from a checkout, and runs
@@ -229,7 +230,23 @@ case ":${PATH:-}:" in
   *":$link_dir:"*) ;;
   *) say "  $link_dir is not on your PATH: add it, or call the program by its full path." ;;
 esac
-say "Next: trommi-connector setup claude   (or: setup codex), then in your project: trommi-connector connect '<invite link>'"
+
+# ---- 7. the programs that start it -----------------------------------------------------------------------------
+# Claude Code and Codex, where they are on the PATH, are told about the connector (`trommi-connector setup`, which
+# changes nothing it does not own and says what it did). That step failing leaves the connector installed.
+found=''
+for program in claude codex; do
+  command -v "$program" >/dev/null 2>&1 || continue
+  found=1
+  say "Setting up $program:"
+  if ! "$bin/trommi-connector" setup "$program" </dev/null; then
+    say "  $program was not set up (see above); once that is solved: trommi-connector setup $program"
+  fi
+done
+if [ -z "$found" ]; then
+  say "Neither claude nor codex is on your PATH. Once one is installed: trommi-connector setup claude (or: setup codex)"
+fi
+say "Next: start claude in a project folder, then: /trommi:connect '<invite link>'"
 }
 
 main "$@"

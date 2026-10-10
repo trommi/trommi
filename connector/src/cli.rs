@@ -62,7 +62,7 @@ pub async fn join(given: Option<String>) -> Result<String> {
         .map(|p| p.key_file.display().to_string())
         .unwrap_or_default();
     let out = format!(
-        "joined room {room} as device {}, session {sid}; key file {kf}",
+        "joined room {room} as device {}, session {sid}; key file {kf}\nNow start claude (or codex) in this folder.",
         c.me()
     );
     m.stop().await;
