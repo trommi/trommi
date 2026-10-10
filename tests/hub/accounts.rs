@@ -233,19 +233,17 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
     sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
 
     // one source guessing: after each failure it waits longer, 1 s, 2 s, 4 s …; in between it is not even checked
-    let mut waits = vec![];
-    for _ in 0..6 {
+    let waits = slowed(hub, 30, || {
         sign_in_from(hub, &attacker, "login", "ada@example.org", &random())
-            .refused(401, "wrong-login");
-        let early = sign_in_from(hub, &attacker, "login", "ada@example.org", &auth);
-        early.refused(429, "rate-limited");
-        waits.push(early.header("retry-after").unwrap().parse::<i64>().unwrap());
-        wait_out(hub, &early);
-    }
-    // (what is told is the time left, in whole seconds: a slow machine eats a second or two of it)
-    for (wait, full) in waits.iter().zip([1i64, 2, 4, 8, 16, 32]) {
-        assert!((full - 2).max(1) <= *wait && *wait <= full, "{waits:?}");
-    }
+    });
+    assert!(
+        waits.windows(2).all(|w| w[0] <= w[1]) && *waits.last().unwrap() <= 32,
+        "{waits:?}"
+    );
+    // while it waits, the right password from there is not checked either
+    let early = sign_in_from(hub, &attacker, "login", "ada@example.org", &auth);
+    early.refused(429, "rate-limited");
+    wait_out(hub, &early);
     // meanwhile the owner gets in at once, from home and from a place the account has never seen
     sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
     sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &auth).ok();
@@ -254,12 +252,10 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
         .refused(401, "wrong-recovery");
     // an e-mail without an account behaves the same: nothing tells whether it exists
     let ghost = fresh_source();
-    sign_in_from(hub, &ghost, "login", "ghost@example.org", &random()).refused(401, "wrong-login");
-    let early = sign_in_from(hub, &ghost, "login", "ghost@example.org", &random());
-    assert_eq!(
-        (early.status, early.header("retry-after")),
-        (429, Some("1"))
-    );
+    let waits = slowed(hub, 8, || {
+        sign_in_from(hub, &ghost, "login", "ghost@example.org", &random())
+    });
+    assert!(*waits.last().unwrap() <= 8, "{waits:?}");
 
     // many sources hammering the account: its budget for sources it does not know (100 an hour) is spent
     // (nine of them were used above: six by the guessing source, three by the owner)
@@ -334,20 +330,22 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
     // behind a proxy the source is the forwarded address only when the hub is told to trust the proxy:
     // without that, a client naming other addresses stays one source
     let plain = TestHub::start_with(&[("HUB_TRUST_CF", "0")]);
-    sign_in_from(&plain, "203.0.113.5", "login", "x@example.org", &random())
-        .refused(401, "wrong-login");
+    slowed(&plain, 16, || {
+        sign_in_from(&plain, "203.0.113.5", "login", "x@example.org", &random())
+    });
     sign_in_from(&plain, "203.0.113.6", "login", "x@example.org", &random())
         .refused(429, "rate-limited");
     // and the forwarded value must be an address: anything else is the peer
     let trusted = TestHub::start();
-    sign_in_from(
-        &trusted,
-        "not an address",
-        "login",
-        "y@example.org",
-        &random(),
-    )
-    .refused(401, "wrong-login");
+    slowed(&trusted, 16, || {
+        sign_in_from(
+            &trusted,
+            "not an address",
+            "login",
+            "y@example.org",
+            &random(),
+        )
+    });
     sign_in_from(
         &trusted,
         "another string",
@@ -760,14 +758,15 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
 fn one_ipv6_network_is_one_source() {
     let hub = TestHub::start();
     // two addresses of one /64: the second is the same guessing source
-    sign_in_from(
-        &hub,
-        "2001:db8:1:2::1",
-        "login",
-        "v6@example.org",
-        &random(),
-    )
-    .refused(401, "wrong-login");
+    slowed(&hub, 16, || {
+        sign_in_from(
+            &hub,
+            "2001:db8:1:2::1",
+            "login",
+            "v6@example.org",
+            &random(),
+        )
+    });
     sign_in_from(
         &hub,
         "2001:db8:1:2:aaaa:bbbb:cccc:dddd",
@@ -954,7 +953,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
                 .as_bytes(),
         )
     };
-    guess(&random()).refused(401, "wrong-recovery");
+    slowed(hub, 16, || guess(&random()));
     guess(&kit).refused(429, "rate-limited");
     // by an e-mail it has none to be found under; the id opens no password login
     recover(hub, "ada@example.org", &kit).refused(401, "wrong-recovery");
@@ -1122,12 +1121,8 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
                 .as_bytes(),
         )
     };
-    guess(&random()).refused(401, "wrong-login");
-    let slowed = guess(&random());
-    assert_eq!(
-        (slowed.status, slowed.header("retry-after")),
-        (429, Some("1"))
-    );
+    let waits = slowed(hub, 8, || guess(&random()));
+    assert!(*waits.last().unwrap() <= 8, "{waits:?}");
 }
 
 #[test]

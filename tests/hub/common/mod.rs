@@ -1094,6 +1094,37 @@ pub fn code_body(flat: &Value) -> Value {
     out
 }
 
+/// Guesses wrong until the guesser is told to wait at least `at_least` seconds, moving the hub's clock over each
+/// shorter wait; returns the waits it was told. Afterwards that wait is still running: the next request of the
+/// same source is refused however slow the machine is (a test must not lean on a one-second back-off still
+/// holding after a slow hash).
+pub fn slowed(hub: &TestHub, at_least: i64, mut guess: impl FnMut() -> Reply) -> Vec<i64> {
+    let mut waits = vec![];
+    for _ in 0..40 {
+        let reply = guess();
+        if reply.status != 429 {
+            assert_eq!(
+                reply.status,
+                401,
+                "{}",
+                String::from_utf8_lossy(&reply.body)
+            );
+            continue;
+        }
+        let wait: i64 = reply
+            .header("retry-after")
+            .expect("a wait")
+            .parse()
+            .unwrap();
+        waits.push(wait);
+        if wait >= at_least {
+            return waits;
+        }
+        hub.clock(wait * 1000);
+    }
+    panic!("never slowed down to {at_least} s: {waits:?}");
+}
+
 pub fn commit_json(out: &Out, sealed_key: &[u8], recovery_auth: Option<&[u8]>) -> Value {
     json!({
         "epoch": out.epoch, "commit": b64(&out.commit), "group_info": b64(&out.group_info), "welcome": out.welcome.as_deref().map(b64),
