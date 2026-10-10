@@ -585,10 +585,16 @@ final class LiveCoreTests: XCTestCase {
     _ = try b.joinInvited(try XCTUnwrap(hub.welcomes.last), nowMs: nowMs())
     _ = try a.inviteHandover(invite: invite.invite)
     try hub.post(a)
+    // At its place in the hub's order, above B's cursor: an epoch before B came. Nothing of it is taken, and the
+    // cursor moves over it, so the catch-up goes on.
+    let atItsPlace = try b.receiveEnvelope(early.bytes, change: early.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(atItsPlace.outcome, .refused)
+    XCTAssertEqual(atItsPlace.code, "group-behind")
+    XCTAssertEqual(b.cursor, early.change)
     try hub.deliver(to: b)
     XCTAssertTrue(try b.holdsKey(group: room, epoch: 0))
 
-    // The envelope lies behind B's cursor, in an epoch before B came: nothing of it is taken.
+    // Behind B's cursor now, and with that epoch's key from the handover: still nothing of it is taken.
     let before = try b.receiveEnvelope(early.bytes, change: early.change, ordered: true, voidCode: nil, nowMs: nowMs())
     XCTAssertEqual(before.outcome, .refused)
     XCTAssertEqual(before.code, "group-behind")
