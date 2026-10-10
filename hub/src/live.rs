@@ -35,6 +35,8 @@ pub struct Stream {
     /// when the token it was opened with runs out: the stream ends then, and the device resumes with a new one
     pub expires_at: u64,
     ended: AtomicBool,
+    /// set by `cut_now`: the body hands nothing on any more
+    pub gone: Arc<AtomicBool>,
     /// cuts the connection under the stream: a reader that stalls never reads the end of its stream
     cut: Option<crate::http::Conn>,
 }
@@ -136,6 +138,12 @@ impl Stream {
         }
     }
 
+    /// Over at once, like `expire`, and whatever the body still holds is dropped (it reads `gone`).
+    pub fn cut_now(&self) {
+        self.gone.store(true, Ordering::SeqCst);
+        self.expire();
+    }
+
     pub fn end(&self) {
         if !self.ended.swap(true, Ordering::Relaxed) {
             let _ = self.tx.send(Msg::End);
@@ -193,6 +201,7 @@ impl Live {
             limit: buffer,
             expires_at,
             ended: AtomicBool::new(false),
+            gone: Arc::new(AtomicBool::new(false)),
             cut,
         });
         list.push(stream.clone());
@@ -239,6 +248,16 @@ impl Live {
     }
 
     /// Ends every stream of a device (14.4), or of every asker of a room for which `which` holds.
+    /// Ends streams at once: what waited to be sent is not sent, and the connection is cut.
+    pub fn cut_where(&self, room: &Room, which: impl Fn(&Auth) -> bool) {
+        let rooms = self.lock();
+        if let Some(list) = rooms.get(room) {
+            for s in list.iter().filter(|s| which(&s.auth)) {
+                s.cut_now();
+            }
+        }
+    }
+
     pub fn end_where(&self, room: &Room, which: impl Fn(&Auth) -> bool) {
         let rooms = self.lock();
         if let Some(list) = rooms.get(room) {

@@ -121,6 +121,19 @@ impl Sessions {
     }
 
     /// As `authorise`, with the time the token runs out.
+    /// Whether a token is still one (it may have been signed out since it was checked).
+    pub fn holds(&self, bearer: Option<&str>, now: u64) -> bool {
+        bearer
+            .and_then(|h| h.split_once(' '))
+            .filter(|(_, token)| token.len() <= 200)
+            .is_some_and(|(_, token)| {
+                self.lock()
+                    .tokens
+                    .get(&key_of(token))
+                    .is_some_and(|t| t.expires_at > now)
+            })
+    }
+
     /// Signing out: the token is no token any more. `false`: it was none.
     pub fn revoke(&self, bearer: Option<&str>) -> bool {
         let token = bearer
