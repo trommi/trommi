@@ -113,6 +113,10 @@ functions! {
     fallible read_web_push(payload);
     fallible recovery_anchor(recovery_code, room, rows);
     fallible recovery_sign_in(recovery_code, room, hub, challenge);
+    fallible board_reduce(snapshot, snapshot_frontier, items, frontier);
+    fallible invite_link_parse(text);
+    plain check_emoji();
+    fallible hub_address(text);
 }
 
 /// The methods of a facade object that return a `Result`, by name and arguments.
@@ -177,7 +181,7 @@ methods!(RawDevice {
     room_roles();
     groups();
     group(group);
-    content_key(group, epoch);
+    holds_key(group, epoch);
     outbox();
     outbox_accepted(id, change);
     outbox_refused(id, code);
@@ -186,9 +190,8 @@ methods!(RawDevice {
     found_room(recovery_code, now_ms);
     found_session(agent, key_packages, now_ms);
     found_helper(parent, key_packages, now_ms);
-    add_human_device(device, key_package, now_ms);
     add_to_session(group, device, key_package, now_ms);
-    change_agents(enrol, remove, now_ms);
+    remove_agents(remove, now_ms);
     remove_human_devices(cuts, now_ms);
     clean_session(group, cuts, replacement, now_ms);
     readmit_helper(group, old, device, key_package, now_ms);
@@ -197,7 +200,7 @@ methods!(RawDevice {
     join_welcome(welcome, room, committer, now_ms);
     observe_room(group_info, expected_state);
     observe_session(group_info);
-    process_log_entry(entry);
+    process_log_entry(entry, now_ms);
     send_handover(group, recipient);
     handovers_sent();
     handover_read(group, recipient);
@@ -214,7 +217,40 @@ methods!(RawDevice {
     replace_code(recovery_code, account, now_ms);
     prepare_recovery(recovery_code, served);
     recover(recovery_code, served, cuts, account, now_ms);
-    hub_sign_in(room, hub, challenge);
+    invite_open(role, session_id, app, hub, now_ms);
+    invite_accept(invite_id, request, now_ms);
+    invite_confirm(invite_id, code, request_hash, matches, now_ms);
+    invite_recommit(invite_id, now_ms);
+    invite_steps();
+    invite_handover(invite_id);
+    invite_forget(invite_id);
+    join_request(link, offer, now_ms);
+    join_reveal(reveal);
+    join_observe(group_info);
+    join_invited(welcome, now_ms);
+    hub_sign_in(hub, challenge);
+    seal(draft, recipient, file_ids, now_ms);
+    outbox_voided(id);
+    envelope_abandon(id);
+    receive_envelope(envelope, change, ordered, void_code, now_ms);
+    receive_relay(group, message, now_ms);
+    heads_due(group, now_ms);
+    compare_heads(group, writer);
+    cut_of(group, device);
+    chain_head(group, sender);
+    chain_cut(group, device);
+    object(group, object_id);
+    objects(group);
+    object_owner(group, object_id);
+    register(group, name);
+    register_of(group, name, sender);
+    board_load(board, served);
+    command(envelope_hash, now_ms);
+    command_finished(envelope_hash);
+    commands_pending();
+    commands_uncertain();
+    findings();
+    findings_read();
 });
 
 /// The facade's file encryptor.

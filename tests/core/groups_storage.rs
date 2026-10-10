@@ -399,6 +399,9 @@ fn a_stored_group_in_an_epoch_no_group_reaches_is_damaged() {
             context["epoch"] = epoch.into();
             let mut entries = stored.clone();
             entries.insert(key.clone(), serde_json::to_vec(&context).unwrap());
+            // A leaf's group context alone, at an epoch nothing else of its state is at, contradicts the
+            // rest whatever the epoch (`groups_hardening_state.rs`): the bound itself shows on the observer.
+            let damaged = damaged || name == "a member";
             match reopen(store_with(handle, &entries)) {
                 Err(Error::Storage(_)) => assert!(damaged, "{name}, epoch {epoch}"),
                 Err(other) => panic!("{name}, epoch {epoch}: {other:?}"),
