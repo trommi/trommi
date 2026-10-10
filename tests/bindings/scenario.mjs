@@ -10,7 +10,10 @@
 const text = bytes => new TextDecoder().decode(bytes)
 const bytes = string => new TextEncoder().encode(string)
 const same = (a, b) => a.length === b.length && a.every((byte, at) => byte === b[at])
+/** The code a call is refused with; 'none' when it is not refused. */
+const refusal = async work => { try { await work() } catch (error) { return error.code ?? String(error) } return 'none' }
 const check = (holds, what) => { if (!holds) throw new Error(what) }
+const unhex = text => Uint8Array.from(text.match(/../g) ?? [], byte => parseInt(byte, 16))
 const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 
 /** The least a hub does: one change counter, the ordered log, the Welcomes, and what it serves a device that
@@ -23,6 +26,7 @@ class Hub {
   sessions = new Map() // hex of a session group -> { founding, current }
   rows = []            // every SealedKey posted
   links = []           // every RecoveryLink posted
+  relayed = []         // application messages that are only passed on: { group, bytes }
 
   /** Posts everything in the device's outbox and reports each as accepted. */
   async post(device) {
@@ -37,6 +41,8 @@ class Hub {
       } else if (entry.kind === 'commit') commit = [part(0), part(1), part(2), part(3), null]
       else if (entry.kind === 'externalCommit') commit = [part(0), part(1), new Uint8Array(), part(2), part(3)]
       else if (entry.kind === 'recoveryCode') { commit = [part(0), part(1), new Uint8Array(), part(2), null]; this.links.push(part(3)) }
+      else if (entry.kind === 'recoveryCommit') commit = [part(0), part(1), part(2), part(3), part(4).length ? part(4) : null]
+      else if (entry.kind === 'recoveryFinish') this.links.push(part(0))
       let change = null
       if (entry.kind === 'roomFounding') {
         this.roomInfos.push(part(0))
@@ -52,9 +58,21 @@ class Hub {
       } else if (entry.kind === 'message') {
         change = ++this.change
         this.log.push({ change, group: entry.group, kind: 'message', bytes: part(0), recoveryAuth: null })
+      } else if (entry.kind === 'envelope') {
+        // A stored envelope has its place in the same one order as the log's entries.
+        change = ++this.change
+        // The header reads without a device, and is the one the outbox entry is for.
+        const info = this.world.core.envelopeHeader(part(0))
+        check(same(info.header.group, entry.group) && same(info.header.sender, await device.call('id')) && !info.pruned, 'the envelope\'s header is another')
+        this.log.push({ change, group: entry.group, kind: 'envelope', bytes: part(0), from: await device.call('id') })
+      } else if (entry.kind === 'relayMessage') {
+        // Passed on, never stored: no change number.
+        this.relayed.push({ group: entry.group, bytes: part(0) })
       }
       await device.call('outboxAccepted', entry.id, change)
     }
+    // What the hub accepted comes back in its log: a device merges its own Commits there, at their place.
+    await this.feed(device, null)
   }
 
   /** A group as the hub serves it to a device that verifies it from its founding. */
@@ -69,27 +87,37 @@ class Hub {
     const anchor = core.recoveryAnchor(code, room, this.rows)
     return {
       room, group: this.served(room, this.roomInfos[0], this.roomInfos.at(-1)), anchor: this.roomInfos[anchor.epoch],
-      rows: this.rows, links: this.links, sessions: [],
+      rows: this.rows, links: this.links,
+      sessions: [...this.sessions].map(([group, { founding, current }]) => this.served(unhex(group), founding, current)),
     }
   }
 
   /** Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did. */
-  async sync(world, device, room) {
+  sync(world, device, room) { return this.feed(device, room) }
+
+  /** The log after the device's cursor, strictly by change number; with `room`, also the Welcomes at their places. */
+  async feed(device, room) {
+    const world = this.world
     const done = []
+    const envelopes = []
     const cursor = await device.call('cursor')
     for (const entry of this.log.filter(entry => entry.change > cursor)) {
+      if (entry.kind === 'envelope') {
+        envelopes.push(await device.call('receiveEnvelope', entry.bytes, entry.change, true, null, Date.now()))
+        continue
+      }
       try {
-        done.push(await device.call('processLogEntry', entry))
+        done.push(await device.call('processLogEntry', entry, Date.now()))
       } catch (error) {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
         if (world.core.logFinding(error.code) !== 'duplicate') throw error
       }
-      for (const welcome of this.welcomes.filter(welcome => welcome.change === entry.change)) {
+      for (const welcome of room ? this.welcomes.filter(welcome => welcome.change === entry.change) : []) {
         // A Welcome for another device does not open here: that is no finding.
         await device.call('joinWelcome', welcome.bytes, room, null, Date.now()).catch(() => {})
       }
     }
-    return done
+    return { done, envelopes }
   }
 }
 
@@ -97,19 +125,24 @@ class Hub {
 export async function runScenario(scenario, world) {
   const { core } = world
   const hub = new Hub()
+  hub.world = world
   const devices = new Map()    // name -> handle
   const groups = new Map()     // name -> group id
   const remembered = new Map() // device name -> its outbox, as remembered
   let room = null
+  let spoken = 0       // how many messages same_key had written
+  const seen = new Map() // device name -> the envelopes its last syncs brought
   let code = null      // the recovery code in force
   const device = name => devices.get(name) ?? (() => { throw new Error(`no device ${name}`) })()
   const group = name => groups.get(name) ?? (() => { throw new Error(`no group ${name}`) })()
   const keyOf = async (name, groupName) => {
     const groupId = group(groupName)
     const { epoch } = await device(name).call('group', groupId)
-    return { epoch, key: await device(name).call('contentKey', groupId, epoch) }
+    return { epoch, held: await device(name).call('holdsKey', groupId, epoch) }
   }
-  const noCut = async name => ({ device: await device(name).call('id'), seq: 0, hash: new Uint8Array(32) })
+  const chatWith = (envelopes, text) => envelopes.find(envelope => envelope.payload && JSON.parse(new TextDecoder().decode(envelope.payload)).text === text)
+  // The board of all desks: the one board id that is no Desk's.
+  const board = Uint8Array.from([...new TextEncoder().encode('all-desks'), 0, 0, 0, 0, 0, 0, 9])
 
   const run = {
     async create(step) { devices.set(step.device, await world.device(step.device, 'create')) },
@@ -119,40 +152,149 @@ export async function runScenario(scenario, world) {
       groups.set('room', core.roomGroupId(room))
     },
     async post(step) { await hub.post(device(step.device)) },
-    async add_human(step) {
-      const newcomer = device(step.device)
-      const keyPackage = await newcomer.call('keyPackage', Date.now())
-      check(same(core.keyPackageInfo(keyPackage).device, await newcomer.call('id')), 'the KeyPackage names another device')
-      await device(step.by).call('addHumanDevice', await newcomer.call('id'), keyPackage, Date.now())
+    /** One invite from its opening to its Commit in the inviter's outbox. Both sides must show the same six emoji. */
+    async invite(step) {
+      const [inviter, newcomer] = [device(step.by), device(step.device)]
+      const taken = step.session ? group(step.session).subarray(32) : null
+      const opened = await inviter.call('inviteOpen', step.role, taken, 'https://app.example', 'https://hub.example', Date.now())
+      check(same(core.inviteLinkParse(opened.link).inviteId, opened.inviteId) && core.hubAddress('https://hub.example') === 'https://hub.example', 'the link names another invite')
+      const asked = await newcomer.call('joinRequest', opened.link, { offer: opened.offer, signature: opened.signature }, Date.now())
+      check(asked.role === step.role && same(asked.inviter, await inviter.call('id')), 'the Request is for another invite')
+      const accepted = await inviter.call('inviteAccept', opened.inviteId, { request: asked.request, mac: asked.mac, signature: asked.signature }, Date.now())
+      const shown = await newcomer.call('joinReveal', { reveal: accepted.reveal, signature: accepted.signature })
+      check(same(shown.numbers, accepted.code.numbers) && shown.emoji.length === 6 && shown.emoji.join() === accepted.code.emoji.join() && shown.words.join() === accepted.code.words.join(), 'the two sides show different codes')
+      // The newcomer signs in at the invite's hub before it is let in: for the Welcome, or the GroupInfo, it must fetch.
+      const signed = await newcomer.call('hubSignIn', 'https://hub.example', new Uint8Array(32).fill(4))
+      check(signed.signature.length === 64, 'a joining device cannot sign in')
+      check(await refusal(() => newcomer.call('hubSignIn', 'https://other.example', new Uint8Array(32).fill(4))) === 'bad-invite', 'a joining device signed in at another hub')
+      // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
+      if (step.role === 'agent') await newcomer.call('joinObserve', hub.roomInfos[asked.roomEpoch])
+      const confirmed = await inviter.call('inviteConfirm', opened.inviteId, accepted.code.numbers, accepted.requestHash, true, Date.now())
+      check(confirmed?.role === step.role && same(confirmed.newDevice, await newcomer.call('id')), 'the confirmed invite was not committed')
+    },
+    async hand_over(step) {
+      const steps = (await device(step.by).call('inviteSteps')).filter(next => next.kind === 'handover')
+      check(steps.length === 1, 'the invite asks for no handover')
+      await device(step.by).call('inviteHandover', steps[0].inviteId)
     },
     async join(step) {
       const welcome = hub.welcomes.at(-1).bytes
-      const joined = await device(step.device).call('joinWelcome', welcome, room, await device(step.by).call('id'), Date.now())
+      const joined = await device(step.device).call('joinInvited', welcome, Date.now())
       check(joined.offending.length === 0 && same(joined.addedBy, await device(step.by).call('id')), 'the join is not the expected one')
     },
     async same_key(step) {
       const [first, ...others] = await Promise.all(step.devices.map(name => keyOf(name, step.group)))
-      check(first.key.length === 32, 'a content key is not 32 bytes')
-      for (const other of others) check(other.epoch === first.epoch && same(other.key, first.key), `the keys of ${step.group} differ`)
+      check(first.held, `the key of ${step.group} is not held`)
+      for (const other of others) check(other.epoch === first.epoch && other.held, `the devices do not share the key of ${step.group}`)
+      // Holding a key says little: in a session, what the first writes now, every other one must open.
+      if (step.group === 'room') return
+      const said = `same key ${++spoken}`
+      await run.chat({ device: step.devices[0], group: step.group, text: said })
+      await hub.post(device(step.devices[0]))
+      for (const name of step.devices.slice(1)) {
+        const { envelopes } = await hub.sync(world, device(name), room)
+        check(chatWith(envelopes, said)?.outcome === 'applied', `${name} did not open what ${step.devices[0]} wrote in ${step.group}`)
+      }
+    },
+    /** The command gate of an agent device, for the Chat message with this text: act once, then done. */
+    async gate(step) {
+      const agent = device(step.device)
+      const envelope = seen.get(step.device)?.findLast(envelope => envelope.payload && JSON.parse(text(envelope.payload)).text === step.text)
+      check(envelope?.command === true, 'the message is not one the gate is asked about')
+      check((await agent.call('commandsPending')).some(hash => same(hash, envelope.envelopeHash)), 'the command is not pending')
+      const first = await agent.call('command', envelope.envelopeHash, Date.now())
+      check(first.gate === 'act' && first.command === 'chat', `the gate answered ${first.gate} ${first.refusal}`)
+      check((await agent.call('commandsUncertain')).some(hash => same(hash, envelope.envelopeHash)), 'a started command is not known as unfinished')
+      await agent.call('commandFinished', envelope.envelopeHash)
+      check((await agent.call('command', envelope.envelopeHash, Date.now())).gate === 'done', 'a finished command was let through again')
+      check(await refusal(() => agent.call('command', new Uint8Array(32), Date.now())) === 'not-found', 'the gate answered for an envelope it never saw')
     },
     async sign_in(step) {
-      const signed = await device(step.device).call('hubSignIn', room, 'https://hub.example', new Uint8Array(32).fill(9))
+      const signed = await device(step.device).call('hubSignIn', 'https://hub.example', new Uint8Array(32).fill(9))
       check(signed.signature.length === 64 && signed.auth.length > 96, 'the sign-in is not a signed HubAuth')
     },
-    async enrol(step) { await device(step.by).call('changeAgents', [await device(step.device).call('id')], [], Date.now()) },
-    async observe(step) { await device(step.device).call('observeRoom', hub.roomInfos.at(-1), null) },
     async sync(step) {
-      const done = await hub.sync(world, device(step.device), room)
+      const { done, envelopes } = await hub.sync(world, device(step.device), room)
+      seen.set(step.device, [...(seen.get(step.device) ?? []), ...envelopes])
       if (step.message !== undefined) {
         const message = done.find(processed => processed.kind === 'message')?.message
         check(message?.kind === 'workTrail' && text(message.payload) === step.message, 'the message did not arrive as it was sent')
       }
       if (step.removed) check(done.some(processed => processed.removed), 'the device did not learn of its removal')
+      if (step.chat !== undefined) {
+        const envelope = chatWith(envelopes, step.chat)
+        check(envelope?.outcome === 'applied' && envelope.header.kind === 'item' && envelope.header.timeline.kind === 'sessionChat', 'the Chat message was not applied')
+        // One that was shown before its turn is now confirmed by its sender's chain.
+        if (step.confirmed) check(envelope.confirmed === true, 'the fetched envelope was not confirmed by its chain')
+      }
+    },
+    /** A Chat message in a session, sealed into the outbox. */
+    async chat(step) {
+      const session = group(step.group).subarray(32)
+      const sealed = await device(step.device).call('seal', { kind: 'sessionChat', session, payload: bytes(JSON.stringify({ content_type: 'message', text: step.text })) }, null, [], Date.now())
+      const [entry] = (await device(step.device).call('outbox')).filter(entry => entry.id === sealed.outboxId)
+      check(entry?.kind === 'envelope' && entry.parts.length === 1 && sealed.seq >= 1 && same(sealed.group, group(step.group)), 'the sealed envelope is not in the outbox')
+    },
+    /** The newest envelope, handed over out of order, before the entries in front of it: shown, not yet confirmed. */
+    async fetch(step) {
+      const entry = hub.log.findLast(entry => entry.kind === 'envelope')
+      const cursor = await device(step.device).call('cursor')
+      const fetched = await device(step.device).call('receiveEnvelope', entry.bytes, entry.change, false, null, Date.now())
+      check(fetched.outcome === 'provisional' && JSON.parse(text(fetched.payload)).text === step.text, `an envelope fetched out of order is ${fetched.outcome} ${fetched.code}`)
+      check(await device(step.device).call('cursor') === cursor, 'an envelope fetched out of order moved the cursor')
+    },
+    /** A stroke still being drawn: relayed, never stored. */
+    async stroke(step) {
+      await device(step.device).call('sendStrokePiece', board, bytes('{"stroke":"AAAAAAAAAAAAAAAAAAAAAA","number":1}'))
+    },
+    async relay(step) {
+      const { group: through, bytes: message } = hub.relayed.at(-1)
+      const cursor = await device(step.device).call('cursor')
+      const piece = await device(step.device).call('receiveRelay', through, message, Date.now())
+      check(piece?.kind === 'strokePiece' && same(piece.board, board) && JSON.parse(text(piece.payload)).number === 1, 'the stroke piece did not arrive')
+      check(await device(step.device).call('cursor') === cursor, 'a relayed message moved the cursor')
+    },
+    /** A board: an item, the writer's snapshot register, another item; the reader loads it and is told what is new. */
+    async board(step) {
+      const [writer, reader] = [device(step.writer), device(step.reader)]
+      const roomGroup = group('room')
+      const writerId = await writer.call('id')
+      const item = { kind: 'boardItem', board, payload: bytes(`{"content_type":"erase","shape_ids":["${core.base64urlEncode(writerId)}/1/0"]}`) }
+      await writer.call('seal', item, null, [], Date.now())
+      await hub.post(writer)
+      // A device takes its own envelope into its chain when the hub hands it back, like anyone's.
+      await hub.sync(world, writer, room)
+      const head = await writer.call('chainHead', roomGroup, writerId)
+      check(head.seq >= 1, 'the writer does not hold its own envelopes')
+      const snapshot = { attachment: { file_id: 'AAAAAAAAAAAAAAAAAAAAAA' }, frontier: { [core.base64urlEncode(writerId)]: [head.seq, core.base64urlEncode(head.hash)] }, change: await writer.call('cursor') }
+      await writer.call('seal', { kind: 'register', group: roomGroup, name: `board_snapshot/${core.base64urlEncode(board)}`, value: bytes(JSON.stringify(snapshot)) }, null, [], Date.now())
+      await hub.post(writer)
+      const second = await writer.call('seal', item, null, [], Date.now())
+      await hub.post(writer)
+      // Before the reader read the register it has no snapshot; after, a hub that leaves the newer item out is found out.
+      check(await refusal(() => reader.call('boardLoad', board, [])) === 'not-found', 'a board loaded without its snapshot')
+      const { envelopes } = await hub.sync(world, reader, room)
+      check(envelopes.length === 3 && envelopes.every(envelope => envelope.outcome === 'applied'), `the board's envelopes were not applied: ${envelopes.map(envelope => `${envelope.outcome}/${envelope.code}`).join(' ')}`)
+      check(envelopes[1].register?.current === true && envelopes[1].header.kind === 'register', 'the snapshot register was not taken')
+      const read = JSON.parse(text(await reader.call('register', roomGroup, `board_snapshot/${core.base64urlEncode(board)}`)))
+      check(read.change === snapshot.change && read.attachment.file_id === snapshot.attachment.file_id, 'the register reads another value')
+      check(await refusal(() => reader.call('boardLoad', board, [])) === 'withheld', 'a withheld item went unnoticed')
+      const loaded = await reader.call('boardLoad', board, [{ sender: writerId, seq: second.seq, hash: second.envelopeHash }])
+      check(loaded.fresh.length === 1 && loaded.fresh[0] === 0 && loaded.covered.length === 0 && loaded.frontier[0].seq === second.seq, 'the board did not load as written')
+      // The board itself: the items the reader opened, merged for the frontier it verified.
+      const items = [envelopes[0], envelopes[2]].map(envelope => ({ sender: envelope.header.sender, seq: envelope.header.seq, payload: envelope.payload }))
+      const merged = JSON.parse(text(core.boardReduce(null, [], items, loaded.frontier)))
+      check(merged !== null && typeof merged === 'object', 'the board did not reduce to a snapshot file')
+      const cut = await reader.call('cutOf', roomGroup, writerId)
+      check(cut.seq === second.seq && same(cut.hash, second.envelopeHash), 'the Cut is not the last accepted envelope')
     },
     async found_session(step) {
       const founder = device(step.by)
-      const keyPackages = []
-      for (const name of [...step.humans, step.agent]) keyPackages.push(await device(name).call('keyPackage', Date.now()))
+      // The agent's KeyPackage is the one of its confirmed Request, which the invite's next step names.
+      const next = (await founder.call('inviteSteps')).find(next => next.kind === 'foundSession')
+      check(next && same(next.device, await device(step.agent).call('id')), 'the invite asks for no session')
+      const keyPackages = [next.keyPackage]
+      for (const name of step.humans) keyPackages.push(await device(name).call('keyPackage', Date.now()))
       const session = await founder.call('foundSession', await device(step.agent).call('id'), keyPackages, Date.now())
       groups.set(step.name, core.sessionGroupId(room, session))
     },
@@ -201,10 +343,14 @@ export async function runScenario(scenario, world) {
     },
     async fail_next_write(step) { await device(step.device).failNextWrite() },
     async second_owner(step) { await (await world.device(step.device, 'open')).close() },
-    async remove_human(step) { await device(step.by).call('removeHumanDevices', [await noCut(step.device)], Date.now()) },
+    async remove_human(step) {
+      const cut = await device(step.by).call('cutOf', group('room'), await device(step.device).call('id'))
+      await device(step.by).call('removeHumanDevices', [cut], Date.now())
+    },
     async clean_session(step) {
       const { disallowed } = await device(step.by).call('group', group(step.group))
-      const cuts = disallowed.map(gone => ({ device: gone, seq: 0, hash: new Uint8Array(32) }))
+      const cuts = []
+      for (const gone of disallowed) cuts.push(await device(step.by).call('cutOf', group(step.group), gone))
       await device(step.by).call('cleanSession', group(step.group), cuts, null, Date.now())
     },
     async join_with_code(step) {
@@ -216,8 +362,8 @@ export async function runScenario(scenario, world) {
       await device(step.device).call('joinSessionWithCode', code, hub.served(group(step.group), founding, current), Date.now())
     },
     async earlier_key(step) {
-      const [mine, theirs] = await Promise.all([step.device, step.like].map(name => device(name).call('contentKey', group(step.group), step.epoch)))
-      check(same(mine, theirs) && await device(step.device).call('keyIsConfirmed', group(step.group), step.epoch), 'the code did not open the earlier key')
+      const held = await Promise.all([step.device, step.like].map(name => device(name).call('holdsKey', group(step.group), step.epoch)))
+      check(held.every(Boolean) && await device(step.device).call('keyIsConfirmed', group(step.group), step.epoch), 'the code did not open the earlier key')
     },
     async replace_code(step) {
       const next = await device(step.device).call('newRecoveryCode', code)
@@ -225,17 +371,93 @@ export async function runScenario(scenario, world) {
       await device(step.device).call('replaceCode', code, bytes('the account\'s sealed copies'), Date.now())
       code = next
     },
+    async recover(step) {
+      const served = hub.servedRoom(core, room, code)
+      check(served.sessions.length > 0, 'the room is served without its sessions')
+      const plan = await device(step.device).call('prepareRecovery', code, served)
+      // The chains of the devices to go, as the hub's chain route serves them: every envelope of theirs, in order.
+      const gone = plan.removals.flatMap(({ devices }) => devices)
+      check(gone.length > 0 && plan.newCode.length === 32, 'the recovery removes nobody')
+      const chains = hub.log.filter(entry => entry.kind === 'envelope' && gone.some(id => same(id, entry.from))).map(entry => ({ bytes: entry.bytes, change: entry.change, voidCode: null }))
+      check(chains.length > 0, 'the devices to go wrote nothing')
+      const built = await device(step.device).call('recover', code, served, chains, bytes('the account\'s sealed copies'), Date.now())
+      check(built.unverified.length === 0 && built.outbox.length >= 2, 'the recovery was not built whole')
+      code = plan.newCode
+    },
+    /** A helper session under a main session: the helper device follows the room and the main session first. */
+    async found_helper(step) {
+      const [opener, helper] = [device(step.by), device(step.helper)]
+      await helper.call('observeRoom', hub.roomInfos.at(-1), null)
+      await helper.call('observeSession', hub.sessions.get(hex(group(step.parent))).current)
+      const keyPackages = []
+      for (const name of step.humans) keyPackages.push(await device(name).call('keyPackage', Date.now()))
+      keyPackages.push(await helper.call('keyPackage', Date.now()))
+      const session = await opener.call('foundHelper', group(step.parent).subarray(32), keyPackages, Date.now())
+      groups.set(step.name, core.sessionGroupId(room, session))
+      await hub.post(opener)
+    },
+    /** A session is handed to a new agent device by invite, and with it every helper session under it. */
+    async take_over(step) {
+      const [human, agent] = [device(step.by), device(step.device)]
+      await run.invite({ by: step.by, device: step.device, role: 'agent', session: step.session })
+      await hub.post(human)
+      const did = []
+      for (let round = 0; round < 16; round++) {
+        const steps = await human.call('inviteSteps')
+        if (steps.length === 0) break
+        const next = steps.find(next => next.kind !== 'wait') ?? steps[0]
+        did.push(next.kind === 'takeOver' && next.keyPackage === null ? 'takeOverHelper' : next.kind)
+        if (next.kind === 'takeOver') {
+          // The main session's step carries the KeyPackage of the confirmed Request; a helper session's asks for a fresh one.
+          const keyPackage = next.keyPackage ?? await agent.call('keyPackage', Date.now())
+          await human.call('cleanSession', next.group, next.cuts, { device: next.device, keyPackage }, Date.now())
+        } else if (next.kind === 'handover') await human.call('inviteHandover', next.inviteId)
+        else if (next.kind === 'checkHelpers') await human.call('inviteChecked', next.inviteId, step.helpers.map(group))
+        else if (next.kind === 'commit') await human.call('inviteRecommit', next.inviteId, Date.now())
+        await hub.post(human)
+      }
+      check((await human.call('inviteSteps')).length === 0, `the takeover did not finish: ${did.join(' ')}`)
+      for (const kind of ['takeOver', 'takeOverHelper', 'handover', 'checkHelpers']) check(did.includes(kind), `the takeover had no step ${kind}: ${did.join(' ')}`)
+    },
+    /** An item in the room, written before anyone else is there. */
+    async early(step) {
+      const id = await device(step.device).call('id')
+      await device(step.device).call('seal', { kind: 'boardItem', board, payload: bytes(`{"content_type":"erase","shape_ids":["${core.base64urlEncode(id)}/9/0"]}`) }, null, [], Date.now())
+    },
+    /** A device that joined by link learns the past of its groups from their public history. */
+    async learn(step) {
+      for (const name of step.groups) {
+        const id = group(name)
+        const founding = name === 'room' ? hub.roomInfos[0] : hub.sessions.get(hex(id)).founding
+        const learned = await device(step.device).call('learnHistory', id, founding, hub.served(id, founding, founding).commits)
+        check(learned.epochs >= 1, `nothing of ${name} was learned`)
+      }
+    },
+    /** Every stored envelope once more, in the hub's order: what was written before the device came opens now. */
+    async read_back(step) {
+      const read = []
+      for (const entry of hub.log.filter(entry => entry.kind === 'envelope')) {
+        let envelope = await device(step.device).call('receiveEnvelope', entry.bytes, entry.change, true, null, Date.now())
+        // One the device's chain already holds is a replay in order; fetched as a page it is read back with its body.
+        if (envelope.code === 'replay') envelope = await device(step.device).call('receiveEnvelope', entry.bytes, entry.change, false, null, Date.now())
+        read.push(envelope)
+      }
+      const opened = read.filter(envelope => envelope.payload && envelope.outcome === 'applied')
+      const all = read.map(envelope => `${envelope.outcome}/${envelope.code}`).join(' ')
+      if (step.early) check(opened.some(envelope => text(envelope.payload).includes('/9/0')), `the early item did not open: ${all}`)
+      if (step.text) check(chatWith(opened, step.text), `the earlier Chat message did not open: ${all}`)
+      if (!step.early && !step.text) check(opened.length > 0, `nothing opened on reading back: ${all}`)
+    },
     async holds_recovery_mac(step) { check(await device(step.device).call('holdsRecoveryMac'), 'the device does not hold the key of the code in force') },
     async no_key(step) {
       const { epoch } = await keyOf(step.epoch_of, step.group)
-      await device(step.device).call('contentKey', group(step.group), epoch)
+      check(!(await device(step.device).call('holdsKey', group(step.group), epoch)), 'the removed device holds the key of the epoch after its removal')
     },
   }
 
   let ran = 0
   for (const step of scenario.steps) {
     const what = `step ${ran + 1} (${JSON.stringify(step)})`
-    if (step.do === 'no_key') step.refused = 'no-key'
     let refused = null
     try {
       await run[step.do](step)
