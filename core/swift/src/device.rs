@@ -22,7 +22,7 @@ use crate::error::core_error;
 use crate::guard::{Guarded, Quiet};
 use crate::invite::{
     check_code, CheckCode, InviteAccepted, InviteConfirmed, InviteOpened, InviteRole, InviteStep,
-    JoinRequest, SignedOffer, SignedRequest, SignedReveal,
+    JoinLink, JoinRequest, SignedOffer, SignedRequest, SignedReveal,
 };
 use crate::records::ReceivedMessage;
 use crate::records::{
@@ -31,8 +31,9 @@ use crate::records::{
     RoomRoles, SignedHubAuth,
 };
 use crate::recovery::{
-    self, with_chains, with_commits, with_group, with_room, CodeJoin, GroupPast, Learned,
-    RecoveryPlan, ServedCommit, ServedEnvelope, ServedGroup, ServedRoom,
+    self, with_chains, with_commits, with_end, with_group, with_placed, with_room, with_start,
+    CodeJoin, GroupPast, LearnProgress, Learned, PlacedCommit, RecoveryPlan, ServedCommit,
+    ServedEnd, ServedEnvelope, ServedGroup, ServedRoom, ServedStart,
 };
 use crate::store::AnyStore;
 use crate::{CoreError, ErrorCode};
@@ -51,6 +52,8 @@ use trommi_core::store::Storage;
 struct Inner {
     device: Device<AnyStore>,
     replacement: Option<NewCode>,
+    /// The check of a room for a recovery plan made in steps, held in memory until its finish.
+    plan_check: Option<construct::RoomCheck>,
 }
 
 /// One device: its signature key, the groups it is a leaf of, its content keys and its outbox, over the store
@@ -78,6 +81,7 @@ impl CoreDevice {
         Ok(Guarded::new(Inner {
             device,
             replacement: None,
+            plan_check: None,
         }))
     }
 
@@ -841,6 +845,243 @@ impl CoreDevice {
         })
     }
 
+    // ---- the same walks in steps, for a history too large for one call -----------------------------------
+    //
+    // Each walk is held in memory beside the device's state and is no state of it: nothing of it is written
+    // and nothing the device answers reads it before its finish. A device opened again holds none, and the
+    // caller starts again. One walk of a past, one room check and one session check are held at a time: a
+    // new start replaces the one held. A slice holds at most 256 Commits of at most 16 MiB together
+    // (`too-large` otherwise, and the walk stands where it was); any other refusal of a slice ends the walk.
+
+    /// Begins the walk of the past of `group` at its founding GroupInfo, as `learn_history` does in one call.
+    /// Nothing to learn is no error: the progress then stands at its end. `bad-group` for a GroupInfo that is
+    /// not the group's founding, `room-behind`, `group-behind` as `learn_history`, `too-large` when the
+    /// device's first epoch lies beyond the 65 536 Commits a walk follows.
+    pub fn learn_start(
+        &self,
+        group: Vec<u8>,
+        founding: Vec<u8>,
+    ) -> Result<LearnProgress, CoreError> {
+        self.write(|device| Ok(progress(device.learn_start(&group_id(&group)?, &founding)?)))
+    }
+
+    /// Hands the walk of `group` its next Commits, in order, as the hub serves them. `bad-group` for a Commit
+    /// that does not verify or obey the rules; `not-found` without a walk of that group.
+    pub fn learn_slice(
+        &self,
+        group: Vec<u8>,
+        commits: Vec<ServedCommit>,
+    ) -> Result<LearnProgress, CoreError> {
+        self.write(|device| {
+            let group = group_id(&group)?;
+            with_commits(&commits, |commits| {
+                Ok(progress(device.learn_slice(&group, commits)?))
+            })
+        })
+    }
+
+    /// Ends the walk of `group` and takes it if it arrived at this device's own state, as `learn_history`
+    /// does: `bad-group` otherwise, and nothing is written (a session whose own history broke the rules is
+    /// closed). Whatever the answer, the walk is gone. `not-found` without a walk.
+    pub fn learn_finish(&self, group: Vec<u8>) -> Result<Learned, CoreError> {
+        self.write(|device| {
+            Ok(Learned {
+                epochs: device.learn_finish(&group_id(&group)?)?.epochs,
+            })
+        })
+    }
+
+    /// Gives up the walk of `group`, if one is held.
+    pub fn learn_abandon(&self, group: Vec<u8>) -> Result<(), CoreError> {
+        self.write(|device| {
+            device.learn_abandon(&group_id(&group)?);
+            Ok(())
+        })
+    }
+
+    /// Begins the check of the room a hub serves to a device that signs in or recovers with the code:
+    /// `served` is everything but the Commits. `room-exists` for a device that holds a room; `too-large` for
+    /// a GroupInfo above the limit of a Commit's request; `bad-format` for a session named twice;
+    /// `wrong-recovery`, `bad-group` as `join_room_with_code`.
+    pub fn code_check_start(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedStart,
+    ) -> Result<(), CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.write(|device| {
+            with_start(
+                &served,
+                |served| Ok(device.code_check_start(&keys, served)?),
+            )
+        })
+    }
+
+    /// Hands the check of the room the next Commits of the room's logs, of the room group and of every
+    /// session group named at the start, in the hub's order across groups: ascending by change number.
+    /// `not-found` without a check.
+    pub fn code_check_slice(&self, commits: Vec<PlacedCommit>) -> Result<(), CoreError> {
+        self.write(|device| with_placed(&commits, |commits| Ok(device.code_check_slice(commits)?)))
+    }
+
+    /// Ends the check of the room and, if it holds, builds the join of the room group as
+    /// `join_room_with_code` does. `bad-format` when `served` names another number of current GroupInfos
+    /// than the start named sessions. Whatever the answer, the check is gone; `not-found` without one.
+    pub fn join_room_checked(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedEnd,
+        now_ms: u64,
+    ) -> Result<CodeJoin, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.write(|device| {
+            with_end(&served, |served| {
+                Ok(device.join_room_checked(&keys, served, now_ms)?.into())
+            })
+        })
+    }
+
+    /// Ends the check of the room and, if it holds, builds the whole recovery as `recover` does, with the
+    /// plan `prepare_recovery` or `recovery_plan_finish` made. `chains` as for `recover` (two different void
+    /// markers for one envelope are `bad-format`). Whatever the answer, the check is gone; `not-found`
+    /// without one.
+    pub fn recover_checked(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedEnd,
+        chains: Vec<ServedEnvelope>,
+        account: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<CodeJoin, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.device.run(|inner| {
+            let replacement = inner
+                .replacement
+                .as_ref()
+                .ok_or(trommi_core::Error::Incomplete)?;
+            let built = with_end(&served, |served| {
+                with_chains(&chains, |chains| {
+                    Ok(inner.device.recover_checked(
+                        &keys,
+                        served,
+                        replacement,
+                        chains,
+                        &account,
+                        now_ms,
+                    )?)
+                })
+            })?;
+            inner.replacement = None;
+            Ok(built.into())
+        })
+    }
+
+    /// Begins the check of a live session group this device, a human device that joined the room group with
+    /// the code, will join with it: `founding` is its founding GroupInfo. Returns the group.
+    pub fn session_check_start(&self, founding: Vec<u8>) -> Result<Vec<u8>, CoreError> {
+        self.write(|device| Ok(device.session_check_start(&founding)?.as_bytes().to_vec()))
+    }
+
+    /// Hands the check of the session `group` its next Commits, in the hub's order. `not-found` without a
+    /// check of that group (a check of another group stays held).
+    pub fn session_check_slice(
+        &self,
+        group: Vec<u8>,
+        commits: Vec<ServedCommit>,
+    ) -> Result<(), CoreError> {
+        self.write(|device| {
+            let group = group_id(&group)?;
+            with_commits(&commits, |commits| {
+                Ok(device.session_check_slice(&group, commits)?)
+            })
+        })
+    }
+
+    /// Ends the check of the session `group` with the GroupInfo the hub offers as `current` and, if it
+    /// agrees with the state the check reached, builds the join as `join_session_with_code` does. Returns
+    /// the outbox entry's id. Whatever the answer, the check is gone; `not-found` without one.
+    pub fn join_session_checked(
+        &self,
+        recovery_code: Vec<u8>,
+        group: Vec<u8>,
+        current: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<u64, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.write(|device| {
+            Ok(device.join_session_checked(&keys, &group_id(&group)?, &current, now_ms)?)
+        })
+    }
+
+    /// `prepare_recovery` in steps: begins the facade's own check of the room for the plan. The device's
+    /// check for `recover_checked` is a second one (`code_check_start`): the history is walked twice. A
+    /// second start replaces the first.
+    pub fn recovery_plan_start(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedStart,
+    ) -> Result<(), CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.device.run(|inner| {
+            inner.plan_check = None;
+            inner.plan_check = Some(with_start(&served, |served| {
+                Ok(construct::RoomCheck::start(&keys, served)?)
+            })?);
+            Ok(())
+        })
+    }
+
+    /// Hands the plan's check of the room its next Commits, as `code_check_slice`. Any refusal but
+    /// `too-large` ends the check. `not-found` without one.
+    pub fn recovery_plan_slice(&self, commits: Vec<PlacedCommit>) -> Result<(), CoreError> {
+        self.device.run(|inner| {
+            let mut check = inner
+                .plan_check
+                .take()
+                .ok_or(trommi_core::Error::NotFound)?;
+            match with_placed(&commits, |commits| Ok(check.slice(commits)?)) {
+                Ok(()) => {
+                    inner.plan_check = Some(check);
+                    Ok(())
+                }
+                Err(error) if error.code() == ErrorCode::TooLarge => {
+                    inner.plan_check = Some(check);
+                    Err(error)
+                }
+                Err(error) => Err(error),
+            }
+        })
+    }
+
+    /// Ends the plan's check of the room and makes the plan as `prepare_recovery` does. Whatever the answer,
+    /// the check is gone; `not-found` without one.
+    pub fn recovery_plan_finish(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedEnd,
+    ) -> Result<RecoveryPlan, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.device.run(|inner| {
+            let check = inner
+                .plan_check
+                .take()
+                .ok_or(trommi_core::Error::NotFound)?;
+            let room = check.room();
+            let checked = with_end(&served, |served| Ok(check.finish(&keys, served)?))?;
+            let history = checked
+                .observer
+                .history()
+                .ok_or(trommi_core::Error::Internal("room history"))?;
+            let replacement = keys.replace(&mut SystemEntropy, &room, history)?;
+            let plan = RecoveryPlan {
+                new_code: replacement.code.expose().to_vec(),
+                removals: recovery::removals(&checked)?,
+            };
+            inner.replacement = Some(replacement);
+            Ok(plan)
+        })
+    }
+
     /// Where this device's knowledge of `group` begins and whether its past was learned; none for a group it
     /// neither is a leaf of nor follows. A followed group is not in [`CoreDevice::groups`]: this is how its
     /// past is asked for.
@@ -1135,7 +1376,8 @@ impl CoreDevice {
     /// Opens an invite: for a human device, or for an agent device, which founds a new main session or, with
     /// `session_id`, takes that one over. `app` is the app's origin for the link, `hub` the canonical address
     /// of the hub the room lives on. Only a human device invites; at most 16 invites are open at once. The
-    /// invite lives ten minutes from `now_ms`.
+    /// invite lives ten minutes from `now_ms` for a human device, fifteen for an agent device; its deadline is
+    /// the link's fifth part. The Offer is published with its signature and its MAC.
     pub fn invite_open(
         &self,
         role: InviteRole,
@@ -1163,6 +1405,7 @@ impl CoreDevice {
                 expires_at: opened.expires_at,
                 offer: opened.signed_offer.offer.clone(),
                 signature: opened.signed_offer.signature.clone(),
+                mac: opened.signed_offer.mac.clone(),
             })
         })
     }
@@ -1261,8 +1504,27 @@ impl CoreDevice {
         self.write(|device| Ok(device.invite_forget(&InviteId::from_slice(&invite_id)?)?))
     }
 
-    /// As the new device: checks the Offer served for `link` and answers it with a fresh KeyPackage of this
-    /// device, stored before the Request is returned. A device joins one room, once (`room-exists`).
+    /// As the new device: reads `link` before anything is fetched for it, with its deadline held against the
+    /// clock `now_ms`. `room-exists` for a device that holds a room; `bad-format`, `newer-version` for the link;
+    /// `invite-expired` more than two minutes past its deadline; `bad-invite` for a deadline further ahead than
+    /// any invite lives.
+    pub fn join_link(&self, link: String, now_ms: u64) -> Result<JoinLink, CoreError> {
+        self.read(|device| {
+            let read = device.join_link(&link, now_ms)?;
+            Ok(JoinLink {
+                hub: read.hub.as_str().to_owned(),
+                room_id: read.room_id.as_bytes().to_vec(),
+                invite_id: read.invite_id.as_bytes().to_vec(),
+                expires_at: read.expires_at,
+            })
+        })
+    }
+
+    /// As the new device: checks the Offer served for `link`, with the MAC the hub serves beside it, and
+    /// answers it with a fresh KeyPackage of this device, stored before the Request is returned. Nothing is
+    /// stored for an Offer that is refused: `bad-invite` for a MAC that is missing, short or wrong (an Offer
+    /// that is not the link's) among others, `bad-signature`, `invite-expired` for the deadline by the Offer's
+    /// kind. A device joins one room, once (`room-exists`).
     pub fn join_request(
         &self,
         link: String,
@@ -1273,6 +1535,7 @@ impl CoreDevice {
             let offer = invite::SignedOffer {
                 offer: offer.offer,
                 signature: offer.signature,
+                mac: offer.mac,
             };
             let request = device.join_request(&link, &offer, now_ms)?;
             Ok(JoinRequest::of(
@@ -1380,5 +1643,13 @@ pub fn log_finding(code: ErrorCode) -> LogFinding {
         core::LogFinding::Duplicate => LogFinding::Duplicate,
         core::LogFinding::BadGroup => LogFinding::BadGroup,
         core::LogFinding::Local => LogFinding::Local,
+    }
+}
+
+/// A walk's progress as a record.
+fn progress(progress: trommi_core::device::LearnProgress) -> LearnProgress {
+    LearnProgress {
+        epoch: progress.epoch,
+        upto: progress.upto,
     }
 }

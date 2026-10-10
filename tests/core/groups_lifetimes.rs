@@ -136,8 +136,9 @@ fn a_key_package_outside_its_lifetime_is_refused() {
     };
     for made in [now() - ELEVEN_YEARS_MS, now() + 3 * HOUR_MS] {
         let package = c.key_package(made).unwrap();
-        // The invite is open at the moment the device answers it.
-        let (opened, link) = open(&mut a, made.max(now()));
+        // The invite is opened by a clock that agrees with the device's (12.1.2): it is open at the moment the
+        // device answers it.
+        let (opened, link) = open(&mut a, made);
         assert_eq!(key_package_info(&package), Err(Error::BadKeyPackage));
         assert_eq!(
             verify_key_package_of(&package, &c.id()),
