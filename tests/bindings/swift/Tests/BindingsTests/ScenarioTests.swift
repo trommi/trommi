@@ -32,6 +32,8 @@ struct Step: Decodable {
   var chat: String?
   var confirmed: Bool?
   var early: Bool?
+  var feed: Bool?
+  var register: Bool?
   var groups: [String]?
   var session: String?
   var parent: String?
@@ -150,16 +152,53 @@ final class Hub {
 
   /// Hands the device everything after its cursor, with every Welcome at its place. Returns what the log's
   /// entries did and what became of the envelopes.
-  func sync(_ device: CoreDevice, room: Data) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
-    try feed(device, room: room)
+  func sync(_ device: CoreDevice, room: Data, batched: Bool = false) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
+    try feed(device, room: room, batched: batched)
   }
 
   /// The log after the device's cursor, strictly by change number; with `room`, also the Welcomes at their places.
-  func feed(_ device: CoreDevice, room: Data?) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
+  func feed(_ device: CoreDevice, room: Data?, batched: Bool = false) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
     var done: [Processed] = []
     var received: [ReceivedEnvelope] = []
     let cursor = try device.cursor()
-    for entry in log where entry.change > cursor {
+    let after = log.filter { $0.change > cursor }
+    func join(_ entry: LogEntry) {
+      guard let room else { return }
+      for welcome in welcomes where welcome.change == entry.change {
+        // A Welcome for another device does not open here: that is no finding.
+        _ = try? device.joinWelcome(welcome: welcome.bytes, room: room, committer: nil, nowMs: now())
+      }
+    }
+    if batched {
+      // Through the batch call: a batch ends where a Welcome is due, and goes on behind an entry that is passed over.
+      var rest = after[...]
+      while let first = rest.first {
+        _ = first
+        let due = room == nil ? nil : rest.firstIndex { entry in welcomes.contains { $0.change == entry.change } }
+        let end = due.map { $0 + 1 } ?? rest.endIndex
+        let batch = Array(rest[rest.startIndex..<end])
+        let items = batch.map { entry in
+          envelopes.contains(entry.change)
+            ? FeedItem(entry: nil, envelope: ServedEnvelope(bytes: entry.bytes, change: entry.change, voidCode: nil))
+            : FeedItem(entry: entry, envelope: nil)
+        }
+        let fed = try device.feed(items: items, nowMs: now())
+        for outcome in fed.outcomes {
+          if let envelope = outcome.envelope { received.append(envelope) }
+          if let processed = outcome.processed { done.append(processed) }
+        }
+        guard let refusedAt = fed.refusedAt, let code = fed.code else {
+          join(batch[batch.count - 1])
+          rest = rest[end...]
+          continue
+        }
+        guard logFinding(code: code) == .duplicate else { throw CoreError.Refused(code: code, message: fed.message ?? "") }
+        join(batch[Int(refusedAt)])
+        rest = rest[(rest.startIndex + Int(refusedAt) + 1)...]
+      }
+      return (done, received)
+    }
+    for entry in after {
       if envelopes.contains(entry.change) {
         received.append(try device.receiveEnvelope(envelope: entry.bytes, change: entry.change, ordered: true, voidCode: nil, nowMs: now()))
         continue
@@ -169,11 +208,7 @@ final class Hub {
       } catch let CoreError.Refused(code, _) where logFinding(code: code) == .duplicate {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
       }
-      guard let room else { continue }
-      for welcome in welcomes where welcome.change == entry.change {
-        // A Welcome for another device does not open here: that is no finding.
-        _ = try? device.joinWelcome(welcome: welcome.bytes, room: room, committer: nil, nowMs: now())
-      }
+      join(entry)
     }
     return (done, received)
   }
@@ -304,7 +339,7 @@ final class ScenarioTests: XCTestCase {
       let signed = try device(step.device).hubSignIn(hub: "https://hub.example", challenge: Data(repeating: 9, count: 32))
       try check(signed.signature.count == 64 && signed.auth.count > 96, "the sign-in is not a signed HubAuth")
     case "sync":
-      let (done, envelopes) = try hub.sync(device(step.device), room: room)
+      let (done, envelopes) = try hub.sync(device(step.device), room: room, batched: step.feed == true)
       seen[step.device!, default: []] += envelopes
       if let expected = step.message {
         let message = done.first { $0.kind == .message }?.message
@@ -407,6 +442,7 @@ final class ScenarioTests: XCTestCase {
       try check(!gone.isEmpty && plan.newCode.count == 32, "the recovery removes nobody")
       let chains = hub.log.filter { hub.envelopes.contains($0.change) && gone.contains(hub.posted[$0.change] ?? Data()) }
         .map { ServedEnvelope(bytes: $0.bytes, change: $0.change, voidCode: nil) }
+        .reversed() as [ServedEnvelope]  // in any order: the device sorts them
       try check(!chains.isEmpty, "the devices to go wrote nothing")
       let built = try device(step.device).recover(
         recoveryCode: code, served: served, chains: chains, account: Data("the account's sealed copies".utf8), nowMs: now())
@@ -442,6 +478,11 @@ final class ScenarioTests: XCTestCase {
         try check(opened.contains { String(decoding: $0.payload ?? Data(), as: UTF8.self).contains("/9/0") }, "the early item did not open")
       }
       if let text = step.text { try check(chat(in: opened, text) != nil, "the earlier Chat message did not open") }
+      if step.register == true {
+        try check(
+          read.contains { $0.header.kind == .register && $0.register?.name.hasPrefix("board_snapshot/") == true && $0.register?.current == true },
+          "the register was not shown on reading back")
+      }
       if step.early != true && step.text == nil { try check(!opened.isEmpty, "nothing opened on reading back") }
     case "found_helper":
       // A helper session under a main session: the helper device follows the room and the main session first.

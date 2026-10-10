@@ -38,10 +38,11 @@ const committed = transaction => new Promise((resolve, reject) => {
 /**
  * Takes the Web Lock `name`. Resolves with `release`, which gives the lock back and resolves once the browser has
  * let it go (the next owner can take it without waiting from then on), and `lost`, a promise that resolves if the
- * lock is taken away while it is held (another context asked for it with `steal`). With `signal`, a wait for the
+ * lock is taken away while it is held (another context asked for it with `steal`); `onLost` is called at that
+ * moment, in the same step in which the browser reports it. With `signal`, a wait for the
  * lock can be given up.
  */
-function lock(name, wait, signal) {
+function lock(name, wait, signal, onLost = () => {}) {
   if (!globalThis.navigator?.locks) return Promise.reject(new Error('Web Locks are not available: one owner cannot be ensured'))
   return new Promise((resolve, reject) => {
     let release
@@ -58,7 +59,8 @@ function lock(name, wait, signal) {
     })
     // The request settles when the lock is gone: resolved after a release, rejected when it was stolen, or when it
     // was never granted (given up, or refused by the browser).
-    request.then(() => {}, error => { if (release) stolen(); else reject(error) })
+    // `onLost` runs in this very step: the holder is marked before anything else of the page runs.
+    request.then(() => {}, error => { if (release) { onLost(); stolen() } else reject(error) })
   })
 }
 
@@ -83,10 +85,9 @@ export class IdbStore {
     if (this.#state !== 'new') throw new Error('this store was loaded before: a store object serves one device, once')
     this.#state = 'loading'
     try {
-      this.#acquiring = lock(lockName(this.#name), this.#wait, this.#waiting.signal)
-      this.#lock = await this.#acquiring
       // A lock that is taken away ends this owner: nothing more is written.
-      this.#lock.lost.then(() => { this.#lost = true })
+      this.#acquiring = lock(lockName(this.#name), this.#wait, this.#waiting.signal, () => { this.#lost = true })
+      this.#lock = await this.#acquiring
       if (this.#state !== 'loading') throw new Error('the store was closed while it loaded')
       const open = indexedDB.open(this.#name, 1)
       open.onupgradeneeded = () => {

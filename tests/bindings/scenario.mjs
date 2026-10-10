@@ -93,15 +93,36 @@ class Hub {
   }
 
   /** Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did. */
-  sync(world, device, room) { return this.feed(device, room) }
+  sync(world, device, room, batched = false) { return this.feed(device, room, batched) }
 
   /** The log after the device's cursor, strictly by change number; with `room`, also the Welcomes at their places. */
-  async feed(device, room) {
+  async feed(device, room, batched = false) {
     const world = this.world
     const done = []
     const envelopes = []
     const cursor = await device.call('cursor')
-    for (const entry of this.log.filter(entry => entry.change > cursor)) {
+    const after = this.log.filter(entry => entry.change > cursor)
+    const welcomesAt = entry => room ? this.welcomes.filter(welcome => welcome.change === entry.change) : []
+    const join = async entry => {
+      // A Welcome for another device does not open here: that is no finding.
+      for (const welcome of welcomesAt(entry)) await device.call('joinWelcome', welcome.bytes, room, null, Date.now()).catch(() => {})
+    }
+    if (batched) {
+      // Through the batch call: a batch ends where a Welcome is due, and goes on behind an entry that is passed over.
+      let rest = after
+      while (rest.length) {
+        const end = rest.findIndex(entry => welcomesAt(entry).length) + 1 || rest.length
+        const batch = rest.slice(0, end)
+        const fed = await device.call('feed', batch.map(entry => entry.kind === 'envelope' ? { envelope: { bytes: entry.bytes, change: entry.change, voidCode: null } } : { entry }), Date.now())
+        for (const outcome of fed.outcomes) outcome.envelope ? envelopes.push(outcome.envelope) : done.push(outcome.processed)
+        if (fed.refusedAt === null) { await join(batch.at(-1)); rest = rest.slice(end); continue }
+        if (world.core.logFinding(fed.code) !== 'duplicate') throw Object.assign(new Error(fed.message), { code: fed.code })
+        await join(batch[fed.refusedAt])
+        rest = rest.slice(fed.refusedAt + 1)
+      }
+      return { done, envelopes }
+    }
+    for (const entry of after) {
       if (entry.kind === 'envelope') {
         envelopes.push(await device.call('receiveEnvelope', entry.bytes, entry.change, true, null, Date.now()))
         continue
@@ -112,10 +133,7 @@ class Hub {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
         if (world.core.logFinding(error.code) !== 'duplicate') throw error
       }
-      for (const welcome of room ? this.welcomes.filter(welcome => welcome.change === entry.change) : []) {
-        // A Welcome for another device does not open here: that is no finding.
-        await device.call('joinWelcome', welcome.bytes, room, null, Date.now()).catch(() => {})
-      }
+      await join(entry)
     }
     return { done, envelopes }
   }
@@ -214,7 +232,7 @@ export async function runScenario(scenario, world) {
       check(signed.signature.length === 64 && signed.auth.length > 96, 'the sign-in is not a signed HubAuth')
     },
     async sync(step) {
-      const { done, envelopes } = await hub.sync(world, device(step.device), room)
+      const { done, envelopes } = await hub.sync(world, device(step.device), room, step.feed === true)
       seen.set(step.device, [...(seen.get(step.device) ?? []), ...envelopes])
       if (step.message !== undefined) {
         const message = done.find(processed => processed.kind === 'message')?.message
@@ -378,7 +396,7 @@ export async function runScenario(scenario, world) {
       // The chains of the devices to go, as the hub's chain route serves them: every envelope of theirs, in order.
       const gone = plan.removals.flatMap(({ devices }) => devices)
       check(gone.length > 0 && plan.newCode.length === 32, 'the recovery removes nobody')
-      const chains = hub.log.filter(entry => entry.kind === 'envelope' && gone.some(id => same(id, entry.from))).map(entry => ({ bytes: entry.bytes, change: entry.change, voidCode: null }))
+      const chains = hub.log.filter(entry => entry.kind === 'envelope' && gone.some(id => same(id, entry.from))).map(entry => ({ bytes: entry.bytes, change: entry.change, voidCode: null })).reverse()   // in any order: the device sorts them
       check(chains.length > 0, 'the devices to go wrote nothing')
       const built = await device(step.device).call('recover', code, served, chains, bytes('the account\'s sealed copies'), Date.now())
       check(built.unverified.length === 0 && built.outbox.length >= 2, 'the recovery was not built whole')
@@ -446,6 +464,7 @@ export async function runScenario(scenario, world) {
       const all = read.map(envelope => `${envelope.outcome}/${envelope.code}`).join(' ')
       if (step.early) check(opened.some(envelope => text(envelope.payload).includes('/9/0')), `the early item did not open: ${all}`)
       if (step.text) check(chatWith(opened, step.text), `the earlier Chat message did not open: ${all}`)
+      if (step.register) check(read.some(envelope => envelope.header.kind === 'register' && envelope.register?.name?.startsWith('board_snapshot/') && envelope.register.current === true), `the register was not shown on reading back: ${all}`)
       if (!step.early && !step.text) check(opened.length > 0, `nothing opened on reading back: ${all}`)
     },
     async holds_recovery_mac(step) { check(await device(step.device).call('holdsRecoveryMac'), 'the device does not hold the key of the code in force') },
