@@ -1093,8 +1093,8 @@ impl Updater {
     }
 
     /// Settles a swap that was cut off (the updater or the machine went down in the middle): when the release the
-    /// note names is the one in place and it runs and is well, the deploy counts as done; otherwise the release
-    /// before is put back.
+    /// note names is the one in place and it runs and is well (it is not started for this), the deploy counts as
+    /// done; otherwise the release before is put back.
     /// False when the swap could not be settled (the note is still there): no new deploy begins on top of it.
     async fn settle(&self) -> bool {
         let path = self.cfg.root.join("deploy-journal.json");
@@ -1117,7 +1117,10 @@ impl Updater {
                 .is_ok();
         if in_place && !journal.rejected {
             if let Some(commit) = commit_of(&new) {
-                if self.started_healthy(Some(&commit)).await.ok && remove_whole(&path).is_ok() {
+                // only a hub that runs already (or is starting) is kept; it is never started here. A release whose
+                // first start the hub's unit refused (no copy of the database) would be let through at a second
+                // start, and that second start is for a deploy call to ask, not for a recovery.
+                if self.wait_healthy(Some(&commit)).await.ok && remove_whole(&path).is_ok() {
                     log("deploy-completed", json!({ "cut_off": journal.tag }));
                     return true;
                 }
