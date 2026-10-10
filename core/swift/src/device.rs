@@ -31,7 +31,7 @@ use crate::records::{
     RoomRoles, SignedHubAuth,
 };
 use crate::recovery::{
-    self, with_chains, with_commits, with_group, with_room, CodeJoin, Learned, RecoveryPlan,
+    self, with_chains, with_commits, with_group, with_room, CodeJoin, GroupPast, Learned, RecoveryPlan,
     ServedCommit, ServedEnvelope, ServedGroup, ServedRoom,
 };
 use crate::store::AnyStore;
@@ -815,6 +815,18 @@ impl CoreDevice {
                     epochs: learned.epochs,
                 })
             })
+        })
+    }
+
+    /// Where this device's knowledge of `group` begins and whether its past was learned; none for a group it
+    /// neither is a leaf of nor follows. A followed group is not in [`CoreDevice::groups`]: this is how its
+    /// past is asked for.
+    pub fn group_past(&self, group: Vec<u8>) -> Result<Option<GroupPast>, CoreError> {
+        self.read(|device| {
+            Ok(device.group_past(&group_id(&group)?)?.map(|past| GroupPast {
+                from_epoch: past.from_epoch,
+                learned: past.learned,
+            }))
         })
     }
 

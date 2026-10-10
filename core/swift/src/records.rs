@@ -84,8 +84,13 @@ record! {
         pub disallowed: Vec<Vec<u8>>,
         /// Whether this device archived it.
         pub archived: bool,
-        /// Whether a Commit of this device waits for the hub's answer.
+        /// Whether a Commit of this device waits: for the hub's answer, or for its place in the log.
         pub pending: bool,
+        /// The epoch this device's own records of the group begin at: the one it joined at.
+        pub own_from: u64,
+        /// Whether it holds the group's epochs before that one too (`learn_history`). While false, an envelope
+        /// of an earlier epoch is `group-behind`.
+        pub past_learned: bool,
     }
 }
 
@@ -103,6 +108,8 @@ impl From<core::GroupSummary> for GroupSummary {
             disallowed: devices(&summary.disallowed),
             archived: summary.archived,
             pending: summary.pending,
+            own_from: summary.own_from,
+            past_learned: summary.past_learned,
         }
     }
 }

@@ -222,6 +222,7 @@ methods!(RawDevice {
     prepare_recovery(recovery_code, served);
     recover(recovery_code, served, chains, account, now_ms);
     learn_history(group, founding, commits);
+    group_past(group);
     invite_open(role, session_id, app, hub, now_ms);
     invite_accept(invite_id, request, now_ms);
     invite_confirm(invite_id, code, request_hash, matches, now_ms);
