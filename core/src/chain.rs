@@ -135,9 +135,20 @@ pub trait GroupFacts {
     /// The Cut of `device` in `group`: present once the verifier has processed a Commit of `group` that removed
     /// the device's leaf, and equal to the entry for that device in that Commit's `CommitNote.cuts` (number 0
     /// and hash zeros if the remover had accepted nothing). `None` only if no processed Commit of `group` ever
-    /// removed the device. A Cut is for ever: it stays the answer even if the same key is a leaf of the group
-    /// again later, and if the key was removed more than once, the first Cut stands.
+    /// removed the device. A Cut is for ever for whatever the device signed for an epoch before it was a leaf
+    /// again: it stays the answer if the same key is added to the group again
+    /// ([`GroupFacts::leaf_again_at`]). Of a key that came back and was removed again, the Cut of its last
+    /// removal is the answer: the device's chain up to it is the one that Cut names.
     fn cut(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Head>, Error>;
+
+    /// For a device with a Cut in `group`: the epoch in which its key became a leaf of the group again after
+    /// the removal that [`GroupFacts::cut`] names, the epoch begun by the Commit that added it again (sections
+    /// 3.7, 9.0.10; a Commit that removes the leaf and adds the key at once begins it). `None` while the key
+    /// has not come back, which is every key in the room group and every revoked key (section 4.2). From that
+    /// epoch on the device's chain goes on from its Cut; for every earlier epoch the Cut ends it.
+    fn leaf_again_at(&self, _group: &GroupId, _device: &DeviceId) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
 
     /// Whether `device` had ceased to be a leaf of `group` by `epoch`: whether a Commit that began an epoch at
     /// or below `epoch` removed its leaf. It stays true if the same key is a leaf of the group again later. An
@@ -481,6 +492,13 @@ impl OwnChain {
         Self { head: Head::START }
     }
 
+    /// A chain that goes on from `cut`: this device's leaf was removed with that Cut, and whatever it signed
+    /// beyond it is void (section 9.0.10). If its key is added to the group again, its next envelope is the
+    /// one after the Cut.
+    pub(crate) fn from_cut(cut: Head) -> Self {
+        Self { head: cut }
+    }
+
     /// The last envelope signed.
     pub fn head(&self) -> Head {
         self.head
@@ -563,7 +581,12 @@ pub fn seal_next(
     if facts.leaf_role(&group, epoch, &sender)?.is_none() {
         return Err(Error::NotMember);
     }
-    if facts.cut(&group, &sender)?.is_some() {
+    // 9.0.10: a Cut ends this device's chain unless its key is a leaf again, and then for this epoch on.
+    if facts.cut(&group, &sender)?.is_some()
+        && !facts
+            .leaf_again_at(&group, &sender)?
+            .is_some_and(|again| epoch >= again)
+    {
         return Err(Error::RemovedSender);
     }
     if facts.is_stale(&group)? {
@@ -735,7 +758,13 @@ fn first_five(facts: &dyn GroupFacts, envelope: Envelope) -> Result<Verified, Er
     }
     let hash = envelope.hash()?;
     if let Some(cut) = facts.cut(&header.group, &header.sender)? {
-        if header.seq > cut.seq {
+        // Beyond the Cut lies only what the device signed for the epoch that added its key again, or a later
+        // one. An envelope it signed for an earlier epoch, whenever it is handed in, stays refused.
+        if header.seq > cut.seq
+            && !facts
+                .leaf_again_at(&header.group, &header.sender)?
+                .is_some_and(|again| header.epoch >= again)
+        {
             return Err(Error::RemovedSender);
         }
         if header.seq == cut.seq && hash != cut.hash {
@@ -1206,6 +1235,25 @@ pub fn cut_chain(
         effect.head = Some(*cut);
     }
     Ok(effect)
+}
+
+/// Whether a Commit may add to a group again a key that it, or an earlier Commit, removed with `cut` (section
+/// 9.0.10): only if the verifier holds nothing of that key beyond the Cut. `held` is the last envelope of the
+/// key's chain that the verifier holds, counting what a Cut already ended: for the hub every envelope it ever
+/// took, for a member the head of the chain it accepted before it applies the Commit. `bad-commit` otherwise:
+/// the chain is to go on from the Cut, and under the number after it another envelope already stands.
+///
+/// The hub decides this for everyone, since it holds every envelope it took. A member can tell only for what
+/// it was served: one that holds more than the Cut names was served it by the hub, which should have refused
+/// the Commit, and does not merge it. A member that holds less cannot tell and relies on the hub; what a hub
+/// then serves of the old chain beyond the Cut fails check 4.
+pub fn check_added_again(held: &Head, cut: &Head) -> Result<(), Error> {
+    let beyond = held.seq > cut.seq || (held.seq == cut.seq && held.hash != cut.hash);
+    if beyond {
+        Err(Error::BadCommit)
+    } else {
+        Ok(())
+    }
 }
 
 /// The value of the register `heads` (section 9.0.7): `{ "<sender>": [seq, envelope_hash] }` for every chain
