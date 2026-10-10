@@ -683,7 +683,7 @@ struct DeskTitle: View {
     let _ = model.version
     HStack(spacing: 8) {
       PenMark("sketch:desk").frame(width: 24, height: 24)
-      Text(model.view?.deskName ?? "Desk").font(Face.display(19, .bold)).foregroundStyle(Ink.fg)
+      Text(model.view?.deskName ?? "Personal").font(Face.display(19, .bold)).foregroundStyle(Ink.fg)
     }
     .id(model.version)
   }

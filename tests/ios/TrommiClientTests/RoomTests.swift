@@ -227,6 +227,31 @@ final class RoomTests: XCTestCase {
     room.close()
   }
 
+  /// Every account has a desk: a new one gets `main`, "Personal", created_at 0; written twice (or by two devices,
+  /// the same value), still one desk; the last desk cannot be removed.
+  func testEveryAccountHasItsFirstDesk() async throws {
+    let room = try await founded()
+    _ = try await room.sync()
+    XCTAssertEqual(room.liveDesks, [])
+    let wrote = try await room.ensureDesk()
+    XCTAssertTrue(wrote)
+    XCTAssertEqual(room.liveDesks, ["main"])
+    XCTAssertEqual(room.board.human.desks["main"], Room.firstDesk)
+    XCTAssertEqual(room.board.human.desks["main"]?["name"].string, "Personal")
+    XCTAssertEqual(room.board.human.desks["main"]?["created_at"].double, 0)
+    let again = try await room.ensureDesk()
+    XCTAssertFalse(again, "a desk is there: nothing is written")
+    // a second device writes the same register with the same value: still one desk
+    try await room.setDesk("main", Room.firstDesk)
+    XCTAssertEqual(room.liveDesks, ["main"])
+    do { try await room.removeDesk("main"); XCTFail("the last desk") } catch { XCTAssertEqual(Room.codeOf(error), "last-desk") }
+    XCTAssertEqual(room.liveDesks, ["main"])
+    try await room.setDesk("d2", .obj(["name": "Work", "created_at": .n(1)]))
+    try await room.removeDesk("main")
+    XCTAssertEqual(room.liveDesks, ["d2"])
+    room.close()
+  }
+
   func testARegisterIsOneEnvelopePerNameAndShowsAtOnce() async throws {
     let room = try await founded()
     _ = try await room.sync()

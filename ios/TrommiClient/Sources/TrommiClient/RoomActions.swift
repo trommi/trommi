@@ -193,6 +193,25 @@ extension Room {
   public func snooze(cardId: String, until: UInt64?) async throws { try await setRegisters(["snooze/\(cardId)": until.map { .obj(["until": .n($0)]) } ?? .null]) }
   public func setCrown(_ v: JV?) async throws { try await setRegisters(["crown": v ?? .null]) }
   public func setDesk(_ id: String, _ v: JV?) async throws { try await setRegisters(["desk/\(id)": v ?? .null]) }
+  /** The first desk of every account (spec/v1.md 9.3.3): `desk/main`, the same value from every device, so two
+   *  that write it at once write one register. */
+  public static let firstDesk: JV = .obj(["name": "Personal", "created_at": .n(0)])
+  /** The desks that are there (a removed one is gone from the board). */
+  public var liveDesks: [String] { board.human.desks.filter { $0.value.object != nil }.map(\.key).sorted() }
+  /**
+   * Every account has a desk: when this human device sees none (a new account, or a list emptied by two removals at
+   * once), it writes the first one. Whether it wrote.
+   */
+  @discardableResult public func ensureDesk() async throws -> Bool {
+    guard board.myRole == "human", liveDesks.isEmpty else { return false }
+    try await setDesk("main", Room.firstDesk)
+    return true
+  }
+  /** Removes a desk; the last one stays (`last-desk`). */
+  public func removeDesk(_ id: String) async throws {
+    guard liveDesks.filter({ $0 != id }).count >= 1 else { throw TrommiError("last-desk", "The last desk stays.") }
+    try await setDesk(id, nil)
+  }
   /** A session's settings (register session/<id>): name, icon, desk, archived… merged into what is there. */
   public func editSession(_ sid: String, _ fields: [String: JV]) async throws {
     var cur = board.human.sessionSettings[sid]?.object ?? [:]

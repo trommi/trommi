@@ -114,7 +114,7 @@ final class BoardTests: XCTestCase {
     XCTAssertFalse(cleared.has("goals")); XCTAssertEqual(cleared["name"], "Trommi")
     // no desk yet: the first one is made for them
     let first = deskRegister(nil, goals: "One", now: 100)
-    XCTAssertEqual(first["name"], "Desk"); XCTAssertEqual(first["created_at"].double, 99); XCTAssertEqual(first["goals"], "One")
+    XCTAssertEqual(first["name"], "Personal"); XCTAssertEqual(first["created_at"].double, 0); XCTAssertEqual(first["goals"], "One")
   }
 }
 
