@@ -21,8 +21,9 @@ use crate::error::Error;
 use crate::ids::{DeviceId, GroupId, Hash32, RoomId};
 use crate::mls::observer;
 use crate::mls::profile::Cut;
-use crate::mls::rules::{Parent, SessionFacts};
+use crate::mls::rules::Parent;
 use crate::objects::{self, Objects};
+use crate::recovery::SessionsAt;
 use crate::registers::Registers;
 use crate::store::{self, table, Batch, Storage};
 use openmls::prelude::LeafNodeIndex;
@@ -232,12 +233,14 @@ impl Decode for Record {
 }
 
 /// What the device keeps per group beside the chains: the highest change number of an accepted envelope, and
-/// when it last wrote `heads` with which value.
+/// of the `heads` it last wrote (9.0.7) when it wrote it, the other senders' heads as they stood then
+/// (their hash), and the number of that envelope in its own chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct GroupState {
     pub max_change: u64,
     pub heads_at: u64,
     pub heads_hash: Hash32,
+    pub heads_seq: u64,
 }
 
 impl Default for GroupState {
@@ -246,6 +249,7 @@ impl Default for GroupState {
             max_change: 0,
             heads_at: 0,
             heads_hash: Hash32::ZERO,
+            heads_seq: 0,
         }
     }
 }
@@ -255,6 +259,7 @@ impl Encode for GroupState {
         writer.u64(self.max_change);
         writer.u64(self.heads_at);
         writer.fixed(self.heads_hash.as_bytes());
+        writer.u64(self.heads_seq);
         Ok(())
     }
 }
@@ -265,6 +270,7 @@ impl Decode for GroupState {
             max_change: reader.u64()?,
             heads_at: reader.u64()?,
             heads_hash: reader.value()?,
+            heads_seq: reader.u64()?,
         })
     }
 }
@@ -507,12 +513,14 @@ impl<S: Storage> Device<S> {
     }
 
     /// The roles of `leaves` under the room state that the Commit naming `room_epoch` was judged with, and the
-    /// seat among them.
+    /// seat among them. `place` is that Commit's change number, where a helper session's opener is its main
+    /// session's agent leaf; without it the place is the group's own, the place of its last Commit.
     pub(super) fn roles(
         &self,
         group: &GroupId,
         leaves: &[(LeafNodeIndex, DeviceId)],
         room_epoch: u64,
+        place: Option<u64>,
     ) -> Result<EpochFacts, Error> {
         let devices = leaves.iter().map(|(_, device)| *device);
         if group.is_room() {
@@ -523,19 +531,27 @@ impl<S: Storage> Device<S> {
                 learned: false,
             });
         }
-        let session = self
+        let meta = self
             .memory
             .groups
             .get(group)
-            .and_then(|meta| meta.session)
+            .ok_or(Error::Internal("a group's record"))?;
+        let session = meta
+            .session
             .ok_or(Error::Internal("a session group without its extension"))?;
+        // A group whose place this device does not know yet (it joined by a Welcome and was not handed the
+        // Commit that made it) is read as it stands.
+        let place = place.unwrap_or(match meta.place {
+            0 => u64::MAX,
+            place => place,
+        });
         let history = self.history()?;
         let room = history.at(room_epoch).unwrap_or(history.newest());
         let main = session.parent.is_zero();
         let seat = if main {
             observer::seat(&session, leaves, room)
         } else {
-            match self.known().main_session(&session.parent, room_epoch) {
+            match self.known().main_session_at(&session.parent, place) {
                 Parent::Seat(seat) => seat,
                 // A device that does not follow the main session takes the one enrolled agent device
                 // among the leaves for the opener.
@@ -547,13 +563,17 @@ impl<S: Storage> Device<S> {
             }
             .filter(|seat| devices.clone().any(|device| device == *seat))
         };
+        // 4.1: a role follows from the room state. A key that was a human or agent device and no longer
+        // is has none, in whatever group its leaf still stands (a stale group keeps such a leaf until it
+        // is cleaned, also over a join by 8.4); nor has an enrolled agent device outside its seat.
         let leaves = devices
             .map(|device| {
+                let enrolled = room.is_agent(&device);
                 let role = if room.is_human(&device) {
                     Some(Role::Human)
-                } else if seat == Some(device) {
+                } else if seat == Some(device) && enrolled {
                     Some(if main { Role::Agent } else { Role::Opener })
-                } else if main {
+                } else if main || enrolled || history.is_revoked(&device, room.epoch) {
                     None
                 } else {
                     Some(Role::Helper)
@@ -580,7 +600,7 @@ impl<S: Storage> Device<S> {
         room_epoch: u64,
     ) -> Result<(), Error> {
         let merging = self.memory.wire.merging.take();
-        let facts = self.roles(group, leaves, room_epoch)?;
+        let facts = self.roles(group, leaves, room_epoch, None)?;
         // The first epoch this device stands in is where its own knowledge of the group begins.
         if self.newest_epoch(group).is_none() {
             self.put_origin(batch, group, epoch)?;
