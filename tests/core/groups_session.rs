@@ -3,10 +3,12 @@
 
 use trommi_core::device::{key_package_info, Processed, Received};
 use trommi_core::ids::GroupId;
+use trommi_core::invite::Role;
 use trommi_core::Error;
+use trommi_tests::join_invited;
 use trommi_tests::{
     add_human, enrol, found_main, found_room, new_device, now, post_ok, process, publish_some,
-    settle, sync_ok, take_welcomes,
+    settle, sync_ok, try_invite, try_invite_between,
 };
 
 #[test]
@@ -206,13 +208,9 @@ fn a_human_device_without_the_recovery_mac_founds_nothing_and_commits_nothing() 
     // 7.4: a device that was added and has not yet been handed the recovery_mac of the key in force.
     let (mut a, mut b, mut agent) = (new_device(), new_device(), new_device());
     let (mut hub, room_group) = found_room(&mut a);
-    let package = b.key_package(now()).unwrap();
-    a.add_human_device(&b.id(), &package, now()).unwrap();
+    try_invite(&mut a, &mut b, Role::Human, None).unwrap();
     post_ok(&mut hub, &mut a);
-    assert_eq!(
-        take_welcomes(&hub, &mut b, trommi_tests::added_at(&hub)).len(),
-        1
-    );
+    join_invited(&hub, &mut b);
     enrol(&mut hub, &mut a, &mut agent);
     publish_some(&mut hub, &mut a, 1);
     publish_some(&mut hub, &mut agent, 1);
@@ -222,8 +220,10 @@ fn a_human_device_without_the_recovery_mac_founds_nothing_and_commits_nothing() 
     }
     assert!(a.holds_recovery_mac() && !b.holds_recovery_mac());
     assert_eq!(b.update(&room_group, true, now()), Err(Error::NoKey));
+    assert_eq!(b.remove_agents(&[agent.id()], now()), Err(Error::NoKey));
+    // Nor does it let a device in: the Commit of an invite it confirms is not built.
     assert_eq!(
-        b.change_agents(&[], &[agent.id()], now()),
+        try_invite(&mut b, &mut new_device(), Role::Human, None),
         Err(Error::NoKey)
     );
     let packages = hub.claim(&[a.id(), agent.id()]).unwrap();
@@ -269,9 +269,7 @@ fn the_own_leaf_update_counts_from_the_last_commit_with_a_path() {
     // A leaf younger than seven days needs no update (5.2.9).
     assert_eq!(a.update(&room_group, false, start + 6 * DAY_MS), Ok(None));
     // An Add on the sixth day: a Commit without a path, which leaves the committer's leaf as it was.
-    let package = b.key_package(now()).unwrap();
-    a.add_human_device(&b.id(), &package, start + 6 * DAY_MS)
-        .unwrap();
+    try_invite_between(&mut a, &mut b, Role::Human, None, start + 6 * DAY_MS, now()).unwrap();
     post_ok(&mut hub, &mut a);
     // So the leaf is seven days old a day later, and the update is due.
     let due = a

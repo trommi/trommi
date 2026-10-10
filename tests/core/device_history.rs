@@ -19,10 +19,10 @@ use trommi_tests::forge_content::{Claim, Pen};
 use trommi_tests::hub::content::StoredEnvelope;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_forger, add_human, add_to_session, enrol, fetch_group, found_helper, found_main,
-    found_room, json, learn, new_device, new_device_on, now, observe, post_all, post_ok,
-    publish_some, reopen, settle, settle_joining, sync_all, test_keys, write, FetchedGroup,
-    MemoryStorage, TestDevice,
+    add_forger, add_human, add_to_session, close_invites, enrol, enrol_over, fetch_group,
+    found_helper, found_main, found_room, json, learn, new_device, new_device_on, now, observe,
+    post_all, post_ok, publish_some, reopen, settle, settle_joining, sync_all, test_keys,
+    try_invite, write, FetchedGroup, MemoryStorage, TestDevice,
 };
 
 const ZERO_HASH: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -274,11 +274,7 @@ fn world(rounds: usize) -> World {
 
     // A takeover: another agent device takes the main session, and with it the helper session.
     let mut next = new_device();
-    w.old
-        .change_agents(&[next.id()], &[w.agent.id()], now())
-        .unwrap();
-    post_ok(&mut w.hub, &mut w.old);
-    observe(&w.hub, &mut next);
+    enrol_over(&mut w.hub, &mut w.old, &mut next, &main);
     // The device that was taken out has nothing more to follow.
     let gone = std::mem::replace(&mut w.agent, next).id();
     w.sync();
@@ -295,6 +291,8 @@ fn world(rounds: usize) -> World {
         post_ok(&mut w.hub, &mut w.old);
     }
     w.sync();
+    // The takeover is finished: the session is free for the next one.
+    close_invites(&w.hub, &mut w.old);
     assert_eq!(w.agent.groups().unwrap().len(), 2);
     writers.push(w.agent.id());
     w.rounds(rounds);
@@ -524,11 +522,7 @@ fn an_agent_device_that_takes_a_session_over_reads_its_past_and_nothing_of_the_r
     let mut w = world(2);
     let (room, main, side) = (w.room, w.main, w.side);
     let mut next = new_device();
-    w.old
-        .change_agents(&[next.id()], &[w.agent.id()], now())
-        .unwrap();
-    post_ok(&mut w.hub, &mut w.old);
-    observe(&w.hub, &mut next);
+    enrol_over(&mut w.hub, &mut w.old, &mut next, &main);
     let gone = std::mem::replace(&mut w.agent, next).id();
     w.sync();
     for group in [main, side] {
@@ -849,7 +843,13 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
     let main = found_main(&mut hub, &mut a, &agent.id());
     // No device builds this founding: the other agent device is a member that obeys MLS only.
     let other = Forger::new();
-    a.change_agents(&[other.id()], &[], now()).unwrap();
+    try_invite(
+        &mut a,
+        &mut other.invitee(),
+        trommi_core::invite::Role::Agent,
+        None,
+    )
+    .unwrap();
     post_ok(&mut hub, &mut a);
     settle(&hub, &mut b);
     let packages = hub.claim(&[a.id(), b.id()]).unwrap();
