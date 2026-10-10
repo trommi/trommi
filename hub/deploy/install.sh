@@ -438,6 +438,15 @@ else
   as_updater sh -c 'sync "$1"/* "$1" && mv -T "$1" "$2" && sync "$(dirname "$2")"' sh "$part" "$DEPLOY/releases/$TAG"
   ok "in place"
 fi
+old_updater=$(as_updater readlink "$DEPLOY/updater" 2>/dev/null || true)
+case "$TAG:$old_updater" in
+  v*:releases/hub-v*)
+    # the hub's own releases' updater does not take a release of every part (v<N>): this one's updater takes over,
+    # the one before stays as the way back
+    as_updater ln -sfn "$old_updater" "$DEPLOY/updater-previous"
+    as_updater ln -sfn "releases/$TAG" "$DEPLOY/updater"
+    ok "the updater is the one of $TAG (it reads v<N>); the one of ${old_updater#releases/} is the way back" ;;
+esac
 if [ "$STATE" = installed ] && as_updater test -x "$DEPLOY/updater/trommi-hub-updater"; then
   ok "an updater is in place already ($(as_updater readlink "$DEPLOY/updater")); it changes itself by release"
 else
@@ -470,7 +479,8 @@ ok "the hub runs as trommi and is well"
 
 step "Ask the hub from outside, through the tunnel"
 url=$(sed -n 's/^HUB_URL=//p' "$ETC/hub.env" | head -1)
-want=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["commit"])' "$STAGE/manifest.json")
+# the commit the updater says runs: a release with the same hub as the one running leaves that hub (and its commit)
+want=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["commit"])' "$STAGE/outcome.json")
 got=''
 for _ in $(seq 1 30); do
   got=$(curl -fsS --max-time 5 "$url/healthz" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("commit", ""))' 2>/dev/null || true)

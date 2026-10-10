@@ -246,7 +246,7 @@ jobs:
         run: |
           set -eu
           echo "published=false" >> "$GITHUB_OUTPUT"
-          newest=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1)
+          newest=$(gh release list --exclude-drafts --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1)
           if [ -n "$newest" ] && [ "$newest" -gt "$VERSION" ]; then
             echo "### Release \`$TAG\`: NOT published, v$newest is newer" >> "$GITHUB_STEP_SUMMARY"
             echo "::notice::v$newest is published already, which is newer than $TAG: nothing is published or delivered"
