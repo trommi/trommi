@@ -1,18 +1,18 @@
 {
   "made_at": 1791469800000,
   "room": {
-    "room_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "room_id": "d6ea790b8e2a791a1d03ddc4fb9d2ce088939589231b41a2e9d878b18737fc74",
     "hub_url": "mock:",
-    "my_device_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "my_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
     "my_role": "human",
     "key_epoch": 1,
-    "last_entry_number": 0,
-    "last_envelope_number": 0,
+    "last_entry_number": 7,
+    "last_envelope_number": 258481,
     "connection": "live"
   },
   "members": [
     {
-      "device_id": "2222222222222222222222222222222222222222222222222222222222222222",
+      "device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
       "device_role": "human",
       "device_name": "Laptop",
       "is_active": true,
@@ -20,20 +20,3023 @@
       "removed_entry_number": null,
       "is_me": true,
       "is_online": true
+    },
+    {
+      "device_id": "064b5da1e8f8b1f1a37b88e1c2f5c96c93d297600e2dd5ba656bf319fc1af128",
+      "device_role": "human",
+      "device_name": "Phone",
+      "is_active": true,
+      "added_entry_number": 1,
+      "removed_entry_number": null,
+      "is_me": false,
+      "is_online": false
+    },
+    {
+      "device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+      "device_role": "agent",
+      "device_name": "Fernly",
+      "is_active": true,
+      "added_entry_number": 2,
+      "removed_entry_number": null,
+      "is_me": false,
+      "is_online": true,
+      "agent_session_id": "web-app"
+    },
+    {
+      "device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+      "device_role": "agent",
+      "device_name": "Design",
+      "is_active": true,
+      "added_entry_number": 3,
+      "removed_entry_number": null,
+      "is_me": false,
+      "is_online": true,
+      "agent_session_id": "web-design"
+    },
+    {
+      "device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+      "device_role": "agent",
+      "device_name": "Copy",
+      "is_active": true,
+      "added_entry_number": 4,
+      "removed_entry_number": null,
+      "is_me": false,
+      "is_online": true,
+      "agent_session_id": "web-copy"
+    },
+    {
+      "device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+      "device_role": "agent",
+      "device_name": "Pip’s Lantern",
+      "is_active": true,
+      "added_entry_number": 5,
+      "removed_entry_number": null,
+      "is_me": false,
+      "is_online": true,
+      "agent_session_id": "game"
+    },
+    {
+      "device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+      "device_role": "agent",
+      "device_name": "Pixel art",
+      "is_active": true,
+      "added_entry_number": 6,
+      "removed_entry_number": null,
+      "is_me": false,
+      "is_online": true,
+      "agent_session_id": "game-art"
+    },
+    {
+      "device_id": "615c678e2d4ec1216d25763cc226f3abc8f0990e200efb9bb285e81f46524585",
+      "device_role": "agent",
+      "device_name": "Sound",
+      "is_active": true,
+      "added_entry_number": 7,
+      "removed_entry_number": null,
+      "is_me": false,
+      "is_online": false,
+      "agent_session_id": "game-sound"
     }
   ],
-  "sessions": [],
-  "cards": [],
+  "sessions": [
+    {
+      "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+      "agent_session_id": "web-app",
+      "device_name": "Fernly",
+      "is_active": true,
+      "is_online": true,
+      "profile": {
+        "model": "claude-opus-5-5",
+        "task": "Fernly: the plant-care web app",
+        "icon": "draw:leaf",
+        "agent_name": "Fernly",
+        "parent_session": null,
+        "is_main": true
+      },
+      "status_lines": [
+        {
+          "id": "onboarding",
+          "label": "Onboarding",
+          "state": "working",
+          "detail": "Step 2 of 3: add your first plant",
+          "object_id": null,
+          "updated_at": 1791469620000
+        },
+        {
+          "id": "pricing",
+          "label": "Pricing page",
+          "state": "done",
+          "detail": "On staging",
+          "object_id": null,
+          "updated_at": 1791462600000
+        }
+      ],
+      "settings": {
+        "name": "",
+        "desk": "main",
+        "archived": false,
+        "group": null,
+        "icon": null
+      }
+    },
+    {
+      "agent_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+      "agent_session_id": "web-design",
+      "device_name": "Design",
+      "is_active": true,
+      "is_online": true,
+      "profile": {
+        "model": "claude-opus-5-5",
+        "task": "Landing page and style",
+        "icon": "draw:brush",
+        "agent_name": "Design",
+        "parent_session": "web-app",
+        "is_main": false
+      },
+      "status_lines": [
+        {
+          "id": "hero",
+          "label": "Mobile hero",
+          "state": "working",
+          "detail": "The phone moves under the buttons",
+          "object_id": null,
+          "updated_at": 1791469440000
+        }
+      ],
+      "settings": {
+        "name": "",
+        "desk": "main",
+        "archived": false,
+        "group": null,
+        "icon": null
+      }
+    },
+    {
+      "agent_device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+      "agent_session_id": "web-copy",
+      "device_name": "Copy",
+      "is_active": true,
+      "is_online": true,
+      "profile": {
+        "model": "claude-opus-5-5",
+        "task": "The words on the site",
+        "icon": "draw:pen",
+        "agent_name": "Copy",
+        "parent_session": "web-app",
+        "is_main": false
+      },
+      "status_lines": [],
+      "settings": {
+        "name": "",
+        "desk": "main",
+        "archived": false,
+        "group": null,
+        "icon": null
+      }
+    },
+    {
+      "agent_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+      "agent_session_id": "game",
+      "device_name": "Pip’s Lantern",
+      "is_active": true,
+      "is_online": true,
+      "profile": {
+        "model": "claude-opus-5-5",
+        "task": "Pip’s Lantern: a cosy night platformer",
+        "icon": "draw:flame",
+        "agent_name": "Pip’s Lantern",
+        "parent_session": null,
+        "is_main": true
+      },
+      "status_lines": [
+        {
+          "id": "level",
+          "label": "Level 2-2",
+          "state": "working",
+          "detail": "Blocking out Firefly Pond",
+          "object_id": null,
+          "updated_at": 1791469560000
+        }
+      ],
+      "settings": {
+        "name": "",
+        "desk": "game",
+        "archived": false,
+        "group": null,
+        "icon": null
+      }
+    },
+    {
+      "agent_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+      "agent_session_id": "game-art",
+      "device_name": "Pixel art",
+      "is_active": true,
+      "is_online": true,
+      "profile": {
+        "model": "claude-opus-5-5",
+        "task": "Sprites and palettes",
+        "icon": "draw:kite",
+        "agent_name": "Pixel art",
+        "parent_session": "game",
+        "is_main": false
+      },
+      "status_lines": [
+        {
+          "id": "sheet",
+          "label": "Sprite sheet",
+          "state": "done",
+          "detail": "3 coats, 5 frames each",
+          "object_id": null,
+          "updated_at": 1791465600000
+        }
+      ],
+      "settings": {
+        "name": "",
+        "desk": "game",
+        "archived": false,
+        "group": null,
+        "icon": null
+      }
+    },
+    {
+      "agent_device_id": "615c678e2d4ec1216d25763cc226f3abc8f0990e200efb9bb285e81f46524585",
+      "agent_session_id": "game-sound",
+      "device_name": "Sound",
+      "is_active": true,
+      "is_online": false,
+      "profile": {
+        "model": "claude-opus-5-5",
+        "task": "Footsteps, chimes and the night",
+        "icon": "draw:waves",
+        "agent_name": "Sound",
+        "parent_session": "game",
+        "is_main": false
+      },
+      "status_lines": [],
+      "settings": {
+        "name": "",
+        "desk": "game",
+        "archived": false,
+        "group": null,
+        "icon": null
+      }
+    }
+  ],
+  "cards": [
+    {
+      "object_id": "98d685411fa1b46845ea1ddec8a69b50",
+      "agent_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+      "first_envelope_number": 151201,
+      "created_at": 1791361800000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "5271bec8d0fb61eb279c706630afbd1deaab4a181faab001d45152f78fe65623",
+          "previous_version_hash": null,
+          "envelope_number": 151201,
+          "sent_at": 1791361800000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "Keep the moon on the title screen?",
+            "teaser": "It sits behind the last letter of the title. Without it the sky feels empty.",
+            "body": "It sits behind the last letter of the title. Without it the sky feels empty.",
+            "options": [
+              {
+                "key": "yes",
+                "label": "Yes",
+                "detail": "",
+                "short": "Yes"
+              },
+              {
+                "key": "no",
+                "label": "No",
+                "detail": "",
+                "short": "No"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "yes",
+            "urgency_reason": "",
+            "attachments": [
+              {
+                "attachment_id": "56af67c9e2442e378e3a5226b26674d7",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "title-screen.png",
+                "media_type": "image/png",
+                "total_size": 40288,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/title-screen.png"
+              }
+            ],
+            "change_note": "",
+            "close_summary": "Done: the moon stays, two pixels dimmer so the title reads first.",
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": {
+        "answer_action": "answer",
+        "choices": [
+          "yes"
+        ],
+        "note": "",
+        "option_notes": {},
+        "attachments": [],
+        "marks": [],
+        "trusted": false,
+        "bound_version_hash": "5271bec8d0fb61eb279c706630afbd1deaab4a181faab001d45152f78fe65623",
+        "bound_object_version": 1,
+        "envelope_number": 154801,
+        "envelope_hash": "0d78bd7ff5400cbbdd8149011b7bacd864810fe5432c1624c8bc8ed6de3f9aa0",
+        "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "answered_at": 1791365400000,
+        "taken_back_at": null
+      },
+      "answers": [
+        {
+          "answer_action": "answer",
+          "choices": [
+            "yes"
+          ],
+          "note": "",
+          "option_notes": {},
+          "attachments": [],
+          "marks": [],
+          "trusted": false,
+          "bound_version_hash": "5271bec8d0fb61eb279c706630afbd1deaab4a181faab001d45152f78fe65623",
+          "bound_object_version": 1,
+          "envelope_number": 154801,
+          "envelope_hash": "0d78bd7ff5400cbbdd8149011b7bacd864810fe5432c1624c8bc8ed6de3f9aa0",
+          "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+          "answered_at": 1791365400000,
+          "taken_back_at": null
+        }
+      ],
+      "closed_how": "closed",
+      "in_revision": null,
+      "timeline_key": "chat:card/98d685411fa1b46845ea1ddec8a69b50",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Keep the moon on the title screen?",
+      "teaser": "It sits behind the last letter of the title. Without it the sky feels empty.",
+      "body": "It sits behind the last letter of the title. Without it the sky feels empty.",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes",
+          "detail": "",
+          "short": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No",
+          "detail": "",
+          "short": "No"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "yes",
+      "urgency_reason": "",
+      "attachments": [
+        {
+          "attachment_id": "56af67c9e2442e378e3a5226b26674d7",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "title-screen.png",
+          "media_type": "image/png",
+          "total_size": 40288,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/title-screen.png"
+        }
+      ],
+      "change_note": "",
+      "close_summary": "Done: the moon stays, two pixels dimmer so the title reads first.",
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "closed",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "5271bec8d0fb61eb279c706630afbd1deaab4a181faab001d45152f78fe65623",
+      "envelope_number": 151201,
+      "updated_at": 1791369000000
+    },
+    {
+      "object_id": "a886d7b3e84bc0780241991899c3fffc",
+      "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+      "first_envelope_number": 165601,
+      "created_at": 1791376200000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "bb3ffd4eb69071d5e50479eb4bf1c5c9068c1498ab6fdf3216413579f6fcb967",
+          "previous_version_hash": null,
+          "envelope_number": 165601,
+          "sent_at": 1791376200000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "Which database for the first version?",
+            "teaser": "Both work for a few thousand users. One is a file, the other a server to look after.",
+            "body": "Both work for a few thousand users. SQLite is one file next to the app; Postgres is a server to look after.",
+            "options": [
+              {
+                "key": "sqlite",
+                "label": "SQLite",
+                "detail": "One file, nothing to run"
+              },
+              {
+                "key": "postgres",
+                "label": "Postgres",
+                "detail": "A server from day one"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "sqlite",
+            "urgency_reason": "",
+            "attachments": [],
+            "change_note": "",
+            "close_summary": "Done: SQLite with a nightly backup. Moving to Postgres later is one script.",
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": {
+        "answer_action": "answer",
+        "choices": [
+          "sqlite"
+        ],
+        "note": "",
+        "option_notes": {},
+        "attachments": [],
+        "marks": [],
+        "trusted": false,
+        "bound_version_hash": "bb3ffd4eb69071d5e50479eb4bf1c5c9068c1498ab6fdf3216413579f6fcb967",
+        "bound_object_version": 1,
+        "envelope_number": 169201,
+        "envelope_hash": "d59376d6adf0bb18a1b51f763ec6ad5a24edbbad917cf5c0c937f64f758f5bf5",
+        "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "answered_at": 1791379800000,
+        "taken_back_at": null
+      },
+      "answers": [
+        {
+          "answer_action": "answer",
+          "choices": [
+            "sqlite"
+          ],
+          "note": "",
+          "option_notes": {},
+          "attachments": [],
+          "marks": [],
+          "trusted": false,
+          "bound_version_hash": "bb3ffd4eb69071d5e50479eb4bf1c5c9068c1498ab6fdf3216413579f6fcb967",
+          "bound_object_version": 1,
+          "envelope_number": 169201,
+          "envelope_hash": "d59376d6adf0bb18a1b51f763ec6ad5a24edbbad917cf5c0c937f64f758f5bf5",
+          "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+          "answered_at": 1791379800000,
+          "taken_back_at": null
+        }
+      ],
+      "closed_how": "closed",
+      "in_revision": null,
+      "timeline_key": "chat:card/a886d7b3e84bc0780241991899c3fffc",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Which database for the first version?",
+      "teaser": "Both work for a few thousand users. One is a file, the other a server to look after.",
+      "body": "Both work for a few thousand users. SQLite is one file next to the app; Postgres is a server to look after.",
+      "options": [
+        {
+          "key": "sqlite",
+          "label": "SQLite",
+          "detail": "One file, nothing to run"
+        },
+        {
+          "key": "postgres",
+          "label": "Postgres",
+          "detail": "A server from day one"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "sqlite",
+      "urgency_reason": "",
+      "attachments": [],
+      "change_note": "",
+      "close_summary": "Done: SQLite with a nightly backup. Moving to Postgres later is one script.",
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "closed",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "bb3ffd4eb69071d5e50479eb4bf1c5c9068c1498ab6fdf3216413579f6fcb967",
+      "envelope_number": 165601,
+      "updated_at": 1791383400000
+    },
+    {
+      "object_id": "1ae150657a775a4ae9508bc924f80808",
+      "agent_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+      "first_envelope_number": 187201,
+      "created_at": 1791397800000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "42b1b4e46a34c852602e88bb4d8b1e24ac4b44c01bdf3092805fb10758488326",
+          "previous_version_hash": null,
+          "envelope_number": 187201,
+          "sent_at": 1791397800000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "Save at every lantern, or after each level?",
+            "teaser": "A level takes about three minutes. Lanterns are 40 seconds apart.",
+            "body": "A level takes about three minutes. Lanterns are about 40 seconds apart.",
+            "options": [
+              {
+                "key": "lantern",
+                "label": "At every lantern",
+                "detail": "Lighting one saves"
+              },
+              {
+                "key": "level",
+                "label": "After each level",
+                "detail": "Simpler, less forgiving"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "lantern",
+            "urgency_reason": "",
+            "attachments": [],
+            "change_note": "",
+            "close_summary": "Done: Pip saves at every lantern. No save menu needed.",
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": {
+        "answer_action": "answer",
+        "choices": [
+          "lantern"
+        ],
+        "note": "",
+        "option_notes": {},
+        "attachments": [],
+        "marks": [],
+        "trusted": false,
+        "bound_version_hash": "42b1b4e46a34c852602e88bb4d8b1e24ac4b44c01bdf3092805fb10758488326",
+        "bound_object_version": 1,
+        "envelope_number": 190801,
+        "envelope_hash": "b65c08bef1845db902b6d1fb3e917712a7c26d657da53f0048c518d73a557de3",
+        "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "answered_at": 1791401400000,
+        "taken_back_at": null
+      },
+      "answers": [
+        {
+          "answer_action": "answer",
+          "choices": [
+            "lantern"
+          ],
+          "note": "",
+          "option_notes": {},
+          "attachments": [],
+          "marks": [],
+          "trusted": false,
+          "bound_version_hash": "42b1b4e46a34c852602e88bb4d8b1e24ac4b44c01bdf3092805fb10758488326",
+          "bound_object_version": 1,
+          "envelope_number": 190801,
+          "envelope_hash": "b65c08bef1845db902b6d1fb3e917712a7c26d657da53f0048c518d73a557de3",
+          "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+          "answered_at": 1791401400000,
+          "taken_back_at": null
+        }
+      ],
+      "closed_how": "closed",
+      "in_revision": null,
+      "timeline_key": "chat:card/1ae150657a775a4ae9508bc924f80808",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Save at every lantern, or after each level?",
+      "teaser": "A level takes about three minutes. Lanterns are 40 seconds apart.",
+      "body": "A level takes about three minutes. Lanterns are about 40 seconds apart.",
+      "options": [
+        {
+          "key": "lantern",
+          "label": "At every lantern",
+          "detail": "Lighting one saves"
+        },
+        {
+          "key": "level",
+          "label": "After each level",
+          "detail": "Simpler, less forgiving"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "lantern",
+      "urgency_reason": "",
+      "attachments": [],
+      "change_note": "",
+      "close_summary": "Done: Pip saves at every lantern. No save menu needed.",
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "closed",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "42b1b4e46a34c852602e88bb4d8b1e24ac4b44c01bdf3092805fb10758488326",
+      "envelope_number": 187201,
+      "updated_at": 1791408600000
+    },
+    {
+      "object_id": "8ba25a25069542fc21e70291a362a553",
+      "agent_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+      "first_envelope_number": 226801,
+      "created_at": 1791437400000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "2f5ba426746a5ff2373f23685cd21b0af4467c892a8f58b044c5a24559757463",
+          "previous_version_hash": null,
+          "envelope_number": 226801,
+          "sent_at": 1791437400000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "Use Pip with the lantern as the app icon?",
+            "teaser": "Drawn at 64 pixels, so it stays sharp at every size.",
+            "body": "Drawn at 64 pixels, so it stays sharp at every size.",
+            "options": [
+              {
+                "key": "yes",
+                "label": "Yes",
+                "detail": "",
+                "short": "Yes"
+              },
+              {
+                "key": "no",
+                "label": "No",
+                "detail": "",
+                "short": "No"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "yes",
+            "urgency_reason": "",
+            "attachments": [
+              {
+                "attachment_id": "088edfa3bd8cc2fea5d6e0d9740171cf",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "app-icon.png",
+                "media_type": "image/png",
+                "total_size": 14501,
+                "width": 1024,
+                "height": 1024,
+                "url": "/demo/files/app-icon.png"
+              }
+            ],
+            "change_note": "",
+            "close_summary": "Done: icon exported in all sizes.",
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": {
+        "answer_action": "answer",
+        "choices": [
+          "yes"
+        ],
+        "note": "",
+        "option_notes": {},
+        "attachments": [],
+        "marks": [],
+        "trusted": false,
+        "bound_version_hash": "2f5ba426746a5ff2373f23685cd21b0af4467c892a8f58b044c5a24559757463",
+        "bound_object_version": 1,
+        "envelope_number": 230401,
+        "envelope_hash": "0c8cc5cd5d2ae2e411e79af16787d284d77cb7999fdd25f3b6a48dd3ea70d000",
+        "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "answered_at": 1791441000000,
+        "taken_back_at": null
+      },
+      "answers": [
+        {
+          "answer_action": "answer",
+          "choices": [
+            "yes"
+          ],
+          "note": "",
+          "option_notes": {},
+          "attachments": [],
+          "marks": [],
+          "trusted": false,
+          "bound_version_hash": "2f5ba426746a5ff2373f23685cd21b0af4467c892a8f58b044c5a24559757463",
+          "bound_object_version": 1,
+          "envelope_number": 230401,
+          "envelope_hash": "0c8cc5cd5d2ae2e411e79af16787d284d77cb7999fdd25f3b6a48dd3ea70d000",
+          "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+          "answered_at": 1791441000000,
+          "taken_back_at": null
+        }
+      ],
+      "closed_how": "closed",
+      "in_revision": null,
+      "timeline_key": "chat:card/8ba25a25069542fc21e70291a362a553",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Use Pip with the lantern as the app icon?",
+      "teaser": "Drawn at 64 pixels, so it stays sharp at every size.",
+      "body": "Drawn at 64 pixels, so it stays sharp at every size.",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes",
+          "detail": "",
+          "short": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No",
+          "detail": "",
+          "short": "No"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "yes",
+      "urgency_reason": "",
+      "attachments": [
+        {
+          "attachment_id": "088edfa3bd8cc2fea5d6e0d9740171cf",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "app-icon.png",
+          "media_type": "image/png",
+          "total_size": 14501,
+          "width": 1024,
+          "height": 1024,
+          "url": "/demo/files/app-icon.png"
+        }
+      ],
+      "change_note": "",
+      "close_summary": "Done: icon exported in all sizes.",
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "closed",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "2f5ba426746a5ff2373f23685cd21b0af4467c892a8f58b044c5a24559757463",
+      "envelope_number": 226801,
+      "updated_at": 1791444600000
+    },
+    {
+      "object_id": "a1bfb1949b8ab36031c4f9d5195b61f2",
+      "agent_device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+      "first_envelope_number": 241201,
+      "created_at": 1791451800000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "26aff41c8fd51f24e4b447969bd2b5248e811c4a39679f49a5ee841932b24ca0",
+          "previous_version_hash": null,
+          "envelope_number": 241201,
+          "sent_at": 1791451800000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "What do we call the three plans?",
+            "teaser": "Free, $4 and $9 a month. The names go on the pricing page.",
+            "body": "Free, $4 and $9 a month. The names go on the pricing page and into the receipts.",
+            "options": [
+              {
+                "key": "places",
+                "label": "Windowsill, Greenhouse, Jungle",
+                "detail": "By how many plants"
+              },
+              {
+                "key": "growth",
+                "label": "Seed, Sprout, Bloom",
+                "detail": "By growing up"
+              },
+              {
+                "key": "plain",
+                "label": "Free, Plus, Family",
+                "detail": "Says what it is"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "places",
+            "urgency_reason": "",
+            "attachments": [
+              {
+                "attachment_id": "79608a641cb2ac45031a9d47f727d56e",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "pricing.png",
+                "media_type": "image/png",
+                "total_size": 228641,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/pricing.png"
+              }
+            ],
+            "change_note": "",
+            "close_summary": "Live on staging: Windowsill, Greenhouse, Jungle.",
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": {
+        "answer_action": "answer",
+        "choices": [
+          "places"
+        ],
+        "note": "",
+        "option_notes": {},
+        "attachments": [],
+        "marks": [],
+        "trusted": false,
+        "bound_version_hash": "26aff41c8fd51f24e4b447969bd2b5248e811c4a39679f49a5ee841932b24ca0",
+        "bound_object_version": 1,
+        "envelope_number": 243001,
+        "envelope_hash": "9b66a4fde07c68cec68b9c0326b1e27cc3c3b9f9ad8e368260edda7562b2689d",
+        "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "answered_at": 1791453600000,
+        "taken_back_at": null
+      },
+      "answers": [
+        {
+          "answer_action": "answer",
+          "choices": [
+            "places"
+          ],
+          "note": "",
+          "option_notes": {},
+          "attachments": [],
+          "marks": [],
+          "trusted": false,
+          "bound_version_hash": "26aff41c8fd51f24e4b447969bd2b5248e811c4a39679f49a5ee841932b24ca0",
+          "bound_object_version": 1,
+          "envelope_number": 243001,
+          "envelope_hash": "9b66a4fde07c68cec68b9c0326b1e27cc3c3b9f9ad8e368260edda7562b2689d",
+          "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+          "answered_at": 1791453600000,
+          "taken_back_at": null
+        }
+      ],
+      "closed_how": "closed",
+      "in_revision": null,
+      "timeline_key": "chat:card/a1bfb1949b8ab36031c4f9d5195b61f2",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "What do we call the three plans?",
+      "teaser": "Free, $4 and $9 a month. The names go on the pricing page.",
+      "body": "Free, $4 and $9 a month. The names go on the pricing page and into the receipts.",
+      "options": [
+        {
+          "key": "places",
+          "label": "Windowsill, Greenhouse, Jungle",
+          "detail": "By how many plants"
+        },
+        {
+          "key": "growth",
+          "label": "Seed, Sprout, Bloom",
+          "detail": "By growing up"
+        },
+        {
+          "key": "plain",
+          "label": "Free, Plus, Family",
+          "detail": "Says what it is"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "places",
+      "urgency_reason": "",
+      "attachments": [
+        {
+          "attachment_id": "79608a641cb2ac45031a9d47f727d56e",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "pricing.png",
+          "media_type": "image/png",
+          "total_size": 228641,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/pricing.png"
+        }
+      ],
+      "change_note": "",
+      "close_summary": "Live on staging: Windowsill, Greenhouse, Jungle.",
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "closed",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "26aff41c8fd51f24e4b447969bd2b5248e811c4a39679f49a5ee841932b24ca0",
+      "envelope_number": 241201,
+      "updated_at": 1791462600000
+    },
+    {
+      "object_id": "7307de99acf2767a5fbe424d65052430",
+      "agent_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+      "first_envelope_number": 256201,
+      "created_at": 1791466800000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "9d103c81cee12aa6d4e09ad7829c75b664774c7f6f7bdd388b9dd0b07bfa4173",
+          "previous_version_hash": null,
+          "envelope_number": 256201,
+          "sent_at": 1791466800000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "Remind in the morning or in the evening?",
+            "teaser": "The reminder for plants that are due. One time for everyone to start with.",
+            "body": "The reminder for plants that are due. One time for everyone to start with; a setting can follow.",
+            "options": [
+              {
+                "key": "morning",
+                "label": "Morning, 8:00",
+                "detail": "Before leaving the house"
+              },
+              {
+                "key": "evening",
+                "label": "Evening, 18:30",
+                "detail": "Back home, can in hand"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "morning",
+            "urgency_reason": "",
+            "attachments": [],
+            "change_note": "",
+            "close_summary": null,
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": {
+        "answer_action": "answer",
+        "choices": [
+          "morning"
+        ],
+        "note": "",
+        "option_notes": {},
+        "attachments": [],
+        "marks": [],
+        "trusted": false,
+        "bound_version_hash": "9d103c81cee12aa6d4e09ad7829c75b664774c7f6f7bdd388b9dd0b07bfa4173",
+        "bound_object_version": 1,
+        "envelope_number": 257881,
+        "envelope_hash": "93a941c0fb901dd447c0d08c02d8007ad0aa49f49dffb263adc276bb19af3a55",
+        "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "answered_at": 1791468480000,
+        "taken_back_at": null
+      },
+      "answers": [
+        {
+          "answer_action": "answer",
+          "choices": [
+            "morning"
+          ],
+          "note": "",
+          "option_notes": {},
+          "attachments": [],
+          "marks": [],
+          "trusted": false,
+          "bound_version_hash": "9d103c81cee12aa6d4e09ad7829c75b664774c7f6f7bdd388b9dd0b07bfa4173",
+          "bound_object_version": 1,
+          "envelope_number": 257881,
+          "envelope_hash": "93a941c0fb901dd447c0d08c02d8007ad0aa49f49dffb263adc276bb19af3a55",
+          "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+          "answered_at": 1791468480000,
+          "taken_back_at": null
+        }
+      ],
+      "closed_how": "answered",
+      "in_revision": null,
+      "timeline_key": "chat:card/7307de99acf2767a5fbe424d65052430",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Remind in the morning or in the evening?",
+      "teaser": "The reminder for plants that are due. One time for everyone to start with.",
+      "body": "The reminder for plants that are due. One time for everyone to start with; a setting can follow.",
+      "options": [
+        {
+          "key": "morning",
+          "label": "Morning, 8:00",
+          "detail": "Before leaving the house"
+        },
+        {
+          "key": "evening",
+          "label": "Evening, 18:30",
+          "detail": "Back home, can in hand"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "morning",
+      "urgency_reason": "",
+      "attachments": [],
+      "change_note": "",
+      "close_summary": null,
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "answered",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "9d103c81cee12aa6d4e09ad7829c75b664774c7f6f7bdd388b9dd0b07bfa4173",
+      "envelope_number": 256201,
+      "updated_at": 1791468480000
+    },
+    {
+      "object_id": "a2d6366e94bbc1d75185e5309778b594",
+      "agent_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+      "first_envelope_number": 256921,
+      "created_at": 1791467520000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "1f90f1f87646e907030094bd679f6cdff4cd0e21a93975d01bb24bf2ec03f152",
+          "previous_version_hash": null,
+          "envelope_number": 256921,
+          "sent_at": 1791467520000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "Which hero for the landing page?",
+            "teaser": "Same words, same colours. One shows the plants, the other the app.",
+            "body": "Same words, same colours. **Centered** keeps the shelf of plants, but on a small laptop it sits below the fold. **Split** shows the app right away.",
+            "options": [
+              {
+                "key": "centered",
+                "label": "Centered",
+                "detail": "Headline first, plants below"
+              },
+              {
+                "key": "split",
+                "label": "Split",
+                "detail": "The app beside the headline"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "split",
+            "urgency_reason": "",
+            "attachments": [
+              {
+                "attachment_id": "90e6803cd9d2b7cf50c87723b06cccf7",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "hero-centered.png",
+                "media_type": "image/png",
+                "total_size": 218828,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/hero-centered.png"
+              },
+              {
+                "attachment_id": "16c96d71c2f363df82d675afd923c572",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "hero-split.png",
+                "media_type": "image/png",
+                "total_size": 273551,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/hero-split.png"
+              }
+            ],
+            "change_note": "",
+            "close_summary": null,
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": null,
+      "answers": [],
+      "closed_how": null,
+      "in_revision": null,
+      "timeline_key": "chat:card/a2d6366e94bbc1d75185e5309778b594",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Which hero for the landing page?",
+      "teaser": "Same words, same colours. One shows the plants, the other the app.",
+      "body": "Same words, same colours. **Centered** keeps the shelf of plants, but on a small laptop it sits below the fold. **Split** shows the app right away.",
+      "options": [
+        {
+          "key": "centered",
+          "label": "Centered",
+          "detail": "Headline first, plants below"
+        },
+        {
+          "key": "split",
+          "label": "Split",
+          "detail": "The app beside the headline"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "split",
+      "urgency_reason": "",
+      "attachments": [
+        {
+          "attachment_id": "90e6803cd9d2b7cf50c87723b06cccf7",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "hero-centered.png",
+          "media_type": "image/png",
+          "total_size": 218828,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/hero-centered.png"
+        },
+        {
+          "attachment_id": "16c96d71c2f363df82d675afd923c572",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "hero-split.png",
+          "media_type": "image/png",
+          "total_size": 273551,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/hero-split.png"
+        }
+      ],
+      "change_note": "",
+      "close_summary": null,
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "open",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "1f90f1f87646e907030094bd679f6cdff4cd0e21a93975d01bb24bf2ec03f152",
+      "envelope_number": 256921,
+      "updated_at": 1791467520000
+    },
+    {
+      "object_id": "08f4985594521ecf8269c8bb903a5f87",
+      "agent_device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+      "first_envelope_number": 257581,
+      "created_at": 1791468180000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "e0c6d98d8b4be450641ce8ebf428e0394a0420a72e93902de1b6e34c07b92d83",
+          "previous_version_hash": null,
+          "envelope_number": 257581,
+          "sent_at": 1791468180000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "What should the sign-up button say?",
+            "teaser": "It is the only button on step 1 of the onboarding.",
+            "body": "It is the only button on step 1. “Add my first plant” says what comes next, “Start free” says what it costs.",
+            "options": [
+              {
+                "key": "first-plant",
+                "label": "Add my first plant",
+                "detail": "Names the next step"
+              },
+              {
+                "key": "start-free",
+                "label": "Start free",
+                "detail": "Same as the landing page"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "first-plant",
+            "urgency_reason": "",
+            "attachments": [
+              {
+                "attachment_id": "fbea941a07ecdda12a62c9a10ef82b38",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "signup-first-plant.png",
+                "media_type": "image/png",
+                "total_size": 153583,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/signup-first-plant.png"
+              },
+              {
+                "attachment_id": "0258857bc2d2f526bbd9e327f2ea9e46",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "signup-start-free.png",
+                "media_type": "image/png",
+                "total_size": 151792,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/signup-start-free.png"
+              }
+            ],
+            "change_note": "",
+            "close_summary": null,
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": null,
+      "answers": [],
+      "closed_how": null,
+      "in_revision": null,
+      "timeline_key": "chat:card/08f4985594521ecf8269c8bb903a5f87",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "What should the sign-up button say?",
+      "teaser": "It is the only button on step 1 of the onboarding.",
+      "body": "It is the only button on step 1. “Add my first plant” says what comes next, “Start free” says what it costs.",
+      "options": [
+        {
+          "key": "first-plant",
+          "label": "Add my first plant",
+          "detail": "Names the next step"
+        },
+        {
+          "key": "start-free",
+          "label": "Start free",
+          "detail": "Same as the landing page"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "first-plant",
+      "urgency_reason": "",
+      "attachments": [
+        {
+          "attachment_id": "fbea941a07ecdda12a62c9a10ef82b38",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "signup-first-plant.png",
+          "media_type": "image/png",
+          "total_size": 153583,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/signup-first-plant.png"
+        },
+        {
+          "attachment_id": "0258857bc2d2f526bbd9e327f2ea9e46",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "signup-start-free.png",
+          "media_type": "image/png",
+          "total_size": 151792,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/signup-start-free.png"
+        }
+      ],
+      "change_note": "",
+      "close_summary": null,
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "open",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "e0c6d98d8b4be450641ce8ebf428e0394a0420a72e93902de1b6e34c07b92d83",
+      "envelope_number": 257581,
+      "updated_at": 1791468180000
+    },
+    {
+      "object_id": "9946b4b1d9b038b941a2c2bfa65ccbd1",
+      "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+      "first_envelope_number": 258481,
+      "created_at": 1791469080000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "d288dfeedb786b36873eecb1f4072c2c3d02ec0513fd611f1d0bc5667da412d8",
+          "previous_version_hash": null,
+          "envelope_number": 258481,
+          "sent_at": 1791469080000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "decision",
+            "title": "Send a weekly summary e-mail on Sundays?",
+            "teaser": "One mail with what is due next week. It can be switched off in Settings.",
+            "body": "One mail with what is due next week. It can be switched off in Settings.",
+            "options": [
+              {
+                "key": "yes",
+                "label": "Yes",
+                "detail": "",
+                "short": "Yes"
+              },
+              {
+                "key": "no",
+                "label": "No",
+                "detail": "",
+                "short": "No"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "yes",
+            "urgency_reason": "",
+            "attachments": [],
+            "change_note": "",
+            "close_summary": null,
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": null,
+      "answers": [],
+      "closed_how": null,
+      "in_revision": null,
+      "timeline_key": "chat:card/9946b4b1d9b038b941a2c2bfa65ccbd1",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Send a weekly summary e-mail on Sundays?",
+      "teaser": "One mail with what is due next week. It can be switched off in Settings.",
+      "body": "One mail with what is due next week. It can be switched off in Settings.",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes",
+          "detail": "",
+          "short": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No",
+          "detail": "",
+          "short": "No"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "yes",
+      "urgency_reason": "",
+      "attachments": [],
+      "change_note": "",
+      "close_summary": null,
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "open",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "d288dfeedb786b36873eecb1f4072c2c3d02ec0513fd611f1d0bc5667da412d8",
+      "envelope_number": 258481,
+      "updated_at": 1791469080000
+    },
+    {
+      "object_id": "f6f196ee7786275547a6050d4ba98c13",
+      "agent_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+      "first_envelope_number": 258241,
+      "created_at": 1791468840000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "f9c094c4364521ab1f1e8a691b3904eb50d77d17cb83c5c5814a8cee635c13a6",
+          "previous_version_hash": null,
+          "envelope_number": 258241,
+          "sent_at": 1791468840000,
+          "object_state": "open",
+          "urgency": "high",
+          "content": {
+            "card_type": "decision",
+            "title": "Which coat for Pip?",
+            "teaser": "All three are drawn and animated. The other two can become unlockables.",
+            "body": "All three are drawn and animated. The one you pick is the fox on the title screen and the icon; the other two can come back as unlockables.",
+            "options": [
+              {
+                "key": "ember",
+                "label": "Ember",
+                "detail": "Fox orange, teal scarf"
+              },
+              {
+                "key": "frost",
+                "label": "Frost",
+                "detail": "Snow fox, red scarf"
+              },
+              {
+                "key": "dusk",
+                "label": "Dusk",
+                "detail": "Violet, yellow scarf"
+              }
+            ],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": "ember",
+            "urgency_reason": "The store page waits for it",
+            "attachments": [
+              {
+                "attachment_id": "7e644b53241cb7fdb1b688c7807c6985",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "pip-ember.png",
+                "media_type": "image/png",
+                "total_size": 34254,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/pip-ember.png"
+              },
+              {
+                "attachment_id": "c76d2123a7203c3854a53726d4e65a89",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "pip-frost.png",
+                "media_type": "image/png",
+                "total_size": 33909,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/pip-frost.png"
+              },
+              {
+                "attachment_id": "c3d2767c10e7b75396f21f4104cd2c89",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "pip-dusk.png",
+                "media_type": "image/png",
+                "total_size": 34275,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/pip-dusk.png"
+              }
+            ],
+            "change_note": "",
+            "close_summary": null,
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": null,
+      "answers": [],
+      "closed_how": null,
+      "in_revision": null,
+      "timeline_key": "chat:card/f6f196ee7786275547a6050d4ba98c13",
+      "content_state": "ok",
+      "card_type": "decision",
+      "title": "Which coat for Pip?",
+      "teaser": "All three are drawn and animated. The other two can become unlockables.",
+      "body": "All three are drawn and animated. The one you pick is the fox on the title screen and the icon; the other two can come back as unlockables.",
+      "options": [
+        {
+          "key": "ember",
+          "label": "Ember",
+          "detail": "Fox orange, teal scarf"
+        },
+        {
+          "key": "frost",
+          "label": "Frost",
+          "detail": "Snow fox, red scarf"
+        },
+        {
+          "key": "dusk",
+          "label": "Dusk",
+          "detail": "Violet, yellow scarf"
+        }
+      ],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": "ember",
+      "urgency_reason": "The store page waits for it",
+      "attachments": [
+        {
+          "attachment_id": "7e644b53241cb7fdb1b688c7807c6985",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "pip-ember.png",
+          "media_type": "image/png",
+          "total_size": 34254,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/pip-ember.png"
+        },
+        {
+          "attachment_id": "c76d2123a7203c3854a53726d4e65a89",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "pip-frost.png",
+          "media_type": "image/png",
+          "total_size": 33909,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/pip-frost.png"
+        },
+        {
+          "attachment_id": "c3d2767c10e7b75396f21f4104cd2c89",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "pip-dusk.png",
+          "media_type": "image/png",
+          "total_size": 34275,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/pip-dusk.png"
+        }
+      ],
+      "change_note": "",
+      "close_summary": null,
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "open",
+      "urgency": "high",
+      "object_version": 1,
+      "version_hash": "f9c094c4364521ab1f1e8a691b3904eb50d77d17cb83c5c5814a8cee635c13a6",
+      "envelope_number": 258241,
+      "updated_at": 1791468840000
+    },
+    {
+      "object_id": "4e2cd76f8b8aec5c8439679fbfd74d6d",
+      "agent_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+      "first_envelope_number": 256321,
+      "created_at": 1791466920000,
+      "versions": [
+        {
+          "object_version": 1,
+          "version_hash": "12d4b754135af2e9d444e21e104647f791e64ca1d6673e262c63bbe1fd77f597",
+          "previous_version_hash": null,
+          "envelope_number": 256321,
+          "sent_at": 1791466920000,
+          "object_state": "open",
+          "urgency": "normal",
+          "content": {
+            "card_type": "info",
+            "title": "Done: level 2-1, Mossy Hollow, is playable",
+            "teaser": "Five lanterns, two ladders, one pond. A run takes about three minutes.",
+            "body": "Five lanterns to light, two ladders and one pond to jump. A full run takes about **three minutes**.\n\nNo enemies yet, as you asked: the only way to lose a heart is the water.",
+            "options": [],
+            "sections": null,
+            "html": null,
+            "allows_multiple": false,
+            "recommended": null,
+            "urgency_reason": "",
+            "attachments": [
+              {
+                "attachment_id": "da1554fcbe9fdbe79cb224211fe6374e",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "level-mossy-hollow.png",
+                "media_type": "image/png",
+                "total_size": 42391,
+                "width": 2560,
+                "height": 1600,
+                "url": "/demo/files/level-mossy-hollow.png"
+              }
+            ],
+            "change_note": "",
+            "close_summary": null,
+            "withdraw_reason": null,
+            "merged_into_object_id": null,
+            "merged_from_object_ids": null
+          }
+        }
+      ],
+      "answer": null,
+      "answers": [],
+      "closed_how": null,
+      "in_revision": null,
+      "timeline_key": "chat:card/4e2cd76f8b8aec5c8439679fbfd74d6d",
+      "content_state": "ok",
+      "card_type": "info",
+      "title": "Done: level 2-1, Mossy Hollow, is playable",
+      "teaser": "Five lanterns, two ladders, one pond. A run takes about three minutes.",
+      "body": "Five lanterns to light, two ladders and one pond to jump. A full run takes about **three minutes**.\n\nNo enemies yet, as you asked: the only way to lose a heart is the water.",
+      "options": [],
+      "sections": null,
+      "html": null,
+      "allows_multiple": false,
+      "recommended": null,
+      "urgency_reason": "",
+      "attachments": [
+        {
+          "attachment_id": "da1554fcbe9fdbe79cb224211fe6374e",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "level-mossy-hollow.png",
+          "media_type": "image/png",
+          "total_size": 42391,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/level-mossy-hollow.png"
+        }
+      ],
+      "change_note": "",
+      "close_summary": null,
+      "withdraw_reason": null,
+      "merged_into_object_id": null,
+      "merged_from_object_ids": null,
+      "object_state": "open",
+      "urgency": "normal",
+      "object_version": 1,
+      "version_hash": "12d4b754135af2e9d444e21e104647f791e64ca1d6673e262c63bbe1fd77f597",
+      "envelope_number": 256321,
+      "updated_at": 1791466920000
+    }
+  ],
   "permissions": [],
-  "notes": [],
-  "published": [],
-  "timelines": {},
+  "notes": [
+    {
+      "object_id": "22df44bb7cff089ea4d55abc6d67cf6e",
+      "by_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+      "text": "Idea: Pip waves when you stand still for ten seconds.",
+      "object_version": 1,
+      "version_hash": "4f5bde550479c52b794b4714de7e187b3c60f9a451dfee6b35069e015f3c8de7",
+      "envelope_number": 255901,
+      "object_state": "open",
+      "created_at": 1791466500000,
+      "updated_at": 1791466500000
+    }
+  ],
+  "published": [
+    {
+      "object_id": "6fe8ad302b25ff06438246251d31b358",
+      "agent_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+      "attachments": [
+        {
+          "attachment_id": "d76cbcc4b7ccff5016daaf6e3bcd7b8c",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "style-tiles.png",
+          "media_type": "image/png",
+          "total_size": 180579,
+          "width": 2560,
+          "height": 1160,
+          "url": "/demo/files/style-tiles.png"
+        }
+      ],
+      "title": "Fernly: style tiles",
+      "note": "Colours, type, buttons and the five plants.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "6948c18668e2025ac58561d572797f2ffcdee0d741b4d900c64c455d1c13932c",
+      "envelope_number": 248401,
+      "sent_at": 1791459000000,
+      "object_state": "open"
+    },
+    {
+      "object_id": "b40d4e6b29a4c4d0317f9320efa04536",
+      "agent_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+      "attachments": [
+        {
+          "attachment_id": "f935b9f76b3ac6a21cd3f822dc6b1e1b",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "landing-page.png",
+          "media_type": "image/png",
+          "total_size": 275258,
+          "width": 1280,
+          "height": 2385,
+          "url": "/demo/files/landing-page.png"
+        }
+      ],
+      "title": "Landing page, whole length",
+      "note": "The page from the hero to the footer.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "b054b161105836dcfe78a4f2d7f7649fa8d3d5328457f454216225734280d0f8",
+      "envelope_number": 253201,
+      "sent_at": 1791463800000,
+      "object_state": "open"
+    },
+    {
+      "object_id": "804bd95d10cfbac2f074d226bda72c46",
+      "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+      "attachments": [
+        {
+          "attachment_id": "22d86ca89973901d912bd9ac731cc028",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "phone-today.png",
+          "media_type": "image/png",
+          "total_size": 102893,
+          "width": 780,
+          "height": 1688,
+          "url": "/demo/files/phone-today.png"
+        }
+      ],
+      "title": "App: Today",
+      "note": "What is thirsty today.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "d609667f440baeffcaf6f88c8298f708b71fba8a4dfa581fc78f984c39bf1fa4",
+      "envelope_number": 253501,
+      "sent_at": 1791464100000,
+      "object_state": "open"
+    },
+    {
+      "object_id": "0a8ce09a8e3da6d3ae95c823b96d13a0",
+      "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+      "attachments": [
+        {
+          "attachment_id": "f2ef1bf3f05f07c3764e170b8c12c57c",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "phone-add-plant.png",
+          "media_type": "image/png",
+          "total_size": 104399,
+          "width": 780,
+          "height": 1688,
+          "url": "/demo/files/phone-add-plant.png"
+        }
+      ],
+      "title": "App: add a plant",
+      "note": "Step 2 of the onboarding.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "5cb92a76754ae1054be85d6bbb1feedae4aae66fa1faa337b11cfc308ff5c9e6",
+      "envelope_number": 253801,
+      "sent_at": 1791464400000,
+      "object_state": "open"
+    },
+    {
+      "object_id": "28030cb288a01d85190c72c8720be76c",
+      "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+      "attachments": [
+        {
+          "attachment_id": "8d2a414a41fc7132c1497047fe6b55c4",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "launch-checklist.html",
+          "media_type": "text/html",
+          "total_size": 3632,
+          "url": "/demo/files/launch-checklist.html"
+        }
+      ],
+      "title": "Launch checklist",
+      "note": "A page: what is left before Fernly opens.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "fd904a812cee164edb16273379e5be231314c243d98d5ffbef920b5635dbbac2",
+      "envelope_number": 254401,
+      "sent_at": 1791465000000,
+      "object_state": "open"
+    },
+    {
+      "object_id": "9c2de51461e91d0489535c0798279dd4",
+      "agent_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+      "attachments": [
+        {
+          "attachment_id": "78455e06bedca7df5aa762879bf54234",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "title-screen.png",
+          "media_type": "image/png",
+          "total_size": 40288,
+          "width": 2560,
+          "height": 1600,
+          "url": "/demo/files/title-screen.png"
+        }
+      ],
+      "title": "Pip’s Lantern: title screen",
+      "note": "With the moon.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "5ccc273c6187277e32d850be589e894c450f0efcf98c1f0e7f8406646e6bad76",
+      "envelope_number": 154802,
+      "sent_at": 1791365400000,
+      "object_state": "open"
+    },
+    {
+      "object_id": "9db0b7780fe4fda064b86267eb220872",
+      "agent_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+      "attachments": [
+        {
+          "attachment_id": "ce2d6564c89e1d56feaf23ad40bfa16c",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "sprite-sheet.png",
+          "media_type": "image/png",
+          "total_size": 21813,
+          "width": 2400,
+          "height": 1500,
+          "url": "/demo/files/sprite-sheet.png"
+        }
+      ],
+      "title": "Pip: sprite sheet",
+      "note": "Three coats, five frames each.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "9335305eed43a703251c14aa8c17b217aa4620e0ef8307361ba479f3a4d21010",
+      "envelope_number": 255002,
+      "sent_at": 1791465600000,
+      "object_state": "open"
+    },
+    {
+      "object_id": "a1e7f71d8d10f92e3fc82c3fdd2801ef",
+      "agent_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+      "attachments": [
+        {
+          "attachment_id": "848b23220a6663e8caf820e4ce8e7ebb",
+          "file_key": "",
+          "sha256": "",
+          "file_name": "app-icon.png",
+          "media_type": "image/png",
+          "total_size": 14501,
+          "width": 1024,
+          "height": 1024,
+          "url": "/demo/files/app-icon.png"
+        }
+      ],
+      "title": "Pip’s Lantern: app icon",
+      "note": "1024 pixels, drawn at 64.",
+      "released_until": null,
+      "object_version": 1,
+      "version_hash": "8081ad47c52340dd3cfb5cca1272409fe1616ae93485e99ee5e404f4a46f81f8",
+      "envelope_number": 234001,
+      "sent_at": 1791444600000,
+      "object_state": "open"
+    }
+  ],
+  "timelines": {
+    "chat:session/0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a": [
+      {
+        "envelope_number": 237601,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "20291b888c2ed855e752b5a84bf281b08be336e622658f0ca5fb6ec1d050e474",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "sent_at": 1791448200000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Morning. Today: the pricing page onto staging, then the onboarding.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 237661,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "a66ca27be2b0896e932bf33bb8296bc549127d0f2b148626805ec38ae2bb53e6",
+        "sender_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "recipient_device_id": null,
+        "sent_at": 1791448260000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "On it. Plan:\n\n- the pricing page with the three plans\n- onboarding in **three steps**\n- the weekly e-mail last\n\nQuestions come to your Desk as cards.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 252001,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "ee97f89b87e1943b362f3cfad755212e0c841da33f1a73c31e0826f3ff14a6a7",
+        "sender_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "recipient_device_id": null,
+        "sent_at": 1791462600000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "The pricing page is on staging. Copy named the plans, Design drew the cards.",
+          "attachments": [
+            {
+              "attachment_id": "6e874d15db82272690a3ba1137f3b971",
+              "file_key": "",
+              "sha256": "",
+              "file_name": "pricing.png",
+              "media_type": "image/png",
+              "total_size": 228641,
+              "width": 2560,
+              "height": 1600,
+              "url": "/demo/files/pricing.png"
+            }
+          ]
+        }
+      },
+      {
+        "envelope_number": 257341,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "d61cba5b7097e53f4141f3a450dea48468e426b727ea1e2e64abfaadb3e33674",
+        "sender_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "recipient_device_id": null,
+        "sent_at": 1791467940000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "How fast is the landing page on a phone? And is the plant library in the first load?",
+          "attachments": [],
+          "terminal": "input"
+        }
+      },
+      {
+        "envelope_number": 257344,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "a93cc92c2bf83d65350d9487acb193489245db5aae1656e6df82ee6aa464e658",
+        "sender_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "recipient_device_id": null,
+        "sent_at": 1791467943000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "attachments": [],
+          "terminal": "work",
+          "work": {
+            "turn": "demo-turn-1",
+            "seq": 1,
+            "state": "running",
+            "started_at": 1791467942000,
+            "items": [
+              {
+                "id": "say:1",
+                "kind": "text",
+                "text": "I build it as it ships, then I measure it on a throttled phone.",
+                "at": 1791467942900
+              },
+              {
+                "id": "toolu_d1",
+                "kind": "step",
+                "tool": "Read",
+                "state": "ok",
+                "at": 1791467943000,
+                "subject": "web/vite.config.ts",
+                "ms": 11
+              },
+              {
+                "id": "toolu_d2",
+                "kind": "step",
+                "tool": "Grep",
+                "state": "ok",
+                "at": 1791467943400,
+                "subject": "plant-library in web/src",
+                "ms": 52
+              },
+              {
+                "id": "toolu_d3",
+                "kind": "step",
+                "tool": "Bash",
+                "state": "running",
+                "at": 1791467943500,
+                "title": "Build the site for production"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "envelope_number": 257395,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "15e88e7701f451d374fa3d29d372cda884356692d150b57e53acc7edb66bfcb7",
+        "sender_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "recipient_device_id": null,
+        "sent_at": 1791467994000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "attachments": [],
+          "terminal": "work",
+          "work": {
+            "turn": "demo-turn-1",
+            "seq": 2,
+            "state": "done",
+            "started_at": 1791467942000,
+            "ended_at": 1791467994000,
+            "items": [
+              {
+                "id": "toolu_d3",
+                "kind": "step",
+                "tool": "Bash",
+                "state": "ok",
+                "at": 1791467943500,
+                "title": "Build the site for production",
+                "ms": 8300
+              },
+              {
+                "id": "toolu_d4",
+                "kind": "step",
+                "tool": "Agent",
+                "state": "ok",
+                "at": 1791467952000,
+                "title": "Find what the landing page loads first",
+                "subject": "Explore",
+                "ms": 15400
+              },
+              {
+                "id": "agent:d1",
+                "kind": "helper",
+                "tool": "Explore",
+                "title": "Find what the landing page loads first",
+                "state": "ok",
+                "at": 1791467952000,
+                "ms": 15000,
+                "steps": 9
+              },
+              {
+                "id": "say:2",
+                "kind": "text",
+                "text": "The library is imported by the search box, and the search box sits in the header. I load it on the first keystroke instead.",
+                "at": 1791467968000
+              },
+              {
+                "id": "toolu_d5",
+                "kind": "step",
+                "tool": "Bash",
+                "state": "failed",
+                "at": 1791467968500,
+                "title": "Measure the landing page on a slow phone",
+                "ms": 1900
+              },
+              {
+                "id": "toolu_d6",
+                "kind": "step",
+                "tool": "Edit",
+                "state": "ok",
+                "at": 1791467971000,
+                "subject": "web/src/lib/Search.svelte",
+                "ms": 9
+              },
+              {
+                "id": "toolu_d7",
+                "kind": "step",
+                "tool": "Bash",
+                "state": "ok",
+                "at": 1791467972000,
+                "title": "Measure the landing page on a slow phone",
+                "ms": 19600
+              }
+            ]
+          }
+        }
+      },
+      {
+        "envelope_number": 257401,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "eb0f48b49fa10e66ef6f349179d4173e51c21e5ca09ac4f2be4e3e9f1bc28281",
+        "sender_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "recipient_device_id": null,
+        "sent_at": 1791468000000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "About **1.4 seconds** on a mid-range phone over 4G.\n\nThe plant library was in the first load, through the search box in the header. It now loads on the first keystroke:\n\n- first load: 312 kB before, **98 kB** now\n- the library: 214 kB, fetched once, then cached",
+          "attachments": [],
+          "terminal": "answer"
+        }
+      },
+      {
+        "envelope_number": 258361,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "9415b3c0a8de75ade15695f535cffc9795e76039ffc50525d1ec099aa771769c",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "sent_at": 1791468960000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Nice. People keep asking for a summary by mail, by the way.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 258451,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "35232140cfdde0b2189da3a8495906fe94fbc0ae3f531f0d3c4150bc8f0a25ea",
+        "sender_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a",
+        "recipient_device_id": null,
+        "sent_at": 1791469050000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Then I would send one on Sunday evening. The question is on your Desk.",
+          "attachments": []
+        }
+      }
+    ],
+    "chat:session/fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414": [
+      {
+        "envelope_number": 256861,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "99d682a145a736f6762b93c2fe3f3ad0eb037aeae3b6d769fb0f4c61f9df7415",
+        "sender_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "recipient_device_id": null,
+        "sent_at": 1791467460000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Two heroes are drawn, with the same words. The choice is on your Desk.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 257402,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "2397c08484b510c959287f6df8dff13d4bd63f760ba0c00e6ccff38ae917ff1b",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "sent_at": 1791468000000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Would the split one work on a phone?",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 257461,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "6885450f891328e7548ee59617839092b2884ac0331894d0ac4dcdd45f000de7",
+        "sender_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "recipient_device_id": null,
+        "sent_at": 1791468060000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Yes. The phone moves under the buttons and the big plant goes. This is the screen it shows:",
+          "attachments": [
+            {
+              "attachment_id": "cbee95004f8907b4299f83a4b2a83d32",
+              "file_key": "",
+              "sha256": "",
+              "file_name": "phone-today.png",
+              "media_type": "image/png",
+              "total_size": 102893,
+              "width": 780,
+              "height": 1688,
+              "url": "/demo/files/phone-today.png"
+            }
+          ]
+        }
+      },
+      {
+        "envelope_number": 257821,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "0f214936cb0d729c269f852c929a2b5b5de6819e76a9719b0455592cee56cf4e",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "sent_at": 1791468420000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Morning reminders, by the way. I water before work.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 257882,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "7e4f88022326dd6363fc9e7497f740de8a95dbf91875a463c44749688b10b374",
+        "sender_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "recipient_device_id": null,
+        "sent_at": 1791468480000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Morning it is: 8:00, in the time zone of the browser. I am on the mobile hero now.",
+          "attachments": []
+        }
+      }
+    ],
+    "chat:session/d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d": [
+      {
+        "envelope_number": 241202,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "1b8fd1717789e2e32ea1edbb75946f9aa8dd39789f00928f6d649b930c2390f3",
+        "sender_device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+        "recipient_device_id": null,
+        "sent_at": 1791451800000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Three sets of names for the plans are on your Desk.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 243002,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "e099217da7f696e7d9c86782ea9acca2c6bcb7c18c937eb59c0b3c16b02271fe",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+        "sent_at": 1791453600000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Jungle made me smile. Take those.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 251701,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "6359b82139706c6f88c40dca7d08e41796dbf0b26c3f5768477caf831936a6b8",
+        "sender_device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+        "recipient_device_id": null,
+        "sent_at": 1791462300000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "They are in: Windowsill, Greenhouse, Jungle. The line under the title is “Start free. Upgrade when the windowsill gets crowded.”",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 257582,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "714da8b5d6c3ceca4afc53b653dc651584d2728f22d9e381d6264f14cd37c4b6",
+        "sender_device_id": "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d",
+        "recipient_device_id": null,
+        "sent_at": 1791468180000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "One more: the button on step 1. Both versions are on your Desk, each with its picture.",
+          "attachments": []
+        }
+      }
+    ],
+    "chat:card/a2d6366e94bbc1d75185e5309778b594": [
+      {
+        "envelope_number": 256981,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "325dde441474290f9e49151d4e3a3ad924a72bc2aad4da69f5638906edd4f544",
+        "sender_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "recipient_device_id": null,
+        "sent_at": 1791467580000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Background: on a 13-inch laptop the centered hero shows the headline and the buttons, the shelf only after scrolling.",
+          "attachments": [],
+          "details": "Measured in the browser at three window heights:\n\n| Window | Centered: plants visible | Split: app visible |\n| --- | --- | --- |\n| 1440 × 900 | half | all of it |\n| 1280 × 720 | no | most |\n| 390 × 844 | no | after one swipe |"
+        }
+      },
+      {
+        "envelope_number": 257221,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "ad2510bc0969a302557cbcd2cdb3076bd1327bd7362d3301f4e34664074b1bf5",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "sent_at": 1791467820000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Does the phone in the split one cost loading time?",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 257281,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "fe697bce3f6ff28da149ce0e749a3dc4e3316d508c5db71d811de9b9f9055eaa",
+        "sender_device_id": "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414",
+        "recipient_device_id": null,
+        "sent_at": 1791467880000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "No. It is drawn in HTML and CSS, no picture: 6 kB more.",
+          "attachments": []
+        }
+      }
+    ],
+    "chat:session/2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728": [
+      {
+        "envelope_number": 205201,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "39001094bb967877d58a28debf4c8d1ede0aef52ac2cc0caad241fe6b8c9c652",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+        "sent_at": 1791415800000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Tonight: get 2-1 playable. Keep it gentle, no enemies yet.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 205261,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "7f6f8bdcb673471eb856dd2431f0168a7ebf5ae41ca23b403f50e5f8be15b0e4",
+        "sender_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+        "recipient_device_id": null,
+        "sent_at": 1791415860000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Will do. Lanterns first, then the ladders, then the pond.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 256261,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "d24dad1f24ac5e4ba90a4fc0dc656538d91d16e8a5b883a35ef59d65d344ab54",
+        "sender_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+        "recipient_device_id": null,
+        "sent_at": 1791466860000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Mossy Hollow runs from start to end. The summary is on your Desk.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 256741,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "9c24b8624b41181ce46c34b12270596942ed9014bce72624ec35e203cacb462c",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+        "sent_at": 1791467340000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Played it twice. The jump over the pond is a bit tight.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 256862,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "162b7351914ac82fdaa71cec5962b9668b8cff2bb74b914cc72719344a791fac",
+        "sender_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+        "recipient_device_id": null,
+        "sent_at": 1791467460000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "The landing is one tile wider now, and Pip can still jump **6 frames** after leaving the ledge. Try again?",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 257041,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "649c28f5c1805a9b6a431127df4042f5f46c36236a0deb7244dc6f5539baf2ef",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728",
+        "sent_at": 1791467640000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Much better. On to 2-2.",
+          "attachments": []
+        }
+      }
+    ],
+    "chat:session/32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4": [
+      {
+        "envelope_number": 255001,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "42c31c942d0adfede749a9bbdb5860788c74e8b63980cc22ac764e17cea47f88",
+        "sender_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+        "recipient_device_id": null,
+        "sent_at": 1791465600000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Three coats, five frames each. All on one sheet:",
+          "attachments": [
+            {
+              "attachment_id": "0017473ee04355ffe0aa6c8566bfd1ca",
+              "file_key": "",
+              "sha256": "",
+              "file_name": "sprite-sheet.png",
+              "media_type": "image/png",
+              "total_size": 21813,
+              "width": 2400,
+              "height": 1500,
+              "url": "/demo/files/sprite-sheet.png"
+            }
+          ]
+        }
+      },
+      {
+        "envelope_number": 255721,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "bb32b29922d10f499dd3bf3dcd3c9079b535a6675f77a33177c60040442eeefa",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+        "sent_at": 1791466320000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Frost is adorable. Ember reads best at night, though.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 258181,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "efd549c9b47769da2bddd6a85ae159ed7321bee21610db7d94aa1fc90c88e48a",
+        "sender_device_id": "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4",
+        "recipient_device_id": null,
+        "sent_at": 1791468780000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "I think so too. The choice is on your Desk, each coat in the same scene; the other two could be unlockables.",
+          "attachments": []
+        }
+      }
+    ],
+    "chat:session/615c678e2d4ec1216d25763cc226f3abc8f0990e200efb9bb285e81f46524585": [
+      {
+        "envelope_number": 180001,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "d1385dde4ee9a3adbba04025e2610737edd905ce9a37630b47c710077428431d",
+        "sender_device_id": "615c678e2d4ec1216d25763cc226f3abc8f0990e200efb9bb285e81f46524585",
+        "recipient_device_id": null,
+        "sent_at": 1791390600000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Footsteps on moss and on wood are in. The lantern hum loops without a click now.",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 183601,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "d19d5229d074895f5a060e4f6bdd6153628679464151f37268f892d52896d10c",
+        "sender_device_id": "29cb3eed27142e322765388f67cf8956ab84dc8b6dcc0b4e46c7cecf165dd5bd",
+        "recipient_device_id": "615c678e2d4ec1216d25763cc226f3abc8f0990e200efb9bb285e81f46524585",
+        "sent_at": 1791394200000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Can the fireflies have a tiny chime?",
+          "attachments": []
+        }
+      },
+      {
+        "envelope_number": 183721,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "3e3536929f369a6c0c18ee42897e3630128f434412c6b8f4489b4bc20999e36f",
+        "sender_device_id": "615c678e2d4ec1216d25763cc226f3abc8f0990e200efb9bb285e81f46524585",
+        "recipient_device_id": null,
+        "sent_at": 1791394320000,
+        "item_state": "loaded",
+        "content_type": "message",
+        "content": {
+          "text": "Yes: one of five notes, picked at random, never the same one twice in a row.",
+          "attachments": []
+        }
+      }
+    ],
+    "scribble:desk/6d61696e000000000000000000000004": [
+      {
+        "envelope_number": 248402,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "1f57bda66d312103877198cce68c1cbb3e37bd826426f46414c98b437f9af83a",
+        "sender_device_id": "064b5da1e8f8b1f1a37b88e1c2f5c96c93d297600e2dd5ba656bf319fc1af128",
+        "sender_sequence": 1,
+        "recipient_device_id": null,
+        "sent_at": 1791459000000,
+        "item_state": "loaded",
+        "content_type": "strokes",
+        "content": {
+          "content_type": "strokes",
+          "strokes": [
+            {
+              "tool": "text",
+              "at": [
+                40,
+                30
+              ],
+              "text": "Fernly: launch week",
+              "size": 30,
+              "color": "ink",
+              "z": 1
+            },
+            {
+              "tool": "marker",
+              "color": "green",
+              "width": 14,
+              "points": "AvAJshMAa6gCEQ58ugIuDov6AQsOlqICIw6dzgIADp6GAgAOma4CEA6QmgIPDoKyAgcOcoACEA5hzAIvDlKEAgIORbICBw48lgI0Dji-AhEOOqwCLQ5C_AEqDk6MAicOXdgCBQ5u_AEoDn7AAgAOjaACNQ6XkgIYDp2oAg8Ono4CCg6YsAInDo60AgAOgPQBIA5wugIJDl-aAhYOT5oCOQ5DmgIUDjs",
+              "z": 2
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                40,
+                120
+              ],
+              "text": "Before we open\n· pricing page ✓\n· onboarding, 3 steps\n· Sunday e-mail?",
+              "size": 17,
+              "color": "ink",
+              "wrap": 240,
+              "z": 3
+            },
+            {
+              "tool": "image",
+              "rect": [
+                340,
+                110,
+                550,
+                564
+              ],
+              "attachment": {
+                "attachment_id": "44d1e4f65fd8578f93a0c4a9dc80d222",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "phone-today.png",
+                "media_type": "image/png",
+                "total_size": 102893,
+                "width": 780,
+                "height": 1688,
+                "url": "/demo/files/phone-today.png"
+              },
+              "nw": 780,
+              "nh": 1688,
+              "mime": "image/png",
+              "name": "phone-today.png",
+              "z": 4
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                640,
+                100
+              ],
+              "text": "“Never forget to water again.”\nKeep it!",
+              "size": 17,
+              "color": "ink",
+              "wrap": 290,
+              "z": 5
+            },
+            {
+              "tool": "pen",
+              "color": "red",
+              "width": 4,
+              "points": "ApyoAZQYAGviBvEBDnyyB7EBDouKCGEOlrAIIQ6dlghSDp6KCHwOmfoG5gEOkKYGnAIOguYE7AIOcsgD9gIOYYACiAMOUh6yAw5FwQGkAw485wKQAw44vQTuAg466QWoAg5CgQf-AQ5O8Qe2AQ5doQhODm69CBgOfrUISw6N6wedAQ6XpQf5AQ6djQaXAg6e8QTzAg6YvQOHAw6O7wGxAw6AC68DDnDeAY8DDl-aA6MDDk_yBOsCDkOMBqkCDjuKB4cCDjiMCJ0BDjs",
+              "z": 6
+            },
+            {
+              "tool": "pen",
+              "color": "ink",
+              "width": 4,
+              "points": "ArydAbQ-AGvjAR4OfNkBEg6L0wEmDpbZASoOnbkBRA6erQFUDpmfAWgOkKMBaA6Cc6QBDnJ5nAEOYWWwAQ5SV8gBDkVb6AEOPFG4AQ44",
+              "z": 7
+            },
+            {
+              "tool": "pen",
+              "color": "ink",
+              "width": 4,
+              "points": "AsCQAfpHAGuJAr4BDnz5AdIBDosDCQ6WAgIOnRG9Ag6eLbsCDpk",
+              "z": 8
+            },
+            {
+              "tool": "text",
+              "at": [
+                640,
+                258
+              ],
+              "text": "the first screen people see",
+              "size": 18,
+              "color": "blue",
+              "z": 9
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                650,
+                340
+              ],
+              "text": "Later: a holiday mode. Who waters when I am away?",
+              "size": 17,
+              "color": "ink",
+              "wrap": 220,
+              "z": 10
+            },
+            {
+              "tool": "pen",
+              "color": "orange",
+              "width": 4,
+              "points": "ArLoAbB1AGtWqgIOfByUAg6LNI4CDpZKmAIOnSycAg6ePJQCDplEqAIOkDKKAg6CBRAOchYCDmH8AQMOUqoCDQ5F-gEFDjyqAhIOOJICAg46nAIKDkIDEQ5OAgwOXTirAg5uMv0BDn4qrQIOjUyDAg6XPqcCDp0cjQIOnliPAg6YNqcCDo4",
+              "z": 11
+            },
+            {
+              "tool": "pen",
+              "color": "orange",
+              "width": 4,
+              "points": "ArjmAfp0AGueAgYOfJQCCw6LmgICDpacAhMOnZgCBg6ejAIEDpmQAhEOkLACEQ6CmAIJDnKcAg4OYZYCGQ5S",
+              "z": 12
+            },
+            {
+              "tool": "pen",
+              "color": "green",
+              "width": 4,
+              "points": "ArjyAf5zAGsLqQEOfDWZAQ6LFaMBDpYRsQEOnSGHAQ6eALsBDpkHmQEOkAOdAQ6CB6MBDnISuwEOYQ6NAQ5SHq8BDkUImQEOPBahAQ44",
+              "z": 13
+            },
+            {
+              "tool": "pen",
+              "color": "green",
+              "width": 4,
+              "points": "AsD9AcBjAGsmjQEOfD1hDoupASkOloUCEA6dtwJKDp63AnwOmYUCogEOkKkBuAEOgj28AQ5yJq4BDmFwjgEOUpwBYg5FqgEqDjyoAQ8OOKIBSQ46ogF7DkKoAaEBDk6qAbcBDl2cAbsBDm5wrQEOfg",
+              "z": 14
+            },
+            {
+              "tool": "pen",
+              "color": "green",
+              "width": 4,
+              "points": "AoDnAcBuAGsimQEOfGSpAQ6LnAGpAQ6WxAGZAQ6d2gF3Dp7aAUsOmcQBGQ6QnAEcDoJkUA5yInoOYSGaAQ5SY6oBDkWbAaoBDjzDAZoBDjjZAXgOOtkBTA5CwwEaDk6bARsOXWNPDm4heQ5-",
+              "z": 15
+            }
+          ]
+        }
+      }
+    ],
+    "scribble:desk/67616d65000000000000000000000004": [
+      {
+        "envelope_number": 201601,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "9f80d7aecc3e973120bd662bda9dabc72d797e2847e0f5e43237d7c3d429d589",
+        "sender_device_id": "064b5da1e8f8b1f1a37b88e1c2f5c96c93d297600e2dd5ba656bf319fc1af128",
+        "sender_sequence": 2,
+        "recipient_device_id": null,
+        "sent_at": 1791412200000,
+        "item_state": "loaded",
+        "content_type": "strokes",
+        "content": {
+          "content_type": "strokes",
+          "strokes": [
+            {
+              "tool": "text",
+              "at": [
+                40,
+                30
+              ],
+              "text": "Pip’s Lantern: ideas",
+              "size": 30,
+              "color": "ink",
+              "z": 16
+            },
+            {
+              "tool": "marker",
+              "color": "yellow",
+              "width": 14,
+              "points": "ApQKuhMAa5oCGw58sAI6DoumAiUOlpQCBg6dsAIXDp6OAg0OmYACBQ6QugIeDoLAAgwOcqYCIQ5hgAILDlK-AgMORYACEQ48oAIMDjiyAhgOOrYCAg5CoAIEDk6EAi0OXaQCFA5unAIvDn66AiQOjYwCFA6XvAIpDp26Ag4OnqACLQ6YnAI0Do6OAh0OgKoCEQ5wmAIMDl-iAgYOT54CEw5DxAIBDjugAhgOOA",
+              "z": 17
+            },
+            {
+              "tool": "image",
+              "rect": [
+                40,
+                120,
+                510,
+                414
+              ],
+              "attachment": {
+                "attachment_id": "749e3a5bad062e9db173fc4197b6d22d",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "sprite-sheet.png",
+                "media_type": "image/png",
+                "total_size": 21813,
+                "width": 2400,
+                "height": 1500,
+                "url": "/demo/files/sprite-sheet.png"
+              },
+              "nw": 2400,
+              "nh": 1500,
+              "mime": "image/png",
+              "name": "sprite-sheet.png",
+              "z": 18
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                560,
+                110
+              ],
+              "text": "Pip waves when you stand still for ten seconds.",
+              "size": 17,
+              "color": "ink",
+              "wrap": 240,
+              "z": 19
+            },
+            {
+              "tool": "pen",
+              "color": "orange",
+              "width": 3,
+              "points": "ArzPAfodAGsIAg58AgQOi1aKAg6WUPwBDp1WjgIOnkiAAg6ZDgEOkAMIDoLdAasBDnLbAZkBDmHjAaMBDlLTAZ0BDkUDAA48AgUOOIYCAw46nAIGDkKOAgcOTpQCDg5dAwkObgYGDn7ZAaYBDo3lAZgBDpfVAaABDp3bAaoBDp4AAw6YBwMOjl6FAg6ASv8BDnBQiQIOX1qHAg5PBgAOQwUEDjs",
+              "z": 20
+            },
+            {
+              "tool": "pen",
+              "color": "orange",
+              "width": 3,
+              "points": "AsbYAZopAGsHDg58AA0Oi2jGAg6WaLoCDp0FAQ6eCAQOmY8CyQEOkI0CxQEOggUEDnICAw5hygIIDlLaAgEORQEGDjwEBw44iwLEAQ46jwLMAQ5CCQQOTgoJDl1ctwIObnDBAg5-AAEOjQEDDpc",
+              "z": 21
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                570,
+                262
+              ],
+              "text": "Fireflies follow the lantern. More light, more of them!",
+              "size": 17,
+              "color": "ink",
+              "wrap": 230,
+              "z": 22
+            },
+            {
+              "tool": "image",
+              "rect": [
+                860,
+                250,
+                1010,
+                400
+              ],
+              "attachment": {
+                "attachment_id": "17a236e5d590e567eceea41114a5e156",
+                "file_key": "",
+                "sha256": "",
+                "file_name": "app-icon.png",
+                "media_type": "image/png",
+                "total_size": 14501,
+                "width": 1024,
+                "height": 1024,
+                "url": "/demo/files/app-icon.png"
+              },
+              "nw": 1024,
+              "nh": 1024,
+              "mime": "image/png",
+              "name": "app-icon.png",
+              "z": 23
+            },
+            {
+              "tool": "pen",
+              "color": "ink",
+              "width": 4,
+              "points": "AqjiAYZ1AGsrnwEOfB2dAQ6LDZ0BDpYTiQEOnQCDAQ6eHJkBDpkudw6QKncOgk5_DnJEhQEOYXRXDlJyeQ5FeFsOPHZhDjg",
+              "z": 24
+            },
+            {
+              "tool": "pen",
+              "color": "ink",
+              "width": 4,
+              "points": "AqjiAeRnAGu0AisOfM4CLw6LEQcOlg4IDp2JAZQCDp6JAawCDpk",
+              "z": 25
+            },
+            {
+              "tool": "text",
+              "at": [
+                838,
+                474
+              ],
+              "text": "the store icon",
+              "size": 18,
+              "color": "blue",
+              "z": 26
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                60,
+                450
+              ],
+              "text": "Level 2-2: Firefly Pond\n· stepping stones\n· one hidden lantern",
+              "size": 17,
+              "color": "ink",
+              "wrap": 230,
+              "z": 27
+            }
+          ]
+        }
+      }
+    ],
+    "scribble:desk/616c6c2d6465736b7300000000000009": [
+      {
+        "envelope_number": 244801,
+        "local_id": null,
+        "pending": false,
+        "envelope_hash": "c3a3841edfef947c1a9235f55fe204c46c053a1214fbb5dbaf5d19443f16e5c4",
+        "sender_device_id": "064b5da1e8f8b1f1a37b88e1c2f5c96c93d297600e2dd5ba656bf319fc1af128",
+        "sender_sequence": 3,
+        "recipient_device_id": null,
+        "sent_at": 1791455400000,
+        "item_state": "loaded",
+        "content_type": "strokes",
+        "content": {
+          "content_type": "strokes",
+          "strokes": [
+            {
+              "tool": "text",
+              "at": [
+                40,
+                30
+              ],
+              "text": "This week",
+              "size": 30,
+              "color": "ink",
+              "z": 28
+            },
+            {
+              "tool": "marker",
+              "color": "pink",
+              "width": 14,
+              "points": "ApgKyBMAa4oCDA58hAIzDovGAgsOlpYCEg6d7gERDp6gAigOmcACOw6QhgIcDoKQAgoOcrwCEw5h-gEODlKCAiMORcQCGg48mgInDjiAAgwOOsACJQ5CgAIkDk4",
+              "z": 29
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                40,
+                120
+              ],
+              "text": "Fernly\nlanding page live by Friday",
+              "size": 17,
+              "color": "ink",
+              "wrap": 240,
+              "z": 30
+            },
+            {
+              "tool": "sticky",
+              "at": [
+                320,
+                132
+              ],
+              "text": "Pip’s Lantern\nworld 2 playable end to end",
+              "size": 17,
+              "color": "ink",
+              "wrap": 240,
+              "z": 31
+            },
+            {
+              "tool": "pen",
+              "color": "orange",
+              "width": 3,
+              "points": "Av6VAbohAGsKAA58DQ4Oi2yyAg6WarACDp1kuAIOngEJDpkHDA6QgQK9AQ6CjQLFAQ5ygQLBAQ5hAgoOUgYCDkXEAgsOPL4CAg44xgIGDjoEBw5CAAgOTo8CwAEOXYUCwAEOboECvAEOfgMCDo0CBw6XYLMCDp1qtwIOnmSxAg6YBAAOjgcBDoA",
+              "z": 32
+            }
+          ]
+        }
+      }
+    ]
+  },
   "human": {
     "drafts": {},
     "snoozes": {},
     "ducks": {},
-    "crown": null,
-    "desks": {},
-    "session_settings": {}
+    "crown": {
+      "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a"
+    },
+    "desks": {
+      "main": {
+        "name": "My New Web App",
+        "created_at": 1790692200000,
+        "crown": {
+          "agent_device_id": "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a"
+        }
+      },
+      "game": {
+        "name": "My Indie Game",
+        "created_at": 1790951400000,
+        "crown": {
+          "agent_device_id": "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728"
+        }
+      }
+    },
+    "session_settings": {
+      "0b897d29bfce4119d3962db0ca04c311b2ae7c94d44e1938cbceaf07191f424a": {
+        "name": "",
+        "desk": "main",
+        "archived": false,
+        "group": null,
+        "icon": null
+      },
+      "fb4ea3087e68ed5be8dc4818decff716a38ee5d2222fc5565391e86c53134414": {
+        "name": "",
+        "desk": "main",
+        "archived": false,
+        "group": null,
+        "icon": null
+      },
+      "d5215ff0c71f1c1176d81f7d08e394f1a28b1779c89a4bfae101b99fd4c2071d": {
+        "name": "",
+        "desk": "main",
+        "archived": false,
+        "group": null,
+        "icon": null
+      },
+      "2ff6c67461d6419dfa141a30c0e2ea0d265e80824d223a206b31786933e9e728": {
+        "name": "",
+        "desk": "game",
+        "archived": false,
+        "group": null,
+        "icon": null
+      },
+      "32da65cbcff925539b1575a708ff8b4a7a48f0c0a96b1146c9ce6f49ad40b9e4": {
+        "name": "",
+        "desk": "game",
+        "archived": false,
+        "group": null,
+        "icon": null
+      },
+      "615c678e2d4ec1216d25763cc226f3abc8f0990e200efb9bb285e81f46524585": {
+        "name": "",
+        "desk": "game",
+        "archived": false,
+        "group": null,
+        "icon": null
+      }
+    }
   }
 }

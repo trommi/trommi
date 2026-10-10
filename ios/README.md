@@ -261,6 +261,8 @@ not. Log-in and recovery name the account in ONE field, `account`: an e-mail if 
 | Log in, passkey | `POST /v2/account/passkey/challenge`, then `POST /v2/account/passkey/login` `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` |
 | Forgot password | `POST /v2/account/recover` `{ account, auth_key }` (e-mail or id), then, named by e-mail, `PUT /v2/account/password` `{ auth_key, sealed_copy, kdf, revision }` |
 | New password, new kit | `PUT /v2/account/password`, `PUT /v2/account/kit` `{ auth_key, sealed_copy, revision }` |
+| New recovery code (8.6) | `GET /v2/account`, then `POST /v2/rooms/{room}/recovery-code` `{ commit: { epoch, commit, group_info, sealed_key }, recovery_link, account: { kit: { auth_key, sealed_copy }, password: { sealed_copy } } }` (with a passkey: `passkey: { credential_id, sealed_copy }`), through the outbox |
+| Every device lost (8.7) | `POST /v2/account/recover`, then as the recovery key: `POST /v2/rooms/{room}/recovery`, the room and `GET /v2/groups/{group}/chains/{sender}` of every device that goes, `POST …/recovery/{id}/commits` per part, `POST …/recovery/{id}/finish` `{ recovery_link, account: { kit, password: { auth_key, sealed_copy, kdf } } }` (an account without e-mail: `passkey`, a registration on `POST /v2/account/passkeys/challenge`); `DELETE …/recovery/{id}` if it fails or is not confirmed |
 | An e-mail for an account without one | `PUT /v2/account/email` `{ email, kit: { auth_key, sealed_copy }, revision }` (`Room.setEmail`; no screen yet) |
 | Add passkey | `POST /v2/account/passkeys/challenge`, `POST /v2/account/passkeys` |
 | Log Out | `DELETE /v2/push`, `DELETE /v2/token`, then the device forgets the room |
@@ -272,7 +274,30 @@ header) is shown with it: "Too many tries. Wait 40 seconds."
 
 **What the client keeps.** Nothing of the account is stored on the device: the id, the e-mail and the kit's form are
 asked of the hub when a screen needs them (`Room.accountStatus`). The password, the kit's words and the recovery
-code live for the length of one call. The kit's words are shown once (`KitScreen.swift`).
+code live for the length of one call. The kit's words are shown once (`KitScreen.swift`). One exception, for as
+long as it takes: a sign-in with the code that could not join every session group keeps the code in the app's
+Keychain (`join-<folder>`) until the next sync has joined them, and deletes it then (`Room.finishCodeJoin`).
+
+**Signing in on a new device** (8.4, `Room.joinWithRecoveryCode`) is two steps. Until the hub accepted the join of
+the room group, a failure leaves nothing on the device. From then on the device is kept whatever happens:
+`room.json` is written at once, the session groups are joined after it, and what is left of them (the hub did not
+answer, the app was ended) is finished by the next sync.
+
+**A new recovery code** (8.6, `Room.replaceRecoveryCode`; Settings → Account → "New Recovery Code…", and offered
+when a device is removed under Devices). The password opens the code in force; the core makes the new code and the
+room Commit; the request carries a new Emergency Kit and the code sealed again under the password. The hub applies
+all of it or nothing and removes every other way in (passkeys), which are added again. The new kit is shown in the
+Emergency Kit group; the old one opens nothing any more. If the hub does not answer within 20 seconds the request
+stays in the outbox, no kit is shown, and the person makes a new kit with the password afterwards.
+
+**When every device is lost** (8.7, `Room.recoverAccount`; "New password" → "All my devices are lost", after a
+confirmation that names it). The kit's words open the code; the new device opens a recovery at the hub, checks the
+room, reads the chains of the devices that go (handed to the core as ONE list rising by change number across
+devices and groups, never chain after chain), and posts the joins, the removals and the new code; the hub publishes
+all of it at once or nothing. The account gets a new kit and the new password; the kit's page comes next, as after
+"Create account". An account without an e-mail needs a new passkey for this, so it waits for passkeys to be switched
+on. Not covered: if the hub published and none of four tries got its answer, the device forgets itself although it
+is in the room; the new password then logs in as on any new device, and Settings makes a new kit.
 
 **The Emergency Kit** carries the twelve words, the account id as text, and a QR code with
 `https://app.trommi.com/#k1.<hub address, base64url>.<account id, 32 hex digits>` (`kitQRText`): an address of the
@@ -494,16 +519,21 @@ chrome; the minimum is iOS 27.
 - **The notification title.** A content key never leaves the core, and the binding opens an envelope only on the
   device that holds the group (`receiveEnvelope`), whose store the app owns. The Notification Service Extension
   therefore opens the push itself (room, change, urgency) and shows the fixed text.
-- **Content from before a device came by link.** The core takes an envelope of an epoch before the device joined
-  only once it learned the group's past (`learnHistory`, bound and tested in `TrommiCoreLive`); the engine does not
-  fetch that history yet, so such items are passed over (`SyncReport.beforeJoining`). (A device that signs in with
-  the recovery code holds the keys back to the founding.)
-- **Recovery when every device is lost** (8.7) and **replacing the recovery code** (8.6) are bound and tested
-  (`prepareRecovery`, `recover`, `newRecoveryCode`, `replaceCode`); no screen and no call of `Room` leads there yet.
+- **Content from before a device came by link** is read once the group's past is learned (`RoomPast.swift`: the
+  founding GroupInfo and the Commits of the group's log go to `learnHistory`, then the changes are read back in the
+  hub's order; what is left to do is noted in `room.json`, so an interrupted run goes on at the next sync). The old
+  items open when the inviting device's key handover arrived; until then they take their places without bodies.
+  Not done: the read back fetches the room's changes from the start again (once per learned past), and the board
+  is rebuilt from them rather than patched.
+- **Replacing the recovery code** (8.6) and **recovery when every device is lost** (8.7) have their callers and
+  screens ("Account"). Both are tested with the real core against `PocketHub` behind the hub's routes
+  (`PocketRoutes.swift`), which checks nothing; neither has met a real hub. With a passkey as the way in, 8.6 has
+  the engine's call (`WayIn.passkey`) and no screen.
 - **Against a real hub** the engine was last run before this binding: `RealHubTests` (founding, signing in with
   the password, a Commit, the whole recovery) are skipped without `TROMMI_HUB_BIN`, and joining by link through
   `Room` has no test against a hub yet. Without a hub, the core's side of these paths is tested on the real core
-  (`PocketHub` keeps the hub's order) and the engine's on a core that seals nothing (`FakeCore`).
+  (`PocketHub` keeps the hub's order), the engine's on a core that seals nothing (`FakeCore`), and the engine with
+  the real core on `PocketHub` behind the hub's routes (`RoomPastTests`, `RoomRecoveryTests`).
 - The Scribble Board still merges with the reducer of the Swift model (`Canvas.swift`); the core's reducer and its
   check of a loaded board (`boardReduce`, `boardLoad`) are bound, and nothing calls them yet.
 - Passkeys are built and switched off (`Passkeys.available`); "Account" says what switching them on needs.

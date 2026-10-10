@@ -67,7 +67,7 @@ final class RealHubTests: XCTestCase {
   }
 
   /// SIGNING IN ON A NEW DEVICE WITH THE CODE (8.4), as RoomAccount.joinWithRecoveryCode is to do it: a new device in
-  /// a new folder, the hub client signed in as the recovery key, the whole join by `LiveCore.joinWithRecoveryCode`,
+  /// a new folder, the hub client signed in as the recovery key, the join by `LiveCore.joinRoomWithRecoveryCode` and `joinSessionsWithRecoveryCode`,
   /// then the room record and the `Room`. (RoomAccount.swift still calls the shape Core.swift guessed, which the core
   /// cannot serve; this is the body it gets.)
   private func signIn(code: Bytes, room: RoomId, hubURL: String, challenge: Bytes? = nil) async throws -> (room: Room, notJoined: [(group: GroupId, code: String)]) {
@@ -78,8 +78,9 @@ final class RealHubTests: XCTestCase {
       let hub = try HubClient(hubURL: hubURL, room: room, signer: try tools.recoverySigner(code: code))
       let role = try await hub.signIn(challenge: challenge)
       XCTAssertEqual(role, "recovery")
-      let outcome = try await tools.joinWithRecoveryCode(device: device, code: code, hub: hub, nowMs: nowMs())
-      XCTAssertNil(outcome.missingLink)
+      let missingLink = try await tools.joinRoomWithRecoveryCode(device: device, code: code, hub: hub, nowMs: nowMs())
+      XCTAssertNil(missingLink)
+      let outcome = try await tools.joinSessionsWithRecoveryCode(device: device, code: code, hub: hub, nowMs: nowMs())
       let record = RoomRecord(hubURL: hubURL, roomId: hex(room), myDeviceId: hex(device.id), role: "human", deviceRegisterSent: false)
       try store.save(record)
       return (try Room(store: store, record: record, deviceStore: state, device: device), outcome.notJoined)
@@ -161,7 +162,7 @@ final class RealHubTests: XCTestCase {
     do { _ = try await Room.signInWithPassword(hubURL: hubURL, account: "ada@example.com", password: "a wrong long password", base: try scratchFolder(self)); XCTFail("a wrong password signed in") }
     catch let refused as TrommiError { XCTAssertEqual(refused.code, "wrong-login") }
     // The right password gets the sealed code from the hub, and RoomAccount.joinWithRecoveryCode joins with it
-    // (LiveCore.joinWithRecoveryCode); testASecondDeviceSignsInWithThePassword looks at that join closely.
+    // (LiveCore.joinRoomWithRecoveryCode); testASecondDeviceSignsInWithThePassword looks at that join closely.
     let outcome = try await Room.signInWithPassword(hubURL: hubURL, account: "ada@example.com", password: "another long password", base: try scratchFolder(self))
     if case .joined(let second) = outcome { XCTAssertEqual(second.roomId, room.roomId); second.close() }
     _ = try await room.sync()
