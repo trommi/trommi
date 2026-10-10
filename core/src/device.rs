@@ -419,7 +419,8 @@ struct GroupMeta {
     /// Read from the group's context when the device is opened; none for the room group.
     session: Option<TrommiSession>,
     previous_room_epoch: u64,
-    /// A main session's agent leaf over time.
+    /// A main session's agent leaf over time: the change number of the Commit that changed it, and the
+    /// leaf after it. The first entry of a device that joined later stands for the state it joined at.
     seats: Vec<(u64, Option<DeviceId>)>,
     /// When this device's leaf was last renewed: by an own Commit with a path, or when the group was founded
     /// or joined (a Welcome does not say when the KeyPackage it used was made, so the join counts). And when
@@ -787,20 +788,36 @@ impl Known {
     }
 }
 
-impl SessionFacts for Known {
-    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+impl recovery::SessionsAt for Known {
+    fn main_session_at(&self, session: &SessionId, change: u64) -> Parent {
         if let Some(seats) = self.closed.get(session) {
             return if self.replay {
-                Parent::Seat(observer::seat_at(seats, room_epoch))
+                observer::parent_at(seats, change)
             } else {
                 Parent::NotAMainSession
             };
         }
         match self.seats.get(session) {
-            Some(seats) => Parent::Seat(observer::seat_at(seats, room_epoch)),
+            Some(seats) => observer::parent_at(seats, change),
             // Neither a leaf nor an observer of it: this device cannot tell who its agent leaf is.
             None => Parent::Unknown,
         }
+    }
+
+    fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
+        SessionFacts::main_session_of(self, agent)
+    }
+
+    fn live_helpers(&self, parent: &SessionId) -> usize {
+        SessionFacts::live_helpers(self, parent)
+    }
+}
+
+/// The sessions as they stand now. A Commit that is judged at a place behind what this device holds asks
+/// [`recovery::At`] instead.
+impl SessionFacts for Known {
+    fn main_session(&self, session: &SessionId, _: u64) -> Parent {
+        recovery::SessionsAt::main_session_at(self, session, u64::MAX)
     }
 
     fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
@@ -2313,7 +2330,8 @@ impl<S: Storage> Device<S> {
                 if session.parent.is_zero() {
                     let now = observer::seat(&session, &leaves, &room);
                     if meta.seats.last().map(|(_, seat)| *seat) != Some(now) {
-                        meta.seats.push((room_epoch, now));
+                        // The group's place is the place of the Commit that led here.
+                        meta.seats.push((meta.place, now));
                     }
                 }
             }
@@ -2947,6 +2965,8 @@ impl<S: Storage> Device<S> {
     ) -> Result<(Vec<u8>, Vec<Cut>), Error> {
         let (facts, leaves, after) = observer::read_commit(public, id, commit)?;
         let mut known = self.known();
+        // Where the log shows it, a helper session's opener is its main session's agent leaf there.
+        let stands = place.unwrap_or(u64::MAX);
         // Where the log shows it, the group it founds is among the groups this device holds: it is not
         // counted against itself (5.2.5: 32 live helper sessions).
         if let (Some(_), Some((session, _))) = (place, session) {
@@ -2957,7 +2977,7 @@ impl<S: Storage> Device<S> {
         let history = self.history()?;
         let verifier = Verifier {
             history,
-            sessions: &known,
+            sessions: &recovery::At(&known, stands),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
             // When built: on the newest room state this device holds, where alone it is taken.
@@ -4434,7 +4454,7 @@ impl<S: Storage> Device<S> {
         };
         let context = Context {
             room: room.as_ref(),
-            sessions: &known,
+            sessions: &recovery::At(&known, entry.change),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
         };
@@ -4445,7 +4465,13 @@ impl<S: Storage> Device<S> {
             .ok_or(Error::NotFound)?;
         let followed = match room_epoch {
             None => observer.process_commit(commit, recovery_auth, &context),
-            Some(at) => observer.process_commit_at(commit, recovery_auth, &context, at),
+            Some(at) => {
+                let place = observer::Place {
+                    change: entry.change,
+                    room_epoch: observer::RoomEpochAt::Epoch(at),
+                };
+                observer.process_commit_at(commit, recovery_auth, &context, &place)
+            }
         };
         match followed {
             Ok(facts) => {
@@ -4554,6 +4580,7 @@ impl<S: Storage> Device<S> {
                     return Err(Error::BadGroup);
                 }
                 let (after, cuts) = self.judge_own(id, session, public, commit, Some(change))?;
+                self.meta(id)?.place = change;
                 self.merge_own(batch, id, &cuts)?;
                 // What OpenMLS held as the pending Commit is the Commit the log shows: merged, it leads
                 // to the group context that Commit leads to for everyone. Anything else is a stored
@@ -4590,7 +4617,8 @@ impl<S: Storage> Device<S> {
         let history = self.history()?;
         let verifier = Verifier {
             history,
-            sessions: &known,
+            // 5.2.1: a helper session's opener is its main session's agent leaf at the Commit's place.
+            sessions: &recovery::At(&known, change),
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
             room_epoch: match meta.session {
