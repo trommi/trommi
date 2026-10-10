@@ -7,6 +7,8 @@
 //   live       GET /v2/stream (server-sent events) with the same items, resumed by change number.
 //   outbox     everything this device wants sent is in the core's outbox, stored with the state it implies; it is
 //              posted in order and the hub's answer reported back. After a crash the same bytes go out again.
+//              The hub's "taken" merges no Commit of this device: the core merges it when it comes back among the
+//              changes, at its place in the hub's order, so the changes are read right after such an answer.
 //
 // What a human does is in RoomActions.swift, devices and invites in RoomDevices.swift, signing in and recovery in
 // RoomAccount.swift, the record cache in RoomCache.swift.
@@ -794,6 +796,11 @@ public final class Room {
    * pause (the entry stays stored). A refusal that is the hub's last word goes to the core, which undoes what the
    * entry was for or holds a Commit back until the log decided (an own Commit that lost its epoch).
    *
+   * An accepted COMMIT of this device is not merged by the answer: the group stands in its old epoch until the core
+   * is handed that Commit from the hub's log, at its place among the changes of every group. So after such an
+   * answer the changes are read from the cursor (`readOwnChanges`) before the entry counts as done. The live stream
+   * may bring the Commit before the answer arrives: the core merged it then and the entry is gone (`not-found`).
+   *
    * An ENVELOPE is different (9.0.1, 9.0.8): this device signed its number and gives it to no other envelope. It
    * leaves the outbox when the hub took it, when the hub kept its number as a void record (`voided`), or when this
    * device is out of the group (`not-member`, `removed-sender`). After any other refusal the same bytes are sent
@@ -814,7 +821,10 @@ public final class Room {
           // HTML) says nothing, and the entry is sent again.
           guard let answer = Self.accepted(entry.kind, r) else { throw HubError(status: 0, code: "offline", message: "the hub's answer to an outbox entry does not read") }
           if entry.kind == .keyPackages { keyPackagesAtHub = Wire.int(r["unused"]) }
-          try await onCore { try $0.outboxAccepted(entry.id, change: answer) }
+          let commits = Self.carriesCommit(entry.kind)
+          do { try await onCore { try $0.outboxAccepted(entry.id, change: answer) } }
+          catch let e as TrommiError where commits && e.code == "not-found" { _ = e }   // merged from the log before the answer came
+          if commits { await readOwnChanges() }
           outcome[entry.id] = .success(())
           backoff = 300_000_000; unknown = 0
           if entry.kind != .envelope && entry.kind != .message && entry.kind != .relayMessage { var ch = Change(); try? await refreshGroups(&ch); emit(ch) }
@@ -860,6 +870,21 @@ public final class Room {
       }
     }
   }
+  /** Whether an entry of that kind carries a Commit of this device, which the core merges only from the hub's log. */
+  static func carriesCommit(_ kind: OutboxKind) -> Bool { [.commit, .groupFounding, .externalCommit, .recoveryCode].contains(kind) }
+  /**
+   * Reads what the hub has after the cursor, in its order, and the groups as they stand then: this is where a
+   * Commit of this device that the hub accepted takes effect. A failure is left to the next catch-up or the stream.
+   */
+  func readOwnChanges() async {
+    if !synced { _ = try? await sync(); return }
+    _ = try? await serial { [self] in
+      var report = SyncReport(), ch = Change()
+      defer { self.board.project(ch); self.emit(ch) }
+      try? await self.readChanges(&report, &ch)
+      try await self.refreshGroups(&ch)
+    }
+  }
   /** What the hub's answer to an outbox entry must hold to count as "taken"; the change number the core wants. */
   static func accepted(_ kind: OutboxKind, _ r: JSON) -> UInt64?? {
     switch kind {
@@ -887,11 +912,11 @@ public final class Room {
     // `orThrow`: the caller builds on the hub having taken it (a step of several): no word is not a yes.
     if orThrow { throw TrommiError("pending", "the hub has not answered yet: this waits in the outbox and is sent again") }
   }
-  /** Waits until the hub has taken everything in the outbox. */
+  /** Waits until the hub has taken everything in the outbox and an own Commit among it was read back and merged. */
   public func flush(timeoutMs: UInt64 = 30_000) async throws {
     _ = try? await serial { }
     let until = nowMs() + timeoutMs
-    while let n = try? await onCore({ $0.outbox().count }), n > 0 {
+    while let n = try? await onCore({ $0.outbox().count }), n > 0 || pumping {
       if nowMs() > until { throw TrommiError("timeout", "the hub has not taken \(n) item(s)") }
       if !pumping { pumpOutbox() }
       try await Task.sleep(nanoseconds: 50_000_000)
