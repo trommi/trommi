@@ -722,6 +722,11 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
         asked["account"],
         w.ada.get(&w.hub, "/v2/account").ok()["account"]
     );
+    // with it what a new kit is salted with (8.8.2)
+    assert_eq!(
+        (&asked["email"], &asked["kit_form"]),
+        (&json!("ada@example.org"), &json!("email"))
+    );
     let challenge = unb64(asked["challenge"].as_str().unwrap()).unwrap();
     // one of the tokenless kind is for a new account, not for this one
     let loose = unb64(
