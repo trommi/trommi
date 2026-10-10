@@ -380,7 +380,7 @@ impl Human {
         self.hub
             .post(
                 "/v2/invites",
-                &json!({ "offer": b64(&offer.offer), "signature": b64(&offer.signature) }),
+                &json!({ "offer": b64(&offer.offer), "signature": b64(&offer.signature), "mac": b64(&offer.mac) }),
             )
             .await
             .expect("the hub takes the Offer");
@@ -388,6 +388,25 @@ impl Human {
             id: opened.invite_id,
             link: String::from_utf8_lossy(opened.link.expose()).into_owned(),
         }
+    }
+
+    /// The link of an agent invite opened `ago_ms` before now and never published: by now it has expired.
+    pub async fn expired_link(&mut self, ago_ms: u64) -> String {
+        let address = self.address.clone();
+        self.v(move |v| {
+            let opened = v
+                .device
+                .invite_open(
+                    Role::Agent,
+                    None,
+                    "https://app.trommi.example",
+                    &address,
+                    now_ms() - ago_ms,
+                )
+                .expect("an invite");
+            String::from_utf8_lossy(opened.link.expose()).into_owned()
+        })
+        .await
     }
 
     /// Waits for the Request to an invite, reveals, "confirms the emoji" and commits the new device: the

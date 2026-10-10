@@ -32,6 +32,8 @@ struct Step: Decodable {
   var chat: String?
   var confirmed: Bool?
   var early: Bool?
+  var feed: Bool?
+  var register: Bool?
   var groups: [String]?
   var session: String?
   var parent: String?
@@ -150,16 +152,53 @@ final class Hub {
 
   /// Hands the device everything after its cursor, with every Welcome at its place. Returns what the log's
   /// entries did and what became of the envelopes.
-  func sync(_ device: CoreDevice, room: Data) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
-    try feed(device, room: room)
+  func sync(_ device: CoreDevice, room: Data, batched: Bool = false) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
+    try feed(device, room: room, batched: batched)
   }
 
   /// The log after the device's cursor, strictly by change number; with `room`, also the Welcomes at their places.
-  func feed(_ device: CoreDevice, room: Data?) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
+  func feed(_ device: CoreDevice, room: Data?, batched: Bool = false) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
     var done: [Processed] = []
     var received: [ReceivedEnvelope] = []
     let cursor = try device.cursor()
-    for entry in log where entry.change > cursor {
+    let after = log.filter { $0.change > cursor }
+    func join(_ entry: LogEntry) {
+      guard let room else { return }
+      for welcome in welcomes where welcome.change == entry.change {
+        // A Welcome for another device does not open here: that is no finding.
+        _ = try? device.joinWelcome(welcome: welcome.bytes, room: room, committer: nil, nowMs: now())
+      }
+    }
+    if batched {
+      // Through the batch call: a batch ends where a Welcome is due, and goes on behind an entry that is passed over.
+      var rest = after[...]
+      while let first = rest.first {
+        _ = first
+        let due = room == nil ? nil : rest.firstIndex { entry in welcomes.contains { $0.change == entry.change } }
+        let end = due.map { $0 + 1 } ?? rest.endIndex
+        let batch = Array(rest[rest.startIndex..<end])
+        let items = batch.map { entry in
+          envelopes.contains(entry.change)
+            ? FeedItem(entry: nil, envelope: ServedEnvelope(bytes: entry.bytes, change: entry.change, voidCode: nil))
+            : FeedItem(entry: entry, envelope: nil)
+        }
+        let fed = try device.feed(items: items, nowMs: now())
+        for outcome in fed.outcomes {
+          if let envelope = outcome.envelope { received.append(envelope) }
+          if let processed = outcome.processed { done.append(processed) }
+        }
+        guard let refusedAt = fed.refusedAt, let code = fed.code else {
+          join(batch[batch.count - 1])
+          rest = rest[end...]
+          continue
+        }
+        guard logFinding(code: code) == .duplicate else { throw CoreError.Refused(code: code, message: fed.message ?? "") }
+        join(batch[Int(refusedAt)])
+        rest = rest[(rest.startIndex + Int(refusedAt) + 1)...]
+      }
+      return (done, received)
+    }
+    for entry in after {
       if envelopes.contains(entry.change) {
         received.append(try device.receiveEnvelope(envelope: entry.bytes, change: entry.change, ordered: true, voidCode: nil, nowMs: now()))
         continue
@@ -169,11 +208,7 @@ final class Hub {
       } catch let CoreError.Refused(code, _) where logFinding(code: code) == .duplicate {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
       }
-      guard let room else { continue }
-      for welcome in welcomes where welcome.change == entry.change {
-        // A Welcome for another device does not open here: that is no finding.
-        _ = try? device.joinWelcome(welcome: welcome.bytes, room: room, committer: nil, nowMs: now())
-      }
+      join(entry)
     }
     return (done, received)
   }
@@ -304,7 +339,7 @@ final class ScenarioTests: XCTestCase {
       let signed = try device(step.device).hubSignIn(hub: "https://hub.example", challenge: Data(repeating: 9, count: 32))
       try check(signed.signature.count == 64 && signed.auth.count > 96, "the sign-in is not a signed HubAuth")
     case "sync":
-      let (done, envelopes) = try hub.sync(device(step.device), room: room)
+      let (done, envelopes) = try hub.sync(device(step.device), room: room, batched: step.feed == true)
       seen[step.device!, default: []] += envelopes
       if let expected = step.message {
         let message = done.first { $0.kind == .message }?.message
@@ -407,6 +442,7 @@ final class ScenarioTests: XCTestCase {
       try check(!gone.isEmpty && plan.newCode.count == 32, "the recovery removes nobody")
       let chains = hub.log.filter { hub.envelopes.contains($0.change) && gone.contains(hub.posted[$0.change] ?? Data()) }
         .map { ServedEnvelope(bytes: $0.bytes, change: $0.change, voidCode: nil) }
+        .reversed() as [ServedEnvelope]  // in any order: the device sorts them
       try check(!chains.isEmpty, "the devices to go wrote nothing")
       let built = try device(step.device).recover(
         recoveryCode: code, served: served, chains: chains, account: Data("the account's sealed copies".utf8), nowMs: now())
@@ -423,8 +459,16 @@ final class ScenarioTests: XCTestCase {
       for name in step.groups! {
         let id = try group(name)
         guard let founding = name == "room" ? hub.roomInfos.first : hub.sessions[id]?.founding else { throw Unexpected("no founding of \(name)") }
+        // Before: its knowledge begins after the founding, and the past is not held; a group it is a leaf of says the same.
+        guard let before = try device(step.device).groupPast(group: id), before.fromEpoch >= 1, !before.learned
+        else { throw Unexpected("the past of \(name) is not shown as missing") }
         let learned = try device(step.device).learnHistory(group: id, founding: founding, commits: hub.served(id, founding: founding, current: founding).commits)
         try check(learned.epochs >= 1, "nothing of \(name) was learned")
+        let after = try device(step.device).groupPast(group: id)
+        try check(after?.learned == true && after?.fromEpoch == before.fromEpoch, "the past of \(name) is not shown as learned")
+        if let summary = try device(step.device).groups().first(where: { $0.group == id }) {
+          try check(summary.pastLearned && summary.ownFrom == before.fromEpoch, "the summary of \(name) does not show its past")
+        }
       }
     case "read_back":
       // Every stored envelope once more, in the hub's order: what was written before the device came opens now.
@@ -442,6 +486,11 @@ final class ScenarioTests: XCTestCase {
         try check(opened.contains { String(decoding: $0.payload ?? Data(), as: UTF8.self).contains("/9/0") }, "the early item did not open")
       }
       if let text = step.text { try check(chat(in: opened, text) != nil, "the earlier Chat message did not open") }
+      if step.register == true {
+        try check(
+          read.contains { $0.header.kind == .register && $0.register?.name.hasPrefix("board_snapshot/") == true && $0.register?.current == true },
+          "the register was not shown on reading back")
+      }
       if step.early != true && step.text == nil { try check(!opened.isEmpty, "nothing opened on reading back") }
     case "found_helper":
       // A helper session under a main session: the helper device follows the room and the main session first.
@@ -504,9 +553,48 @@ final class ScenarioTests: XCTestCase {
       let id = try group(name)
       return id.subdata(in: id.startIndex + 32..<id.endIndex)
     }
-    let opened = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: now())
-    try check(try inviteLinkParse(text: opened.link).inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
-    let asked = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature), nowMs: now())
+    let openedAt = now()
+    let opened = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: openedAt)
+    let parts = try inviteLinkParse(text: opened.link)
+    try check(parts.inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
+    // The deadline is the link's fifth part: ten minutes for a human device, fifteen for an agent device.
+    let life = inviteLifeMs(role: role)
+    try check(
+      life == (agent ? 15 : 10) * 60000 && parts.expiresAt == opened.expiresAt && opened.expiresAt == openedAt + life,
+      "the invite does not live \(life) ms")
+    let late = opened.expiresAt + inviteClockToleranceMs() + 1
+    try check(
+      try inviteLinkCheck(text: opened.link, nowMs: openedAt).inviteId == opened.inviteId
+        && (try inviteLinkCheck(text: opened.link, nowMs: late - 1)).expiresAt == opened.expiresAt,
+      "a live link is refused")
+    try check(refusal { _ = try inviteLinkCheck(text: opened.link, nowMs: late) } == .inviteExpired, "an expired link is taken by the stateless check")
+    let read = try newcomer.joinLink(link: opened.link, nowMs: openedAt)
+    try check(read.inviteId == opened.inviteId && read.hub == "https://hub.example" && read.expiresAt == opened.expiresAt, "joinLink reads another link")
+    try check(refusal { _ = try newcomer.joinLink(link: opened.link, nowMs: late) } == .inviteExpired, "joinLink takes an expired link")
+    let offer = SignedOffer(offer: opened.offer, signature: opened.signature, mac: opened.mac)
+    try check(opened.mac.count == 32, "the Offer comes without its MAC")
+    // An expired link, an altered deadline, an Offer of another invite, a missing or wrong MAC: refused, nothing stored.
+    try check(refusal { _ = try newcomer.joinRequest(link: opened.link, offer: offer, nowMs: late) } == .inviteExpired, "an expired link was answered")
+    let cut = opened.link.lastIndex(of: ".")!
+    let deadline = String(opened.link[opened.link.index(after: cut)...])
+    var moved = try base64urlDecode(text: deadline).reduce(UInt64(0)) { $0 << 8 | UInt64($1) } + 60000
+    let movedBytes = Data((0..<8).map { _ -> UInt8 in defer { moved >>= 8 }; return UInt8(moved & 0xff) }.reversed())
+    let altered = String(opened.link[...cut]) + base64urlEncode(bytes: movedBytes)
+    try check(try inviteLinkParse(text: altered).expiresAt == opened.expiresAt + 60000, "the deadline was not altered")
+    try check(refusal { _ = try newcomer.joinRequest(link: altered, offer: offer, nowMs: openedAt) } == .badInvite, "a link with an altered deadline was answered")
+    let other = try inviter.inviteOpen(role: role, sessionId: taken, app: "https://app.example", hub: "https://hub.example", nowMs: openedAt)
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: other.offer, signature: other.signature, mac: other.mac), nowMs: openedAt) }
+        == .badInvite, "an Offer of another invite was answered")
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature, mac: Data()), nowMs: openedAt) }
+        == .badInvite, "an Offer without its MAC was answered")
+    var wrong = opened.mac
+    wrong[wrong.startIndex] ^= 1
+    try check(
+      refusal { _ = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature, mac: wrong), nowMs: openedAt) }
+        == .badInvite, "an Offer with a wrong MAC was answered")
+    let asked = try newcomer.joinRequest(link: opened.link, offer: offer, nowMs: now())
     try check(asked.role == role && asked.inviter == (try inviter.id()), "the Request is for another invite")
     let accepted = try inviter.inviteAccept(
       inviteId: opened.inviteId, request: SignedRequest(request: asked.request, mac: asked.mac, signature: asked.signature), nowMs: now())

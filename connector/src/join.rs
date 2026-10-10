@@ -21,6 +21,37 @@ pub fn room_of_link(link: &str) -> Result<(String, String)> {
     Ok((link.room_id.to_base64url(), link.hub.as_str().to_string()))
 }
 
+/// Checks a pasted link before anything is asked of a hub or written: its form, and its deadline by this
+/// machine's clock (with the protocol's two minutes of tolerance). An expired link is `invite-expired`, a
+/// deadline further ahead than any invite lives is `bad-invite`.
+pub fn check_link(link: &str, now_ms: u64) -> Result<()> {
+    let link = InviteLink::parse(link.trim())?;
+    link.check_deadline(now_ms).map_err(|error| {
+        let fault = Fault::from(error);
+        let message = match fault.code.as_str() {
+            "invite-expired" => format!(
+                "this invite link expired {} ago; make a new invite in the Trommi app",
+                ago(now_ms.saturating_sub(link.expires_at))
+            ),
+            "bad-invite" => {
+                "this invite link's deadline is further ahead than an invite lives (is this machine's clock right?)"
+                    .to_string()
+            }
+            _ => return fault,
+        };
+        Fault::new(fault.code, message)
+    })
+}
+
+fn ago(ms: u64) -> String {
+    let minutes = ms / 60_000;
+    match minutes {
+        0 => "just now".to_string(),
+        1..=119 => format!("{minutes} min"),
+        _ => format!("{} h", minutes / 60),
+    }
+}
+
 /// Answers the invite `link` with a new device in the empty `journal` and waits until the inviter enrolled it.
 /// `on_code` is handed the check code as soon as the inviter revealed it; the human compares it in the app.
 /// `poll_ms` is the pause between questions to the hub, `timeout_ms` how long the whole join may take.
@@ -50,28 +81,35 @@ async fn answer_invite(
 ) -> Result<()> {
     let link_text = link.trim().to_string();
     let link = InviteLink::parse(&link_text)?;
-    let invite_id = link.invite_id()?.to_base64url();
     let until = now_ms() + timeout_ms;
     let open = Hub::new(link.hub.as_str(), None, None)?;
-
-    let offer = open
-        .open_call(
-            reqwest::Method::GET,
-            &format!("/v2/invites/{invite_id}"),
-            None,
-        )
-        .await?;
-    let offer = SignedOffer {
-        offer: unb64(&offer, "offer")?,
-        signature: unb64(&offer, "signature")?,
-    };
-    // What the Offer says is checked by the device below; it is read here only for what this side stores.
-    let told = Offer::decode(&offer.offer)?;
-
     // The new device: its key, its KeyPackage and its Request are written before the Request leaves (13.2).
     let for_vault = journal.clone();
     let vault = Arc::new(Keeper::spawn(move || Vault::create(for_vault))?);
     let outcome = async {
+        // The link as the device reads it, before the Offer is fetched: its deadline, and that this device
+        // holds no room yet.
+        let for_link = link_text.clone();
+        let joining = vault
+            .call(move |v: &mut Vault| v.device.join_link(&for_link, now_ms()))
+            .await??;
+        let invite_id = joining.invite_id.to_base64url();
+        let offer = open
+            .open_call(
+                reqwest::Method::GET,
+                &format!("/v2/invites/{invite_id}"),
+                None,
+            )
+            .await?;
+        // The MAC binds the Offer to this link; a hub that serves none leaves it empty and the device
+        // refuses the Offer (bad-invite).
+        let offer = SignedOffer {
+            offer: unb64(&offer, "offer")?,
+            signature: unb64(&offer, "signature")?,
+            mac: unb64(&offer, "mac").unwrap_or_default(),
+        };
+        // What the Offer says is checked by the device below; it is read here only for what this side stores.
+        let told = Offer::decode(&offer.offer)?;
         let now = now_ms();
         let request = vault
             .call(move |v: &mut Vault| -> Result<_> {

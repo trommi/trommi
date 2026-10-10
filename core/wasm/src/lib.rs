@@ -115,6 +115,9 @@ functions! {
     fallible recovery_sign_in(recovery_code, room, hub, challenge);
     fallible board_reduce(snapshot, snapshot_frontier, items, frontier);
     fallible invite_link_parse(text);
+    fallible invite_link_check(text, now_ms);
+    plain invite_life_ms(role);
+    plain invite_clock_tolerance_ms();
     plain check_emoji();
     fallible hub_address(text);
     fallible kit_keys_for(name, words);
@@ -197,6 +200,7 @@ methods!(RawDevice {
     remove_agents(remove, now_ms);
     remove_human_devices(cuts, now_ms);
     clean_session(group, cuts, replacement, now_ms);
+    readmit_human(group, device, key_package, now_ms);
     readmit_helper(group, old, device, key_package, now_ms);
     update(group, forced, now_ms);
     archive(group);
@@ -204,6 +208,7 @@ methods!(RawDevice {
     observe_room(group_info, expected_state);
     observe_session(group_info);
     process_log_entry(entry, now_ms);
+    feed(items, now_ms);
     send_handover(group, recipient);
     handovers_sent();
     handover_read(group, recipient);
@@ -221,6 +226,7 @@ methods!(RawDevice {
     prepare_recovery(recovery_code, served);
     recover(recovery_code, served, chains, account, now_ms);
     learn_history(group, founding, commits);
+    group_past(group);
     invite_open(role, session_id, app, hub, now_ms);
     invite_accept(invite_id, request, now_ms);
     invite_confirm(invite_id, code, request_hash, matches, now_ms);
@@ -229,6 +235,7 @@ methods!(RawDevice {
     invite_handover(invite_id);
     invite_checked(invite_id, helpers);
     invite_forget(invite_id);
+    join_link(link, now_ms);
     join_request(link, offer, now_ms);
     join_reveal(reveal);
     join_observe(group_info);

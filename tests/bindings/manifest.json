@@ -332,6 +332,32 @@
       ],
       "returns": "InviteLinkParts"
     },
+    "inviteLinkCheck": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        },
+        {
+          "name": "nowMs",
+          "type": "number"
+        }
+      ],
+      "returns": "InviteLinkParts"
+    },
+    "inviteLifeMs": {
+      "arguments": [
+        {
+          "name": "role",
+          "type": "InviteRole"
+        }
+      ],
+      "returns": "number"
+    },
+    "inviteClockToleranceMs": {
+      "arguments": [],
+      "returns": "number"
+    },
     "checkEmoji": {
       "arguments": [],
       "returns": "list<EmojiWord>"
@@ -738,6 +764,27 @@
         ],
         "returns": "number"
       },
+      "readmitHuman": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "device",
+            "type": "bytes"
+          },
+          {
+            "name": "keyPackage",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
       "update": {
         "arguments": [
           {
@@ -819,6 +866,19 @@
           }
         ],
         "returns": "Processed"
+      },
+      "feed": {
+        "arguments": [
+          {
+            "name": "items",
+            "type": "list<FeedItem>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "Fed"
       },
       "sendHandover": {
         "arguments": [
@@ -1058,6 +1118,15 @@
           }
         ],
         "returns": "Learned"
+      },
+      "groupPast": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<GroupPast>"
       },
       "seal": {
         "arguments": [
@@ -1436,6 +1505,19 @@
         ],
         "returns": "void"
       },
+      "joinLink": {
+        "arguments": [
+          {
+            "name": "link",
+            "type": "text"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "JoinLink"
+      },
       "joinRequest": {
         "arguments": [
           {
@@ -1702,6 +1784,20 @@
       "seq": "number",
       "payload": "bytes"
     },
+    "FeedItem": {
+      "entry": "optional<LogEntry>",
+      "envelope": "optional<ServedEnvelope>"
+    },
+    "FeedOutcome": {
+      "processed": "optional<Processed>",
+      "envelope": "optional<ReceivedEnvelope>"
+    },
+    "Fed": {
+      "outcomes": "list<FeedOutcome>",
+      "refusedAt": "optional<number>",
+      "code": "optional<ErrorCode>",
+      "message": "optional<text>"
+    },
     "EnvelopeInfo": {
       "envelopeHash": "bytes",
       "header": "EnvelopeHeader",
@@ -1742,11 +1838,13 @@
       "link": "text",
       "expiresAt": "number",
       "offer": "bytes",
-      "signature": "bytes"
+      "signature": "bytes",
+      "mac": "bytes"
     },
     "SignedOffer": {
       "offer": "bytes",
-      "signature": "bytes"
+      "signature": "bytes",
+      "mac": "bytes"
     },
     "SignedRequest": {
       "request": "bytes",
@@ -1761,7 +1859,14 @@
       "app": "text",
       "hub": "text",
       "roomId": "bytes",
-      "inviteId": "bytes"
+      "inviteId": "bytes",
+      "expiresAt": "number"
+    },
+    "JoinLink": {
+      "hub": "text",
+      "roomId": "bytes",
+      "inviteId": "bytes",
+      "expiresAt": "number"
     },
     "EmojiWord": {
       "emoji": "text",
@@ -1824,8 +1929,12 @@
       "epoch": "number",
       "leaves": "list<bytes>",
       "disallowed": "list<bytes>",
+      "missingOpener": "optional<bytes>",
+      "stale": "bool",
       "archived": "bool",
-      "pending": "bool"
+      "pending": "bool",
+      "ownFrom": "number",
+      "pastLearned": "bool"
     },
     "RoomRoles": {
       "epoch": "number",
@@ -1942,6 +2051,10 @@
     },
     "Learned": {
       "epochs": "number"
+    },
+    "GroupPast": {
+      "fromEpoch": "number",
+      "learned": "bool"
     },
     "Removals": {
       "group": "bytes",
@@ -2115,6 +2228,9 @@
       "leaseLost": "lease-lost",
       "accountExists": "account-exists",
       "lastWayIn": "last-way-in",
+      "accountChanged": "account-changed",
+      "range": "range",
+      "badPasskey": "bad-passkey",
       "tooLarge": "too-large",
       "quotaExceeded": "quota-exceeded",
       "clientTooOld": "client-too-old",

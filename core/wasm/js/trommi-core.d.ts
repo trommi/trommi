@@ -17,7 +17,8 @@ export type ErrorCode =
   | 'wrong-recovery' | 'forbidden' | 'not-member' | 'removed-sender' | 'wrong-sender' | 'not-found' | 'no-room'
   | 'gone' | 'invite-expired' | 'invite-burned' | 'epoch-taken' | 'wrong-epoch' | 'room-behind' | 'group-behind'
   | 'stale-session' | 'epoch-full' | 'replay' | 'gap' | 'equivocation' | 'room-exists' | 'invite-used'
-  | 'lease-lost' | 'account-exists' | 'last-way-in' | 'too-large' | 'quota-exceeded' | 'client-too-old'
+  | 'lease-lost' | 'account-exists' | 'last-way-in' | 'account-changed' | 'range' | 'bad-passkey' | 'too-large'
+  | 'quota-exceeded' | 'client-too-old'
   | 'too-many' | 'rate-limited' | 'overloaded' | 'withheld' | 'hub-voided-other' | 'bad-group' | 'no-key'
   | 'pruned' | 'decrypt-failed' | 'code-not-confirmed' | 'hash-mismatch' | 'cut'
   | 'bad-email' | 'weak-password' | 'bad-kdf' | 'bad-recovery-words' | 'bad-recovery-code' | 'no-prf'
@@ -79,6 +80,9 @@ export interface Store {
   /** The bytes of `write` are the device's: a store copies what it keeps, they are overwritten afterwards. Like
    *  `load`, it must not call its device, nor wait for a call of it: the device waits for the store. */
   apply(write: StoreWrite): Promise<void>
+  /** Optional: several writes of one call, in order, in ONE atomic and durable step; each names the revision the
+   *  one before it left. Without it they are applied one by one. */
+  applyAll?(writes: StoreWrite[]): Promise<void>
   /** Called once when the device closes, also when it closes itself after a failed write. */
   close?(): void | Promise<void>
 }
@@ -100,9 +104,18 @@ export interface GroupSummary {
   leaves: Uint8Array[]
   /** The leaves the newest room state does not allow: not empty means stale. */
   disallowed: Uint8Array[]
+  /** The opener a helper session lacks although its main session has an agent leaf: stale until it is added. */
+  missingOpener: Uint8Array | null
+  /** Whether the group is stale: a disallowed leaf or a missing opener. */
+  stale: boolean
   archived: boolean
-  /** Whether a Commit of this device waits for the hub's answer. */
+  /** Whether a Commit of this device waits: for the hub's answer, or for its place in the log. */
   pending: boolean
+  /** The epoch this device's own records of the group begin at: the one it joined at. */
+  ownFrom: number
+  /** Whether it holds the group's epochs before that one too (`learnHistory`); while false, an envelope of an
+   *  earlier epoch is `group-behind`. */
+  pastLearned: boolean
 }
 
 /** The room's roles at its newest epoch. */
@@ -315,12 +328,15 @@ export interface InviteOpened {
   expiresAt: number
   offer: Uint8Array
   signature: Uint8Array
+  /** The MAC that binds the Offer to the link, 32 bytes: published with the Offer and its signature. */
+  mac: Uint8Array
 }
 
-/** An Offer as the hub takes and serves it. */
+/** An Offer as the hub takes and serves it, with the MAC it serves beside it. */
 export interface SignedOffer {
   offer: Uint8Array
   signature: Uint8Array
+  mac: Uint8Array
 }
 
 /** A Request as the hub takes and serves it. */
@@ -342,6 +358,16 @@ export interface InviteLinkParts {
   hub: string
   roomId: Uint8Array
   inviteId: Uint8Array
+  /** The link's deadline, ms by the inviter's clock: its fifth part. */
+  expiresAt: number
+}
+
+/** What a link names, as the new device reads it before it fetches anything. */
+export interface JoinLink {
+  hub: string
+  roomId: Uint8Array
+  inviteId: Uint8Array
+  expiresAt: number
 }
 
 export interface EmojiWord {
@@ -600,6 +626,25 @@ export interface Finding {
   code: ErrorCode
 }
 
+/** One thing of the hub's one order for `feed`: a log entry, or a stored envelope. Exactly one of the two. */
+export interface FeedItem {
+  entry?: LogEntry | null
+  envelope?: ServedEnvelope | null
+}
+
+export interface FeedOutcome {
+  processed: Processed | null
+  envelope: ReceivedEnvelope | null
+}
+
+export interface Fed {
+  outcomes: FeedOutcome[]
+  /** The place of the refused item, from 0; null when all were taken. */
+  refusedAt: number | null
+  code: ErrorCode | null
+  message: string | null
+}
+
 /** An envelope's readable part, read without a device. */
 export interface EnvelopeInfo {
   envelopeHash: Uint8Array
@@ -676,6 +721,14 @@ export interface Learned {
   epochs: number
 }
 
+/** Where a device's knowledge of a group begins. */
+export interface GroupPast {
+  /** The epoch its own knowledge begins at: the one it joined at, or began to follow at. */
+  fromEpoch: number
+  /** Whether it holds every epoch before that one too; true for a group it founded. */
+  learned: boolean
+}
+
 export interface Removals {
   group: Uint8Array
   devices: Uint8Array[]
@@ -729,12 +782,25 @@ export class Device {
   removeHumanDevices(cuts: Cut[], nowMs: number): Promise<number>
   cleanSession(group: Uint8Array, cuts: Cut[], replacement: Replacement | null | undefined, nowMs: number): Promise<number>
   readmitHelper(group: Uint8Array, old: Cut, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
+  /**
+   * Lets a human device into a session group again whose Welcome it could not use: one Commit removes its leaf
+   * with its Cut and adds the same key with the fresh KeyPackage it asked with. `forbidden` in the room group and
+   * for a device that is no human device; `bad-commit` for this device itself, a device that is no human device of
+   * the room, and when the hub holds an envelope of it beyond the Cut. Returns the outbox entry's id.
+   */
+  readmitHuman(group: Uint8Array, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
   update(group: Uint8Array, forced: boolean, nowMs: number): Promise<number | null>
   archive(group: Uint8Array): Promise<void>
   joinWelcome(welcome: Uint8Array, room: Uint8Array, committer: Uint8Array | null | undefined, nowMs: number): Promise<Joined>
   observeRoom(groupInfo: Uint8Array, expectedState?: Uint8Array | null): Promise<void>
   observeSession(groupInfo: Uint8Array): Promise<void>
   processLogEntry(entry: LogEntry, nowMs: number): Promise<Processed>
+  /**
+   * Catching up: several log entries and stored envelopes, in the order of their change numbers, in one call. It
+   * stops at the first that is refused (`refusedAt`, `code`); nothing after it was touched. The writes of the
+   * whole call are stored in one transaction before it resolves. A few hundred items per call is a good size.
+   */
+  feed(items: FeedItem[], nowMs: number): Promise<Fed>
   sendHandover(group: Uint8Array, recipient: Uint8Array): Promise<number[]>
   handoversSent(): Promise<HandoverSent[]>
   handoverRead(group: Uint8Array, recipient: Uint8Array): Promise<void>
@@ -755,6 +821,14 @@ export class Device {
   inviteChecked(inviteId: Uint8Array, helpers: Uint8Array[]): Promise<void>
   /** A takeover without history: drops the invite's handover steps only. */
   inviteForget(inviteId: Uint8Array): Promise<void>
+  /**
+   * Reads a link before anything is fetched for it, its deadline held against `nowMs`: `room-exists`, `bad-format`,
+   * `newer-version`, `invite-expired` (more than two minutes past it), `bad-invite` (further ahead than any invite
+   * lives).
+   */
+  joinLink(link: string, nowMs: number): Promise<JoinLink>
+  /** Answers the Offer served for `link`, with the MAC served beside it: `bad-invite` for an Offer that is not the
+   *  link's (a missing, short or wrong MAC) and nothing is stored; `invite-expired` by the Offer's kind. */
   joinRequest(link: string, offer: SignedOffer, nowMs: number): Promise<JoinRequest>
   joinReveal(reveal: SignedReveal): Promise<CheckCode>
   joinObserve(groupInfo: Uint8Array): Promise<void>
@@ -815,6 +889,9 @@ export class Device {
    * `group-behind` until then, are handed to `receiveEnvelope` again.
    */
   learnHistory(group: Uint8Array, founding: Uint8Array, commits: ServedCommit[]): Promise<Learned>
+  /** Where this device's knowledge of a group begins, also for a followed group (not in `groups`); null for a
+   *  group it neither is a leaf of nor follows. */
+  groupPast(group: Uint8Array): Promise<GroupPast | null>
 }
 
 // ---- files --------------------------------------------------------------------------------------------------------
@@ -885,7 +962,15 @@ export function boardReduce(snapshot: Uint8Array | null | undefined, snapshotFro
 /** The header of an envelope (full or pruned form), with the sender's signature verified and nothing else:
  *  membership and the place in the chain are a device's to check (`receiveEnvelope`). */
 export function envelopeHeader(envelope: Uint8Array): EnvelopeInfo
+/** The parts of a link, nothing held against a clock; `bad-format` for a link without its deadline. */
 export function inviteLinkParse(text: string): InviteLinkParts
+/** The parts of a link after its deadline was held against `nowMs`: `invite-expired` more than two minutes past it,
+ *  `bad-invite` further ahead than any invite lives. */
+export function inviteLinkCheck(text: string, nowMs: number): InviteLinkParts
+/** How long an invite for `role` may be answered: 10 minutes for a human device, 15 for an agent device. */
+export function inviteLifeMs(role: InviteRole): number
+/** How far the new device's clock may stand from the inviter's around a deadline, either way: 2 minutes. */
+export function inviteClockToleranceMs(): number
 export function checkEmoji(): EmojiWord[]
 /** The address if `text` spells it canonically; `bad-format` otherwise. Never normalised. */
 export function hubAddress(text: string): string

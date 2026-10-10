@@ -17,7 +17,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `POST /v2/rooms` | `{ group_info, sealed_key, account? }` → `{ room_id }` | founding (5.1.1, 8.2); `room-exists`; `account`: the body of `POST /v2/account`, made in the same transaction |
 | `GET /v2/rooms/{room}/challenge` | → `{ challenge }` | 12.3 |
 | `POST /v2/rooms/{room}/tokens` | `{ auth, signature }` (`auth`: the `HubAuth` bytes) → `{ token, expires_at }` | 12.3; the challenge is used up |
-| `GET /v2/invites/{invite_id}`, `POST …/request`, `GET …/reveal` | Offer; Request + mac + signature; Reveal | by `invite_id` only (12.1); 4 requests per invite |
+| `GET /v2/invites/{invite_id}`, `POST …/request`, `GET …/reveal` | Offer + signature + mac; Request + mac + signature; Reveal | by `invite_id` only (12.1); 4 requests per invite |
 | `GET /v2/shares/{share_id}` | header `x-share-secret` → the file's bytes (`Range` honoured) | 11.5; every refusal is the same `not-found` |
 | `GET /v2/push-envelope?ticket=` | → one envelope | 15.2 |
 | **Groups (MLS delivery service)** | | |
@@ -48,7 +48,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | **Files, shares, push, presence** | | |
 | `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; at most 67 125 269 stored bytes, which is 64 MiB of plaintext (`too-large`); `quota-exceeded` |
 | `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
-| `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | Offer + signature; Reveal + signature | human devices |
+| `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | Offer + signature + mac (32 bytes, length checked only); Reveal + signature | human devices |
 | `POST /v2/push` · `GET` · `DELETE` | `{ web_push: { endpoint, keys: { p256dh, auth } } \| apns: { token, key, environment, topic }, level }`; `GET` → `{ subscriptions, vapid_public_key, apns }` | 15; human devices |
 | `POST /v2/live-activity` | `{ kind: start \| activity, token, tag, environment, topic }` | 15.3 |
 | `POST /v2/link` | `{ process, generation?, hears, working, last_call_at }` → `{ generation, expires_at }` | 13.7; every later write of that device carries `Trommi-Lease: <generation>` (`lease-lost`) |
@@ -75,7 +75,7 @@ written. Catch-up is "everything above N".
 | `registers` | `group_id`, `writer`, `register_id`, `head_change` | | **all current values**: (`group_id`); derived |
 | `files` | `file_id`, `room_id`, `uploader`, `group_id`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
 | `shares` | `share_id`, `file_id`, `secret_hash`, `expires_at`, `created_by` | | by id |
-| `invites`, `invite_requests` | signed Offer, Requests, Reveal, `expires_at`, `used_at`, `burned_at` | | by `invite_id` |
+| `invites`, `invite_requests` | signed Offer with its `mac`, Requests, Reveal, `expires_at`, `used_at`, `burned_at` | | by `invite_id` |
 | `requests` | `room_id`, `device`, `kind`, `group_id`, `at` | | by room |
 | `push_subscriptions`, `live_activities` | endpoints, tokens, `level`, the counts last sent | | by device |
 | `agent_leases` | `device`, `process`, `generation`, `expires_at` | | |
