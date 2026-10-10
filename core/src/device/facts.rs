@@ -558,13 +558,17 @@ impl<S: Storage> Device<S> {
             }
             .filter(|seat| devices.clone().any(|device| device == *seat))
         };
+        // 4.1: a role follows from the room state. A key that was a human or agent device and no longer
+        // is has none, in whatever group its leaf still stands (a stale group keeps such a leaf until it
+        // is cleaned, also over a join by 8.4); nor has an enrolled agent device outside its seat.
         let leaves = devices
             .map(|device| {
+                let enrolled = room.is_agent(&device);
                 let role = if room.is_human(&device) {
                     Some(Role::Human)
-                } else if seat == Some(device) {
+                } else if seat == Some(device) && enrolled {
                     Some(if main { Role::Agent } else { Role::Opener })
-                } else if main {
+                } else if main || enrolled || history.is_revoked(&device, room.epoch) {
                     None
                 } else {
                     Some(Role::Helper)

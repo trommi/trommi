@@ -1653,3 +1653,78 @@ fn what_the_hub_says_beside_the_commits_closes_no_session() {
         .is_ok());
     assert_open(&late, &side);
 }
+
+#[test]
+fn a_revoked_key_has_no_role_in_an_epoch_that_kept_its_leaf() {
+    let mut w = world(1);
+    let (room, main, side) = (w.room, w.main, w.side);
+    // A human device whose key the test holds, a leaf of the helper session.
+    let forger = Forger::new();
+    add_forger(&mut w.hub, &mut w.old, &forger);
+    w.sync();
+    w.old
+        .add_to_session(&side, &forger.id(), &forger.key_package(), now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    w.sync();
+    // It is removed from the room. Before anyone cleans the helper session, a device signs in with the
+    // code: the stale group takes that join, and its new epoch still holds the revoked key's leaf.
+    let cut = w.old.cut_of(&room, &forger.id()).unwrap();
+    w.old.remove_human_devices(&[cut], now()).unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    w.sync();
+    let keys = w.keys();
+    let mut signer = new_device();
+    trommi_tests::join_room(&w.hub, &mut signer, &keys).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    for group in [main, side] {
+        trommi_tests::join_session(&w.hub, &mut signer, &keys, &group).unwrap();
+        post_ok(&mut w.hub, &mut signer);
+    }
+    w.sync();
+    let kept = w.hub.epoch(&side).unwrap();
+    assert!(w.old.group(&side).unwrap().leaves.contains(&forger.id()));
+
+    // The revoked key signs a card in that epoch, as a helper device would.
+    let claim = Claim {
+        group: side,
+        epoch: kept,
+        role: Role::Helper,
+        seat: Some(w.agent.id()),
+        key: w.old.content_key(&side, kept).unwrap(),
+    };
+    let draft = envelope::Draft::first_version(
+        envelope::ObjectType::Card,
+        Urgency::Normal,
+        format!(r#"{{"card_type":"info","title":"forged","previous_version_hash":"{ZERO_HASH}"}}"#)
+            .as_bytes(),
+    )
+    .unwrap();
+    let mut pen = Pen::new(&forger.key);
+    let forged = pen.sign(&claim, &draft, &Objects::new(), now());
+    let bytes = forged.encode().unwrap();
+    // It is handed behind the cursor, as an envelope read back along its chain is.
+    let at = w.old.cursor();
+    let got = w
+        .old
+        .receive_envelope(&bytes, at, true, None, now())
+        .unwrap();
+    assert_ne!(got.outcome, EnvelopeOutcome::Applied);
+    let objects = w.old.objects(&side).unwrap();
+
+    // The session is cleaned, and a device that comes later learns that epoch and reads it back.
+    let cut = w.old.cut_of(&side, &forger.id()).unwrap();
+    w.old.clean_session(&side, &[cut], None, now()).unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    w.sync();
+    let (mut late, _) = late_in_both(&mut w);
+    learn(&w.hub, &mut late, &side).unwrap();
+    for ordered in [true, false] {
+        let got = late
+            .receive_envelope(&bytes, at, ordered, None, now())
+            .unwrap();
+        assert_ne!(got.outcome, EnvelopeOutcome::Applied, "{:?}", got.code);
+    }
+    assert_eq!(late.objects(&side).unwrap(), objects);
+    assert_eq!(w.old.objects(&side).unwrap(), objects);
+}
