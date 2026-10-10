@@ -18,8 +18,8 @@
 # variables: IOS_NON_EXEMPT_ENCRYPTION (YES or NO, default YES: the export compliance answer written into the build,
 # ios/README.md "Export compliance"), IOS_EXPORT_COMPLIANCE_CODE (not secret: the code of the app's export compliance
 # documentation in App Store Connect, written into the app's Info.plist as ITSEncryptionExportComplianceCode; with
-# YES the export is refused without it once that documentation exists), IOS_TESTFLIGHT_TESTER (an address kept in
-# the group).
+# YES the export is refused without it once that documentation exists; left empty, the code of the APPROVED
+# documentation is read from App Store Connect), IOS_TESTFLIGHT_TESTER (an address kept in the group).
 name: deploy_ios
 
 on:
