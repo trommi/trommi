@@ -390,7 +390,7 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
     };
     let bytes = offer.bytes();
     let publish = |dev: &Dev, offer: &[u8], signer: &Dev| {
-        dev.post(&w.hub, "/v2/invites", &json!({ "offer": b64(offer), "signature": b64(&signer.sign("TrommiInviteOffer", offer)) }))
+        dev.post(&w.hub, "/v2/invites", &json!({ "offer": b64(offer), "signature": b64(&signer.sign("TrommiInviteOffer", offer)), "mac": b64(&[9u8; 32]) }))
     };
     // signed by someone else; for too long; naming another room state
     publish(&w.ada, &bytes, &Dev::new()).refused(400, "bad-signature");
@@ -406,11 +406,66 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
     }
     .bytes();
     publish(&w.ada, &stale, &w.ada).refused(400, "bad-invite");
-    publish(&w.ada, &bytes, &w.ada).ok();
-    // by invite id only, without a token: the Offer
+    // 12.1.2: the Offer comes with its MAC of exactly 32 bytes; the hub checks nothing but the length
+    let with_mac = |mac: Option<&[u8]>| {
+        let mut body = json!({ "offer": b64(&bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &bytes)) });
+        if let Some(mac) = mac {
+            body["mac"] = json!(b64(mac));
+        }
+        w.ada.post(&w.hub, "/v2/invites", &body)
+    };
+    // without a MAC (clients before 12.1.2's MAC): taken, stored without one and served as null
+    let unbound = wire::Offer {
+        invite_id: random(),
+        ..offer.clone()
+    };
+    let unbound_bytes = unbound.bytes();
+    w.ada.post(&w.hub, "/v2/invites", &json!({ "offer": b64(&unbound_bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &unbound_bytes)) })).ok();
+    assert_eq!(
+        w.hub
+            .get(&format!("/v2/invites/{}", b64(&unbound.invite_id)))
+            .ok()["mac"],
+        Value::Null
+    );
+    with_mac(Some(&[9u8; 31])).refused(400, "bad-format");
+    with_mac(Some(&[9u8; 33])).refused(400, "bad-format");
+    // 12.1.2: a human device's invite lives 10 minutes, an agent device's 15; 2 minutes for the clocks
+    let human_long = wire::Offer {
+        expires_at: trommi_hub::util::now() + 600_000 + 120_000 + 10_000,
+        ..offer.clone()
+    }
+    .bytes();
+    publish(&w.ada, &human_long, &w.ada).refused(400, "bad-invite");
+    let agent = wire::Offer {
+        invite_id: random(),
+        role: 2,
+        expires_at: trommi_hub::util::now() + 900_000,
+        ..offer.clone()
+    };
+    publish(&w.ada, &agent.bytes(), &w.ada).ok();
+    // the hub's own expiry is the Offer's
+    assert_eq!(
+        w.hub
+            .get(&format!("/v2/invites/{}", b64(&agent.invite_id)))
+            .ok()["expires_at"],
+        agent.expires_at
+    );
+    let agent_long = wire::Offer {
+        invite_id: random(),
+        role: 2,
+        expires_at: trommi_hub::util::now() + 900_000 + 120_000 + 10_000,
+        ..offer.clone()
+    }
+    .bytes();
+    publish(&w.ada, &agent_long, &w.ada).refused(400, "bad-invite");
+    with_mac(Some(&[9u8; 32])).ok();
+    // the same Offer with another MAC is not the first post again
+    with_mac(Some(&[8u8; 32])).refused(409, "replay");
+    // by invite id only, without a token: the Offer and its MAC
     let path = format!("/v2/invites/{}", b64(&invite_id));
     let read = w.hub.get(&path).ok();
     assert_eq!(read["offer"], b64(&bytes));
+    assert_eq!(read["mac"], b64(&[9u8; 32]));
     assert!(read.get("requests").is_none());
     w.hub
         .get(&format!("/v2/invites/{}", b64(&random::<16>())))

@@ -281,6 +281,73 @@ mod db_tests {
         Db::open(&dir.join("hub.db")).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// A database the hub wrote before Welcomes had their own ids: the counter starts above every id SQLite can
+    /// have given, also one whose row was deleted, so `?after=` never hides a new Welcome.
+    #[test]
+    fn the_welcome_counter_starts_above_every_id_given_before() {
+        let dir = std::env::temp_dir().join(format!(
+            "trommi-hub-upgrade-{}",
+            trommi_hub::util::hex(&trommi_hub::util::random::<8>())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hub.db");
+        {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            // (only the rows this test needs, without the rooms and groups they would hang on)
+            c.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            c.execute_batch(&format!(
+                "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+            ))
+            .unwrap();
+            let room = [1u8; 32];
+            let group = [room.to_vec(), vec![2; 16]].concat();
+            c.execute(
+                "INSERT INTO group_log (group_id, n, room_id, epoch, kind, sender, at, change, digest, bytes)
+                 VALUES (?1, 1, ?2, 0, 'commit', x'03', 0, 1, x'04', x'05')",
+                rusqlite::params![&group, &room[..]],
+            )
+            .unwrap();
+            for device in [[7u8; 32], [8u8; 32]] {
+                c.execute(
+                    "INSERT INTO welcomes (room_id, device, group_id, at, bytes) VALUES (?1, ?2, ?3, 0, x'06')",
+                    rusqlite::params![&room[..], &device[..], &group],
+                )
+                .unwrap();
+            }
+            // the highest id given is gone before the upgrade
+            c.execute("DELETE FROM welcomes WHERE id = 2", []).unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let last: i64 = db
+            .read(|c| c.query_row("SELECT last FROM welcome_ids", [], |r| r.get(0)))
+            .unwrap();
+        assert!(last >= 1024, "{last}");
+        // the old row reads as before, and opening again changes nothing
+        let old: Vec<u8> = db
+            .read(|c| c.query_row("SELECT bytes FROM welcomes WHERE id = 1", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(old, vec![6]);
+        drop(db);
+        let db = Db::open(&path).unwrap();
+        let again: i64 = db
+            .read(|c| c.query_row("SELECT last FROM welcome_ids", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(again, last);
+        // a counter an earlier build seeded too low (from the rows left) is raised on the next open
+        drop(db);
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute("UPDATE welcome_ids SET last = 1", [])
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let raised: i64 = db
+            .read(|c| c.query_row("SELECT last FROM welcome_ids", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(raised, last);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 mod rules_tests {
