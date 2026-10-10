@@ -117,6 +117,24 @@ final class RoomBoardTests: XCTestCase {
     XCTAssertEqual(Set(again.shapes.keys), ids.union(["\(hex(a.id))/\(four.seq)/0"]))
   }
 
+  /// A register's value in force is the core's: B writes the crown while A's later-counted writes are already at
+  /// the hub; the core does not make B's current, and the board shows A's value, B's echo gone.
+  func testTheRegisterInForceIsTheCores() async throws {
+    let (a, b, room) = try await roomOfTwo()
+    for v in ["a1", "a2", "a3"] {
+      _ = try a.seal(.register(group: room, name: "crown", value: JV.str(v).encoded()), files: [], nowMs: nowMs())
+      try hub.post(a)
+    }
+    try await b.setCrown(.str("b"))
+    try await b.flush(timeoutMs: 10_000)
+    _ = try await b.sync()
+    let core = try await b.onCore { try $0.register(group: room, name: "crown") }
+    XCTAssertEqual(core.flatMap { JV.parse($0) }?.string, "a3")
+    XCTAssertEqual(b.board.human.crown.string, "a3")
+    XCTAssertEqual(b.board.human.raw["crown"]?.pending, false)
+    XCTAssertEqual(b.board.human.raw["crown"]?.value.string, "a3")
+  }
+
   /// gzip with one stored block (no compression): what `gunzip` reads.
   static func gzipStored(_ data: Bytes) -> Bytes {
     precondition(data.count < 65_535)
