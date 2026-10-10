@@ -226,3 +226,50 @@ fn a_helper_device_removed_and_added_again_under_its_key_owns_its_card_no_more()
     // And the chain of that key stays ended at its Cut.
     assert_eq!(w.a.chain_cut(&group, &helper.id()).unwrap().unwrap().seq, 1);
 }
+
+#[test]
+fn a_human_writes_to_an_empty_seat_with_no_recipient_and_commands_nobody() {
+    let mut w = world();
+    let seated = write(&mut w.hub, &mut w.b, &chat(&w.main, "to the agent"));
+    // The agent device is removed and its seat left empty (5.2.8).
+    sync_all(&w.hub, &mut w.a);
+    w.a.remove_agents(&[w.agent.id()], now()).unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    let cuts: Vec<_> =
+        w.a.group(&w.main)
+            .unwrap()
+            .disallowed
+            .iter()
+            .map(|gone| w.a.cut_of(&w.main, gone).unwrap())
+            .collect();
+    w.a.clean_session(&w.main, &cuts, None, now()).unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    sync_all(&w.hub, &mut w.b);
+
+    // The human still writes into the session's Chat: the device addresses nobody, the hub takes the
+    // envelope as a stored item, and the other human device reads it.
+    let waiting = write(&mut w.hub, &mut w.b, &chat(&w.main, "anyone there?"));
+    assert!(waiting.seq > seated.seq);
+    let stored = w.hub.content.envelopes.last().unwrap().clone();
+    assert_eq!(stored.void_code, None);
+    let got = sync_all(&w.hub, &mut w.a);
+    let read = got.last().unwrap();
+    assert_eq!(read.envelope_hash, waiting.envelope_hash);
+    assert_eq!(read.outcome, EnvelopeOutcome::Applied);
+    assert!(read.header.recipient.is_zero());
+    assert!(!read.command && read.body.is_some());
+    // Addressed to the device that left, or to any other, it is `forbidden` before it is signed.
+    for named in [w.agent.id(), w.a.id()] {
+        assert_eq!(
+            w.b.seal(&chat(&w.main, "to nobody's seat"), Some(&named), &[], now())
+                .map(|_| ()),
+            Err(Error::Forbidden)
+        );
+    }
+    // The device that sat there holds the session no more: nothing of it is a command for it.
+    sync_all(&w.hub, &mut w.agent);
+    assert_eq!(
+        w.agent.command(&waiting.envelope_hash, now()),
+        Err(Error::NotFound)
+    );
+}

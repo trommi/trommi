@@ -17,7 +17,8 @@ export type ErrorCode =
   | 'wrong-recovery' | 'forbidden' | 'not-member' | 'removed-sender' | 'wrong-sender' | 'not-found' | 'no-room'
   | 'gone' | 'invite-expired' | 'invite-burned' | 'epoch-taken' | 'wrong-epoch' | 'room-behind' | 'group-behind'
   | 'stale-session' | 'epoch-full' | 'replay' | 'gap' | 'equivocation' | 'room-exists' | 'invite-used'
-  | 'lease-lost' | 'account-exists' | 'last-way-in' | 'too-large' | 'quota-exceeded' | 'client-too-old'
+  | 'lease-lost' | 'account-exists' | 'last-way-in' | 'account-changed' | 'range' | 'bad-passkey' | 'too-large'
+  | 'quota-exceeded' | 'client-too-old'
   | 'too-many' | 'rate-limited' | 'overloaded' | 'withheld' | 'hub-voided-other' | 'bad-group' | 'no-key'
   | 'pruned' | 'decrypt-failed' | 'code-not-confirmed' | 'hash-mismatch' | 'cut'
   | 'bad-email' | 'weak-password' | 'bad-kdf' | 'bad-recovery-words' | 'bad-recovery-code' | 'no-prf'
@@ -103,6 +104,10 @@ export interface GroupSummary {
   leaves: Uint8Array[]
   /** The leaves the newest room state does not allow: not empty means stale. */
   disallowed: Uint8Array[]
+  /** The opener a helper session lacks although its main session has an agent leaf: stale until it is added. */
+  missingOpener: Uint8Array | null
+  /** Whether the group is stale: a disallowed leaf or a missing opener. */
+  stale: boolean
   archived: boolean
   /** Whether a Commit of this device waits: for the hub's answer, or for its place in the log. */
   pending: boolean
@@ -764,6 +769,13 @@ export class Device {
   removeHumanDevices(cuts: Cut[], nowMs: number): Promise<number>
   cleanSession(group: Uint8Array, cuts: Cut[], replacement: Replacement | null | undefined, nowMs: number): Promise<number>
   readmitHelper(group: Uint8Array, old: Cut, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
+  /**
+   * Lets a human device into a session group again whose Welcome it could not use: one Commit removes its leaf
+   * with its Cut and adds the same key with the fresh KeyPackage it asked with. `forbidden` in the room group and
+   * for a device that is no human device; `bad-commit` for this device itself, a device that is no human device of
+   * the room, and when the hub holds an envelope of it beyond the Cut. Returns the outbox entry's id.
+   */
+  readmitHuman(group: Uint8Array, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
   update(group: Uint8Array, forced: boolean, nowMs: number): Promise<number | null>
   archive(group: Uint8Array): Promise<void>
   joinWelcome(welcome: Uint8Array, room: Uint8Array, committer: Uint8Array | null | undefined, nowMs: number): Promise<Joined>

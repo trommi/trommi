@@ -170,7 +170,7 @@ const DEVICE_CALLS = [
   'id', 'room', 'cursor', 'is_human', 'is_owner', 'room_roles', 'groups', 'group', 'holds_key',
   'outbox', 'outbox_accepted', 'outbox_refused', 'key_packages_to_upload', 'key_package',
   'found_room', 'found_session', 'found_helper', 'add_to_session', 'remove_agents',
-  'remove_human_devices', 'clean_session', 'readmit_helper', 'update', 'archive',
+  'remove_human_devices', 'clean_session', 'readmit_helper', 'readmit_human', 'update', 'archive',
   'join_welcome', 'observe_room', 'observe_session', 'process_log_entry', 'feed',
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
   'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',

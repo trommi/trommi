@@ -14,7 +14,7 @@ use super::{entropy, hex};
 /// The name of the file.
 pub const NAME: &str = "account";
 /// The label of the salt of an account without an e-mail.
-pub const LABEL_ID_SALT: &str = "trommi/v2/account-salt/id";
+pub const LABEL_ID_SALT: &str = "trommi/v1/account-salt/id";
 /// An e-mail the same words are tried under.
 pub const EMAIL: &str = "owner@example.com";
 

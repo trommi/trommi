@@ -320,10 +320,10 @@ pub struct Verifier<'a> {
     pub sessions: &'a dyn SessionFacts,
     /// The recovery construct's checks.
     pub recovery: &'a dyn RecoveryRules,
-    /// The most human devices the room may hold after the Commit: 32, or 33 while a recovery runs. A verifier
-    /// that cannot know whether one runs (a device) gives 33. Above 32 the rules take only what a recovery
-    /// does, whatever is given here: a join from outside, and in a room that holds more than 32 a Commit
-    /// that adds nobody.
+    /// The most human devices the room may hold after the Commit: the limit of section 16, or one more while
+    /// a recovery runs. A verifier that cannot know whether one runs (a device) gives the larger. Above the
+    /// limit the rules take only what a recovery does, whatever is given here: a join from outside, and in a
+    /// room that holds more than the limit a Commit that adds nobody.
     pub max_human_devices: usize,
     /// The room epoch that was current at the Commit's place in the hub's order (5.2.1, 5.4.1): a session
     /// Commit names exactly this one. For the hub that takes a post, and for whoever processes the log in the
@@ -448,8 +448,13 @@ pub fn check_room_commit(verifier: &Verifier<'_>, judged: &Judged<'_>) -> Result
     }
     refuse(facts.adds.len() > 1, Error::BadCommit)?;
     for added in &facts.adds {
-        // 4.2: a revoked key never returns, and no key is both a human and an agent device.
-        refuse(revoked(added) || !humans.insert(*added), Error::BadCommit)?;
+        // 4.2: a revoked key never returns, and no key is both a human and an agent device. 3.7: nor does
+        // the key of a leaf that this same Commit removes; into the room group there is no second try.
+        let removed_here = facts.removes.contains(added);
+        refuse(
+            revoked(added) || removed_here || !humans.insert(*added),
+            Error::BadCommit,
+        )?;
     }
 
     let room = match &facts.context {
@@ -487,9 +492,10 @@ pub fn check_room_commit(verifier: &Verifier<'_>, judged: &Judged<'_>) -> Result
             Error::BadCommit,
         )?;
     }
-    // Section 16, 8.7: 32 human devices. The 33rd comes only by a join from outside, and a room that holds 33
-    // takes on only Commits that add nobody, so that the recovery's removal passes. Whether a recovery runs
-    // is the hub's to know: it sets the most to 32 outside one, and then no join makes a 33rd.
+    // Section 16, 8.7: the limit of human devices. The one beyond it comes only by a join from outside, and a
+    // room that holds one more takes on only Commits that add nobody, so that the recovery's removal passes.
+    // Whether a recovery runs is the hub's to know: it sets the most to the limit outside one, and then no
+    // join makes a device beyond it.
     let recovering =
         facts.external || (before.humans.len() > MAX_HUMAN_DEVICES && facts.adds.is_empty());
     let most = if recovering {
@@ -548,8 +554,8 @@ impl Allowed<'_> {
     }
 }
 
-/// The leaves of a session group that the room state does not allow (5.2.8): a group with one is stale. For a
-/// helper session `parent` is its main session at that place.
+/// The leaves of a session group that the room state does not allow (5.2.8): a group with one is stale
+/// ([`staleness`] is the whole predicate). For a helper session `parent` is its main session at that place.
 pub fn disallowed_leaves(
     history: &RoomHistory,
     room: &RoomState,
@@ -582,6 +588,47 @@ pub fn disallowed_leaves(
         }
     }
     unfit
+}
+
+/// Why a session group is stale (5.2.8): nobody writes into it, and it takes nothing but a join by 8.4 and
+/// the Commit that removes the leaves named here and adds the opener named here.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Staleness {
+    /// The leaves the room state does not allow, ascending.
+    pub disallowed: Vec<DeviceId>,
+    /// The opener a helper session lacks: its main session's agent leaf, an agent device of the room, that
+    /// is no leaf of the helper session. None for a main session, and while the main session has no agent
+    /// leaf (5.2.3, 5.3.3): the helper session then waits without an opener and is not stale for that.
+    pub missing_opener: Option<DeviceId>,
+}
+
+impl Staleness {
+    /// Whether the group is stale.
+    pub fn is_stale(&self) -> bool {
+        !self.disallowed.is_empty() || self.missing_opener.is_some()
+    }
+}
+
+/// Whether a session group with these leaves is stale under `room`, and why (5.2.8). The one predicate of
+/// the hub, of every member and of every observer. For a helper session `parent` is its main session at that
+/// place.
+pub fn staleness(
+    history: &RoomHistory,
+    room: &RoomState,
+    session: &TrommiSession,
+    parent: Parent,
+    leaves: &BTreeSet<DeviceId>,
+) -> Staleness {
+    let missing_opener = match parent {
+        Parent::Seat(Some(seat)) if !session.parent.is_zero() => {
+            Some(seat).filter(|seat| room.is_agent(seat) && !leaves.contains(seat))
+        }
+        _ => None,
+    };
+    Staleness {
+        disallowed: disallowed_leaves(history, room, session, parent, leaves),
+        missing_opener,
+    }
 }
 
 /// The helper devices among a helper session's leaves (5.2.3): those that are neither human devices nor the
@@ -708,8 +755,10 @@ pub fn check_session_commit(
             // 5.2.4: the opener removes no human device.
             refuse(human, Error::BadCommit)?;
         } else if helper && parent == Parent::Seat(None) && !facts.external {
-            // 5.2.3: while the main session has no agent leaf, only leaves the room no longer allows go.
-            refuse(allowed.allows(gone), Error::BadCommit)?;
+            // 5.2.3: while the main session has no agent leaf, only leaves the room no longer allows go;
+            // and the leaf of a human device that the same Commit adds again (3.7).
+            let again = human && facts.adds.contains(gone);
+            refuse(allowed.allows(gone) && !again, Error::BadCommit)?;
         }
         // 5.2.3: the opener is a leaf for as long as it is the main session's agent leaf.
         let opener = parent == Parent::Seat(Some(*gone)) && room.is_agent(gone);
@@ -723,10 +772,20 @@ pub fn check_session_commit(
         refuse(unseats_enrolled, Error::BadCommit)?;
     }
 
-    // 5.2.8: a leaf the room state does not allow makes the group stale. Only the Commit that removes every
-    // such leaf is taken, and a join by 8.4, which leaves them for that one Commit.
-    let unfit = disallowed_leaves(history, room, session, parent, &leaves);
-    if !unfit.is_empty() && !facts.external {
+    // 5.2.8: a leaf the room state does not allow makes the group stale, and so does a helper session's
+    // missing opener. Only the Commit that removes every such leaf and adds that opener is taken, and a join
+    // by 8.4, which leaves the group as stale as it was for that one Commit. The repair is that and nothing
+    // beside it: it removes exactly the leaves the room does not allow and adds no human device.
+    let stale_before = staleness(history, room, session, parent, &before.leaves);
+    if stale_before.is_stale() && !facts.external && !founding {
+        let removed: BTreeSet<DeviceId> = facts.removes.iter().copied().collect();
+        let unfit: BTreeSet<DeviceId> = stale_before.disallowed.iter().copied().collect();
+        let adds_human = facts.adds.iter().any(|added| room.is_human(added));
+        refuse(removed != unfit || adds_human, Error::StaleSession)?;
+    }
+    let stale = staleness(history, room, session, parent, &leaves);
+    if stale.is_stale() && !facts.external {
+        let unfit = &stale.disallowed;
         let brought = unfit.iter().any(|leaf| !before.leaves.contains(leaf));
         return Err(if brought {
             Error::BadCommit

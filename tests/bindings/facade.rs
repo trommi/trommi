@@ -573,3 +573,19 @@ fn the_account_seals_and_opens_the_code_under_its_ways() {
         ErrorCode::BadFormat
     );
 }
+
+#[test]
+fn a_founded_room_is_whole_and_takes_no_readmission() {
+    let (device, room) = founder(MemoryStorage::new());
+    let summary = device.group(room.clone()).expect("the room group");
+    assert!(!summary.stale && summary.missing_opener.is_none() && summary.disallowed.is_empty());
+    assert!(summary.past_learned && summary.own_from == 0);
+    let past = device.group_past(room.clone()).expect("asked").expect("its own group");
+    assert!(past.learned && past.from_epoch == 0);
+    assert!(device.group_past(vec![7; 32]).expect("asked").is_none());
+    // A device that cannot join the room group comes back as a new device: no readmission there.
+    let key_package = device.key_package(now()).expect("a KeyPackage");
+    let other = CoreDevice::create_on(Box::new(MemoryStorage::new())).expect("a new device");
+    let id = other.id().expect("its id");
+    assert_eq!(code_of(device.readmit_human(room, id, key_package, now())), ErrorCode::Forbidden);
+}
