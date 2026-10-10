@@ -230,7 +230,7 @@ final class RecoveryTests: XCTestCase {
     let room = try a.foundRoom(recoveryCode: code, nowMs: nowMs())
     try hub.post(a)
     let joined = try b.joinRoomWithCode(code, served: try hub.served(room: room, code: code, tools: tools), nowMs: nowMs())
-    try b.outboxRefused(joined.outbox[0], code: "bad-commit", voided: false)
+    try b.outboxRefused(joined.outbox[0], code: "bad-commit")
     XCTAssertTrue(b.outbox().isEmpty)
     XCTAssertNil(b.room)
     XCTAssertTrue(try b.groups().isEmpty)
@@ -283,7 +283,6 @@ final class RecoveryTests: XCTestCase {
     let got = try hub.deliver(to: b)
     XCTAssertEqual(got, [.commit(group: room, epoch: 2, superseded: nil, removed: false), .message(.recoveryAuth(from: a.id))])
     XCTAssertTrue(try b.holdsRecoveryMac())
-    XCTAssertNil(b.recoveryAuthConflict)
 
     // A new device with the new code: the link opens the old code's sealed keys, back to the founding.
     let c = try newDevice()
@@ -299,7 +298,7 @@ final class RecoveryTests: XCTestCase {
     withheld.links = []
     let joined = try d.joinRoomWithCode(next, served: withheld, nowMs: nowMs())
     XCTAssertNotNil(joined.missingLink)
-    try d.outboxRefused(joined.outbox[0], code: "bad-commit", voided: false)
+    try d.outboxRefused(joined.outbox[0], code: "bad-commit")
 
     // The old code: the room names other keys now.
     let e = try newDevice()
@@ -319,7 +318,7 @@ final class RecoveryTests: XCTestCase {
     try hub.post(lost)
 
     let served = try hub.served(room: room, code: code, tools: tools)
-    XCTAssertEqual(refusedCode { _ = try new.recover(code, served: served, cuts: [], account: [], nowMs: nowMs()) }, "incomplete")
+    XCTAssertEqual(refusedCode { _ = try new.recover(code, served: served, chains: [], account: [], nowMs: nowMs()) }, "incomplete")
     let plan = try new.prepareRecovery(code, served: served)
     XCTAssertEqual(plan.newCode.count, 32)
     XCTAssertNotEqual(plan.newCode, code)
@@ -327,11 +326,11 @@ final class RecoveryTests: XCTestCase {
     XCTAssertEqual(plan.removals.first?.group, room)
     XCTAssertEqual(plan.removals.first?.devices, [lost.id])
     // A Cut is owed for every leaf that goes.
-    XCTAssertEqual(refusedCode { _ = try new.recover(code, served: served, cuts: [], account: [], nowMs: nowMs()) }, "incomplete")
+    XCTAssertEqual(refusedCode { _ = try new.recover(code, served: served, chains: [], account: [], nowMs: nowMs()) }, "incomplete")
 
     let account = utf8(#"{"kit":{"sealed_copy":"x"}}"#)
     // (the lost device stored nothing: its chain in the room group has no head)
-    let built = try new.recover(code, served: served, cuts: [(room, Cut(device: lost.id, seq: 0, hash: ZERO32))], account: account, nowMs: nowMs())
+    let built = try new.recover(code, served: served, chains: [], account: account, nowMs: nowMs())
     let waiting = PocketHub.waiting(new)
     XCTAssertEqual(waiting.map(\.id), built.outbox)
     // The join from outside, the removal with the new code, the finish.
@@ -341,8 +340,7 @@ final class RecoveryTests: XCTestCase {
     XCTAssertTrue(waiting[1].parts[4].isEmpty)       // a member's Commit carries no RecoveryAuth
     XCTAssertEqual(waiting[2].parts.count, 2)        // RecoveryLink, the account's copies as given
     XCTAssertEqual(waiting[2].parts[1], account)
-    // Core.swift's outbox ends in front of what it cannot name; what is held back is everything here.
-    XCTAssertEqual(new.outbox().count + new.heldBack().count, 3)
+    XCTAssertEqual(new.outbox().count, 3)
     XCTAssertNil(new.room)
 
     try hub.post(new)
@@ -354,7 +352,6 @@ final class RecoveryTests: XCTestCase {
     XCTAssertEqual(try new.recoveryKeys()?.signatureKey, try tools.recoverySigner(code: plan.newCode).id)
     XCTAssertTrue(try bothHoldKey(new, lost, group: room, epoch: 0))
     XCTAssertTrue(new.outbox().isEmpty)
-    XCTAssertTrue(new.heldBack().isEmpty)
     // The lost device, should it turn up, learns that it is out.
     XCTAssertTrue(try hub.deliver(to: lost).contains { if case .commit(_, _, _, true) = $0 { return true } else { return false } })
   }

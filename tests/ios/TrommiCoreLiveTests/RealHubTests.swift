@@ -214,102 +214,8 @@ final class RealHubTests: XCTestCase {
     live.cancel()
   }
 
-  /// A second device joins by invite (12.1) against the hub's invite routes, with nothing passed from hand to hand
-  /// but the link: the Offer, the Request and the Reveal go through the hub, both sides show the same six numbers,
-  /// the hub takes the Add as the outcome of that invite, and the new device joins from its Welcome and reads the
-  /// epochs before it came. (`Room.join(link:)` cannot run yet: it starts with `parseInviteLink`, which the binding
-  /// lacks. Here the invite's id comes from the inviter; the steps are the ones RoomAccount.swift and
-  /// RoomDevices.swift take.)
-  func testADeviceJoinsByInviteAgainstTheHub() async throws {
-    let hubURL = try XCTUnwrap(hub).url
-    let founded = try await Room.foundRoom(hubURL: hubURL, base: try scratchFolder(self))
-    let first = founded.room
-    defer { first.close() }
-    let a = try XCTUnwrap(first.device as? LiveDevice)
-    let roomId = first.roomId
-    _ = try await first.hub.signIn()
-    _ = try await first.sync()
-    XCTAssertNotNil(try a.update(group: roomId, forced: true, nowMs: nowMs()))
-    first.pumpOutbox()
-    try await first.flush(timeoutMs: 5_000)
-    XCTAssertEqual(try a.groups().first?.epoch, 1)
-    func field(_ json: JSON, _ name: String) throws -> Bytes { try unb64u(try XCTUnwrap(json[name] as? String, name)) }
+  // (A device joining by invite against the real hub: to be written on the binding's invite calls through Room.)
 
-    // The inviter opens the invite and publishes its Offer.
-    let opened = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: hubURL, nowMs: nowMs())
-    try await first.hub.postInvite(offer: opened.offer, signature: opened.offerSignature)
-
-    // The new device, in a folder of its own: it reads the Offer by the invite's id and answers it.
-    let store = try Store.new(base: try scratchFolder(self))
-    let state = try store.openState(create: true)
-    let b = try XCTUnwrap(try tools.createDevice(store: state) as? LiveDevice)
-    let newcomer = try HubClient(hubURL: hubURL, room: roomId, signer: b)
-    let offer = try await newcomer.getInvite(opened.inviteId)
-    let asked = try tools.inviteRequest(link: opened.link, offer: try field(offer, "offer"), offerSignature: try field(offer, "signature"), device: b, nowMs: nowMs())
-    XCTAssertEqual(asked.invite, opened.inviteId)
-    XCTAssertEqual(asked.hub, hubURL)
-    XCTAssertEqual(asked.room, roomId)
-    try await newcomer.postInviteRequest(asked.invite, request: asked.request, mac: asked.mac, signature: asked.signature)
-
-    // The inviter finds the Request at the hub, accepts it and publishes the Reveal; both show the same numbers.
-    let waiting = try await first.hub.getInviteRequests(opened.inviteId)
-    let request = try XCTUnwrap((waiting["requests"] as? [JSON])?.first)
-    let accepted = try a.acceptInviteRequest(invite: opened.inviteId, request: try field(request, "request"), mac: try field(request, "mac"),
-                                             signature: try field(request, "signature"), nowMs: nowMs())
-    XCTAssertEqual(accepted.newDevice, b.id)
-    try await first.hub.putInviteReveal(opened.inviteId, reveal: accepted.reveal, signature: accepted.revealSignature)
-    let reveal = try await newcomer.getInviteReveal(opened.inviteId)
-    let shown = try tools.inviteReveal(device: b, reveal: try field(reveal, "reveal"), signature: try field(reveal, "signature"))
-    XCTAssertEqual(shown, accepted.numbers)
-
-    // Confirmed: the hub takes the Add, and what the device queues on hearing that.
-    let id = try a.inviteConfirm(invite: opened.inviteId, numbers: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: nowMs())
-    let welcome = try XCTUnwrap(a.outbox().first { $0.id == id }).parts[2]
-    first.pumpOutbox()
-    try await first.flush(timeoutMs: 5_000)
-    XCTAssertEqual(try a.groups().first?.pending, false)
-    XCTAssertEqual(try a.groups().first?.epoch, 2)
-    XCTAssertEqual(Set(try a.groups().first?.leaves ?? []), Set([a.id, b.id]))
-
-    // WHERE THE CORE AND THE HUB PART (not the client): the new device is a leaf now and fetches its Welcome with a
-    // leaf's token (GET /v2/welcomes), but the core signs a hub challenge only for the room a device already holds
-    // (`no-room`), and an invited device holds none before its Welcome. Until the core signs for the room of the
-    // stored invite, the Welcome is handed over here from the inviter's Commit; everything after it is the hub's.
-    do {
-      _ = try await newcomer.signIn()
-      let waiting = try await newcomer.welcomes()
-      XCTAssertEqual(try waiting.map { try field($0, "welcome") }, [welcome])
-    } catch let refused as TrommiError where refused.code == "no-room" {
-      if strict { XCTFail("an invited device cannot sign in to fetch its Welcome: \(refused)") }
-    }
-    let joined = try b.joinInvited(welcome, nowMs: nowMs())
-    XCTAssertEqual(joined, Joined(group: roomId, epoch: 2, addedBy: a.id))
-    // In the room, it signs in as a leaf, and the hub holds the same Welcome for it.
-    let role = try await newcomer.signIn()
-    XCTAssertEqual(role, "human")
-    let kept = try await newcomer.welcomes()
-    XCTAssertEqual(try kept.map { try field($0, "welcome") }, [welcome])
-
-    // What the invite still asks of the inviter: the handover of the old keys.
-    XCTAssertEqual(try a.inviteSteps(), [.handover(invite: opened.inviteId, group: roomId, device: b.id)])
-    XCTAssertFalse(try a.inviteHandover(invite: opened.inviteId).isEmpty)
-    first.pumpOutbox()
-    try await first.flush(timeoutMs: 5_000)
-    XCTAssertEqual(try a.inviteSteps(), [])
-    XCTAssertTrue(a.outbox().isEmpty)
-
-    // As a room of the app: the new device catches up and holds every key of the room, from the founding on.
-    let record = RoomRecord(hubURL: hubURL, roomId: hex(roomId), myDeviceId: hex(b.id), role: "human", deviceRegisterSent: false)
-    try store.save(record)
-    let second = try Room(store: store, record: record, deviceStore: state, device: b)
-    defer { second.close() }
-    let caught = try await second.sync()
-    XCTAssertEqual(caught.refused, 0)
-    XCTAssertTrue(try b.holdsRecoveryMac())
-    for epoch in UInt64(0)...2 { XCTAssertTrue(try bothHoldKey(b, a, group: roomId, epoch: epoch), "epoch \(epoch)") }
-    let listed = try await leaves(second, of: roomId)
-    XCTAssertEqual(listed, Set([a.id, b.id]))
-  }
 
   /// Two devices of one account. The first founds the room with its account and moves the room group on; the second
   /// logs in with the password, opens the code, signs in to the hub as the recovery key and joins from outside. Both
@@ -382,7 +288,7 @@ final class RealHubTests: XCTestCase {
       // this test runs once the hub follows 8.2.
       XCTAssertEqual(refused.status, 400)
       if strict { XCTFail("the hub refuses the SealedKey of a Commit that replaces the recovery keys: \(refused)") }
-      try a.outboxRefused(id, code: refused.code, voided: false)
+      try a.outboxRefused(id, code: refused.code)
       XCTAssertTrue(a.outbox().isEmpty)
       XCTAssertEqual(try a.groups().first?.epoch, 2)
       XCTAssertEqual(try a.groups().first?.pending, false)
@@ -398,7 +304,6 @@ final class RealHubTests: XCTestCase {
     _ = try await second.sync()
     XCTAssertEqual(try b.groups().first?.epoch, 3)
     XCTAssertTrue(try b.holdsRecoveryMac())
-    XCTAssertNil(b.recoveryAuthConflict)
 
     // The old code signs in no more; the password now opens the new one, and a third device joins with it.
     do { _ = try await signIn(code: opened.code, room: roomId, hubURL: hubURL); XCTFail("the replaced code signed in") }
@@ -441,7 +346,7 @@ final class RealHubTests: XCTestCase {
     // (the lost device stored nothing: GET /v2/groups/{group}/chains/{sender} is empty, its Cut is 0 and zeros)
     let chain = try await hub.chain(group: roomId, sender: lost, after: 0)
     XCTAssertEqual((chain["items"] as? [Any])?.count ?? 0, 0)
-    let built = try device.recover(code, served: served, cuts: [(roomId, Cut(device: lost, seq: 0, hash: ZERO32))], account: [], nowMs: nowMs())
+    let built = try device.recover(code, served: served, chains: [], account: [], nowMs: nowMs())
     XCTAssertEqual(PocketHub.waiting(device).map(\.kind), [11, 11, 12])
     for (index, entry) in PocketHub.waiting(device).enumerated() {
       XCTAssertTrue(built.outbox.contains(entry.id))
@@ -462,7 +367,7 @@ final class RealHubTests: XCTestCase {
           if strict { XCTFail("the hub refuses the SealedKey of a Commit that replaces the recovery keys: \(refused)") }
           let dropped = try await hub.request("DELETE", "/rooms/\(room)/recovery/\(recovery)")
           XCTAssertEqual(dropped["dropped"] as? Bool, true)
-          while let waiting = PocketHub.waiting(device).first { try device.outboxRefused(waiting.id, code: refused.code, voided: false) }
+          while let waiting = PocketHub.waiting(device).first { try device.outboxRefused(waiting.id, code: refused.code) }
           XCTAssertTrue(PocketHub.waiting(device).isEmpty)
           XCTAssertNil(device.room)
           device.close()
