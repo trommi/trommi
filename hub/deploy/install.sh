@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# The hub server's first installation, run on the owner's laptop from a checkout of this repository.
+# The hub server's installation, run on the owner's laptop from a checkout of this repository.
 #
 #   hub/deploy/install.sh inventory          reads the server, writes trommi-inventory-<time>.txt; changes nothing
-#   hub/deploy/install.sh install [hub-vN]   installs the updater and a hub release (default: the newest)
+#   hub/deploy/install.sh install [hub-vN]   installs the fixed parts and a hub release (default: the newest)
 #   hub/deploy/install.sh secrets            sends the push credentials; run it as
 #                                              op run --environment <hub production environment id> -- hub/deploy/install.sh secrets
-#   hub/deploy/install.sh back               undoes `install`: stops the new hub, puts the old stack back, starts it
 #
 # It reaches the server with ssh as root (1Password approves the key): HUB_SSH (default
 # root@trommi-hub.tail276436.ts.net), HUB_SSH_PORT (default 22).
 #
-# What `install` does on the server, each step printed before it is taken and checked after:
-#   1. looks, and stops before changing anything if something is not as expected
-#   2. stops the old hub container (docker compose stop hub in /srv/trommi) and moves the whole old stack, with its
-#      data and backups, to /srv/trommi-old. The tunnel container (cloudflared) is not touched and keeps running.
-#   3. makes a new, empty /srv/trommi, installs the pinned release key, the updater and its unit
-#   4. lets the updater deploy the release (it proves it itself), and asks the hub through its public address
-# It deletes nothing and can be run again at any time. If a step fails after the old hub was stopped, the old stack
-# is put back and started. After the first installation everything arrives by release: hub, its unit, the updater.
+# What is installed here and only here (root's; no release can change it): the users `trommi` and `trommi-updater`,
+# the pinned release key and the settings in /etc/trommi, the units trommi-hub.service, trommi-hub-updater.service,
+# trommi-hub-ctl.socket and trommi-hub-ctl@.service, and the scripts hub-prestart.sh, updater-prestart.sh and
+# hub-ctl.sh in /usr/local/lib/trommi. What arrives by release afterwards: the hub and the updater, as programs
+# under /srv/trommi/deploy, which belongs to trommi-updater. Nothing of Trommi runs as root except hub-ctl.sh, which
+# starts or stops the hub's unit when the updater asks. A change to one of the fixed parts: run `install` again.
+#
+# `install` prints each step before it takes it and checks it after; it deletes nothing and can be run again at any
+# time. On a server whose updater still runs as root (installed before this) it converts in place: about a minute
+# without the hub; if a step fails, everything is moved back and the old updater is started.
 set -euo pipefail
 
 HUB_SSH=${HUB_SSH:-root@trommi-hub.tail276436.ts.net}
@@ -141,10 +142,13 @@ done
 
 section "a Trommi installation by this script"
 if [ -d /etc/trommi ]; then ls -la /etc/trommi | sed 's/^/  /'; else echo "/etc/trommi: not there"; fi
-for l in current previous updater updater-previous; do
-  [ -L "/srv/trommi/$l" ] && echo "  /srv/trommi/$l -> $(readlink "/srv/trommi/$l")"
+for d in /srv/trommi /srv/trommi/deploy; do
+  for l in current previous updater updater-previous; do
+    [ -L "$d/$l" ] && echo "  $d/$l -> $(readlink "$d/$l")"
+  done
 done
-for u in trommi-hub.service trommi-hub-updater.service; do
+id trommi 2>&1; id trommi-updater 2>&1
+for u in trommi-hub.service trommi-hub-updater.service trommi-hub-ctl.socket; do
   echo "  $u: $(systemctl is-active "$u" 2>/dev/null || true)"
 done
 [ -x /usr/local/bin/trommi-hub-updater ] && /usr/local/bin/trommi-hub-updater status 2>/dev/null | sed 's/^/  /'
@@ -153,57 +157,70 @@ exit 0
 REMOTE
 }
 
-# Shared by `install` and `back`: where things are, and how the old stack is put back.
+# Shared by what `install` runs on the server: where things are, and how a conversion is undone.
 remote_common() {
   cat <<'REMOTE'
 set -euo pipefail
 export LC_ALL=C
-ROOT=/srv/trommi OLD=/srv/trommi-old UNITS=/etc/systemd/system
+ROOT=/srv/trommi DEPLOY=/srv/trommi/deploy ETC=/etc/trommi LIB=/usr/local/lib/trommi UNITS=/etc/systemd/system
+SAVE=/etc/trommi/before-noroot
+MOVED="releases current previous updater updater-previous state.json deploy.lock updater-reverted"
 step() { printf '\n--> %s\n' "$*"; }
 ok() { printf '    ok: %s\n' "$*"; }
 stop() { printf '\nSTOPPED: %s\n' "$*" >&2; exit 1; }
 # whether something listens on exactly this address; whether anything listens on this port at all
 listens() { ss -tlnH 2>/dev/null | awk -v a="$1" '$4 == a {f = 1} END {exit !f}'; }
 port_taken() { ss -tlnH 2>/dev/null | awk -v p=":$1\$" '$4 ~ p {f = 1} END {exit !f}'; }
-old_stack_here() { [ -f "$1/compose.yaml" ] || [ -f "$1/docker-compose.yml" ]; }
-
-# One installation or undoing at a time.
-exec 9> /run/trommi-install.lock
-flock -n 9 || stop "another run of this script is at work on the server"
-
-# Stops what this script installed and starts the old stack from where it was. Deletes nothing. Every step is
-# checked by itself (a function called in a condition does not stop at a failing command on its own).
-put_old_back() {
-  systemctl disable --now trommi-hub-updater.service >/dev/null 2>&1 || true
-  systemctl stop trommi-hub.service >/dev/null 2>&1 || true
-  rm -f "$UNITS/trommi-hub.service" || return 1
-  systemctl daemon-reload || true
-  if [ -d "$OLD" ]; then
-    if [ -e "$ROOT" ]; then
-      aside="/srv/trommi-new-$(date -u +%Y%m%d-%H%M%S)"
-      mv -T "$ROOT" "$aside" || { echo "    $ROOT could not be moved aside" >&2; return 1; }
-      echo "    the new installation (its data too) is kept in $aside"
-    fi
-    mv -T "$OLD" "$ROOT" || { echo "    $OLD could not be moved back to $ROOT" >&2; return 1; }
-  fi
-  old_stack_here "$ROOT" || { echo "    there is no old stack in $ROOT to start" >&2; return 1; }
-  (cd "$ROOT" && docker compose up -d) || { echo "    docker compose up failed in $ROOT" >&2; return 1; }
-  for _ in $(seq 1 30); do
+# Root does not write or run anything under $DEPLOY itself: that folder is the updater's, and whatever lies in it
+# is not root's to trust. Files go in and commands run there as the updater's user.
+as_updater() { (cd / && runuser -u trommi-updater -- "$@"); }
+hub_well() {
+  for _ in $(seq 1 "${1:-30}"); do
     if curl -fsS --max-time 3 http://127.0.0.1:8790/healthz >/dev/null 2>&1; then return 0; fi
     sleep 2
   done
-  echo "    the old hub was started but does not answer on 127.0.0.1:8790: cd $ROOT && docker compose ps" >&2
   return 1
 }
-REMOTE
-}
 
-remote_back() {
-  remote_common
-  cat <<'REMOTE'
-step "Stop the new hub and its updater, put the old stack back into $ROOT and start it"
-put_old_back || stop "the old stack is not running; see above"
-ok "the old stack runs again (docker compose in $ROOT)"
+# One installation at a time.
+exec 9> /run/trommi-install.lock
+flock -n 9 || stop "another run of this script is at work on the server"
+
+# Undoes the conversion of an installation whose updater ran as root: everything back where $SAVE says it was, and
+# the old updater started. Every step is checked by itself (a function called in a condition does not stop at a
+# failing command on its own). Safe to run on a conversion that was cut off anywhere.
+undo_conversion() {
+  [ -d "$SAVE" ] || return 0
+  systemctl disable --now trommi-hub-ctl.socket >/dev/null 2>&1 || true
+  systemctl stop trommi-hub-updater.service trommi-hub.service 'trommi-hub-ctl@*.service' >/dev/null 2>&1 || true
+  rm -f "${UNITS:?}/trommi-hub-ctl.socket" "${UNITS:?}/trommi-hub-ctl@.service" "${UNITS:?}/trommi-hub.service" || return 1
+  if [ -d "$DEPLOY" ]; then
+    for name in $MOVED; do
+      if [ -e "$DEPLOY/$name" ] || [ -L "$DEPLOY/$name" ]; then
+        mv -T "$DEPLOY/$name" "$ROOT/$name" || { echo "    $DEPLOY/$name could not be moved back" >&2; return 1; }
+      fi
+    done
+    for name in $MOVED; do
+      if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then chown -hR root:root "$ROOT/$name" || return 1; fi
+    done
+    # what else the new updater left there is kept beside it, not deleted
+    rmdir "$DEPLOY" 2>/dev/null || mv -T "$DEPLOY" "$ROOT/deploy-undone-$(date -u +%Y%m%d-%H%M%S)" || return 1
+  fi
+  # the links as they were (the release that was being installed has no unit file for the old way of running)
+  while read -r name target; do
+    ln -sfn "$target" "$ROOT/$name" || return 1
+  done < "$SAVE/links"
+  if [ -d "$ROOT/backups" ]; then chown -R root:root "$ROOT/backups" || return 1; fi
+  install -m 0644 "$SAVE/trommi-hub-updater.service" "$UNITS/trommi-hub-updater.service" || return 1
+  install -m 0644 "$SAVE/updater.env" "$ETC/updater.env" || return 1
+  install -m 0755 "$SAVE/command" /usr/local/bin/trommi-hub-updater || return 1
+  ln -sfn "$ROOT/current/trommi-hub.service" "$UNITS/trommi-hub.service" || return 1
+  systemctl daemon-reload || return 1
+  systemctl enable trommi-hub-updater.service >/dev/null 2>&1 || true
+  systemctl restart trommi-hub-updater.service || { echo "    the old updater did not start: journalctl -u trommi-hub-updater -n 30" >&2; return 1; }
+  hub_well 45 || { echo "    the old updater runs, but the hub does not answer on 127.0.0.1:8790: journalctl -u trommi-hub -n 30" >&2; return 1; }
+  mv -T "$SAVE" "$ETC/before-noroot-undone-$(date -u +%Y%m%d-%H%M%S)" || return 1
+}
 REMOTE
 }
 
@@ -211,101 +228,130 @@ REMOTE
 remote_install() {
   remote_common
   cat <<'REMOTE'
-TAG=$1 STAGE=$2 ETC=/etc/trommi LIB=/usr/local/lib/trommi
+TAG=$1 STAGE=$2
 
 # ---- 1. look, change nothing ----
 step "Look at the server (nothing is changed yet)"
 [ "$(id -u)" = 0 ] || stop "this must run as root"
 [ "$(uname -m)" = x86_64 ] || stop "this server is $(uname -m); the release is built for x86_64"
 [ -d /run/systemd/system ] || stop "this server does not run systemd"
-for t in curl python3 sha256sum tailscale ss; do command -v "$t" >/dev/null || stop "$t is missing on the server"; done
+for t in curl python3 sha256sum tailscale ss runuser useradd; do command -v "$t" >/dev/null || stop "$t is missing on the server"; done
 (cd "$STAGE" && sha256sum --quiet -c SHA256SUMS) || stop "the files did not arrive whole; run the script again"
 TSIP=$(tailscale ip -4 2>/dev/null | head -1)
 case "$TSIP" in 100.*) ;; *) stop "the server has no tailnet address (is tailscale up?)" ;; esac
 if [ -f "$ETC/release-public-key.pem" ] && ! cmp -s "$ETC/release-public-key.pem" "$STAGE/public-key.pem"; then
   stop "another release key is pinned in $ETC/release-public-key.pem; this script never replaces it"
 fi
-if old_stack_here "$ROOT"; then
-  [ ! -e "$OLD" ] || stop "$OLD exists already although $ROOT still holds the old stack; run 'inventory' and look"
-  command -v docker >/dev/null || stop "the old stack is a docker compose stack, but docker is not there"
-  STATE=old-stack
-elif [ -d "$ROOT/releases" ] || [ ! -e "$ROOT" ] || [ -z "$(ls -A "$ROOT")" ]; then
-  STATE=ours
-else
-  stop "$ROOT holds something this script does not know; run 'inventory' and look"
+if [ -f "$ROOT/compose.yaml" ] || [ -f "$ROOT/docker-compose.yml" ]; then
+  stop "$ROOT holds a docker compose stack; this script no longer moves one aside (move it away by hand first)"
 fi
-if port_taken 9443 && ! systemctl is-active --quiet trommi-hub-updater.service; then stop "port 9443 is taken by something else"; fi
-if [ "$STATE" = ours ] && port_taken 8790 && ! systemctl is-active --quiet trommi-hub.service; then
-  stop "port 8790 is taken by something else"
+if [ -d "$SAVE" ]; then
+  step "An earlier run was cut off while it converted this installation: first everything back as it was"
+  undo_conversion || stop "the earlier conversion could not be undone; see above"
+  ok "as before the conversion"
 fi
-tunnels=0
-if command -v docker >/dev/null; then
-  tunnels=$(docker ps --filter network=host --format '{{.Image}}' | grep -ci cloudflared || true)
+if [ -d "$DEPLOY" ]; then STATE=installed            # the updater runs as its own user already
+elif [ -d "$ROOT/releases" ]; then STATE=as-root     # an installation whose updater runs as root: it is converted
+else STATE=fresh
 fi
-ok "state: $STATE; tailnet address $TSIP; tunnel containers on the host's network: $tunnels (left as they are)"
+ACTIVE=$ROOT; [ "$STATE" = installed ] && ACTIVE=$DEPLOY
+if [ -e "$ACTIVE/deploy-journal.json" ] || [ -e "$ACTIVE/updater-trial" ]; then
+  stop "a deploy or a change of the updater is in the middle on the server; run this again in a few minutes"
+fi
+if [ "$STATE" = fresh ]; then
+  if port_taken 9443; then stop "port 9443 is taken by something else"; fi
+  if port_taken 8790; then stop "port 8790 is taken by something else"; fi
+fi
+ok "state: $STATE; tailnet address $TSIP"
 
 # The owner's tailnet login, from this very ssh connection: his own devices may call the endpoint beside the CI.
+# If it cannot be told (a call from a tagged device), the login an earlier installation wrote down stays.
 read -r client_ip client_port _ <<< "${SSH_CLIENT:-}"
 OWNER=$(tailscale whois --json "$client_ip:$client_port" 2>/dev/null | python3 -c '
 import json, sys
 w = json.load(sys.stdin)
 print("" if w["Node"].get("Tags") else w["UserProfile"].get("LoginName", ""))' 2>/dev/null || true)
+[ -n "$OWNER" ] || OWNER=$(sed -n 's/^UPDATER_CALLER_USERS=//p' "$ETC/updater.env" 2>/dev/null | head -1)
 case "$OWNER" in *[!A-Za-z0-9@._+-]*) OWNER='' ;; esac
 
-# ---- from here on things change; if a step fails once the old hub was stopped, the old stack is put back ----
-TOUCHED=0
+# ---- from here on things change; a conversion that fails is undone ----
+CONVERTING=0
 on_exit() {
   code=$?
   trap - EXIT
   [ "$code" = 0 ] && exit 0
-  if [ "$TOUCHED" = 1 ]; then
-    printf '\n!!! A step failed. Putting the old stack back.\n' >&2
-    if put_old_back; then
-      printf '!!! The old stack runs again from %s. Nothing was deleted. Fix what failed above and run install again.\n' "$ROOT" >&2
+  if [ "$CONVERTING" = 1 ]; then
+    printf '\n!!! A step failed. Putting the installation back as it was (updater as root).\n' >&2
+    if undo_conversion; then
+      printf '!!! Back as before: the old updater and the hub run. Nothing was deleted. Fix what failed above and run install again.\n' >&2
     else
-      printf '!!! The old stack does NOT run. Run:  hub/deploy/install.sh back\n' >&2
+      printf '!!! It could NOT be put back by itself. What was there is noted in %s; run install again, it tries the way back first.\n' "$SAVE" >&2
     fi
   else
-    printf '\n!!! A step failed. Nothing that ran before was stopped. Fix what failed above and run install again.\n' >&2
+    printf '\n!!! A step failed. Nothing that ran before was stopped by this run. Fix what failed above and run install again.\n' >&2
   fi
   exit "$code"
 }
 trap on_exit EXIT
-# an earlier run got as far as moving the old stack and did not bring the new hub up: this run answers for it too
-if [ -d "$OLD" ] && ! systemctl is-active --quiet trommi-hub.service; then TOUCHED=1; fi
 
-step "User trommi (the hub runs as it)"
-id trommi >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin trommi
-ok "$(id trommi)"
+step "Users: trommi (the hub runs as it) and trommi-updater (the updater runs as it); neither can log in"
+for user in trommi trommi-updater; do
+  id "$user" >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$user"
+done
+ok "$(id trommi); $(id trommi-updater)"
 
-if [ "$STATE" = old-stack ]; then
-  step "Stop the old hub container (docker compose stop hub in $ROOT); the tunnel container keeps running"
-  TOUCHED=1
-  (cd "$ROOT" && docker compose stop hub)
-  for _ in $(seq 1 15); do port_taken 8790 || break; sleep 1; done
-  if port_taken 8790; then stop "port 8790 is still taken after the old hub was stopped"; fi
-  ok "stopped; port 8790 is free"
+step "Ask the tailnet who a caller is, as the updater's user (it must work without root)"
+as_updater tailscale whois --json "$TSIP:1" >/dev/null || stop "tailscaled does not answer an unprivileged user; the updater could not check its callers"
+ok "it answers"
 
-  step "Move the old stack aside with all its data and backups: $ROOT -> $OLD"
-  mv "$ROOT" "$OLD"
-  [ -d "$OLD" ] && [ ! -e "$ROOT" ]
-  ok "in $OLD, untouched"
+if [ "$STATE" = as-root ]; then
+  step "Note how the installation is today, in $SAVE (to put it back if a later step fails)"
+  install -d -m 0700 "$SAVE.part"
+  install -m 0644 "$UNITS/trommi-hub-updater.service" "$SAVE.part/trommi-hub-updater.service"
+  install -m 0644 "$ETC/updater.env" "$SAVE.part/updater.env"
+  install -m 0755 /usr/local/bin/trommi-hub-updater "$SAVE.part/command"
+  : > "$SAVE.part/links"
+  for name in current previous updater updater-previous; do
+    if [ -L "$ROOT/$name" ]; then printf '%s %s\n' "$name" "$(readlink "$ROOT/$name")" >> "$SAVE.part/links"; fi
+  done
+  grep -q '^current ' "$SAVE.part/links" && grep -q '^updater ' "$SAVE.part/links" || stop "the installation has no current hub or no updater link; nothing was changed"
+  mv -T "$SAVE.part" "$SAVE"
+  ok "$(tr '\n' ';' < "$SAVE/links")"
+
+  step "Stop the updater and the hub (the hub is down from here until the new updater starts it, about a minute)"
+  CONVERTING=1
+  systemctl stop trommi-hub-updater.service
+  systemctl stop trommi-hub.service
+  ok "stopped"
+
+  step "Move releases, links and state into $DEPLOY and hand that folder to trommi-updater; backups to trommi"
+  install -d -m 0755 "$DEPLOY"
+  for name in $MOVED; do
+    if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then mv -T "$ROOT/$name" "$DEPLOY/$name"; fi
+  done
+  # the updater before this one expects to be root: it is no fallback any more (the note above still names it)
+  rm -f "${DEPLOY:?}/updater-previous"
+  chown -hR trommi-updater:trommi-updater "$DEPLOY"
+  if [ -d "$ROOT/backups" ]; then chown -R trommi:trommi "$ROOT/backups"; fi
+  ok "moved"
 fi
 
-step "Folders (a new, empty data folder: the hub starts clean)"
+step "Folders: $ROOT (root), data and backups (trommi), deploy (trommi-updater)"
 systemctl stop trommi-hub-updater.service >/dev/null 2>&1 || true
-install -d -m 0755 "$ROOT" "$ROOT/releases" "$ETC" "$LIB"
-install -d -m 0700 "$ROOT/backups"
-install -d -m 0700 -o trommi -g trommi "$ROOT/data"
-ok "$ROOT (root), $ROOT/data (trommi), $ETC, $LIB"
+install -d -m 0755 "$ROOT" "$ETC" "$LIB"
+install -d -m 0700 -o trommi -g trommi "$ROOT/data" "$ROOT/backups"
+install -d -m 0755 -o trommi-updater -g trommi-updater "$DEPLOY"
+as_updater mkdir -p "$DEPLOY/releases"
+[ "$(stat -c '%U' "$ROOT")" = root ] && [ "$(stat -c '%U' "$DEPLOY")" = trommi-updater ] && [ "$(stat -c '%U %a' "$ROOT/data")" = "trommi 700" ]
+ok "in place"
 
-step "The pinned release key, the updater's unit and its pre-start script"
+step "What is installed once and belongs to root: the pinned release key, four units, three scripts, the command"
 install -m 0644 "$STAGE/public-key.pem" "$ETC/release-public-key.pem"
-install -m 0755 "$STAGE/updater-prestart.sh" "$LIB/updater-prestart.sh"
-install -m 0644 "$STAGE/trommi-hub-updater.service" "$UNITS/trommi-hub-updater.service"
-printf '%s\n' '#!/bin/sh' '# The updater with the settings its service has: trommi-hub-updater status | deploy hub-v<N>' \
-  'set -a; . /etc/trommi/updater.env; set +a' 'exec /srv/trommi/updater/trommi-hub-updater "$@"' > /usr/local/bin/trommi-hub-updater
-chmod 0755 /usr/local/bin/trommi-hub-updater
+install -m 0755 "$STAGE/updater-prestart.sh" "$STAGE/hub-prestart.sh" "$STAGE/hub-ctl.sh" "$LIB/"
+# until now a link into the release
+rm -f "${UNITS:?}/trommi-hub.service"
+install -m 0644 "$STAGE/trommi-hub.service" "$STAGE/trommi-hub-updater.service" "$STAGE/trommi-hub-ctl.socket" "$STAGE/trommi-hub-ctl@.service" "$UNITS/"
+install -m 0755 "$STAGE/command" /usr/local/bin/trommi-hub-updater
 cmp -s "$STAGE/public-key.pem" "$ETC/release-public-key.pem"
 ok "installed"
 
@@ -334,50 +380,54 @@ printf '%s\n' "# Settings of the updater (hub/updater/src/main.rs lists them). W
 chmod 0644 "$ETC/updater.env"
 ok "the endpoint will listen on $TSIP:9443 only; callers: tag:trommi-ci${OWNER:+ and $OWNER}"
 
-step "The release $TAG, as it was checked on the laptop, into $ROOT/releases/$TAG"
-if [ -d "$ROOT/releases/$TAG" ]; then
+step "The release $TAG, as it was checked on the laptop, into $DEPLOY/releases/$TAG (written as trommi-updater)"
+if as_updater test -d "$DEPLOY/releases/$TAG"; then
   ok "already there (the updater proves it again before it uses it)"
 else
-  part="$ROOT/releases/.tmp-$TAG-install"
-  rm -rf "$part"
-  install -d -m 0755 "$part"
-  install -m 0755 "$STAGE/trommi-hub-$TARGET" "$part/trommi-hub"
-  install -m 0755 "$STAGE/trommi-hub-updater-$TARGET" "$part/trommi-hub-updater"
-  install -m 0644 "$STAGE/trommi-hub.service" "$STAGE/manifest.json" "$STAGE/manifest.json.sig" "$part/"
-  sync
-  mv "$part" "$ROOT/releases/$TAG"
+  part="$DEPLOY/releases/.tmp-$TAG-install"
+  as_updater rm -rf "${part:?}"
+  as_updater mkdir "$part"
+  put() { as_updater sh -c 'umask 022; cat > "$1" && chmod "$2" "$1"' sh "$part/$2" "$3" < "$STAGE/$1"; }
+  put "trommi-hub-$TARGET" trommi-hub 0755
+  put "trommi-hub-updater-$TARGET" trommi-hub-updater 0755
+  put manifest.json manifest.json 0644
+  put manifest.json.sig manifest.json.sig 0644
+  as_updater sh -c 'sync; mv -T "$1" "$2"' sh "$part" "$DEPLOY/releases/$TAG"
   ok "in place"
 fi
-if [ -L "$ROOT/updater" ]; then
-  ok "an updater is in place already ($(readlink "$ROOT/updater")); it changes itself by release"
+if [ "$STATE" = installed ] && as_updater test -x "$DEPLOY/updater/trommi-hub-updater"; then
+  ok "an updater is in place already ($(as_updater readlink "$DEPLOY/updater")); it changes itself by release"
 else
-  ln -s "releases/$TAG" "$ROOT/updater"
-  ok "the first updater is the one of $TAG"
+  as_updater ln -sfn "releases/$TAG" "$DEPLOY/updater"
+  ok "the updater is the one of $TAG"
 fi
-[ -x "$ROOT/updater/trommi-hub-updater" ]
-# the hub's unit is the one of the release that runs; the updater starts the hub, also after a reboot
-ln -sfn "$ROOT/current/trommi-hub.service" "$UNITS/trommi-hub.service"
+as_updater test -x "$DEPLOY/updater/trommi-hub-updater"
 
-step "Start the updater (systemd; at boot too)"
+step "Start the helper's socket and the updater (systemd; at boot too); the updater starts the hub"
 systemctl daemon-reload
+systemctl enable --now trommi-hub-ctl.socket >/dev/null
 systemctl enable trommi-hub-updater.service >/dev/null
-systemctl restart trommi-hub-updater.service
+systemctl restart trommi-hub-updater.service || { journalctl -u trommi-hub-updater.service -n 20 --no-pager >&2; stop "the updater did not start"; }
+[ "$(stat -c '%U %a' /run/trommi-hub-ctl.sock)" = "trommi-updater 600" ] || stop "the helper's socket is not the updater's alone"
 listens "$TSIP:9443" || { journalctl -u trommi-hub-updater.service -n 20 --no-pager >&2; stop "the updater does not listen on $TSIP:9443"; }
 [ "$(ss -tlnH | awk '$4 ~ /:9443$/' | wc -l)" = 1 ] || stop "port 9443 listens on more than the tailnet address"
-ok "listening on $TSIP:9443 and nowhere else"
+pid=$(systemctl show -p MainPID --value trommi-hub-updater.service)
+[ "$(stat -c '%U' "/proc/$pid")" = trommi-updater ] || stop "the updater does not run as trommi-updater"
+ok "the updater runs as trommi-updater and listens on $TSIP:9443 and nowhere else"
 
 step "Deploy $TAG through the updater (it proves the release itself, swaps, checks health)"
 /usr/local/bin/trommi-hub-updater deploy "$TAG" > "$STAGE/outcome.json" || true
 cat "$STAGE/outcome.json"
 python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("ok") is True else 1)' "$STAGE/outcome.json" \
   || stop "the updater did not accept $TAG (its answer is above; the hub's own words: journalctl -u trommi-hub -n 30)"
-curl -fsS --max-time 5 http://127.0.0.1:8790/healthz >/dev/null
-systemctl is-active --quiet trommi-hub.service
-ok "the hub runs and is well"
+hub_well 5 || stop "the hub does not answer on 127.0.0.1:8790"
+pid=$(systemctl show -p MainPID --value trommi-hub.service)
+[ "$(stat -c '%U' "/proc/$pid")" = trommi ] || stop "the hub does not run as trommi"
+ok "the hub runs as trommi and is well"
 
 step "Ask the hub from outside, through the tunnel"
 url=$(sed -n 's/^HUB_URL=//p' "$ETC/hub.env" | head -1)
-want=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["commit"])' "$ROOT/current/manifest.json")
+want=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["commit"])' "$STAGE/manifest.json")
 got=''
 for _ in $(seq 1 30); do
   got=$(curl -fsS --max-time 5 "$url/healthz" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("commit", ""))' 2>/dev/null || true)
@@ -387,16 +437,41 @@ done
 [ "$got" = "$want" ] || stop "$url/healthz does not answer as the new hub (got: ${got:-nothing}, expected $want)"
 ok "$url answers as commit $want"
 
+# from here on there is no way back by itself, and none is needed; the note of how it was is kept beside
+CONVERTING=0
+if [ -d "$SAVE" ]; then mv -T "$SAVE" "$ETC/before-noroot-done-$(date -u +%Y%m%d-%H%M%S)"; fi
 trap - EXIT
 step "Done"
 /usr/local/bin/trommi-hub-updater status
-printf 'trommi-hub.service: %s    trommi-hub-updater.service: %s, at boot: %s\n' \
-  "$(systemctl is-active trommi-hub.service)" "$(systemctl is-active trommi-hub-updater.service)" "$(systemctl is-enabled trommi-hub-updater.service)"
-[ -d "$OLD" ] && printf 'The old stack lies untouched in %s (its hub container stopped, its tunnel container still running).\n' "$OLD"
+printf 'trommi-hub.service: %s    trommi-hub-updater.service: %s, at boot: %s    trommi-hub-ctl.socket: %s\n' \
+  "$(systemctl is-active trommi-hub.service)" "$(systemctl is-active trommi-hub-updater.service)" \
+  "$(systemctl is-enabled trommi-hub-updater.service)" "$(systemctl is-active trommi-hub-ctl.socket)"
 printf 'Should a later release refuse the data of an earlier one (before launch the hub does not migrate), a clean\nstart is: systemctl stop trommi-hub; mv %s/data %s/data-old; install -d -m 0700 -o trommi -g trommi %s/data; systemctl start trommi-hub\n' "$ROOT" "$ROOT" "$ROOT"
-rm -rf "$STAGE"
-printf '\nINSTALLED: %s runs.\n' "$TAG"
+rm -rf "${STAGE:?}"
+printf '\nINSTALLED: %s runs; the updater runs as trommi-updater, the hub as trommi, nothing of Trommi as root.\n' "$TAG"
 REMOTE
+}
+
+# The command for the owner on the server, installed as /usr/local/bin/trommi-hub-updater.
+remote_command() {
+  cat <<'COMMAND'
+#!/bin/sh
+# trommi-hub-updater status | deploy hub-v<N>: the updater with the settings its service has, as the updater's own
+# user. Never as root: what lies under /srv/trommi/deploy is the updater's, not root's to run.
+set -a; . /etc/trommi/updater.env; set +a
+program=/srv/trommi/deploy/updater/trommi-hub-updater
+if [ "$(id -u)" != 0 ]; then
+  [ "$(id -un)" = trommi-updater ] || { echo "run this as root" >&2; exit 1; }
+  exec "$program" "$@"
+fi
+cd /
+before=$(readlink /srv/trommi/deploy/updater 2>/dev/null)
+runuser -u trommi-updater -- "$program" "$@"
+code=$?
+# a deploy by hand that brought another updater: the serving one makes room for it
+[ "$before" = "$(readlink /srv/trommi/deploy/updater 2>/dev/null)" ] || systemctl try-restart --no-block trommi-hub-updater.service
+exit "$code"
+COMMAND
 }
 
 # Standard input: three lines (key id, team id, topics), then the key in PEM form.
@@ -448,7 +523,7 @@ inventory() {
 # Fetches the release into $1 and proves it: the signature of the manifest, then every file against the manifest.
 fetch_release() {
   stage=$1 tag=$2
-  for name in manifest.json manifest.json.sig "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET" trommi-hub.service; do
+  for name in manifest.json manifest.json.sig "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET"; do
     curl -fsSL --max-time 300 -o "$stage/$name" "https://github.com/$REPOSITORY/releases/download/$tag/$name" \
       || die "could not fetch $name of $tag from GitHub"
   done
@@ -461,7 +536,7 @@ stage, tag, repository, target = sys.argv[1:5]
 m = json.load(open(os.path.join(stage, "manifest.json")))
 assert m["product"] == "trommi-hub" and m["repository"] == repository, "another product or repository"
 assert m["tag"] == tag and tag == "hub-v%d" % m["version"], "another release"
-for name in ("trommi-hub-" + target, "trommi-hub-updater-" + target, "trommi-hub.service"):
+for name in ("trommi-hub-" + target, "trommi-hub-updater-" + target):
     entries = [a for a in m["assets"] if a["name"] == name]
     assert len(entries) == 1, "the manifest does not name exactly one " + name
     data = open(os.path.join(stage, name), "rb").read()
@@ -487,7 +562,10 @@ print(max(tags, key=lambda t: int(t[5:])) if tags else "")') || die "GitHub coul
   trap 'rm -rf "$stage"' EXIT
   say "Fetch $tag from GitHub and check it against release/public-key.pem"
   fetch_release "$stage" "$tag"
-  cp "$REPO/release/public-key.pem" "$HERE/trommi-hub-updater.service" "$HERE/updater-prestart.sh" "$stage/"
+  cp "$REPO/release/public-key.pem" "$HERE"/trommi-hub.service "$HERE"/trommi-hub-updater.service \
+    "$HERE"/trommi-hub-ctl.socket "$HERE/trommi-hub-ctl@.service" "$HERE"/updater-prestart.sh "$HERE"/hub-prestart.sh \
+    "$HERE"/hub-ctl.sh "$stage/"
+  remote_command > "$stage/command"
   { printf 'TARGET=%q\nREPOSITORY=%q\n' "$TARGET" "$REPOSITORY"; remote_install; } > "$stage/install-remote.sh"
   (cd "$stage" && sha256sum -- * > SHA256SUMS)
 
@@ -506,14 +584,7 @@ Next:
   1. op run --environment <hub production environment id> -- hub/deploy/install.sh secrets     (push to Apple)
   2. nothing else: from now on every hub build on main is delivered by itself
 Which hub and which updater run:   ssh -p $HUB_SSH_PORT $HUB_SSH trommi-hub-updater status
-Back to the old stack:             hub/deploy/install.sh back
 EOF
-}
-
-back() {
-  say "Put the old stack back on $HUB_SSH"
-  remote_back | "${SSH[@]}" 'bash -s' || die "the old stack does not run; see above"
-  say "BACK: the old stack runs again; the new installation was stopped and kept."
 }
 
 secrets() {
@@ -539,7 +610,7 @@ check() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   remote_inventory > "$tmp/inventory.sh"; remote_install > "$tmp/install.sh"
-  remote_back > "$tmp/back.sh"; remote_secrets > "$tmp/secrets.sh"
+  remote_secrets > "$tmp/secrets.sh"; remote_command > "$tmp/command.sh"
   for f in "$tmp"/*.sh; do bash -n "$f"; done
   if command -v shellcheck >/dev/null 2>&1; then
     # TARGET and REPOSITORY are put in front of the installation program when it is sent
@@ -556,7 +627,6 @@ case "${1:-}" in
   inventory) inventory ;;
   install) install_ "${2:-}" ;;
   secrets) secrets ;;
-  back) back ;;
   check) check ;;
-  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

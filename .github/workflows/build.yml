@@ -499,7 +499,7 @@ jobs:
           # notes of the lowest level differ between shellcheck versions and do not stop the build
           shellcheck -S warning release/*.sh hub/deploy/*.sh
           bash hub/deploy/install.sh check
-      # The files of the release: both programs as static binaries, the hub's systemd unit, and the manifest that
+      # The files of the release: both programs as static binaries and the manifest that
       # names them. The commit is compiled in; paths of the build machine are not.
       - name: Build the release
         env:
@@ -511,7 +511,6 @@ jobs:
           mkdir out
           cp "target/$TARGET/release/trommi-hub" "out/trommi-hub-$TARGET"
           cp "target/$TARGET/release/trommi-hub-updater" "out/trommi-hub-updater-$TARGET"
-          cp hub/deploy/trommi-hub.service out/trommi-hub.service
           for f in "out/trommi-hub-$TARGET" "out/trommi-hub-updater-$TARGET"; do
             file "$f" | grep -Eq 'static(ally|-pie) linked' || { echo "::error::$f is not a static binary"; exit 1; }
           done

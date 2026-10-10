@@ -9,7 +9,7 @@
 #
 # It uses nothing but the shell and coreutils. Whatever happens here, systemd goes on to start the updater the link
 # names (the unit ignores this script's exit code).
-root=${1:-/srv/trommi}
+root=${1:-/srv/trommi/deploy}
 cd "$root" 2>/dev/null || exit 0
 [ -f updater-trial ] || exit 0
 # A trial is about the program, not about the network: while the tailnet address the updater listens on is not there
