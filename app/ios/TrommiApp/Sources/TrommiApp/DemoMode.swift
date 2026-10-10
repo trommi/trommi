@@ -28,6 +28,12 @@ struct DemoScreen: Identifiable, Hashable {
 }
 
 enum DemoData {
+  /** TROMMI_STORE_SHOTS=1 beside TROMMI_SCREEN: the App Store screenshots (AppStore/shots.sh). The demo's marks (the
+   *  iPad's yellow tag, the iPhone's "Leave demo" beside the tab pill) are left out; nothing else changes. */
+  static let storeShots: Bool = {
+    let env = ProcessInfo.processInfo.environment
+    return env["TROMMI_STORE_SHOTS"] == "1" && !(env["TROMMI_SCREEN"] ?? "").isEmpty
+  }()
   static func url(_ name: String) -> URL {
     Bundle.module.url(forResource: "Demo/\(name)", withExtension: nil) ?? (Bundle.module.resourceURL ?? Bundle.main.bundleURL).appendingPathComponent("Demo/\(name)")
   }
@@ -83,7 +89,17 @@ extension BoardModel {
     case "duck": duckAsk = v?.tools.showsDuck ?? false
     case "toast": if let c = v?.fresh.first { say("Answered", c.title, undo: {}) }
     case "menu", "drawer", "rail", "switch": break
-    case "note", "phone-note": tab = .note
+    case "note", "phone-note":
+      tab = .note
+      // the iPad has no Note tab: its corner button's sheet opens instead (NoteButton), once the Desk stands
+      #if canImport(UIKit)
+      if UIDevice.current.userInterfaceIdiom == .pad {
+        Task { @MainActor in
+          try? await Task.sleep(nanoseconds: 800_000_000)
+          NotificationCenter.default.post(name: .trommiNoteOpen, object: nil)
+        }
+      }
+      #endif
     case "pair", "pair-emoji": path = [.settings("")]; demoSheet = "pair"
     case "invite", "invite-emoji", "invite-ended": path = [.settings("")]; demoSheet = "invite"
     default: break

@@ -923,7 +923,7 @@ struct RootView: View {
     .background(Ink.bg)
     // the demo's tag at the top of every screen, below the island: content starts under it, nothing covers it
     // (an iPad: floating at the foot, right; above it sat over the sidebar's desk box and the centred title)
-    .overlay(alignment: .bottomTrailing) { if model.demo && model.phase == .board && model.demoKit == nil { DemoTag().padding(.trailing, 24).padding(.bottom, 24) } }
+    .overlay(alignment: .bottomTrailing) { if model.demo && !DemoData.storeShots && model.phase == .board && model.demoKit == nil { DemoTag().padding(.trailing, 24).padding(.bottom, 24) } }
     .sheet(isPresented: $model.demoScreens) { AllScreensSheet() }
   }
 }

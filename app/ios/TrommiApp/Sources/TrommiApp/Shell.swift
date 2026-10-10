@@ -42,7 +42,7 @@ struct BoardShell: View {
         // a bar, not a plain inset: the lists' soft scroll edge reaches up to it
         .safeAreaBar(edge: .bottom, spacing: 0) {
           if showBar {
-            TabPill(waiting: model.view?.fresh.count ?? 0, hasNote: hasNote, leaveDemo: model.demo ? { model.leaveDemo() } : nil) { t in
+            TabPill(waiting: model.view?.fresh.count ?? 0, hasNote: hasNote, leaveDemo: model.demo && !DemoData.storeShots ? { model.leaveDemo() } : nil) { t in
               let was = model.tabs.page
               // the page he is on, tapped again: back to its root. Chat always opens on its list (a chat has no bar)
               if model.tabs.tap(t) { withAnimation(.snappy) { model.path = [] } } else if t == .chat && was != .chat { model.chatPath = [] }
