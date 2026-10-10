@@ -335,6 +335,9 @@ export const steps = [
       if (await A.js("return document.getElementById('brand-doors')?.hidden !== false")) { await A.click('.desk-switch-open'); await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open') }
       // (the menu's list already holds the desk made before: no redraw of it comes between the press and the line)
       await A.until(`document.querySelector('#desk-add')?.getClientRects().length && ${has(made.at(-1))}`, 'the menu\'s New Desk, with the desk made before listed')
+      // (the menu scrolls to the desk in view as it opens: New Desk is pressed once it stands still, or a quick press
+      //  lands on the row that scrolled under it)
+      for (let i = 0, was = ''; i < 20; i++) { const at = await A.js("const r = document.querySelector('#desk-add').getBoundingClientRect(); return `${Math.round(r.x)},${Math.round(r.y)}`"); if (at === was) break; was = at; await sleep(80) }
       await A.click('#desk-add')
       await A.until("document.activeElement?.matches('.menu-desk-field')", 'the field for the new desk\'s name')
       await A.session.send('Input.insertText', { text: name })
