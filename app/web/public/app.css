@@ -618,6 +618,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
    takes the pointer. Under the lifted piece the other page itself shows (the Scribble Board laid there by the
    controller, or .curl-back: the Desk as rendered); the flap is paper with an ink outline, pen strokes along its
    fold and a second, lighter line as its shadow. Nothing leaves the box. ---- */
+:root { --safe-top: env(safe-area-inset-top, 0px); --safe-right: env(safe-area-inset-right, 0px); }
 .curl { position: fixed; z-index: 7; pointer-events: none; overflow: hidden; }
 .curl-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
 .curl-back { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
