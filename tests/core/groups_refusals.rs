@@ -8,6 +8,7 @@ use trommi_core::codec;
 use trommi_core::crypto::Secret;
 use trommi_core::device::{log_finding, LogFinding, Processed, Received, WelcomeExpectation};
 use trommi_core::ids::{BoardId, DeviceId, GroupId, Hash32, RoomId, TurnId};
+use trommi_core::invite::Role;
 use trommi_core::mls::message::{EpochKey, TrommiMessage};
 use trommi_core::mls::profile::{CommitNote, Cut, TrommiRoom};
 use trommi_core::Error;
@@ -15,8 +16,8 @@ use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
     add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
-    now, observe, post_all, post_ok, post_refused, process, publish_some, settle, sync, sync_ok,
-    TestDevice,
+    now, post_all, post_ok, post_refused, process, publish_some, seeded_device, settle, sync,
+    sync_ok, try_invite, TestDevice,
 };
 
 struct World {
@@ -29,14 +30,17 @@ struct World {
     main: GroupId,
 }
 
+/// The seeds of the keys of the second human device and of the second agent device.
+const SECOND: u8 = 0x0B;
+const OTHER: u8 = 0x0E;
+
 /// Two human devices, a main session with its agent device, and a second enrolled agent device.
 fn world(checks: bool) -> World {
-    let mut devices: Vec<TestDevice> = (0..4).map(|_| new_device()).collect();
     let (mut other, mut agent, mut b, mut a) = (
-        devices.pop().unwrap(),
-        devices.pop().unwrap(),
-        devices.pop().unwrap(),
-        devices.pop().unwrap(),
+        seeded_device(OTHER),
+        new_device(),
+        seeded_device(SECOND),
+        new_device(),
     );
     let mut hub = Hub::new(checks);
     let room_group = found_room_on(&mut hub, &mut a);
@@ -67,15 +71,14 @@ fn an_agent_device_committing_in_the_room_group() {
     // No operation of an agent device builds a Commit of the room group's leaves: it is no leaf.
     // (`rules.rs`, room_commits_follow_5_1: a committer that is no human device is `bad-commit`.)
     let mut built = world(true);
-    let package = built.other.key_package(now()).unwrap();
+    for role in [Role::Human, Role::Agent] {
+        assert_eq!(
+            try_invite(&mut built.agent, &mut new_device(), role, None),
+            Err(Error::Forbidden)
+        );
+    }
     assert_eq!(
-        built
-            .agent
-            .add_human_device(&built.other.id(), &package, now()),
-        Err(Error::Forbidden)
-    );
-    assert_eq!(
-        built.agent.change_agents(&[], &[built.other.id()], now()),
+        built.agent.remove_agents(&[built.other.id()], now()),
         Err(Error::Forbidden)
     );
     assert_eq!(
@@ -158,12 +161,10 @@ fn a_main_session_with_two_agent_leaves() {
     assert!(w.a.outbox().is_empty() && !w.a.group(&w.main).unwrap().pending);
     // Founded with two: the second agent device is one KeyPackage too many, added like a helper device.
     let mut third = new_device();
-    w.a.change_agents(&[third.id()], &[], now()).unwrap();
-    post_ok(&mut w.hub, &mut w.a);
+    enrol(&mut w.hub, &mut w.a, &mut third);
     for device in [&mut w.b, &mut w.agent, &mut w.other] {
         settle(&w.hub, device);
     }
-    observe(&w.hub, &mut third);
     publish_some(&mut w.hub, &mut w.other, 1);
     let mut packages = w.hub.claim(&[w.b.id(), w.other.id()]).unwrap();
     packages.push(third.key_package(now()).unwrap());
@@ -194,11 +195,15 @@ fn a_returning_key() {
         post_ok(&mut hub, &mut a);
         settle(&hub, &mut agent);
         let package = b.key_package(now()).unwrap();
-        // The device does not build its return to the room group.
+        // The device does not build its return to the room group: whoever holds the key answers an
+        // invite, the person confirms, and no Commit is made.
+        let mut returning = seeded_device(SECOND);
+        assert_eq!(returning.id(), b.id());
         assert_eq!(
-            a.add_human_device(&b.id(), &package, now()),
+            try_invite(&mut a, &mut returning, Role::Human, None),
             Err(Error::BadCommit)
         );
+        assert!(a.outbox().is_empty());
         // Nor its return to a session group.
         assert_eq!(
             a.add_to_session(&main, &b.id(), &package, now()),
@@ -209,10 +214,10 @@ fn a_returning_key() {
     }
     // A replaced agent device is enrolled again.
     let mut w = world(true);
-    w.a.change_agents(&[], &[w.other.id()], now()).unwrap();
+    w.a.remove_agents(&[w.other.id()], now()).unwrap();
     post_ok(&mut w.hub, &mut w.a);
     assert_eq!(
-        w.a.change_agents(&[w.other.id()], &[], now()),
+        try_invite(&mut w.a, &mut seeded_device(OTHER), Role::Agent, None),
         Err(Error::BadCommit)
     );
     assert!(w.a.outbox().is_empty());
@@ -466,7 +471,8 @@ fn a_work_trail_step_without_a_number() {
 
 #[test]
 fn a_welcome_into_a_room_with_too_many_devices() {
-    // No device builds one: the Add of a 33rd human device and the enrolment of a 257th agent device are
+    // No device builds one: the Add of a human device beyond the limit and the enrolment of a 257th agent
+    // device are
     // refused where they are built and where they are judged (`rules.rs`). A founder that obeys MLS only
     // makes such rooms, and the device it adds refuses the Welcome (section 16).
     let room = |agents: usize| TrommiRoom {
@@ -482,15 +488,18 @@ fn a_welcome_into_a_room_with_too_many_devices() {
             })
             .collect(),
     };
-    for (humans, agents, fits) in [(31, 256, true), (32, 0, false), (1, 257, false)] {
+    let limit = trommi_core::mls::profile::MAX_HUMAN_DEVICES;
+    let cases = [(limit - 1, 256, true), (limit, 0, false), (1, 257, false)];
+    for (at, (humans, agents, fits)) in cases.into_iter().enumerate() {
         let founder = Forger::new();
-        let group = GroupId::room(RoomId::new([humans as u8; 32]));
+        let group = GroupId::room(RoomId::new([at as u8; 32]));
         let extension = room(agents);
         assert_eq!(extension.agents.len(), agents);
         let mut forged = founder.found_room(&group, &extension);
         let mut c = new_device();
         let mut packages: Vec<Vec<u8>> = (1..humans).map(|_| Forger::new().key_package()).collect();
-        packages.push(c.key_package(now()).unwrap());
+        // The founder invites the device, which answers: the Welcome is for the KeyPackage of its Request.
+        packages.push(founder.invite(&group.room_id(), &mut c));
         let welcome = founder
             .commit(&mut forged, b"", &packages)
             .welcome
@@ -501,12 +510,118 @@ fn a_welcome_into_a_room_with_too_many_devices() {
         };
         let joined = c.join_welcome(&welcome, &expected, now());
         if fits {
-            let joined = joined.expect("32 human devices and 256 agent devices fit");
-            assert_eq!(c.group(&joined.group).unwrap().leaves.len(), 32);
+            let joined = joined.expect("the limit of human devices and 256 agent devices fit");
+            assert_eq!(c.group(&joined.group).unwrap().leaves.len(), limit);
         } else {
             assert_eq!(joined, Err(Error::TooMany), "{humans} and {agents}");
             assert!(c.groups().unwrap().is_empty());
             assert_eq!(c.room(), None);
         }
     }
+}
+
+/// The note of a Commit that builds on the newest room state `device` holds.
+fn note_now(device: &TestDevice) -> Vec<u8> {
+    let state = device.room_history().unwrap().newest().clone();
+    codec::encode(&CommitNote {
+        room_epoch: state.epoch,
+        room_state: state.state,
+        time: now(),
+        cuts: Vec::new(),
+        join: false,
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_commit_with_a_pre_shared_key_proposal() {
+    // Section 3: no PreSharedKey proposal, whoever holds the key. No device builds one; a member that obeys
+    // MLS alone does. The hub refuses it by the rules.
+    let World {
+        mut hub,
+        mut a,
+        room_group,
+        ..
+    } = world(true);
+    let forger = Forger::new();
+    let mut forged = add_forger(&mut hub, &mut a, &forger);
+    let with_psk = forger.commit_with_psk(&mut forged, &note_now(&a));
+    assert_eq!(
+        forger.post_commit(&mut hub, &room_group, &with_psk),
+        Err(Error::BadCommit)
+    );
+
+    // Stored by a hub that checks nothing, it is taken by nobody: an observer refuses it by the same rules,
+    // a member cannot even process it, and every one of them keeps its state.
+    let World {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        room_group,
+        ..
+    } = world(false);
+    let forger = Forger::new();
+    let mut forged = add_forger(&mut hub, &mut a, &forger);
+    sync_ok(&hub, &mut b);
+    settle(&hub, &mut agent);
+    let epoch = hub.epoch(&room_group).unwrap();
+    let with_psk = forger.commit_with_psk(&mut forged, &note_now(&a));
+    forger
+        .post_commit(&mut hub, &room_group, &with_psk)
+        .unwrap();
+    assert_eq!(last(&hub, &mut agent), Err(Error::BadCommit));
+    for device in [&mut a, &mut b] {
+        let error = last(&hub, device).unwrap_err();
+        assert_eq!(log_finding(&error), LogFinding::BadGroup);
+        assert_eq!(device.group(&room_group).unwrap().epoch, epoch);
+    }
+    assert_eq!(
+        agent.room_history().unwrap().newest().epoch,
+        epoch,
+        "the observer did not follow it"
+    );
+}
+
+#[test]
+fn a_commit_with_one_byte_changed() {
+    // The hub refuses it wherever the byte lies in what it can check: the content, the signature, the
+    // confirmation tag. The membership tag, the last 32 bytes, only members can check (14.1). It then takes
+    // the Commit as it was built.
+    let World {
+        mut hub,
+        mut a,
+        room_group,
+        ..
+    } = world(true);
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    let entry = a.outbox().remove(0);
+    let len = entry.parts[0].len();
+    for at in [len / 4, len / 2, len - 100, len - 40] {
+        let mut changed = entry.clone();
+        changed.parts[0][at] ^= 1;
+        assert!(hub.post(&a.id(), &changed).is_err(), "byte {at}");
+    }
+    post_ok(&mut hub, &mut a);
+
+    // A changed membership tag passes every hub and is merged by no member; an observer, which follows
+    // what the hub does, cannot tell either (14.7).
+    let World {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        room_group,
+        ..
+    } = world(false);
+    let epoch = hub.epoch(&room_group).unwrap();
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    let mut changed = a.outbox().remove(0);
+    let last_byte = changed.parts[0].len() - 1;
+    changed.parts[0][last_byte] ^= 1;
+    hub.post(&a.id(), &changed).unwrap();
+    let error = last(&hub, &mut b).unwrap_err();
+    assert_eq!(log_finding(&error), LogFinding::BadGroup);
+    assert_eq!(b.group(&room_group).unwrap().epoch, epoch);
+    assert!(last(&hub, &mut agent).is_ok());
 }
