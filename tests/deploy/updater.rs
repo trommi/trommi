@@ -873,6 +873,37 @@ async fn a_cut_off_release_that_does_not_run_is_not_started_but_put_back() {
     assert!(!b.root.join("deploy-journal.json").exists());
 }
 
+/// When not even the link can be put back (a full disk), the release that was not taken is not started a second
+/// time: the hub stays stopped and the note stays, until a later start of the updater settles it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cut_off_release_is_not_started_when_the_way_back_cannot_be_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let b = cut_off("cutfull", true, false).await;
+    let closed = std::fs::Permissions::from_mode(0o555);
+    std::fs::set_permissions(&b.root, closed).unwrap();
+    if std::fs::write(b.root.join("probe"), b"").is_ok() {
+        std::fs::set_permissions(&b.root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: run as root, the folder cannot be closed this way");
+        return;
+    }
+    let starts = b.world.starts.load(Ordering::SeqCst);
+    b.updater().started().await;
+    std::fs::set_permissions(&b.root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        b.world.starts.load(Ordering::SeqCst),
+        starts,
+        "nothing was started"
+    );
+    assert_eq!(b.hub_commit(), None);
+    assert_eq!(b.link("current").as_deref(), Some("hub-v6"));
+    assert!(b.root.join("deploy-journal.json").exists());
+    // room again: the next start settles it
+    b.updater().started().await;
+    assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
+    assert_eq!(b.hub_commit(), Some(commit_of(5)));
+    assert!(!b.root.join("deploy-journal.json").exists());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_release_already_found_not_well_is_never_taken_at_a_later_start() {
     // the updater went down while it was putting hub-v5 back; hub-v6 would answer as well by now
