@@ -94,7 +94,7 @@ export function register(t) {
 }
 
 // ---- share view ----
-// The page for people outside the room: https://app.trommi.com/a/<share_id>#<share_secret>.<file_key>.<sha256>
+// The page for people outside the room: https://app.trommi.com/artifact/<share_id>#<share_secret>.<file_key>.<sha256>
 // (the repository's README, "links for people outside the room"). Everything after # stays in this browser: the secret goes
 // to the hub only as the x-share-secret header, the file key never leaves the page. The hub hands out the encrypted
 // bytes; they are checked against the sha256 of the link, decrypted here, and shown: a page in the sandboxed frame

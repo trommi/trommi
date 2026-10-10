@@ -426,9 +426,11 @@ test('the app takes the address of a share link of this protocol for a share pag
   // a share id is 16 bytes: 22 characters of base64url in a link (client.ts shareAttachment), 32 hex before
   const id = Buffer.alloc(16, 0xfb).toString('base64url')
   assert.equal(id.length, 22)
-  assert.ok(page.test(`/a/${id}`), 'a link of this protocol')
-  assert.ok(page.test(`/a/${'0'.repeat(32)}`), 'a link of before')
-  assert.ok(!page.test('/a/short') && !page.test(`/a/${id}/x`))
+  assert.ok(page.test(`/artifact/${id}`), 'a link of this protocol')
+  assert.ok(page.test(`/artifact/${'0'.repeat(32)}`), 'a link of before')
+  assert.ok(!page.test('/artifact/short') && !page.test(`/artifact/${id}/x`))
+  // (/a/… is the address of before: the router has moved it to /artifact/… before it asks, paths.mjs)
+  assert.ok(!page.test(`/a/${id}`))
   // every other place that tells a share page by its address uses the same rule
   for (const s of sources) for (const hit of s.text.matchAll(/\\\/a\\\/\[0-9a-f\]\{32\}\$/g)) assert.fail(`${where(s, hit.index)}: a share page told by a hex id alone`)
   const start = fs.readFileSync(path.join(CORE, 'core-start.ts'), 'utf8')

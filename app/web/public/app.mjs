@@ -8,6 +8,7 @@ import * as notes from './notes.mjs'
 import { DRAWER_VEIL, SIDE_FOOT, cornerNote, markCurrent, phoneBar, sidebarRows, tabBar, topbar } from './sidebar.mjs'
 import { Controller, WORDS, calm, readAttachmentsWith, controller, copyLater, curlHTML, html, hueFor, isKnock, keySheet, raw, showToast, sk, startUi, toast, sayError } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
+import { movedPath } from './paths.mjs'
 import { rowSheet } from './desk.mjs'
 // The views a cold start needs (the Desk, its frame, the notes) come with this module; every other view is loaded
 // when an address of it is first asked for (LAZY: the addresses it answers), and all of them once the page is idle,
@@ -18,8 +19,8 @@ const PROOF_PATH = /^\/settings\/proof$/
 const LAZY = {
   auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings(?:\/(?:devices|account|theme|keys|kit|password))?|devices\/|pair|logout|join|login)(?:\/|$)/ },
   agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings\/(?:sessions|agents)$|sessions\/)/ },
-  card: { load: () => import('./card.mjs'), paths: /^(?:\/s\/[^/]+)?\/card\/|^\/cards\/[0-9a-f]+\// },
-  session: { load: () => import('./session.mjs'), paths: /^\/s\// },
+  card: { load: () => import('./card.mjs'), paths: /^(?:\/chat\/[^/]+)?\/card\/|^\/cards\/[0-9a-f]+\// },
+  session: { load: () => import('./session.mjs'), paths: /^\/chat\// },
   media: { load: () => import('./media.mjs'), paths: /^\/artifacts(?:\/|$)/ },
   whiteboard: { load: () => import('./whiteboard.mjs'), paths: /^\/scribble-board$/ },
   proof: { load: () => import('./proof.mjs'), paths: PROOF_PATH },
@@ -397,7 +398,7 @@ document.addEventListener('click', async e => {
 
 
 const SESSION_ID_LEN = 12
-// A session's id on the board (its address /s/<id>): the start of the agent's device id, known from the first envelope
+// A session's id on the board (its address /chat/<id>): the start of the agent's device id, known from the first envelope
 // on and never changing. (The hub's agent_session_id is random hex and arrives later, with GET devices: it would move
 // the address. A readable one, as the mock room has, is kept.)
 // A session's key in the core's model: its session_id (in the demo room that is its agent's device id).
@@ -1561,6 +1562,7 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
   async function visit(path, { action = 'advance', scroll } = {}) {
     const url = new URL(path, location.href)
     if (url.origin !== location.origin) { location.href = url.href; return }
+    url.pathname = movedPath(url.pathname) ?? url.pathname   // (an address of before: paths.mjs)
     const to = url.pathname + url.search + url.hash
     if (action !== 'restore' && fire(document, 'turbo:before-visit', { url: url.href }, true).defaultPrevented) return
     const mine = ++visiting
@@ -1921,8 +1923,8 @@ const write = (k, v) => { try { if (v == null) localStorage.removeItem(k); else 
 // stored there, and the page holds an exact copy of the model (core/remote.ts).
 /* global __TROMMI_CORE_WORKER__ */
 const CORE_WORKER = typeof __TROMMI_CORE_WORKER__ === 'string' ? __TROMMI_CORE_WORKER__ : '/gen/vendor/core-worker.mjs'
-/** A share page: `/a/<share id>` (22 characters of base64url; 32 hex in the links of before). */
-const SHARE_PAGE = /^\/a\/(?:[0-9a-f]{32}|[A-Za-z0-9_-]{22})$/
+/** A share page: `/artifact/<share id>` (22 characters of base64url; 32 hex in the links of before). */
+const SHARE_PAGE = /^\/artifact\/(?:[0-9a-f]{32}|[A-Za-z0-9_-]{22})$/
 /** The stored room in the core worker: a RemoteClient, or null (no room stored). A browser without workers, or a
  *  worker that does not come up, fails with `worker-failed` / `worker-timeout`: the account screens word it. */
 export async function openInWorker() {
@@ -2098,7 +2100,7 @@ async function start(client, { fresh = false } = {}) {
   const load = (key, limit) => { if (opened.has(key)) return; opened.add(key); client.loadTimeline(key, { limit }).catch(err => console.warn('timeline', err)) }
   const loadOpen = () => {
     const path = location.pathname
-    const q = /^\/(?:s\/[^/]+\/)?card\/([\w-]+)/.exec(path)
+    const q = /^\/(?:chat\/[^/]+\/)?card\/([\w-]+)/.exec(path)
     if (q) { const card = model().cardByRef(decodeURIComponent(q[1])); if (card) load(`chat:card/${card.id}`, 50) }
     if (path === '/') for (const c of model().revising ?? []) load(`chat:card/${c.id}`, 5)
   }
@@ -2144,6 +2146,9 @@ const fontsAfterPaint = () => requestAnimationFrame(() => setTimeout(loadFonts, 
 /** The page starts here (index.html loads this module; importing it elsewhere, as tests in Node do, does nothing). */
 async function boot() {
   T0 = performance.now()
+  // An address of before (/s/…, /a/…; paths.mjs): the address bar shows its new form from the start.
+  const moved = movedPath(location.pathname)
+  if (moved) history.replaceState(history.state, '', `${moved}${location.search}${location.hash}`)
   setTimeout(loadFonts, FONTS_MS)
   // The core worker starts first, beside everything below: the room is being read while the page sets itself up.
   early = startEarly()
@@ -2163,7 +2168,7 @@ async function boot() {
   // (the switch is in the tab now: the address goes back to plain, so a reload or a saved link does not decide it again)
   if (params.has('mock')) { params.delete('mock'); history.replaceState(history.state, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`) }
   document.documentElement.classList.toggle('is-demo', Boolean(mock))
-  // A link for someone outside the room (/a/<share_id>#…): its own small page, no room needed.
+  // A link for someone outside the room (/artifact/<share_id>#…): its own small page, no room needed.
   if (SHARE_PAGE.test(location.pathname)) return (await view('media')).showShare()
   // A room that is stored but does not open is never shown as "not logged in": the start page would offer Log in, which
   // this storage refuses (it holds a room). The room screen says what failed and offers Retry and Log out of this device.

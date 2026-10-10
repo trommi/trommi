@@ -362,7 +362,8 @@ and stay as they are there. The `applinks` part is today's, unchanged; `webcrede
         "appIDs": ["<TEAM_ID>.com.trommi.ios", "<TEAM_ID>.XTL-<XTOOL_ID>.com.trommi.ios"],
         "components": [
           { "/": "/card/*", "comment": "a card, by its Nr. or id" },
-          { "/": "/s/*", "comment": "a session, a card of it, its files" },
+          { "/": "/chat/*", "comment": "a session, a card of it, its files" },
+          { "/": "/s/*", "comment": "a session, in the links of before (/chat/*)" },
           { "/": "/settings", "comment": "Settings" },
           { "/": "/settings/*", "comment": "Settings: sessions, devices, account" }
         ]
@@ -463,8 +464,8 @@ tag per room, and each running activity's token to the hub whose tag its attribu
 background for that. Push off (Settings · Devices) removes them and ends what runs; signing out ends it too. Past the
 push's stale date the widget dims the counts and says "Not up to date". `NSSupportsLiveActivities` is in `Info.plist`.
 
-**Universal links** (`Links.swift`): `https://app.trommi.com/card/<Nr. or id>`, `/s/<session>`,
-`/s/<session>/card/<ref>`, `/settings` and `/settings/<sessions|devices|account|theme>` open in the app when it is
+**Universal links** (`Links.swift`): `https://app.trommi.com/card/<Nr. or id>`, `/chat/<session>`,
+`/chat/<session>/card/<ref>` (and `/s/…`, the form of before), `/settings` and `/settings/<sessions|devices|account|theme>` open in the app when it is
 installed (`com.apple.developer.associated-domains: applinks:app.trommi.com`; the web app serves
 `/.well-known/apple-app-site-association` for `NL9YA3V25N.com.trommi.ios` and `NL9YA3V25N.XTL-70CB783D.com.trommi.ios`).
 A long press offers "Open in Safari" as usual. A link that names a card the board does not have yet waits up to 20 s.

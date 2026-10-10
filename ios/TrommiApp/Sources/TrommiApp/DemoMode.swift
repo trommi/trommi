@@ -65,7 +65,7 @@ extension BoardModel {
       if let id = segs.count > 1 ? card(segs[1]) : nil {
         if segs.count > 3, segs[2] == "picture" { path = [.card(id), .picture(id, max(0, (Int(segs[3]) ?? 1) - 1))] } else { path = [.card(id)] }
       }
-    case "s": if segs.count > 1 { path = [.session(segs[1])] }
+    case "chat", "s": if segs.count > 1 { path = [.session(segs[1])] }
     case "blitz": path = [.blitz]
     // (/settings is the page of Settings itself; /settings/<page> one of its pages)
     case "settings": path = [.settings(segs.count > 1 && segs[1] != "agents" ? segs[1] : "")]

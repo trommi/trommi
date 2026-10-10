@@ -57,7 +57,7 @@ function moreMenu(u, ctx, { group }) {
   const sub = (words, inner, cls = '') => html`<details class="set-sub${cls}"${LATER}><summary class="ledger-sheet-item">${words}</summary>${inner}</details>`
   return html`<details class="t-pick ledger-dots"${LATER}><summary class="ledger-ib ledger-menu" data-ledger="more" title="More: ${a.name}" aria-label="More for ${a.name}: Rename, Change Icon, Make Main Session, Move to Desk, Archive, Delete">…</summary>
 ${later(html`<div class="ledger-sheet t-sheet set-menu" role="group" aria-label="Actions for ${a.name}"><h3>${a.name}</h3>
-<a class="ledger-sheet-item" data-nav href="${base}/s/${encodeURIComponent(a.id)}">Open</a>
+<a class="ledger-sheet-item" data-nav href="${base}/chat/${encodeURIComponent(a.id)}">Open</a>
 ${sub('Rename…', post(`${forms}/edit`, html`<input type="text" name="label" value="${a.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session">`, html`<button class="set-sub-go" type="submit">Rename</button>`))}
 ${sub('Change Icon…', marksHolder(a, base, { stay: true, where: 's' }), ' t-sheet-marks')}
 ${item(`${forms}/star`, 'starred', a.starred ? '0' : '1', a.starred ? 'Remove as Main Session' : 'Make Main Session')}
@@ -73,7 +73,7 @@ ${a.own ? '' : sub('Delete…', html`<form class="session-delete-ask set-sub-ask
 
 /** One session's line. error: what the hub refused, said under the line. */
 function ledgerLine(u, ctx, { error = '' } = {}) {
-  const a = u.agent, { m, base, groups, apart } = ctx, forms = sessionForms(a, base), to = `${base}/s/${encodeURIComponent(a.id)}`
+  const a = u.agent, { m, base, groups, apart } = ctx, forms = sessionForms(a, base), to = `${base}/chat/${encodeURIComponent(a.id)}`
   const hand = Boolean(u.blocked), word = stateWord(u, hand)
   const group = groups.get(a.group), others = group ? group.filter(x => x.id !== a.id).map(x => x.name).join(' + ') : ''
   const ring = badge(u, u, base)
@@ -283,7 +283,7 @@ export function register(t) {
   // removed from the room (as Remove under Devices). A session on a person's own device is never deleted this way.
   t.post(/^\/sessions\/([^/]+)\/delete$/, async ({ req, res, match }) => {
     const m = t.model(), id = decodeURIComponent(match[1]), a = m.byAgent.get(id)
-    const fail = text => (t.wantsStream(req) ? t.sendStream(req, res, t.toast({ head: 'Not deleted', line: text, role: 'alert' })) : t.redirect(res, `${BASE}/s/${encodeURIComponent(id)}`))
+    const fail = text => (t.wantsStream(req) ? t.sendStream(req, res, t.toast({ head: 'Not deleted', line: text, role: 'alert' })) : t.redirect(res, `${BASE}/chat/${encodeURIComponent(id)}`))
     if (!a) return fail('no such session')
     if (a.own) return fail('this session runs on your own device')
     const all = [a, ...m.agents.filter(x => x.parent === a.id)], ids = new Set(all.map(x => x.id))

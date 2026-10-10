@@ -14,7 +14,7 @@ export { openRoomInTabs, adoptInTabs } from './tabs.ts'
 export { CHECK_EMOJI, checkEmoji, checkEmojiLine } from './check-emoji.ts'
 export { foldWork, isWork, workAnchor, WORK_ITEMS_MAX } from './work.ts'
 
-/** The shared file's bytes for whoever holds a Share link (the viewer page `/a/<share id>`): no room, no sign-in. */
+/** The shared file's bytes for whoever holds a Share link (the viewer page `/artifact/<share id>`): no room, no sign-in. */
 export async function openShared(hub: Hub, link: string): Promise<Uint8Array> {
   const { loadCore } = await import('./core-wasm.ts')
   return openSharedWith(await loadCore(), hub, link)

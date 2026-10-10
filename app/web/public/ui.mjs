@@ -605,14 +605,14 @@ function ago(ts, now = Date.now()) {
 export const agoSpan = (ts, cls = 'ago') => html`<span class="${cls}" data-ts="${ts}">${ago(ts)}</span>`
 
 // ---- links ----
-const ASSET_URL = /^(https?:\/\/[^\/\s]+)?\/a\/([A-Za-z0-9_-]{16,64})#([A-Za-z0-9_-]{43})$/
+const ASSET_URL = /^(https?:\/\/[^\/\s]+)?\/(?:artifact|a)\/([A-Za-z0-9_-]{16,64})#([A-Za-z0-9_-]{43})$/
 const ASSET_LABEL = { html: 'Page', image: 'Picture', video: 'Video', audio: 'Audio', file: 'File' }
 /** What a URL points at: one of the board's published assets ({ asset }) or anything else ({ text }, short). */
 function linkInfo(url, assets = []) {
   const m = ASSET_URL.exec(url)
   if (m) {
     const record = assets.find(a => a.id === m[2])
-    if (record || !m[1]) return { asset: { id: m[2], href: `/a/${m[2]}#${m[3]}`, title: record?.title || '', type: record?.type ?? null } }
+    if (record || !m[1]) return { asset: { id: m[2], href: `/artifact/${m[2]}#${m[3]}`, title: record?.title || '', type: record?.type ?? null } }
   }
   let text = url.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '')
   if (text.length > 34) text = `${text.slice(0, 33)}…`
@@ -2731,7 +2731,7 @@ export function deskRow(card, model, base, { error = '', slim = false } = {}) {
   const trustTip = `I don’t give a duck: your call (R)${advisedLabels(card) ? ` · agent takes ${advisedLabels(card)}` : ''}`
   const href = cardPath(card, base)
   return html`<article class="inbox-row" id="row-${card.id}"${knockAttr(card)} tabindex="-1" data-id="${card.id}" data-urgency="${card.urgency}"${card.kind === 'info' ? raw(' data-kind="info"') : ''}${from ? html` data-from="${from.id}" style="--hue:${from.hue}"` : ''}>
-${from && !slim ? html`<a class="inbox-gutter" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
+${from && !slim ? html`<a class="inbox-gutter" data-nav href="${base}/chat/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
 <div class="inbox-content">
 <header class="inbox-row-head"></header>
 ${media.length ? html`<a class="inbox-fan" data-nav href="${href}${images.length ? '/picture/1' : ''}" aria-label="${media.length === 1 ? 'Look at the picture' : `Look at ${media.length} pictures and videos`}">${media.slice(0, 3).map(a => kindOf(a) === 'image' ? html`<img${srcOf(a, 56)} alt="" loading="lazy" decoding="async" width="56" height="42">` : html`<video src="${a.url}" muted playsinline preload="metadata"></video>`)}</a>` : ''}
@@ -2782,7 +2782,7 @@ export function badge(u, shown, base, tally = false) {
     : online ? (running ? `Working, ${questions(open)} open` : `${questions(open)} open`) : `Disconnected, ${questions(open)} open`
   const inner = blocked ? raw(handSvg()) : !tally ? html`${raw(ringSvg())}<b>${open}</b>` : open > 5 ? html`<b>${open}</b>` : raw(tallySvg(open))
   const data = html` data-state="${blocked ? 'blocked' : 'open'}"${blocked ? html` data-why="${blocked.why}"` : ''}${!online ? raw(' data-offline') : ''}${busy ? raw(' data-working') : ''}`
-  return html`<a class="agent-badge" data-nav href="${base}/s/${encodeURIComponent(u.id)}"${data} title="${u.agent.name}: ${state}" aria-label="${u.agent.name}: ${state}">${inner}</a>`
+  return html`<a class="agent-badge" data-nav href="${base}/chat/${encodeURIComponent(u.id)}"${data} title="${u.agent.name}: ${state}" aria-label="${u.agent.name}: ${state}">${inner}</a>`
 }
 
 // ---- a session's link: whether it hears the human (app.mjs linkOf, heardOf) ----
@@ -2797,7 +2797,7 @@ export const linkCap = (link, unheard = 0) => {
 /** The note on a card's page and in a session: the receipt, the sentence about the session, and the way out as a line to type. */
 export const linkNote = (link, { receipt = '', sign = null, tone = null, id = '' } = {}) => html`<aside class="link-note"${id ? html` id="${id}"` : ''} data-link="${tone ?? link?.state ?? 'live'}" role="status">${sk(sign ?? link?.sign ?? 'ear')}<div>${receipt ? html`<p class="link-receipt">${receipt}</p>` : ''}${link?.line && link.state !== 'live' ? html`<p>${link.line}</p>` : ''}${link?.fix ? html`<p class="link-fix">${link.fix.say} <code>${link.fix.code}</code></p>` : ''}</div></aside>`
 /** The slip above the Desk's questions: one line per session that is cut off, with the step in its terminal. cut: [{ agent, link }]. */
-export const linkSlip = (cut, base) => html`<section class="link-slip" id="link-slip" role="alert" aria-label="Sessions that are cut off"${cut.length ? '' : raw(' hidden')}>${cut.map(({ agent, link }) => html`<p><a data-nav href="${base}/s/${encodeURIComponent(agent.id)}">${sk('ear-off')}<span><b>${agent.name}</b> is cut off${link.since ? ` since ${link.word.split(' · ')[1]}` : ''}: it cannot hear you and cannot write to you.</span></a><span class="link-fix">${link.fix.say} <code>${link.fix.code}</code></span></p>`)}</section>`
+export const linkSlip = (cut, base) => html`<section class="link-slip" id="link-slip" role="alert" aria-label="Sessions that are cut off"${cut.length ? '' : raw(' hidden')}>${cut.map(({ agent, link }) => html`<p><a data-nav href="${base}/chat/${encodeURIComponent(agent.id)}">${sk('ear-off')}<span><b>${agent.name}</b> is cut off${link.since ? ` since ${link.word.split(' · ')[1]}` : ''}: it cannot hear you and cannot write to you.</span></a><span class="link-fix">${link.fix.say} <code>${link.fix.code}</code></span></p>`)}</section>`
 
 // The plus of the rows that add something (invite an agent: POST /pair, role agent; a new desk).
 export const PLUS = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M12.3 5.2C11.9 9.7 12 14.2 12.1 18.9"/><path d="M5.3 12.4C9.8 11.8 14.3 11.9 18.8 12.2"/></svg>')
@@ -2829,7 +2829,7 @@ function galleryItems(model, base = '') {
     const agent = model.byAgent.get(a.agent)
     if (!agent || !model.onDesk(agent)) continue
     const type = a.type === 'image' || a.type === 'html' || a.type === 'video' ? a.type : 'file'
-    out.push({ id: a.id, type, title: a.title || 'Untitled', agent, ts: a.created ?? 0, url: a.att?.url ?? '', name: a.att?.name ?? '', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, from: 'published', att: attIdOf(a.att) })
+    out.push({ id: a.id, type, title: a.title || 'Untitled', agent, ts: a.created ?? 0, url: a.att?.url ?? '', name: a.att?.name ?? '', href: `${base}/chat/${encodeURIComponent(agent.id)}/artifact/${a.id}`, from: 'published', att: attIdOf(a.att) })
   }
   for (const c of state.cards) {
     const agent = model.byAgent.get(c.agent)
@@ -2880,7 +2880,7 @@ function pageItems(model, base = '') {
     const agent = here(a.agent)
     if (!agent || a.type !== 'html') continue
     const id = attIdOf(a.att)
-    put({ key: `file:${id ?? a.att?.url ?? a.id}`, kind: 'page', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, url: a.att?.url ?? '', title: a.title || 'Untitled page', agent, ts: a.created ?? 0, att: id })
+    put({ key: `file:${id ?? a.att?.url ?? a.id}`, kind: 'page', href: `${base}/chat/${encodeURIComponent(agent.id)}/artifact/${a.id}`, url: a.att?.url ?? '', title: a.title || 'Untitled page', agent, ts: a.created ?? 0, att: id })
   }
   for (const c of state.cards) {
     const agent = here(c.agent)

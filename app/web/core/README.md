@@ -196,7 +196,7 @@ await client.settle({ timeout_ms })   // outbox empty and the hub's copies back;
   `sending`. After a restart the stored outbox is sent again unchanged (the echoes of before are not shown again;
   the items arrive as the hub's copies).
 - Files are encrypted by the core in 64 KiB pieces (spec 11); a reference travels only inside a body. A Share link
-  (`<app>/a/<share id>#<secret>.<file key>.<sha256>`) is for one file of an open Artifact; the page `/a/…` opens it
+  (`<app>/artifact/<share id>#<secret>.<file key>.<sha256>`; `/a/` in the links of before) is for one file of an open Artifact; the page `/artifact/…` opens it
   with `openShared(hub, link)` (`index.ts`), no room and no sign-in.
 
 ## Sessions and devices

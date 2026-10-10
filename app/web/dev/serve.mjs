@@ -11,6 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generate } from './build.mjs'
 import { SITE_ASSOCIATION, isFilePath, FAVICON } from '../worker.js'
+import { movedPath } from '../public/paths.mjs'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const port = Number(process.argv.slice(2).find(a => /^\d+$/.test(a)) || 8900)
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain', '.sh': 'text/plain; charset=utf-8', '.webm': 'video/webm', '.wasm': 'application/wasm' }
@@ -54,13 +55,15 @@ async function serve(req, res) {
   if (rel.split('/').includes('..')) { res.writeHead(403); return res.end() }
   const isFile = f => fs.existsSync(path.join(root, f)) && fs.statSync(path.join(root, f)).isFile()
   if (rel === '' || rel.endsWith('/')) rel += 'index.html'
-  // Like Cloudflare's html_handling: /a/frame serves /a/frame.html.
+  // Like Cloudflare's html_handling: /frame serves /frame.html.
   if (!isFile(rel) && isFile(`${rel}.html`)) rel += '.html'
   // (the modules too: the build gives their module addresses the build's version, ?v=…)
   const gen = rel === 'index.html' || rel === 'sw.js' || rel.endsWith('.mjs') || rel.startsWith('gen/') || rel.startsWith('demo/') ? await built() : {}
   if (!(rel in gen) && !isFile(rel)) {
     // As worker.js: the icon for /favicon.ico; a file that does not exist is a 404, every other address is the app.
     if (url.pathname === '/favicon.ico') { res.writeHead(301, { Location: FAVICON }); return res.end() }
+    const moved = movedPath(url.pathname)
+    if (moved) { res.writeHead(301, { Location: `${moved}${url.search}` }); return res.end() }
     if (isFilePath(url.pathname) || (req.headers['sec-fetch-mode'] !== 'navigate' && /\.\w+$/.test(rel))) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Robots-Tag': 'noindex' }); return res.end('not found\n') }
     rel = 'index.html'
   }

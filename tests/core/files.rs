@@ -730,7 +730,7 @@ fn a_share_link_is_built_and_read() {
     assert_eq!(
         text,
         format!(
-            "https://app.example.org/a/{}#{}.{KEY_TEXT}.{HASH_TEXT}",
+            "https://app.example.org/artifact/{}#{}.{KEY_TEXT}.{HASH_TEXT}",
             link.share_id.to_base64url(),
             String::from_utf8(link.secret_base64url().expose().to_vec()).expect("utf-8"),
         )
@@ -770,10 +770,15 @@ fn a_share_link_needs_a_canonical_app_and_entropy() {
 fn a_share_link_of_any_other_form_is_refused() {
     let id = "8fHx8fHx8fHx8fHx8fHx8Q";
     let secret = "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM";
-    let good = format!("https://app.example.org/a/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}");
+    let good = format!("https://app.example.org/artifact/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}");
     let link = ShareLink::parse(&good).expect("parses");
     assert_eq!(link.share_id, ShareId::new([0xF1; 16]));
     assert_eq!(link.secret.expose(), &[0x33; 32]);
+    // (the form of before, `/a/`, is the same link; it is written as `/artifact/`)
+    let before = format!("https://app.example.org/a/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}");
+    let old = ShareLink::parse(&before).expect("parses");
+    assert_eq!(old, link);
+    assert_eq!(old.to_text().expose(), good.as_bytes());
 
     let cases = [
         String::new(),
@@ -791,6 +796,10 @@ fn a_share_link_of_any_other_form_is_refused() {
         format!("https://app.example.org/a/{id}?x=1#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
         format!("https://app.example.org/a/{id}/#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
         format!("https://app.example.org/b/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
+        format!("https://app.example.org/artifacts/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
+        format!("https://app.example.org/artifact/{id}/#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
+        format!("https://app.example.org/artifact/a/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
+        format!("https://app.example.org/a/artifact/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
         format!("https://app.example.org/x/a/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
         format!("https://app.example.org//a/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}"),
         format!("https://App.example.org/a/{id}#{secret}.{KEY_TEXT}.{HASH_TEXT}"),

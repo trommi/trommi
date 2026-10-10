@@ -29,9 +29,9 @@ async function profile(name, { width, height, throttle }) {
     await sleep(300)
     // Visit timings: from the call to the painted page (one frame after).
     const visit = path => js(`const t = performance.now(); await trommi.router.visit(${JSON.stringify(path)}); await new Promise(r => requestAnimationFrame(() => setTimeout(r))); return performance.now() - t`)
-    add('open a session with a 2,000+ message thread', await visit('/s/agent-1'))
+    add('open a session with a 2,000+ message thread', await visit('/chat/agent-1'))
     await sleep(400)   // its timeline page arrives
-    add('switch to another session', await visit('/s/agent-2'))
+    add('switch to another session', await visit('/chat/agent-2'))
     add('back to the Desk (300 open cards)', await visit('/'))
     const nr = await js("return trommi.model().fresh.find(c => c.options.length === 2)?.number")
     add('open a card', await visit(`/card/${nr}`))
@@ -39,7 +39,7 @@ async function profile(name, { width, height, throttle }) {
     // Answer a card with its row's tile: click -> model changed and the page patched (row leaving starts).
     add('answer a card (click -> patched)', await js(`const row = [...document.querySelectorAll('.inbox-row')].find(r => r.querySelector('button[name=key]')); const id = row.id; const t = performance.now(); row.querySelector('button[name=key]').click(); while (!(document.getElementById(id)?.inert || !document.getElementById(id))) await new Promise(r => setTimeout(r, 1)); return performance.now() - t`))
     // Type and send in a session: own message visible.
-    await visit('/s/agent-3')
+    await visit('/chat/agent-3')
     add('send a message (submit -> own message visible)', await js(`const f = document.querySelector('form.composer'); const ta = f.querySelector('textarea'); ta.value = 'perf ' + Math.random(); const n = document.querySelectorAll('.log .msg').length; const t = performance.now(); f.requestSubmit(f.querySelector('button[type=submit]')); while (document.querySelectorAll('.log .msg').length <= n) await new Promise(r => setTimeout(r, 1)); return performance.now() - t`))
     add('patch after a change (board-state + live diff)', await js('return trommi.lastPatchMs ?? 0'))
   }

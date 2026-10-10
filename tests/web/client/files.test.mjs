@@ -33,6 +33,9 @@ test('a file of 3 MiB: uploaded in pieces, fetched on another device, shared by 
   assert.equal(a.model.published.get(artifact).title, 'Report')
   const { share_id, link, expires_at } = await a.shareAttachment(a.model.published.get(artifact).attachments[0], { keep_link: true })
   assert.equal(parseShareLink(link).share_id, share_id)
+  assert.match(link, /\/artifact\/[A-Za-z0-9_-]{22}#/)
+  // a link of before (/a/…) is the same link
+  assert.equal(parseShareLink(link.replace('/artifact/', '/a/')).share_id, share_id)
   assert.ok(expires_at > Date.now())
   assert.deepEqual((await a.myShares()).map(s => [s.share_id, s.link]), [[share_id, link]])
   const outside = new Hub({ hub_url: fake.url })

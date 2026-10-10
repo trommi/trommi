@@ -131,7 +131,7 @@
     "app": "https://app.example.org",
     "file_id": "5acf6ef31925d58b1c412e60856b9c66",
     "file_key": "322e0f5bac24a444096ac3120b2ebb6ca7ce97031b1ebc7ea9077cba807ddb89",
-    "link": "https://app.example.org/a/B2OIjnfLkAsdEZxNKQfTFQ#qPZsMl56tCireFon1k_pG1RUou3QQI67dL99uoVUwYw.Mi4PW6wkpEQJasMSCy67bKfOlwMbHrx-qQd8uoB924k.dVtDbzymj6sHGSkPwVsrKsdJFar4caKZkGV9JVsM7TQ",
+    "link": "https://app.example.org/artifact/B2OIjnfLkAsdEZxNKQfTFQ#qPZsMl56tCireFon1k_pG1RUou3QQI67dL99uoVUwYw.Mi4PW6wkpEQJasMSCy67bKfOlwMbHrx-qQd8uoB924k.dVtDbzymj6sHGSkPwVsrKsdJFar4caKZkGV9JVsM7TQ",
     "secret": "a8f66c325e7ab428ab785a27d64fe91b5454a2edd0408ebb74bf7dba8554c18c",
     "secret_sha256": "0982b2eca39976ea653c2cb7776005be1548f630c94d71bb5abcb7ea8316afa7",
     "sha256": "755b436f3ca68fab0719290fc15b2b2ac74915aaf871a29990657d255b0ced34",
