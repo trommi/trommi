@@ -232,13 +232,41 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
     // the owner signs in from home: the account knows that source from now on
     sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
 
-    // one source guessing: after each failure it waits longer, 1 s, 2 s, 4 s …; in between it is not even checked
-    let waits = slowed(hub, 30, || {
-        sign_in_from(hub, &attacker, "login", "ada@example.org", &random())
-    });
-    assert!(
-        waits.windows(2).all(|w| w[0] <= w[1]) && *waits.last().unwrap() <= 32,
-        "{waits:?}"
+    // one source guessing: after its n-th failure it waits the hub's backoff, 1 s, 2 s, 4 s … 32 s; in between it
+    // is not even checked. A `retry-after` is what is left of that wait, so on a slow machine it may be read a
+    // second or more after the failure: it lies between the backoff less the real time since the failure (the
+    // clock the test moves runs on beside it) and the backoff itself, never above.
+    let (mut failures, mut waits) = (0u32, vec![]);
+    let mut failed_at = std::time::Instant::now();
+    while failures < 6 || waits.len() < 6 {
+        let reply = sign_in_from(hub, &attacker, "login", "ada@example.org", &random());
+        if reply.status == 401 {
+            failures += 1;
+            failed_at = std::time::Instant::now();
+            continue;
+        }
+        reply.refused(429, "rate-limited");
+        let wait: i64 = reply.header("retry-after").unwrap().parse().unwrap();
+        let backoff = (trommi_hub::throttle::backoff_ms(failures) / 1000) as i64;
+        let since = failed_at.elapsed().as_secs() as i64 + 1;
+        assert!(
+            wait <= backoff && wait >= (backoff - since).max(1),
+            "after {failures} failures: a wait of {wait} s, the backoff is {backoff} s ({since} s since): {waits:?}"
+        );
+        waits.push(backoff);
+        if waits.len() < 6 {
+            hub.clock(wait * 1000);
+        }
+        assert_eq!(
+            failures as usize,
+            waits.len(),
+            "one wait after each failure: {waits:?}"
+        );
+    }
+    assert_eq!(
+        waits,
+        [1, 2, 4, 8, 16, 32],
+        "the wait doubles with each failure"
     );
     // while it waits, the right password from there is not checked either
     let early = sign_in_from(hub, &attacker, "login", "ada@example.org", &auth);
