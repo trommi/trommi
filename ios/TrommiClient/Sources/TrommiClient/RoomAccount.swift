@@ -92,7 +92,8 @@ extension Room {
       // (a Welcome into a session group comes later, in the catch-up; the one to take here is the room group's,
       // which the core knows by the invite it stored)
       guard let joined = try? made.device.joinInvited(bytes, nowMs: nowMs()), joined.group == room else { continue }
-      let record = RoomRecord(hubURL: hubURL, roomId: hex(room), myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
+      // (the room group's past is to be learned: this device holds it from the epoch of its Welcome on)
+      let record = RoomRecord(hubURL: hubURL, roomId: hex(room), myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false, past: PastWork(toLearn: [hex(room)]))
       try made.store.save(record)
       return try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
     }

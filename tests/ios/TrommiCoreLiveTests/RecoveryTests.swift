@@ -25,6 +25,10 @@ final class PocketHub {
   var account: Bytes?
   /// The kinds posted, in order.
   var kinds: [UInt8] = []
+  /// The envelopes with the group and the sender of each, where the poster named them: what the chain route serves.
+  var chains: [(change: UInt64, bytes: Bytes, group: GroupId, sender: DeviceId)] = []
+  /// Held while a request is answered: `Room` posts from its own tasks (PocketRoutes.swift).
+  let lock = NSRecursiveLock()
 
   static func waiting(_ device: CoreDevice) -> [Posted] {
     device.outbox().map { ($0.id, $0.kind.rawValue, $0.group, $0.epoch, $0.parts) }
@@ -43,53 +47,60 @@ final class PocketHub {
   /// Posts what waits and reports each entry as accepted, without handing anything back from the log.
   func postWaiting(_ device: CoreDevice) throws {
     while let entry = Self.waiting(device).first {
-      func part(_ at: Int) -> Bytes { at < entry.parts.count ? entry.parts[at] : [] }
-      let group = entry.group ?? []
-      kinds.append(entry.kind)
-      // A Commit with its GroupInfo, Welcome, SealedKey and RecoveryAuth, wherever its kind keeps them.
-      var commit: (bytes: Bytes, groupInfo: Bytes, welcome: Bytes, sealedKey: Bytes, recoveryAuth: Bytes)?
-      var accepted: UInt64?
-      switch entry.kind {
-      case 1:   // room founding: GroupInfo 0, SealedKey 0. The hub answers with the room id, not a change number.
-        infos[group] = [0: part(0)]
-        sealedKeys.append(part(1))
-      case 2:   // session founding
-        infos[group] = [0: part(0)]
-        sealedKeys.append(part(1))
-        commit = (part(2), part(3), part(4), part(5), [])
-      case 3: commit = (part(0), part(1), part(2), part(3), [])
-      case 4: commit = (part(0), part(1), [], part(2), part(3))
-      case 5:
-        change += 1
-        accepted = change
-        log.append(LogEntry(change: change, group: group, kind: .message(bytes: part(0))))
-      case 7:
-        change += 1
-        accepted = change
-        envelopes.append((change, part(0)))
-      case 9: sealedKeys.append(part(0))
-      case 10:
-        commit = (part(0), part(1), [], part(2), [])
-        links.append(part(3))
-        account = part(4)
-      case 11: commit = (part(0), part(1), part(2), part(3), part(4))
-      case 12:
-        links.append(part(0))
-        account = part(1)
-        accepted = change
-      default: break   // a relayed message, KeyPackages: nothing is kept
-      }
-      if let commit {
-        change += 1
-        // (the real hub gives a Commit of a recovery no number of its own: its finish names the last)
-        if entry.kind != 11 { accepted = change }
-        infos[group, default: [:]][entry.epoch + 1] = commit.groupInfo
-        sealedKeys.append(commit.sealedKey)
-        if !commit.welcome.isEmpty { welcomes.append(commit.welcome) }
-        log.append(LogEntry(change: change, group: group, kind: .commit(bytes: commit.bytes, recoveryAuth: commit.recoveryAuth.isEmpty ? nil : commit.recoveryAuth)))
-      }
-      try device.outboxAccepted(entry.id, change: accepted)
+      try device.outboxAccepted(entry.id, change: take(kind: entry.kind, group: entry.group ?? [], epoch: entry.epoch, parts: entry.parts, sender: device.id))
     }
+  }
+
+  /// Keeps one posted entry as a hub would (it checks nothing) and gives the change number its answer names, if it
+  /// names one. `sender`: the posting device, for the chain an envelope belongs to.
+  func take(kind: UInt8, group: GroupId, epoch: UInt64, parts: [Bytes], sender: DeviceId = []) -> UInt64? {
+    lock.lock(); defer { lock.unlock() }
+    func part(_ at: Int) -> Bytes { at < parts.count ? parts[at] : [] }
+    kinds.append(kind)
+    // A Commit with its GroupInfo, Welcome, SealedKey and RecoveryAuth, wherever its kind keeps them.
+    var commit: (bytes: Bytes, groupInfo: Bytes, welcome: Bytes, sealedKey: Bytes, recoveryAuth: Bytes)?
+    var accepted: UInt64?
+    switch kind {
+    case 1:   // room founding: GroupInfo 0, SealedKey 0. The hub answers with the room id, not a change number.
+      infos[group] = [0: part(0)]
+      sealedKeys.append(part(1))
+    case 2:   // session founding
+      infos[group] = [0: part(0)]
+      sealedKeys.append(part(1))
+      commit = (part(2), part(3), part(4), part(5), [])
+    case 3: commit = (part(0), part(1), part(2), part(3), [])
+    case 4: commit = (part(0), part(1), [], part(2), part(3))
+    case 5:
+      change += 1
+      accepted = change
+      log.append(LogEntry(change: change, group: group, kind: .message(bytes: part(0))))
+    case 7:
+      change += 1
+      accepted = change
+      envelopes.append((change, part(0)))
+      chains.append((change, part(0), group, sender))
+    case 9: sealedKeys.append(part(0))
+    case 10:
+      commit = (part(0), part(1), [], part(2), [])
+      links.append(part(3))
+      account = part(4)
+    case 11: commit = (part(0), part(1), part(2), part(3), part(4))
+    case 12:
+      links.append(part(0))
+      account = part(1)
+      accepted = change
+    default: break   // a relayed message, KeyPackages: nothing is kept
+    }
+    if let commit {
+      change += 1
+      // (the real hub gives a Commit of a recovery no number of its own: its finish names the last)
+      if kind != 11 { accepted = change }
+      infos[group, default: [:]][epoch + 1] = commit.groupInfo
+      sealedKeys.append(commit.sealedKey)
+      if !commit.welcome.isEmpty { welcomes.append(commit.welcome) }
+      log.append(LogEntry(change: change, group: group, kind: .commit(bytes: commit.bytes, recoveryAuth: commit.recoveryAuth.isEmpty ? nil : commit.recoveryAuth)))
+    }
+    return accepted
   }
 
   /// A group from its founding, as GET …/info?epoch=0, …/log and …/info give it.

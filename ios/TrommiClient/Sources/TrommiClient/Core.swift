@@ -130,6 +130,8 @@ public enum ReceivedMessage: Equatable {
   case dropped
   case newerVersion(from: DeviceId)
 }
+/** One Commit of a group's log as the hub serves it: its change number, its bytes and, for a join from outside, its RecoveryAuth. */
+public typealias PastCommit = (change: UInt64, commit: Bytes, recoveryAuth: Bytes?)
 /** What processing a log entry did (core `Processed`). */
 public enum Processed: Equatable {
   /** Another device's Commit was merged. `superseded`: the own outbox entry dropped for it, to be built again. */
@@ -470,6 +472,15 @@ public protocol CoreDevice: CoreSigner {
    *  joins by invite uses `joinInvited`. */
   func joinWelcome(_ welcome: Bytes, room: RoomId, committer: DeviceId?, nowMs: UInt64) throws -> Joined
   func processLogEntry(_ entry: LogEntry) throws -> Processed
+  /**
+   * Learns the past of a group this device came into later (by link, or by a Welcome into a session group), from its
+   * public history: the founding GroupInfo (epoch 0) and every Commit from the first on, in the hub's order. The
+   * room group first, then main sessions, then helper sessions (`room-behind`, `group-behind` otherwise). Taken
+   * only if it arrives at this device's own state (`bad-group`, and nothing is written). How many epochs were
+   * recorded; 0 when there was nothing to learn. Envelopes of those epochs, `group-behind` until then, are handed
+   * to `receiveEnvelope` again afterwards, `ordered`, in the hub's order.
+   */
+  func learnHistory(group: GroupId, founding: Bytes, commits: [PastCommit]) throws -> UInt64
   func logFinding(_ error: Error) -> LogFinding
 
   func sendHandover(group: GroupId, recipient: DeviceId) throws -> [UInt64]
