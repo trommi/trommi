@@ -18,7 +18,7 @@
 // on its own: all of it is inside the worker's one file, which is as trustworthy as the worker itself (this origin
 // only, CSP `script-src 'self'`; a worker's script and its imports take no integrity).
 import * as binding from '../../../core/wasm/js/trommi-core.js'
-import type { Core, Device, ErrorCode, ProvisionalDevice, ProvisionalStateless, Store } from './core-api.ts'
+import type { Core, Device, ErrorCode, ProvisionalDevice, Store } from './core-api.ts'
 
 /** The binding's store on IndexedDB (store-idb.ts is handed this class and wraps it). */
 export { IdbStore } from '../../../core/wasm/js/idb-store.js'
@@ -29,7 +29,6 @@ declare const __TROMMI_CORE_WASM_SHA256__: string
 
 /** The calls of core-api.ts the binding does not have yet (a Record: a call missing here, or one too many, does not compile). */
 const MISSING_ON_DEVICE: Record<keyof ProvisionalDevice, true> = {}
-const MISSING_STATELESS: Record<keyof ProvisionalStateless, true> = { kitKeysFor: true, accountIdParse: true }
 
 /** What a call the binding lacks answers with. */
 class CoreMissing extends Error {
@@ -54,7 +53,6 @@ async function load(): Promise<Core> {
   const { init: _init, Device: _Device, TrommiError: _TrommiError, StoreConflict: _StoreConflict, ...stateless } = binding
   return {
     ...stateless,
-    ...refusals<ProvisionalStateless>(MISSING_STATELESS, false),
     createDevice: async (store: Store) => whole(await binding.Device.create(store)),
     openDevice: async (store: Store) => whole(await binding.Device.open(store)),
     errorCode: (error: unknown): ErrorCode | 'core-missing' | null => (error instanceof binding.TrommiError ? error.code : error instanceof CoreMissing ? error.code : null),

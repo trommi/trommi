@@ -56,14 +56,15 @@ const idText = (digits: string): string => `${digits.slice(0, 8)}-${digits.slice
 
 /**
  * The one field "E-mail or account ID", told apart by its form alone, as the hub does: a text with an `@` is an
- * e-mail address (`bad-email` if it is none); any other is an account id, taken without regard to case, white
- * space and dashes, and what is left must be 32 hex digits (`bad-account` otherwise). Nothing is guessed: an
+ * e-mail address (`bad-email` if it is none); any other is an account id, taken without regard to case, spaces
+ * and hyphens, as the core's `accountIdParse` takes it, and what is left must be 32 hex digits (`bad-account`
+ * otherwise; the hub would also drop other white space, which no field of the screens lets in). Nothing is guessed: an
  * e-mail without its `@` is not an e-mail.
  */
 export function accountName(text: unknown): AccountNamed {
   const s = String(text ?? '')
   if (s.includes('@')) return { kind: 'email', email: normaliseEmail(s) }
-  const digits = s.replace(/[\s-]/gu, '').toLowerCase()
+  const digits = s.replace(/[ -]/g, '').toLowerCase()
   if (!/^[0-9a-f]{32}$/.test(digits)) throw refusal('bad-account', 'not an email address and not an account id')
   return { kind: 'id', account: idText(digits) }
 }

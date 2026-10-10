@@ -164,10 +164,10 @@ test('the Reveal reaches the new device as the inviter put it', async t => {
 test('the account: sign-up with the founding, login, the Emergency Kit, the password, passkeys', async t => {
   const { fake } = await scene(t)
   const room_id = id(32), device = id(32), outside = client(fake, null)
-  const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), form: 'email' }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
+  const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
   await outside.foundRoom({ group_info: utf8({ group: room_id, epoch: 0, leaves: [device] }), sealed_key: utf8('s'), account: { email: 'Ada@Example.com', kit, password } })
   assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account).sort(), ['email', 'kit', 'password'])
-  assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account.kit).sort(), ['auth_key', 'form', 'sealed_copy'])
+  assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account.kit).sort(), ['auth_key', 'sealed_copy'], 'a kit\'s form is not sent: it follows from the account')
 
   const wrong = await outside.login('ada@example.com', new Uint8Array(32)).catch(e => e)
   const nobody = await outside.login('nobody@example.com', password.auth_key).catch(e => e)
@@ -198,18 +198,17 @@ test('the account: sign-up with the founding, login, the Emergency Kit, the pass
   assert.deepEqual([account.email, account.account, account.kit_form, account.revision, account.has_password, account.kdf, account.password_copy, account.kit_copy, account.passkeys, account.rooms], ['ada@example.com', login.account, 'email', 1, true, KDF, password.sealed_copy, kit.sealed_copy, [], [room_id]])
   assert.equal(Buffer.from(account.user_handle).toString('hex'), login.account.replaceAll('-', ''), 'the id\'s 16 bytes are the user handle')
   await assert.rejects(hub.createAccount({ email: 'other@example.com', kit, password }), e => e.code === 'account-exists' && e.status === 409)
-  await assert.rejects(hub.putEmail({ email: 'new@example.com', revision: 1 }), e => e.code === 'forbidden' && e.status === 403, 'an e-mail is set once')
+  await assert.rejects(hub.putEmail({ email: 'new@example.com', kit, revision: 1 }), e => e.code === 'forbidden' && e.status === 403, 'an e-mail is set once')
 
   const next = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
   assert.deepEqual(await hub.putPassword({ ...next, revision: 1 }), { revision: 2 })
   const stale = await hub.putKit({ ...kit, sealed_copy: copy(), revision: 1 }).catch(e => e)
   assert.deepEqual([stale.code, stale.status], ['account-changed', 409])
   assert.deepEqual(await hub.putKit({ ...kit, sealed_copy: copy(), revision: 2 }), { revision: 3 })
-  await assert.rejects(hub.putKit({ auth_key: kit.auth_key, sealed_copy: copy(), revision: 3 }), { code: 'bad-argument' }, 'a kit says its form')
   await outside.login('ada@example.com', next.auth_key)
 
   const challenge = await hub.accountPasskeyChallenge()
-  assert.deepEqual([challenge.account, challenge.user_handle, challenge.challenge.length], [account.account, account.user_handle, 32], 'the account\'s challenge names the account\'s id')
+  assert.deepEqual([challenge.account, challenge.user_handle, challenge.challenge.length, challenge.email, challenge.kit_form], [account.account, account.user_handle, 32, 'ada@example.com', 'email'], 'the account\'s challenge names the account\'s id and what its kit is salted with')
   const client_data_json = utf8({ type: 'webauthn.create', challenge: b64u(challenge.challenge), origin: 'https://app.trommi.com' })
   const added = await hub.addPasskey({ attestation_object: new Uint8Array(randomBytes(120)), client_data_json, sealed_copy: copy(), transports: ['internal'] })
   assert.deepEqual((await hub.account()).passkeys.map(p => [p.credential_id, p.transports]), [[added.credential_id, ['internal']]])
@@ -240,11 +239,10 @@ test('an account without an e-mail: made with a passkey on the challenge that na
   const room_id = id(32), device = id(32), outside = client(fake, null)
   const named = await outside.passkeyChallenge()
   const registration = c => ({ attestation_object: new Uint8Array(randomBytes(120)), client_data_json: utf8({ type: 'webauthn.create', challenge: b64u(c), origin: 'https://app.trommi.com' }), sealed_copy: copy() })
-  const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), form: 'id' }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
+  const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
   const founding = { group_info: utf8({ group: room_id, epoch: 0, leaves: [device] }), sealed_key: utf8('s') }
   // a password needs an e-mail; a kit under an e-mail's salt needs one too
   await assert.rejects(outside.foundRoom({ ...founding, account: { kit, password } }), e => e.code === 'bad-email' && e.status === 400)
-  await assert.rejects(outside.foundRoom({ ...founding, account: { kit: { ...kit, form: 'email' }, passkey: registration((await outside.passkeyChallenge()).challenge) } }), e => e.code === 'bad-email')
   await outside.foundRoom({ ...founding, account: { kit, passkey: registration(named.challenge) } })
   assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account).sort(), ['kit', 'passkey'], 'no e-mail and no user handle are sent')
 
@@ -255,13 +253,19 @@ test('an account without an e-mail: made with a passkey on the challenge that na
   assert.deepEqual([recovered.account, recovered.email, recovered.rooms[0].sealed_copy], [named.account, null, kit.sealed_copy])
   await assert.rejects(hub.putPassword({ ...password, revision: 1 }), e => e.code === 'bad-email', 'a password on an account without e-mail')
 
-  await assert.rejects(hub.putEmail({ email: 'not an address', revision: 1 }), e => e.code === 'bad-email')
-  await assert.rejects(hub.putEmail({ email: 'ada@example.com', revision: 0 }), e => e.code === 'account-changed')
-  assert.deepEqual(await hub.putEmail({ email: 'Ada@Example.com', revision: 1 }), { revision: 2 })
-  assert.deepEqual(received(fake, '/v2/account/email', 'PUT').at(-1).body, { email: 'Ada@Example.com', revision: 2 - 1 })
+  // an e-mail comes with the kit made anew under it, in one request
+  const anew = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }
+  await assert.rejects(hub.putEmail({ email: 'not an address', kit: anew, revision: 1 }), e => e.code === 'bad-email')
+  await assert.rejects(hub.putEmail({ email: 'ada@example.com', kit: anew, revision: 0 }), e => e.code === 'account-changed')
+  const bare = await hub.request('PUT', '/v2/account/email', { body: { email: 'ada@example.com', revision: 1 } }).catch(e => e)
+  assert.deepEqual([bare.code, (await hub.account()).email], ['incomplete', null], 'without the kit nothing is set')
+  assert.deepEqual(await hub.putEmail({ email: 'Ada@Example.com', kit: anew, revision: 1 }), { revision: 2 })
+  assert.deepEqual(received(fake, '/v2/account/email', 'PUT').at(-1).body, { email: 'Ada@Example.com', kit: { auth_key: b64u(anew.auth_key), sealed_copy: b64u(anew.sealed_copy) }, revision: 1 })
   const after = await hub.account()
-  assert.deepEqual([after.email, after.kit_form, after.account], ['ada@example.com', 'id', named.account], 'the kit keeps its form')
-  assert.equal((await outside.recover('ada@example.com', kit.auth_key)).account, named.account, 'both names lead to the account')
+  assert.deepEqual([after.email, after.kit_form, after.account, after.kit_copy], ['ada@example.com', 'email', named.account, anew.sealed_copy], 'the kit\'s form follows the account')
+  assert.equal((await outside.recover('ada@example.com', anew.auth_key)).account, named.account, 'both names lead to the account')
+  assert.equal((await outside.recover(named.account, anew.auth_key)).email, 'ada@example.com')
+  await assert.rejects(outside.recover(named.account, kit.auth_key), e => e.code === 'wrong-recovery', 'the kit of before opens nothing')
   assert.deepEqual(await hub.putPassword({ ...password, revision: 2 }), { revision: 3 })
   assert.equal((await outside.login('ada@example.com', password.auth_key)).account, named.account)
 })

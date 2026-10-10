@@ -3,9 +3,8 @@
 // An account has passkeys, a password or both, and an Emergency Kit (twelve words, made with the account and with
 // every new recovery code). It has an id, a UUID the hub mints, which is public and printed on every kit; an e-mail
 // is optional beside a passkey, and a password needs one (its keys are derived from it). The kit's keys are salted
-// with the e-mail where the account has one and with the id where it has none (`kit_form`; the latter needs the
-// core's `kitKeysFor` and `accountIdParse`, which today's binding does not have: `core-missing`). It is a way into
-// the ROOM the first device founded: each way in opens
+// with the e-mail where the account has one and with the id where it has none (`kit_form`; the core's `kitKeysFor`).
+// It is a way into the ROOM the first device founded: each way in opens
 // one sealed copy of the room's recovery code, and a device that holds the code joins the room (8.4). The hub checks
 // a login and hands out the sealed copy; it never sees the password, the kit's words, a passkey's prf output or the
 // code.
@@ -75,6 +74,7 @@ type Opening = DeviceOptions & { hub_url: string }
 
 /** A refusal of this module's own. Its codes: `no-account`, `no-password`, `no-room`, `bad-argument`, `bad-passkey`,
  *  `wrong-login` (a passkey that is not the account's), `needs-email` (a password on an account without e-mail),
+ *  `email-set` (an e-mail for an account that has one),
  *  `account-changed`, `internal`. Everything else thrown here is the core's
  *  (TrommiError) or the hub's (HubError), each with its stable `code`. */
 export class AccountError extends Error {
@@ -115,18 +115,20 @@ function sealed(core: Core, way: Way, room_id: Uint8Array, code: Uint8Array): Ui
 }
 const open = (core: Core, way: Way, room_id: Uint8Array, copy: Uint8Array): Uint8Array => core.openRecoveryCode(way.wrap_key, room_id, way.name, way.credential_id, copy)
 
-/** The kit's keys for the account `name` names. An e-mail: the binding's `kitKeys`, as ever. An id: `kitKeysFor`. */
-const kitKeysOf = (core: Core, name: AccountName, words: string): AccountKeys => (name.kind === 'email' ? core.kitKeys(name.email, words) : core.kitKeysFor(name, words))
+/** Which of its two names a kit's keys were made under. */
+/** The one field's name as the core takes it: the e-mail as the core keeps it, or the id in the core's own text. */
+const nameFor = (core: Core, who: ReturnType<typeof accountName>): AccountName => (who.kind === 'email' ? { email: core.normaliseEmail(who.email) } : { id: core.accountIdParse(who.account) })
+const formOf = (name: AccountName): KitForm => (name.email != null ? 'email' : 'id')
 /** How a NEW kit of an account is made: under its e-mail where it has one, else under its id. */
-const kitNameOf = (email: string | null, id: Uint8Array): AccountName => (email !== null ? { kind: 'email', email } : { kind: 'id', id })
+const kitNameOf = (email: string | null, id: string): AccountName => (email !== null ? { email } : { id })
 /** A new Emergency Kit: fresh words and their two keys. */
 function newKit(core: Core, name: AccountName): { words: string; keys: AccountKeys; form: KitForm } {
   const words = core.generateKitWords()
-  return { words, keys: kitKeysOf(core, name, words), form: name.kind }
+  return { words, keys: core.kitKeysFor(name, words), form: formOf(name) }
 }
 /** The kit's part of a body for the hub. The login key is a copy: the body is the hub client's from here on. */
-const kitPart = (core: Core, kit: { keys: AccountKeys; form: KitForm }, room_id: Uint8Array, code: Uint8Array): KitPart =>
-  ({ auth_key: kit.keys.authKey.slice(), sealed_copy: sealed(core, kitWay(kit.keys), room_id, code), form: kit.form })
+const kitPart = (core: Core, kit: { keys: AccountKeys }, room_id: Uint8Array, code: Uint8Array): KitPart =>
+  ({ auth_key: kit.keys.authKey.slice(), sealed_copy: sealed(core, kitWay(kit.keys), room_id, code) })
 const passwordPart = (core: Core, keys: AccountKeys, room_id: Uint8Array, code: Uint8Array): { auth_key: Uint8Array; sealed_copy: Uint8Array; kdf: Kdf } =>
   ({ auth_key: keys.authKey.slice(), sealed_copy: sealed(core, passwordWay(keys), room_id, code), kdf: pinnedKdf(core) })
 /** A passkey's registration as the hub takes it. The hub wants each transport as lowercase letters and hyphens, at
@@ -168,7 +170,7 @@ export async function createAccount(o: Opening & { email: string; password: stri
   core.checkPassword(password)
   const keys = core.passwordKeys(email, password)
   try {
-    return await found(core, device, { email, account: null }, { kind: 'email', email }, (room_id, code) => ({ password: passwordPart(core, keys, room_id, code) }))
+    return await found(core, device, { email, account: null }, { email }, (room_id, code) => ({ password: passwordPart(core, keys, room_id, code) }))
   } finally { zeroKeys(keys) }
 }
 
@@ -176,8 +178,7 @@ export async function createAccount(o: Opening & { email: string; password: stri
  * Create an account whose way in is a passkey; an e-mail is optional. The page asked the hub for a challenge
  * (`passkeyChallenge`), which names the id the account will have, made the passkey over it with that id as its user
  * handle, and has its prf output before it calls this; nothing but that question reached the hub until then.
- * `account`: that id, as printed. With an e-mail the kit is made under it; without one under the id, which needs the
- * core's `accountIdParse` and `kitKeysFor` (`core-missing` on a binding without them, before anything is founded).
+ * `account`: that id, as printed. With an e-mail the kit is made under it; without one under the id.
  * `no-prf` when the passkey gave no key (nothing is founded then).
  */
 export async function createAccountWithPasskey(o: Opening & { email?: string | null; account: string; passkey: PasskeyRegistration; found_token?: string | null }): Promise<{ client: Client; kit: Kit }> {
@@ -189,8 +190,8 @@ export async function createAccountWithPasskey(o: Opening & { email?: string | n
     if (id.kind !== 'id' || id.account !== named) throw new AccountError('bad-argument', 'account: the id the passkey\'s challenge named')
     // a passkey without a prf output is refused before a room is founded (the room id here is none)
     zero(passkeyWay(core, new Uint8Array(32), passkey).wrap_key)
-    const name: AccountName = email !== null ? { kind: 'email', email } : { kind: 'id', id: core.accountIdParse(id.account) }
-    return await found(core, device, { email, account: id.account }, name, (room_id, code) => ({ passkey: passkeyPart(core, passkey, room_id, code) }))
+    if (core.accountIdParse(id.account) !== id.account) throw new AccountError('bad-argument', 'account: not an id in its one form')
+    return await found(core, device, { email, account: id.account }, kitNameOf(email, id.account), (room_id, code) => ({ passkey: passkeyPart(core, passkey, room_id, code) }))
   } finally { zero(passkey.prf) }
 }
 
@@ -273,15 +274,13 @@ async function signIn(core: Core, device: Opening, room: LoginAnswer['rooms'][nu
  * The Emergency Kit without a new password: the one field and the words, and this device signs in (8.4). The
  * screen then asks for the way in from now on, and `setPassword` or `addPasskey` with `{ words }` replaces the code
  * (8.6). `account`: an e-mail opens a kit made under the e-mail; an account id opens a kit made under the id (an
- * account without e-mail), and needs the core's `accountIdParse` and `kitKeysFor`. The kit's sheet says which of
- * the two it opens with. One refusal for every miss: `wrong-recovery`; `bad-account` for a text that is neither.
+ * account without e-mail). The kit's sheet says which of the two it opens with. One refusal for every miss: `wrong-recovery`; `bad-account` for a text that is neither.
  */
 export async function recoverWithKit(o: Opening & { account: string; words: string }): Promise<{ client: Client }> {
   const { account: named, words, ...device } = o
   const core = await loadCore()
   const who = accountName(named)
-  const name: AccountName = who.kind === 'email' ? { kind: 'email', email: core.normaliseEmail(who.email) } : { kind: 'id', id: core.accountIdParse(who.account) }
-  const keys = kitKeysOf(core, name, words)
+  const keys = core.kitKeysFor(nameFor(core, who), words)
   try {
     const answer = await anonymous(device).recover(who.kind === 'email' ? who.email : who.account, keys.authKey)
     // an answer for another account than the one named opens nothing; said before anything is joined
@@ -303,8 +302,7 @@ export async function resetPassword(o: Opening & { account: string; words: strin
   const core = await loadCore()
   core.checkPassword(new_password)
   const who = accountName(named)
-  const name: AccountName = who.kind === 'email' ? { kind: 'email', email: core.normaliseEmail(who.email) } : { kind: 'id', id: core.accountIdParse(who.account) }
-  const keys = kitKeysOf(core, name, words)
+  const keys = core.kitKeysFor(nameFor(core, who), words)
   let password: AccountKeys | null = null
   try {
     const answer = await anonymous(device).recover(who.kind === 'email' ? who.email : who.account, keys.authKey)
@@ -321,7 +319,7 @@ export async function resetPassword(o: Opening & { account: string; words: strin
       const next = password = core.passwordKeys(email, new_password)
       const made: Kit[] = []
       const copies = (new_code: Uint8Array): Record<string, unknown> => {
-        const kit = newKit(core, { kind: 'email', email })
+        const kit = newKit(core, { email })
         try {
           const account: AccountCopies = { kit: kitPart(core, kit, room.room_id, new_code), password: passwordPart(core, next, room.room_id, new_code) }
           made.push(kitOf(kit, { email, account: answer.account }))
@@ -414,7 +412,7 @@ async function unlock(client: AccountClient, given: Unlock): Promise<Unlocked> {
     } else if ('words' in given) {
       // the kit is opened in the form it was made in, which the account's later e-mail does not change
       if (view.kit_form === 'email' && view.email === null) throw new AccountError('internal', 'a kit under an e-mail the account does not have')
-      const keys = kitKeysOf(core, view.kit_form === 'email' ? { kind: 'email', email: view.email! } : { kind: 'id', id: view.user_handle }, given.words)
+      const keys = core.kitKeysFor(view.kit_form === 'email' ? { email: view.email } : { id: view.account }, given.words)
       zero(keys.authKey)
       way = kitWay(keys)
       copy = view.kit_copy
@@ -455,7 +453,7 @@ export async function addAccount(client: AccountClient, { email: given, password
     // a code of another room would make an account whose copies open nothing here
     await client.checkRecoveryCode(code).catch((e: unknown) => { throw (e as { code?: unknown } | null)?.code === 'wrong-recovery' ? new AccountError('bad-recovery-code', 'this is not the recovery code of this room') : e })
     keys = core.passwordKeys(email, password)
-    kit = newKit(core, { kind: 'email', email })
+    kit = newKit(core, { email })
     body = { email, kit: kitPart(core, kit, room_id, code), password: passwordPart(core, keys, room_id, code) }
     const view = await hub.createAccount(body)
     return { kit: kitOf(kit, view) }
@@ -464,7 +462,7 @@ export async function addAccount(client: AccountClient, { email: given, password
 
 /**
  * A new Emergency Kit for the same code: new words, the code (opened with `given`) sealed under them, replacing the
- * kit before. It is made under the account's e-mail where it has one now, else under its id. `account-changed` when
+ * kit before. It is made under the account's e-mail where it has one, else under its id. `account-changed` when
  * the account changed since it was read.
  */
 export async function makeEmergencyKit(client: AccountClient, given: Unlock): Promise<Kit> {
@@ -472,7 +470,7 @@ export async function makeEmergencyKit(client: AccountClient, given: Unlock): Pr
   const u = await unlock(client, given)
   let kit: ReturnType<typeof newKit> | null = null, part: ReturnType<typeof kitPart> | null = null
   try {
-    kit = newKit(core, kitNameOf(u.view.email, u.view.user_handle))
+    kit = newKit(core, kitNameOf(u.view.email, u.view.account))
     part = kitPart(core, kit, room_id, u.code)
     await hub.putKit({ ...part, revision: u.view.revision })
     return kitOf(kit, u.view)
@@ -503,14 +501,24 @@ export async function setPassword(client: AccountClient, { unlock: given, next }
 }
 
 /**
- * Gives an account without e-mail one, once: a second name for it, and what a password needs. The Emergency Kit
- * it has stays as it is (made under the id). `bad-email`, `account-exists`, `forbidden` when it has one already.
+ * Gives an account without e-mail one, once: a second name for it, and what a password needs. With an e-mail the
+ * kit's keys are salted with the e-mail (8.8.2), so the kit comes anew in the same request: the person's SAME twelve
+ * words, typed once more (they open the code here, under the id, and seal it again under the e-mail). Returns the
+ * kit as its sheet reads from now on: the same words, opened with the e-mail. `wrong-recovery` for words that are
+ * not the kit's; `bad-email`, `account-exists`, `forbidden` when the account has an e-mail already.
  */
-export async function setEmail(client: AccountClient, { email: given }: { email: string }): Promise<void> {
-  const email = client.core.normaliseEmail(given)
-  const view = await viewOf(client)
-  if (!view) throw new AccountError('no-account', 'this room has no account yet')
-  await client.hub.putEmail({ email, revision: view.revision })
+export async function setEmail(client: AccountClient, { email: given, words }: { email: string; words: string }): Promise<Kit> {
+  const { core, hub, room_id } = client
+  const email = core.normaliseEmail(given)
+  const u = await unlock(client, { words })
+  let keys: AccountKeys | null = null, part: KitPart | null = null
+  try {
+    if (u.view.email !== null) throw new AccountError('email-set', 'this account has an e-mail already')
+    keys = core.kitKeysFor({ email }, words)
+    part = kitPart(core, { keys }, room_id, u.code)
+    await hub.putEmail({ email, kit: part, revision: u.view.revision })
+    return { words: core.parseKitWords(words), email, account: u.view.account, form: 'email' }
+  } finally { forget(u); zero(part?.auth_key); zeroKeys(keys) }
 }
 
 /** A challenge (base64url) for a passkey added to this room's account; the hub binds it to the account as it is
@@ -586,7 +594,7 @@ async function replaceCode(client: AccountClient, view: AccountView, way: Way, c
   if ((await viewOf(client))?.revision !== revision) throw new AccountError('account-changed', 'the account changed meanwhile: try again')
   const made: Kit[] = []
   const copies = (new_code: Uint8Array): Record<string, unknown> => {
-    const kit = newKit(core, kitNameOf(view.email, view.user_handle))
+    const kit = newKit(core, kitNameOf(view.email, view.account))
     try {
       const copy = sealed(core, way, room_id, new_code)
       const account: AccountCopies = {
