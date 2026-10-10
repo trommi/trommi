@@ -30,8 +30,8 @@ use crate::records::{
     RoomRoles, SignedHubAuth,
 };
 use crate::recovery::{
-    self, group_cuts, with_group, with_room, CodeJoin, GroupCut, RecoveryPlan, ServedGroup,
-    ServedRoom,
+    self, with_chains, with_commits, with_group, with_room, CodeJoin, Learned, RecoveryPlan,
+    ServedCommit, ServedEnvelope, ServedGroup, ServedRoom,
 };
 use crate::store::AnyStore;
 use crate::{CoreError, ErrorCode};
@@ -597,7 +597,7 @@ impl CoreDevice {
     /// then opens none of the session's content. `room-behind` and `group-behind` are no findings: process
     /// further and ask again.
     pub fn verify_founding(&self, group: Vec<u8>, served: ServedGroup) -> Result<(), CoreError> {
-        self.read(|device| {
+        self.write(|device| {
             let group = group_id(&group)?;
             with_group(
                 &served,
@@ -714,31 +714,65 @@ impl CoreDevice {
 
     /// The whole recovery, as [`CoreDevice::prepare_recovery`] prepared it: the device joins the room group and
     /// every session group from outside, removes every other human device together with the replacement of
-    /// the code, and then every leaf the new room state does not allow. `cuts` hold the Cut of every leaf to
-    /// go (`incomplete` when one is missing); `account` are the account's sealed copies of the new code. The
-    /// outbox entries are posted in order; the device's state changes only when the hub accepted the last.
+    /// the code, and then every leaf the new room state does not allow.
+    ///
+    /// `chains` are the envelopes of the devices to go (the plan's removals name them), in pruned form as the
+    /// hub's chain route serves them, in the hub's order. The device verifies each chain from number 1 and
+    /// takes the Cut from the head it verified; a chain that does not hold (`gap`, `chain-break`, a second
+    /// envelope under a number) fails the recovery with that code. A device of which nothing is handed in is
+    /// cut at nothing. `account` are the account's sealed copies of the new code. The outbox entries are
+    /// posted in order; the device's state changes only when the hub accepted the last.
     pub fn recover(
         &self,
         recovery_code: Vec<u8>,
         served: ServedRoom,
-        cuts: Vec<GroupCut>,
+        chains: Vec<ServedEnvelope>,
         account: Vec<u8>,
         now_ms: u64,
     ) -> Result<CodeJoin, CoreError> {
         let keys = recovery::keys(&recovery_code)?;
-        let cuts = group_cuts(&cuts)?;
         self.device.run(|inner| {
             let replacement = inner
                 .replacement
                 .as_ref()
                 .ok_or(trommi_core::Error::Incomplete)?;
             let built = with_room(&served, |served| {
-                Ok(inner
-                    .device
-                    .recover(&keys, served, replacement, &cuts, &account, now_ms)?)
+                with_chains(&chains, |chains| {
+                    Ok(inner.device.recover(
+                        &keys,
+                        served,
+                        replacement,
+                        chains,
+                        &account,
+                        now_ms,
+                    )?)
+                })
             })?;
             inner.replacement = None;
             Ok(built.into())
+        })
+    }
+
+    /// Learns the past of `group` from its public history, for a device that joined by link: `founding` is the
+    /// group's founding GroupInfo, `commits` its Commits from the first on, in order. The room group is
+    /// learned first, then main sessions, then helper sessions (`room-behind`, `group-behind` otherwise). The
+    /// history is taken only if it arrives at this device's own state (`bad-group` otherwise, and nothing is
+    /// written). Envelopes of the earlier epochs, refused with `group-behind` until then, are handed to
+    /// [`CoreDevice::receive_envelope`] again afterwards; their bodies open once the key handover arrived.
+    pub fn learn_history(
+        &self,
+        group: Vec<u8>,
+        founding: Vec<u8>,
+        commits: Vec<ServedCommit>,
+    ) -> Result<Learned, CoreError> {
+        self.write(|device| {
+            let group = group_id(&group)?;
+            with_commits(&commits, |commits| {
+                let learned = device.learn_history(&group, &founding, commits)?;
+                Ok(Learned {
+                    epochs: learned.epochs,
+                })
+            })
         })
     }
 

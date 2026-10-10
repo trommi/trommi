@@ -651,9 +651,16 @@ export interface CodeJoin {
   unverified: UnverifiedSession[]
 }
 
-export interface GroupCut {
-  group: Uint8Array
-  cut: Cut
+/** One envelope of a chain as the hub's chain route serves it. */
+export interface ServedEnvelope {
+  bytes: Uint8Array
+  change: number
+  voidCode?: ErrorCode | null
+}
+
+export interface Learned {
+  /** How many epochs were recorded; 0 when there was nothing to learn. */
+  epochs: number
 }
 
 export interface Removals {
@@ -786,7 +793,15 @@ export class Device {
   newRecoveryCode(recoveryCode: Uint8Array): Promise<Uint8Array>
   replaceCode(recoveryCode: Uint8Array, account: Uint8Array, nowMs: number): Promise<number>
   prepareRecovery(recoveryCode: Uint8Array, served: ServedRoom): Promise<RecoveryPlan>
-  recover(recoveryCode: Uint8Array, served: ServedRoom, cuts: GroupCut[], account: Uint8Array, nowMs: number): Promise<CodeJoin>
+  /** `chains`: the envelopes of the devices the plan removes, as the hub's chain route serves them, in its order.
+   *  The device verifies each chain from number 1 and takes the Cuts itself. */
+  recover(recoveryCode: Uint8Array, served: ServedRoom, chains: ServedEnvelope[], account: Uint8Array, nowMs: number): Promise<CodeJoin>
+  /**
+   * For a device that joined by link: learns the past of a group from its founding GroupInfo and its Commits. The
+   * room group first, then main sessions, then helper sessions. Afterwards the envelopes of the earlier epochs,
+   * `group-behind` until then, are handed to `receiveEnvelope` again.
+   */
+  learnHistory(group: Uint8Array, founding: Uint8Array, commits: ServedCommit[]): Promise<Learned>
 }
 
 // ---- files --------------------------------------------------------------------------------------------------------

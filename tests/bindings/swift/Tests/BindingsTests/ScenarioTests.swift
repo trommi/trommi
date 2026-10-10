@@ -31,7 +31,8 @@ struct Step: Decodable {
   var reader: String?
   var chat: String?
   var confirmed: Bool?
-  var keys_only: Bool?
+  var early: Bool?
+  var groups: [String]?
   var session: String?
   var parent: String?
   var helper: String?
@@ -62,6 +63,8 @@ final class Hub {
   /// told apart by `envelopes`, the change numbers that are envelopes.
   var log: [LogEntry] = []
   var envelopes: Set<UInt64> = []
+  /// Who posted each envelope, by its change number.
+  var posted: [UInt64: Data] = [:]
   /// Application messages that are only passed on.
   var relayed: [(group: Data, bytes: Data)] = []
   var welcomes: [(change: UInt64, bytes: Data)] = []
@@ -114,6 +117,7 @@ final class Hub {
         change += 1
         accepted = change
         envelopes.insert(change)
+        posted[change] = try device.id()
         log.append(LogEntry(change: change, group: group, kind: .message, bytes: part(0), recoveryAuth: nil))
       } else if entry.kind == .relayMessage, let group = entry.group {
         // Passed on, never stored: no change number.
@@ -271,7 +275,7 @@ final class ScenarioTests: XCTestCase {
       let keys = try step.devices!.map { try key($0, step.group) }
       try check(keys.allSatisfy { $0.epoch == keys[0].epoch && $0.held }, "the devices do not share the key of \(step.group!)")
       // Holding a key says little: in a session, what the first writes now, every other one must open.
-      if step.group == "room" || step.keys_only == true { return }
+      if step.group == "room" { return }
       spoken += 1
       let said = "same key \(spoken)"
       try say(step.devices![0], in: step.group, said)
@@ -395,14 +399,47 @@ final class ScenarioTests: XCTestCase {
       let served = try hub.servedRoom(room, code: code)
       try check(!served.sessions.isEmpty, "the room is served without its sessions")
       let plan = try device(step.device).prepareRecovery(recoveryCode: code, served: served)
-      let cuts = plan.removals.flatMap { removal in
-        removal.devices.map { GroupCut(group: removal.group, cut: Cut(device: $0, seq: 0, hash: Data(count: 32))) }
-      }
-      try check(!cuts.isEmpty && plan.newCode.count == 32, "the recovery removes nobody")
+      // The chains of the devices to go, as the hub's chain route serves them: every envelope of theirs, in order.
+      let gone = Set(plan.removals.flatMap { $0.devices })
+      try check(!gone.isEmpty && plan.newCode.count == 32, "the recovery removes nobody")
+      let chains = hub.log.filter { hub.envelopes.contains($0.change) && gone.contains(hub.posted[$0.change] ?? Data()) }
+        .map { ServedEnvelope(bytes: $0.bytes, change: $0.change, voidCode: nil) }
+      try check(!chains.isEmpty, "the devices to go wrote nothing")
       let built = try device(step.device).recover(
-        recoveryCode: code, served: served, cuts: cuts, account: Data("the account's sealed copies".utf8), nowMs: now())
+        recoveryCode: code, served: served, chains: chains, account: Data("the account's sealed copies".utf8), nowMs: now())
       try check(built.unverified.isEmpty && built.outbox.count >= 2, "the recovery was not built whole")
       code = plan.newCode
+    case "early":
+      // An item written in the room before anyone else is there.
+      var item = draft(.boardItem)
+      item.board = allDesks
+      item.payload = Data(#"{"content_type":"erase","shape_ids":["\#(base64urlEncode(bytes: try device(step.device).id()))/9/0"]}"#.utf8)
+      _ = try device(step.device).seal(draft: item, recipient: nil, fileIds: [], nowMs: now())
+    case "learn":
+      // A device that joined by link learns the past of its groups from their public history.
+      for name in step.groups! {
+        let id = try group(name)
+        guard let founding = name == "room" ? hub.roomInfos.first : hub.sessions[id]?.founding else { throw Unexpected("no founding of \(name)") }
+        let learned = try device(step.device).learnHistory(group: id, founding: founding, commits: hub.served(id, founding: founding, current: founding).commits)
+        try check(learned.epochs >= 1, "nothing of \(name) was learned")
+      }
+    case "read_back":
+      // Every stored envelope once more, in the hub's order: what was written before the device came opens now.
+      var read: [ReceivedEnvelope] = []
+      for entry in hub.log where hub.envelopes.contains(entry.change) {
+        var envelope = try device(step.device).receiveEnvelope(envelope: entry.bytes, change: entry.change, ordered: true, voidCode: nil, nowMs: now())
+        // One the device's chain already holds is a replay in order; fetched as a page it is read back with its body.
+        if envelope.code == .replay {
+          envelope = try device(step.device).receiveEnvelope(envelope: entry.bytes, change: entry.change, ordered: false, voidCode: nil, nowMs: now())
+        }
+        read.append(envelope)
+      }
+      let opened = read.filter { $0.payload != nil && $0.outcome == .applied }
+      if step.early == true {
+        try check(opened.contains { String(decoding: $0.payload ?? Data(), as: UTF8.self).contains("/9/0") }, "the early item did not open")
+      }
+      if let text = step.text { try check(chat(in: opened, text) != nil, "the earlier Chat message did not open") }
+      if step.early != true && step.text == nil { try check(!opened.isEmpty, "nothing opened on reading back") }
     case "found_helper":
       // A helper session under a main session: the helper device follows the room and the main session first.
       let (opener, helper) = (try device(step.by), try device(step.helper))
@@ -509,7 +546,7 @@ final class ScenarioTests: XCTestCase {
     // A device takes its own envelope into its chain when the hub hands it back, like anyone's.
     _ = try hub.sync(writer, room: room)
     let head = try writer.chainHead(group: roomGroup, sender: writerId)
-    try check(head.seq == 1, "the writer does not hold its own first envelope")
+    try check(head.seq >= 1, "the writer does not hold its own envelopes")
     let change = try writer.cursor()
     let snapshot: [String: Any] = [
       "attachment": ["file_id": "AAAAAAAAAAAAAAAAAAAAAA"],
@@ -619,6 +656,6 @@ final class ScenarioTests: XCTestCase {
       ran += 1
     }
     XCTAssertEqual(ran, scenario.steps.count)
-    XCTAssertGreaterThan(ran, 100)
+    XCTAssertGreaterThan(ran, 108)
   }
 }
