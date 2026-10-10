@@ -319,6 +319,35 @@ export const steps = [
     await ctx.close('new')
   }],
 
+  // (a password manager's extension that answers create() and get() for the browser hands its bytes as ArrayBuffers
+  //  made in its own realm: `instanceof ArrayBuffer` is false for them and they have no .buffer)
+  ['a passkey answered by an extension, its bytes from another realm: the account is made, the kit shows', async ctx => {
+    const page = await ctx.profile('realm')
+    await page.session.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+      const realm = () => { const f = document.createElement('iframe'); f.style.display = 'none'; (document.body ?? document.documentElement).append(f); return f.contentWindow }
+      const foreign = b => { if (!(b instanceof ArrayBuffer)) return b; const w = realm(), out = new w.ArrayBuffer(b.byteLength); new w.Uint8Array(out).set(new Uint8Array(b)); return out }
+      const wrap = cred => {
+        const r = cred.response, ext = cred.getClientExtensionResults()
+        const response = Object.create(r)
+        for (const k of ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature', 'userHandle']) if (k in r) Object.defineProperty(response, k, { value: foreign(r[k]) })
+        if (r.getTransports) response.getTransports = () => r.getTransports()
+        const prf = ext.prf ? { ...ext.prf, ...(ext.prf.results ? { results: { first: foreign(ext.prf.results.first) } } : {}) } : undefined
+        return { id: cred.id, type: cred.type, rawId: foreign(cred.rawId), response, getClientExtensionResults: () => ({ ...ext, ...(prf ? { prf } : {}) }) }
+      }
+      const create = navigator.credentials.create.bind(navigator.credentials), get = navigator.credentials.get.bind(navigator.credentials)
+      navigator.credentials.create = async o => wrap(await create(o))
+      navigator.credentials.get = async o => wrap(await get(o))
+    })()` })
+    await toCreate(ctx, page)
+    await page.type('#create-form input[name=email]', `realm+${Date.now().toString(36)}@example.org`)
+    await page.click('#create-form button[type=submit]')
+    await page.until("document.querySelector('#kit-gate[open] #kit-done') || document.querySelector('#create-form #ob-error')?.textContent.trim()", 'the Emergency Kit screen, or the form\'s error line', 60000)
+    const error = await text(page, '#create-form #ob-error')
+    ctx.run.check(!error && await page.js("return !!document.querySelector('#kit-gate[open] #kit-done')"), 'the account is made: the kit screen, no error line', error)
+    ctx.run.check(ctx.seen.exceptions.every(e => !/reading 'slice'/.test(e)), 'no "reading \'slice\'" in the page', ctx.seen.exceptions.slice(-3))
+    await ctx.close('realm')
+  }],
+
   ['a passkey without the prf extension: the screen says so and offers the password; no account is made', async ctx => {
     const page = await ctx.profile('noprf', { prf: false }), since = ctx.mark()
     await toCreate(ctx, page)
