@@ -1928,15 +1928,13 @@ async function start(client, { fresh = false } = {}) {
   // The hub says this app is too old (426, or upgrade_required on the stream): a calm notice, reload takes the new build.
   client.on('error', err => { if (err?.code === 'client-too-old') notice('Please reload: this app needs a newer version.', err.message, true) })
   // README "Versioning and compatibility": something on the board was written by a newer Trommi (model.newer): it shows
-  // as a placeholder in its place, and once per page a calm line offers the reload that brings the new build. A newer
-  // version the hub recommends (GET /v1/version) is offered the same way, quieter (the app keeps working).
+  // as a placeholder in its place, and once per page a calm line offers the reload that brings the new build.
   let newerSaid = false
   const newerNotice = () => {
     if (newerSaid || !client.model?.newer?.count) return
     newerSaid = true
     notice('Some things here need a newer version of Trommi.', `${client.model.newer.what.join(', ')}: reload to update`, true, 'newer')
   }
-  recommendNewer(client).catch(() => {})
   const board = new BoardState(client)
   board.update()
   let desk = read('trommi-desk')
@@ -2147,22 +2145,6 @@ if (typeof window !== 'undefined') boot()
 
 /** Ask the browser to keep this origin's storage (no eviction under storage pressure; Safari weighs it too). */
 function keepStorage() { try { navigator.storage?.persist?.().catch(() => {}) } catch {} }
-
-/** Semver "a > b" for x.y.z strings (suffixes ignored). */
-function versionNewer(a, b) {
-  const p = v => String(v ?? '').split(/[-+]/)[0].split('.').map(n => Number(n) || 0)
-  const x = p(a), y = p(b)
-  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
-  return false
-}
-/** The hub recommends a newer app (GET /v1/version recommended_client_versions.app): a quiet "Reload" line, once. */
-async function recommendNewer(client) {
-  const hub = client.model?.room?.hub_url
-  if (!hub || mock) return
-  const r = await fetch(new URL('/v1/version', hub), { headers: { accept: 'application/json' } })
-  const rec = r.ok ? (await r.json())?.recommended_client_versions?.app : null
-  if (rec && versionNewer(rec, APP_VERSION)) notice('A newer version of Trommi is ready.', `recommended: ${rec}, this is ${APP_VERSION}`, true, 'recommended')
-}
 
 /** A calm full-width line at the foot (styled by auth.css), with "Reload". update: fetch the new build first. */
 function notice(text, detail, update, why = '') {
