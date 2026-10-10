@@ -17,4 +17,13 @@ final class HubJSONTests: XCTestCase {
     let link = cleanLink(v["devices"][0]["link"].with("hears", .str("live")))
     XCTAssertEqual(link?.attached, false, "a link not attached reads as not attached")
   }
+  /// A log gets known codes and the status only: never the hub's message, nor a code the hub made up.
+  func testWhatOfAnErrorGoesIntoALog() {
+    XCTAssertEqual(loggable(HubError(status: 403, code: "not-member", message: "secret text")), "not-member (403)")
+    XCTAssertEqual(loggable(HubError(status: 400, code: "Bearer abc.def", message: "")), "other (400)")
+    XCTAssertEqual(loggable(HubError(status: 0, code: "offline", message: "hub not reachable: 10.0.0.1")), "offline (0)")
+    XCTAssertEqual(loggable(TrommiError("no-prf", "this passkey gives no key")), "no-prf")
+    XCTAssertEqual(loggable(TrommiError("a code with spaces", "")), "other")
+    XCTAssertEqual(loggable(CocoaError(.fileNoSuchFile)), "error")
+  }
 }

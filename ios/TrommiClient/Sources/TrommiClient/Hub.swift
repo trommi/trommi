@@ -24,6 +24,19 @@ public struct HubError: Error, CustomStringConvertible {
   public var isOffline: Bool { status == 0 }
 }
 
+/**
+ * What of an error may go into a log: a code this app knows (the hub's table, the client's own transport codes, a
+ * TrommiError's code) and the status, never a message or a code the hub made up, which could carry what was sent.
+ */
+public func loggable(_ error: Error) -> String {
+  let local: Set<String> = ["offline", "too-large", "closed", "unauthorised", "rate-limited", "overloaded", "internal", "not-found", "not-member", "bad-format", "timeout", "pending"]
+  func plain(_ code: String) -> Bool { !code.isEmpty && code.count <= 40 && code.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") } }
+  func known(_ code: String) -> String { plain(code) && (local.contains(code) || (Core.isInstalled && Core.tools.isFinalRefusal(code))) ? code : "other" }
+  if let h = error as? HubError { return "\(known(h.code)) (\(h.status))" }
+  if let t = error as? TrommiError { return plain(t.code) ? t.code : "other" }
+  return "error"
+}
+
 public final class HubClient: @unchecked Sendable {
   public static let clientName = "ios/0.2.0"
   /** This app's version, as it names itself to the hub ("ios/<version>"). */
@@ -213,13 +226,15 @@ public final class HubClient: @unchecked Sendable {
    * A group's public history from its founding: the GroupInfo of epoch 0 and every Commit of its log, in the hub's
    * order. `reached`: the epoch the last Commit read leads to. Nothing in it is trusted: the core checks it.
    */
+  /** The most a client reads of what the hub serves page by page for one check (a history, the sealed keys, the chains). */
+  public static let maxServed = 128 << 20
   public func history(of group: GroupId) async throws -> (founding: Bytes, commits: [PastCommit], reached: UInt64) {
     func bytes(_ json: JSON, _ field: String) throws -> Bytes {
       guard let text = json[field] as? String, let bytes = try? unb64u(text), !bytes.isEmpty else { throw TrommiError("bad-format", "the hub's answer has no \(field)") }
       return bytes
     }
     let founding = try bytes(try await groupInfo(group, epoch: 0), "group_info")
-    var commits = [PastCommit](), after: UInt64 = 0, reached: UInt64 = 0
+    var commits = [PastCommit](), after: UInt64 = 0, reached: UInt64 = 0, total = founding.count
     while true {
       let page = try await groupLog(group, after: after)
       let items = page["items"] as? [JSON] ?? []
@@ -228,7 +243,10 @@ public final class HubClient: @unchecked Sendable {
         after = n
         guard item["kind"] as? String == "commit" else { continue }
         guard let change = Wire.uint(item["change"]), let epoch = Wire.uint(item["epoch"]) else { throw TrommiError("bad-format", "a Commit of the hub's log has no change number or epoch") }
-        commits.append((change, try bytes(item, "bytes"), (item["recovery_auth"] as? String).flatMap { try? unb64u($0) }))
+        let commit = try bytes(item, "bytes")
+        total += commit.count
+        guard total <= Self.maxServed else { throw TrommiError("too-large", "a group's history is larger than this client reads") }
+        commits.append((change, commit, (item["recovery_auth"] as? String).flatMap { try? unb64u($0) }))
         reached = epoch + 1
       }
       guard page["more"] as? Bool == true, !items.isEmpty else { return (founding, commits, reached) }

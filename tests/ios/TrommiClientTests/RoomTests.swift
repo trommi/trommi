@@ -203,6 +203,30 @@ final class RoomTests: XCTestCase {
     room.close()
   }
 
+  /// A register write the core never sealed takes its echo back: the value before it shows again. A name sealed
+  /// before the failure in the same write stays.
+  func testARegisterThatIsNeverSealedShowsTheValueBefore() async throws {
+    let room = try await founded()
+    _ = try await room.sync()
+    try await room.setCrown(.str("first"))
+    let device = try XCTUnwrap(room.device as? FakeDevice)
+    device.sealRefusal = "busy"
+    do { try await room.setCrown(.str("second")); XCTFail("refused") } catch {}
+    XCTAssertEqual(room.board.human.crown.string, "first")
+    XCTAssertEqual(room.board.human.raw["crown"]?.value.string, "first")
+    // (the names go out in their order: desk/a is sealed, the refusal comes for desk/b)
+    device.sealsBeforeRefusal = 1
+    do { try await room.setRegisters(["desk/a": .obj(["name": "A"]), "desk/b": .obj(["name": "B"])]); XCTFail("refused") } catch {}
+    device.sealRefusal = nil
+    // a value over the register's 4 KiB is refused before it is sealed, a string as much as an object
+    do { try await room.setCrown(.str(String(repeating: "x", count: 5000))); XCTFail("too large") } catch { XCTAssertEqual(Room.codeOf(error), "too-large") }
+    XCTAssertEqual(room.board.human.crown.string, "first")
+    XCTAssertEqual(room.board.human.desks["a"]?["name"].string, "A", "sealed before the failure: it stays")
+    XCTAssertNil(room.board.human.desks["b"])
+    XCTAssertNil(room.board.human.raw["desk/b"])
+    room.close()
+  }
+
   func testARegisterIsOneEnvelopePerNameAndShowsAtOnce() async throws {
     let room = try await founded()
     _ = try await room.sync()

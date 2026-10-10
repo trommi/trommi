@@ -145,7 +145,12 @@ final class FakeDevice: CoreDevice {
   func receiveRelay(group: GroupId, message: Bytes, nowMs: UInt64) throws -> ReceivedMessage? { .strokePiece(from: id, board: ALL_DESKS_BOARD, piece: message) }
 
   /** An "envelope" here is JSON of its header and its body in the clear. */
+  /** Set: the next seals are refused with this code (nothing goes into the outbox). */
+  var sealRefusal: String?
+  /** With `sealRefusal`: this many seals still go through first. */
+  var sealsBeforeRefusal = 0
   func seal(_ draft: EnvelopeDraft, files: [FileId], nowMs: UInt64) throws -> Sealed {
+    if let code = sealRefusal { if sealsBeforeRefusal > 0 { sealsBeforeRefusal -= 1 } else { throw TrommiError(code) } }
     guard let r = state.room else { throw TrommiError("no-key") }
     var h: [String: Any] = ["sender": state.id, "time": nowMs]
     var payload = Bytes(), group = try unhex(r)

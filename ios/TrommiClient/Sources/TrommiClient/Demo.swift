@@ -25,7 +25,7 @@ public enum DemoFixture {
     }
   }
 
-  static func u64(_ v: JV) -> UInt64 { UInt64(max(0, v.double ?? 0)) }
+  static func u64(_ v: JV) -> UInt64 { clampedU64(v.double) }
   static func strings(_ v: JV) -> [String] { (v.array ?? []).compactMap { $0.string } }
 
   static func build(_ f: JV) -> Board {

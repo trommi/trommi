@@ -1,5 +1,7 @@
 This build is the first one on the new encryption core (MLS, one Rust core for all apps). It has never run on a phone. Expect it to fail early; what matters is WHERE.
 
+This build's core stores its state in a newer form: what an earlier build stored on this phone does not open. Log out (or delete the app) and sign in again; an account made with an earlier build of this kind may need a new test account.
+
 Please look at, in this order:
 1. Does it start, and do the screens look as before (sign-in, Desk, Settings)? Nothing in the looks was meant to change.
 2. Settings, last row "MLS proof": it should say OK with the steps and times. "Copy result" and send it, whatever it says.
@@ -9,11 +11,12 @@ Please look at, in this order:
 Known not to work in this build:
 - New in this build: the Emergency Kit shows your account ID, as text and as a QR code; Log in and New password take "Email or account ID"; Log Out ends the session at the hub too. Please look at the Emergency Kit page after creating an account: the ID and the QR code should be there.
 - New in this build: the demo shows a full made-up Desk again (agents, cards, pictures). If the Desk ever loads for more than a few seconds, it now says why and offers Try Again.
-- New in this build: passkeys turn on by themselves once app.trommi.com names this app for them. Then Create account offers "Create with passkey" first (email optional, no password needed) and Log in offers "Log in with passkey" with no field. Until then the screens look as before. A passkey has never been made on a phone: please try it once it shows, on a test account. An Emergency Kit of an account without an email may not open with later builds.
+- New in this build: passkeys turn on by themselves once app.trommi.com names this app for them. Then Create account offers "Create with passkey" first (email optional, no password needed) and Log in offers "Log in with passkey" with no field. Until then the screens look as before. A passkey has never been made on a phone: please try it once it shows, on a test account.
 - Chat, cards, notes, the Scribble Board and pairing a device are wired to the core and pass their tests on Linux, but have never met a real hub.
 - New in this build: a device that joins by scanning a code now also shows what was written before it joined. It can take a moment after joining, and the board fills a second time while it reads back.
 - New in this build: Settings, Account, "New Recovery Code…" (asks for your password, then shows a new Emergency Kit; the old kit stops working). Removing a device under Devices offers it too. Use it after a device was lost.
 - New in this build: "New password" has a link "All my devices are lost". It asks once more, then removes every other device from your account, sets the new password and shows a new Emergency Kit. Only try it on a test account: it really removes the other devices.
 - All three have passed tests on Linux and have never met the real hub.
-- Notifications show the fixed text only ("A new question."), never a title.
+- Notifications show the fixed text only ("A new question."), never a title. A tap opens the app on the board, not on a card.
+- New in this build: a device you remove from another device notices it at its next start, checks it, forgets everything and says so on the start screen.
 - While passkeys are not on, "All my devices are lost" does not work for an account without an email.

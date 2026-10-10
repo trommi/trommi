@@ -95,6 +95,16 @@ different items under one number.
     title. Every member of the App Group (the three extensions) can read the item. A title in the notification
     needs a title the core seals separately, or a call of the binding that opens one envelope without the device.
   - **Live Activity widget:** shows two counts; it holds no key and reads no file.
+- **Removed by another device.** The hub ends a removed device's access and names it `role: "removed"` at its next
+  sign-in; that token reads only `GET /v2/groups/{room}/removal`, the room group's Commits up to the removing one.
+  The device hands them to its core; only when the core says a Commit removed it (or it read that Commit in the
+  changes before) is the room marked removed (`Room.removedAt`, kept in room.json), and the app forgets the room
+  and says so on the start screen. A hub that says "removed" without such a Commit, and a bare `not-member`, change
+  nothing: an envelope refused with `not-member` stays in the outbox unless the core's own group state has no leaf
+  of this device there.
+- **A sign-in whose room join got no answer** keeps its device (marked `join-unsure`, never swept) and asks the hub
+  under the device's own key: a member's token resumes it as the room's device, `not-member` gives it up, no
+  answer leaves it for the next sign-in, which resumes it instead of making a second device.
 - **What is not covered:** a phone whose app container AND Keychain an attacker can write. The lock is held while
   the app is suspended; the folder is not a shared container, where iOS would end an app for that, but this is to
   be watched on a device.
@@ -427,7 +437,8 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
 `Sources/TrommiApp/Push.swift`: on the first start with a room the app asks for notifications, registers with Apple
 and hands its device token and a push key of its own to the hub. Apple sees a fixed text ("A new question."); the
 hub's message rides along sealed under that key. A push in the foreground shows as a banner; arriving, it refreshes
-the board; a tap opens the card (`Links.swift`).
+the board; a tap refreshes the board and follows nothing the push carries (a path in it would be the hub's word,
+and could come from a push the extension never saw).
 
 **The notification** (`Sources/TrommiNotify`, the Notification Service Extension; the pushes carry
 `mutable-content: 1`). The extension opens the hub's sealed message with the push key and shows the fixed text,
