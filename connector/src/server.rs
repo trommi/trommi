@@ -66,6 +66,11 @@ pub fn channels_heard(args: Option<Vec<String>>) -> bool {
             a
         }
     };
+    // Codex shows no channel events: what it starts answers through the inbox tool.
+    let codex = regex::Regex::new(r"(^|[\\/])codex$").unwrap();
+    if args.iter().take(2).any(|a| codex.is_match(a)) {
+        return false;
+    }
     let claude = regex::Regex::new(r"(^|[\\/])claude(\.exe)?$|claude-code").unwrap();
     if !args.iter().take(2).any(|a| claude.is_match(a)) {
         return true;
