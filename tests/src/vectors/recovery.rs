@@ -123,7 +123,7 @@ fn request(entry: &OutboxEntry, names: &[&str]) -> Value {
     value
 }
 
-/// A Cut that names an envelope: the caller of a recovery verified that chain; the core carries it.
+/// A Cut that names an envelope: the remover accepted that chain; the core carries it.
 fn cut(device: DeviceId, seq: u64) -> Result<Cut, Error> {
     Ok(Cut {
         device,
@@ -226,15 +226,16 @@ pub fn generate() -> Result<Value, Error> {
             .ok_or(Error::Internal("vector room"))?;
         let replacement =
             keys.replace(&mut entropy(&format!("{NAME} new code"))?, &room, history)?;
+        // No device of this room wrote an envelope: every chain ends at nothing, and so does every Cut.
         let mut cuts = Vec::new();
         for (group, gone) in removals(&checked)? {
-            for (seq, device) in (3u64..).zip(gone) {
-                cuts.push((group, cut(device, seq)?));
+            for device in gone {
+                cuts.push((group, Cut::none(device)));
             }
         }
         Ok::<_, Error>((replacement, cuts))
     })?;
-    lost.served(|served| e.recover(&keys, served, &replacement, &cuts, ACCOUNT, NOW))?;
+    lost.served(|served| e.recover(&keys, served, &replacement, &[], ACCOUNT, NOW))?;
     let requests = post(&mut hub, &mut e)?;
     let (finish, commits) = requests
         .split_last()
