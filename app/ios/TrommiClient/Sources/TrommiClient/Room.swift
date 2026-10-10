@@ -13,9 +13,11 @@
 // What a human does is in RoomActions.swift, devices and invites in RoomDevices.swift, signing in and recovery in
 // RoomAccount.swift, the record cache in RoomCache.swift.
 //
-// Threads: the room is used from the main actor; its operations run one after the other (`serial`). The core is
-// only called inside `onCore`, which runs on one queue of its own: that keeps the order of its operations, and a
-// long catch-up does not hold the main thread.
+// Threads: the room is the main actor's (`@MainActor`), and so is its board: every method of it, async ones
+// included, runs there, and its operations run one after the other (`serial`). (Without it an async method of the
+// room ran on any thread of the pool, and the outbox pump changed the board's members while the main thread did.)
+// The core is only called inside `onCore`, which runs on one queue of its own: that keeps the order of its
+// operations, and a long catch-up does not hold the main thread.
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -131,7 +133,7 @@ public struct Store {
   static let lifecycle = NSLock()
 }
 
-public final class Room {
+@MainActor public final class Room {
   public let store: Store
   public var record: RoomRecord
   public let hub: HubClient
@@ -447,11 +449,13 @@ public final class Room {
     let list = try await noted { try await hub.welcomes() }
     guard !list.isEmpty else { return }
     let room = roomId
+    var joinedGroups = [GroupId]()
     for w in list {
       guard let bytes = (w["welcome"] as? String).flatMap({ try? unb64u($0) }) else { continue }
       // A Welcome that does not check is left alone: the hub keeps it, an alert says so, nothing is joined.
       do {
         let joined = try await onCore { try $0.joinWelcome(bytes, room: room, committer: nil, nowMs: nowMs()) }
+        joinedGroups.append(joined.group)
         // (this device holds the group from here on; what was written in it before is learned: RoomPast.swift)
         notePast { if !$0.toLearn.contains(hex(joined.group)) { $0.toLearn.append(hex(joined.group)) } }
         pastDue = true
@@ -459,8 +463,75 @@ public final class Room {
       catch let e as TrommiError where e.code == "wrong-epoch" { continue }   // (joined before: the hub still had it)
       catch { board.pushAlert(&change, code: "welcome", message: "a Welcome was refused: \(Self.codeOf(error))") }
     }
+    // A Welcome taken later than its place in the hub's order (the device read past its Add first): the group's
+    // entries up to where the core has read are handed again, as the web engine's `handLog` does.
+    for group in joinedGroups { try await handGroupLog(group, upTo: try await onCore { $0.cursor }, &change) }
     try await refreshGroups(&change)
   }
+
+  /**
+   * Hands a group's log to the core again from its start up to the change `upTo`: for a Welcome taken after the
+   * device read past its Add (core/README.md). The core takes the group's next Commits and the messages behind the
+   * Add (a handover of the earlier keys) also below its cursor, and passes over what it has (`duplicate`). Entries
+   * after `upTo` come at their place in the hub's order with the changes. An entry that came early ends the
+   * reading; one that does not process is shown, a Commit of it reported (14.7), and ends it too. The hub not
+   * answering ends it quietly (as the web's): the entries then wait for the group's next Commit.
+   */
+  func handGroupLog(_ group: GroupId, upTo: UInt64, _ change: inout Change) async throws {
+    var after: UInt64 = 0
+    reading: for _ in 0..<10_000 {
+      guard let page = try? await noted({ try await hub.groupLog(group, after: after, limit: 200) }) else { return }
+      let raw = page["items"] as? [JSON] ?? []
+      var entries = [(n: UInt64, entry: LogEntry)]()
+      var end = page["more"] as? Bool != true || raw.isEmpty
+      for j in raw {
+        // (the entry's group is the one asked for: the log route need not name it)
+        guard let n = Wire.uint(j["n"]), n > after, let c = Wire.uint(j["change"]), let bytes = (j["bytes"] as? String).flatMap({ try? unb64u($0) }) else {
+          throw finding("bad-format", "the hub's log of a group does not read or is not in order")
+        }
+        after = n
+        if c > upTo { end = true; break }
+        switch j["kind"] as? String {
+        case "commit": entries.append((n, LogEntry(change: c, group: group, kind: .commit(bytes: bytes, recoveryAuth: (j["recovery_auth"] as? String).flatMap { try? unb64u($0) }))))
+        case "message": entries.append((n, LogEntry(change: c, group: group, kind: .message(bytes: bytes))))
+        default: continue   // a kind a newer hub adds
+        }
+      }
+      let taken: [LateTaken] = try await onCore { device in
+        var out = [LateTaken]()
+        for (_, entry) in entries {
+          do { out.append(.processed(try device.processLogEntry(entry))) } catch {
+            if !device.isOwner { throw error }
+            switch device.logFinding(error) {
+            case .local: throw error
+            case .duplicate: out.append(.duplicate)
+            case .early: out.append(.early); return out
+            case .badGroup: out.append(.refused(Room.codeOf(error))); return out
+            }
+          }
+        }
+        return out
+      }
+      coreCursor = try await onCore { $0.cursor }
+      for (i, t) in taken.enumerated() {
+        let (n, entry) = entries[i]
+        switch t {
+        case .processed(.message(let m)): try await refreshGroups(&change); applyMessage(m, group: entry.group, change: entry.change, &change)
+        case .processed(.commit(_, _, let superseded, _)), .processed(.joinSuperseded(_, _, let superseded)):
+          if let id = superseded { lostToAnother(id) }
+        case .processed, .duplicate: break
+        case .early: break reading
+        case .refused(let code):
+          board.pushAlert(&change, code: code == "internal" ? "bad-group" : code, message: "an entry of a group's log does not process: the group is kept as it was", envelopeNumber: Int(entry.change))
+          if case .commit = entry.kind { reportBadCommit(group, n) }
+          break reading
+        }
+      }
+      if end { break }
+    }
+  }
+  /** What the core made of an entry handed again after a late Welcome (`handGroupLog`). */
+  enum LateTaken { case processed(Processed), duplicate, early, refused(String) }
 
   /**
    * The hub says this device was removed. It is believed only with the proof: the room group's Commits up to the
@@ -567,7 +638,7 @@ public final class Room {
     throw finding("bad-format", "the hub's changes do not end")
   }
   /** The items of a page as they must be: each readable, each with a change number above the one before. */
-  static func ordered(_ raw: [JSON], after: UInt64) throws -> [Item] {
+  nonisolated static func ordered(_ raw: [JSON], after: UInt64) throws -> [Item] {
     var last = after
     return try raw.map { j in
       guard let item = Item(j) else {
@@ -877,7 +948,7 @@ public final class Room {
     }
   }
 
-  static func codeOf(_ error: Error) -> String {
+  nonisolated static func codeOf(_ error: Error) -> String {
     if let e = error as? TrommiError { return e.code }
     if let e = error as? HubError { return e.code }
     if let e = error as? StoreError { if case .conflict = e { return "conflict" }; return "storage" }
@@ -1081,7 +1152,7 @@ public final class Room {
     return !held.leaves.contains(device.id)
   }
   /** Whether an entry of that kind carries a Commit of this device, which the core merges only from the hub's log. */
-  static func carriesCommit(_ kind: OutboxKind) -> Bool { [.commit, .groupFounding, .externalCommit, .recoveryCode].contains(kind) }
+  nonisolated static func carriesCommit(_ kind: OutboxKind) -> Bool { [.commit, .groupFounding, .externalCommit, .recoveryCode].contains(kind) }
   /**
    * Reads what the hub has after the cursor, in its order, and the groups as they stand then: this is where a
    * Commit of this device that the hub accepted takes effect. A failure is left to the next catch-up or the stream.
@@ -1096,7 +1167,7 @@ public final class Room {
     }
   }
   /** What the hub's answer to an outbox entry must hold to count as "taken"; the change number the core wants. */
-  static func accepted(_ kind: OutboxKind, _ r: JSON) -> UInt64?? {
+  nonisolated static func accepted(_ kind: OutboxKind, _ r: JSON) -> UInt64?? {
     switch kind {
     case .envelope, .commit, .externalCommit, .recoveryCode: return Wire.uint(r["change"]).flatMap { $0 > 0 ? .some(.some($0)) : nil }
     case .message: return Wire.uint(r["n"]) != nil ? .some(nil) : nil

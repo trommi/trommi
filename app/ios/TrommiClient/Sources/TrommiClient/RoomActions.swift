@@ -364,7 +364,7 @@ extension Room {
   }
 
   /** A frontier's heads from the register's JSON (`{ <writer b64u>: [seq, hash b64u] }`); nil when it does not read. */
-  static func heads(_ v: JV) -> [WriterHead]? {
+  nonisolated static func heads(_ v: JV) -> [WriterHead]? {
     guard let o = v.object else { return nil }
     var out = [WriterHead]()
     for (w, h) in o {
@@ -374,7 +374,7 @@ extension Room {
     return out.sorted { hex($0.writer) < hex($1.writer) }
   }
   /** Per writer the furthest of `heads` and `over`. */
-  static func frontier(of heads: [WriterHead], over: [WriterHead]) -> [WriterHead] {
+  nonisolated static func frontier(of heads: [WriterHead], over: [WriterHead]) -> [WriterHead] {
     var by = [Bytes: WriterHead]()
     for h in over + heads where (by[h.writer]?.seq ?? 0) < h.seq { by[h.writer] = h }
     return by.values.sorted { hex($0.writer) < hex($1.writer) }
@@ -388,7 +388,7 @@ extension Room {
    * A board without a room (the demo's, from its fixture): its items merged by the core (`boardReduce`), no snapshot.
    * The items are the fixture's, made up; nothing is verified, since there is no chain to verify them against.
    */
-  public static func demoCanvas(_ board: Board, _ timelineId: String) throws -> CanvasState {
+  nonisolated public static func demoCanvas(_ board: Board, _ timelineId: String) throws -> CanvasState {
     // The demo's pictures name their files by a path in the app (`url`), with no key: for the core they get a key of
     // zeros, and the path is put back on each picture afterwards (DemoData reads the file by it).
     var urls = [String: JV]()
@@ -416,7 +416,7 @@ extension Room {
     st.putBack(urls: urls)
     return st
   }
-  static func boardItems(_ board: Board, _ key: String) -> [(head: WriterHead, payload: Bytes, change: UInt64)] {
+  nonisolated static func boardItems(_ board: Board, _ key: String) -> [(head: WriterHead, payload: Bytes, change: UInt64)] {
     guard let t = board.timelines[key] else { return [] }
     return t.items.keys.sorted().compactMap { n in
       guard let it = t.items[n], it.itemState == "loaded", !it.pending, let c = it.content, let seq = it.senderSequence,

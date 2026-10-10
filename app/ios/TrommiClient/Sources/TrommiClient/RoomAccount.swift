@@ -135,7 +135,7 @@ extension Room {
   }
 
   /** The Keychain item that holds the recovery code while a sign-in with it is not finished. */
-  static func joinCodeItem(_ dir: URL) -> String { "join-\(dir.lastPathComponent)" }
+  nonisolated static func joinCodeItem(_ dir: URL) -> String { "join-\(dir.lastPathComponent)" }
 
   /**
    * Sign in on this device with the recovery code (8.4): the code's key signs in to the hub, and this device joins
@@ -195,7 +195,7 @@ extension Room {
   }
 
   /** An error after which nothing is known of what the hub did: no answer, or one it could not give. */
-  static func unsure(_ error: Error) -> Bool {
+  nonisolated static func unsure(_ error: Error) -> Bool {
     guard let h = error as? HubError else { return error is CancellationError }
     return h.isOffline || h.status >= 500
   }

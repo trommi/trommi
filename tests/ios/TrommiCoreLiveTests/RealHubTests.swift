@@ -59,6 +59,7 @@ final class HubProcess {
   func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
 }
 
+@MainActor
 final class RealHubTests: XCTestCase {
   private var hub: HubProcess?
   private var transport: [AnyClass] = []
@@ -67,7 +68,7 @@ final class RealHubTests: XCTestCase {
   /// fails that test.
   private let strict = ProcessInfo.processInfo.environment["TROMMI_STRICT_HUB"] == "1"
 
-  override func setUpWithError() throws {
+  override func setUp() async throws {
     guard let started = try HubProcess(data: try scratchFolder(self).appendingPathComponent("hub")) else {
       throw XCTSkip("TROMMI_HUB_BIN names no hub binary")
     }
@@ -78,7 +79,7 @@ final class RealHubTests: XCTestCase {
     HubClient.transportForTests = []
   }
 
-  override func tearDown() {
+  override func tearDown() async throws {
     hub?.stop()
     HubClient.transportForTests = transport
   }

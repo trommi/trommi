@@ -84,4 +84,44 @@ final class SessionPastTests: XCTestCase {
     let profile = try XCTUnwrap(board.sessions[hex(Bytes(session.suffix(16)))]?.profile)
     XCTAssertEqual(profile["agent_name"].string, "Builder", "the profile written between the handover and the Add is read")
   }
+
+  /// A Welcome taken late (core groups_concurrency `a_welcome_taken_late_is_caught_up_from_its_place_in_the_log`):
+  /// the phone is added to the session, the session and the room move on, and the phone reads past all of it before
+  /// it takes its Welcome. Taking it, the engine hands the session's log again up to where the core read (as the
+  /// web engine's `handLog`): the handover behind the Add opens and the Commits behind it are merged, so the phone
+  /// stands in the session's current epoch and reads what the agent writes there.
+  func testAWelcomeTakenLateCatchesUpFromItsPlaceInTheLog() async throws {
+    let (a, agent, room, session) = try roomWithAgent()
+    var invite = Bytes()
+    let phone = try pocketRoom(self, room: room, past: PastWork(toLearn: [hex(room)]), tools: tools) { b in
+      let exchanged = try exchangeInvite(from: a, to: b, tools: self.tools)
+      invite = exchanged.invite
+      _ = try a.inviteConfirm(invite: exchanged.invite, numbers: exchanged.inviterShows, requestHash: exchanged.requestHash, matches: true, nowMs: nowMs())
+      try self.hub.post(a)
+      _ = try b.joinInvited(try XCTUnwrap(self.hub.welcomes.last), nowMs: nowMs())
+    }
+    addTeardownBlock { await phone.shutdown() }
+    _ = try a.inviteHandover(invite: invite)
+    try hub.post(a)
+    _ = try await phone.sync()
+
+    let device = try XCTUnwrap(phone.device as? LiveDevice)
+    _ = try a.addToSession(group: session, device: device.id, keyPackage: try device.keyPackage(nowMs: nowMs()), nowMs: nowMs())
+    try hub.post(a)
+    for target in [session, room, session] {
+      _ = try a.update(group: target, forced: true, nowMs: nowMs())
+      try hub.post(a)
+    }
+    // (the phone's core reads the log without its Welcome: the session's entries are passed over)
+    try hub.deliver(to: device)
+    XCTAssertEqual(device.cursor, hub.change)
+    XCTAssertNil(try device.groups().first { $0.group == session }, "not in the session yet")
+
+    try agentWrites(agent, session: session, name: "profile", #"{"agent_name":"Late","model":"m","task":"t"}"#)
+    _ = try await phone.sync()
+    let epoch = try XCTUnwrap(try a.groups().first { $0.group == session }?.epoch)
+    XCTAssertEqual(try device.groups().first { $0.group == session }?.epoch, epoch, "the session's Commits behind the Add were merged")
+    let profile = try XCTUnwrap(phone.board.sessions[hex(Bytes(session.suffix(16)))]?.profile)
+    XCTAssertEqual(profile["agent_name"].string, "Late", "what the agent wrote in the current epoch opens")
+  }
 }

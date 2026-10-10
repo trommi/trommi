@@ -190,6 +190,7 @@ final class RoomBoardTests: XCTestCase {
 
 /// The demo's Scribble Boards (demo/data/fixture.json), merged by the real core without a room: every desk's board
 /// shows its made-up shapes.
+@MainActor
 final class DemoBoardTests: XCTestCase {
   func testTheDemosBoardsAreTheCoresMerge() throws {
     Core.tools = LiveCore()
