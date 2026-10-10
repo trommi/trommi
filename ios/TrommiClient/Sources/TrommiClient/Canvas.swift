@@ -228,8 +228,33 @@ public final class CanvasState {
   public private(set) var frontier: [String: (seq: UInt64, hash: String?)] = [:]
   public private(set) var lastEnvelopeNumber = 0
   public private(set) var applied = 0
+  /**
+   * The board as the core last reduced it (`CoreTools.boardReduce`): the snapshot file's JSON (10.8, the wire's
+   * form) and the frontier it stands for. What is shown is made from this alone (`show`); this class judges no
+   * item itself.
+   */
+  public internal(set) var reduced: Bytes?
+  public internal(set) var reducedFrontier: [WriterHead] = []
+  /** The hub's change number up to which the board's items were read into `reduced`. */
+  public internal(set) var heldChange: UInt64 = 0
   public init() {}
   public func covered(_ sender: String, _ seq: UInt64) -> Bool { (frontier[sender]?.seq ?? 0) >= seq }
+
+  /**
+   * Shows the board the core made: its snapshot file (wire form) turned into the model's shapes by
+   * `Records.boardSnapshot`, which converts and judges nothing. The ids whose shape changed.
+   */
+  @discardableResult public func show(reduced file: Bytes, frontier: [WriterHead]) throws -> Set<String> {
+    guard let wire = JV.parse(file), let model = Records.boardSnapshot(wire) else { throw TrommiError("bad-format", "the core's board does not read") }
+    let before = shapes
+    load(snapshot: model)
+    reduced = file
+    reducedFrontier = frontier
+    var changed = Set<String>()
+    for (id, s) in shapes where before[id] != s { changed.insert(id) }
+    for id in before.keys where shapes[id] == nil { changed.insert(id) }
+    return changed
+  }
 
   static func nums(_ v: JV, _ n: Int) -> [Double]? {
     guard let a = v.array, a.count == n else { return nil }
@@ -283,70 +308,12 @@ public final class CanvasState {
     return .obj(e)
   }
 
-  /** Apply one scribble item; the ids it changed, or nil when it was skipped (covered by the frontier). */
-  @discardableResult public func apply(sender: String, seq: UInt64, hash: String?, envelopeNumber: Int?, content: JV, senderRole: String = "human") -> Set<String>? {
-    if seq < 1 || covered(sender, seq) { return nil }
-    frontier[sender] = (seq, hash)
-    if let n = envelopeNumber { lastEnvelopeNumber = max(lastEnvelopeNumber, n) }
-    applied += 1
-    var changed = Set<String>()
-    let own: (String) -> Bool = { $0.hasPrefix("\(sender)/") }
-    let may: (String) -> Bool = { senderRole != "agent" || own($0) }
-    switch content["content_type"].string {
-    case "strokes":
-      for (i, e) in (content["strokes"].array ?? []).enumerated() {
-        if let cont = e["continues"].string {
-          guard own(cont), var head = shapes[cont], head.isStroke, var ink = head.ink, let more = InkWire.unpack(e["points"].string) else { continue }
-          ink.pts += more.pts; ink.t += more.t; ink.f += more.f
-          if ink.az != nil, let maz = more.az, let mal = more.al { ink.az! += maz; ink.al! += mal } else { ink.az = nil; ink.al = nil }
-          head.ink = ink; head.pts = ink.pts
-          shapes[cont] = head
-          changed.insert(cont)
-          continue
-        }
-        let id = "\(sender)/\(seq)/\(i)"
-        if erased.contains(id) || shapes[id] != nil { continue }
-        if var s = CanvasState.shapeOf(e, id: id, by: sender) {
-          if let m = early.removeValue(forKey: id) { CanvasState.move(&s, m.dx, m.dy) }
-          shapes[id] = s; changed.insert(id)
-        }
-      }
-    case "erase", "send_away":
-      for id in (content["stroke_ids"].array ?? []).compactMap({ $0.string }) where may(id) {
-        erased.insert(id)
-        early.removeValue(forKey: id)
-        if shapes.removeValue(forKey: id) != nil { changed.insert(id) }
-      }
-    case "move":
-      let off = (content["offset"].array ?? []).map { $0.double ?? 0 }
-      let dx = off.count > 0 ? off[0] : 0, dy = off.count > 1 ? off[1] : 0
-      if dx != 0 || dy != 0 {
-        for id in (content["stroke_ids"].array ?? []).compactMap({ $0.string }) where may(id) {
-          guard var s = shapes[id] else {
-            if !erased.contains(id) { let m = early[id] ?? (0, 0); early[id] = (m.dx + dx, m.dy + dy) }
-            continue
-          }
-          CanvasState.move(&s, dx, dy)
-          shapes[id] = s
-          changed.insert(id)
-        }
-      }
-    default: break
-    }
-    return changed
-  }
-
-  private static func move(_ s: inout CanvasShape, _ dx: Double, _ dy: Double) {
-    for k in stride(from: 0, to: s.pts.count - 1, by: 2) { s.pts[k] += dx; s.pts[k + 1] += dy }
-    if s.ink != nil { s.ink!.pts = s.pts }
-  }
-
   /**
    * Start from a snapshot: the entries with id and by, the frontier; and of a snapshot file of spec/v2.md 10.8
    * (as `Records.boardSnapshot` hands it over) `gone`, the ids erased beyond their writer's frontier, and `moved`,
    * the summed moves of shapes still to come.
    */
-  public func load(snapshot j: JV) {
+  func load(snapshot j: JV) {
     shapes = [:]; erased = []; frontier = [:]; early = [:]
     for id in j["gone"].array ?? [] { if let id = id.string { erased.insert(id) } }
     for m in j["moved"].array ?? [] { if let id = m[0].string, let dx = m[1].double, let dy = m[2].double { early[id] = (dx, dy) } }
@@ -356,10 +323,6 @@ public final class CanvasState {
     for (k, v) in j["frontier"].object ?? [:] { if let seq = v[0].int, seq >= 0 { frontier[k] = (UInt64(seq), v[1].string) } }
     lastEnvelopeNumber = j["last_envelope_number"].int ?? 0
     applied = 0
-  }
-  public func snapshot() -> JV {
-    .obj(["v": 2, "shapes": .arr(shapes.values.map { s in CanvasState.entryOf(s).with("id", .str(s.id)).with("by", .str(s.by)) }),
-          "frontier": .obj(frontier.mapValues { .arr([.n($0.seq), $0.hash.map { .str($0) } ?? .null]) }), "last_envelope_number": .n(lastEnvelopeNumber)])
   }
 }
 
