@@ -1,13 +1,12 @@
 // Recovery and signing in on a new device (spec/v2.md section 8) with the real core and no hub: `PocketHub` keeps
-// what a hub would keep (the log in order, every GroupInfo, the SealedKeys, the RecoveryLinks) and serves it back.
-// It checks nothing: the core does.
+// what a hub would keep (the log and the envelopes in one order, every GroupInfo, the SealedKeys, the RecoveryLinks)
+// and serves it back. It checks nothing: the core does.
 import Foundation
 import XCTest
 import TrommiClient
 @testable import TrommiCoreLive
 
-/// One outbox entry with its kind as the number of core/src/store.rs, so that the kinds Core.swift cannot name yet
-/// (11 and 12) are posted like the others.
+/// One outbox entry with its kind as the number of core/src/store.rs.
 typealias Posted = (id: UInt64, kind: UInt8, group: GroupId?, epoch: UInt64, parts: [Bytes])
 
 final class PocketHub {
@@ -18,6 +17,10 @@ final class PocketHub {
   var sealedKeys: [Bytes] = []
   var links: [Bytes] = []
   var welcomes: [Bytes] = []
+  /// The stored envelopes, by the change number each took: one order with the log's entries.
+  var envelopes: [(change: UInt64, bytes: Bytes)] = []
+  /// What became of the envelopes the last `deliver` handed over.
+  var received: [ReceivedEnvelope] = []
   /// The fifth part of the last `recoveryCode`, or the second of the last `recoveryFinish`.
   var account: Bytes?
   /// The kinds posted, in order.
@@ -27,9 +30,17 @@ final class PocketHub {
     device.outbox().map { ($0.id, $0.kind.rawValue, $0.group, $0.epoch, $0.parts) }
   }
 
-  /// Takes everything in the device's outbox, in order, and reports each entry as accepted; also what the device
-  /// queues on hearing that.
+  /// Takes everything in the device's outbox, in order, and reports each entry as accepted. The answer merges no
+  /// Commit: what the hub took comes back to the device in the hub's order (`deliver`), and there its own Commits
+  /// take effect. What the device queues on that is posted too, until nothing waits.
   func post(_ device: CoreDevice) throws {
+    repeat {
+      try postWaiting(device)
+      try deliver(to: device)
+    } while !Self.waiting(device).isEmpty
+  }
+
+  private func postWaiting(_ device: CoreDevice) throws {
     while let entry = Self.waiting(device).first {
       func part(_ at: Int) -> Bytes { at < entry.parts.count ? entry.parts[at] : [] }
       let group = entry.group ?? []
@@ -51,6 +62,10 @@ final class PocketHub {
         change += 1
         accepted = change
         log.append(LogEntry(change: change, group: group, kind: .message(bytes: part(0))))
+      case 7:
+        change += 1
+        accepted = change
+        envelopes.append((change, part(0)))
       case 9: sealedKeys.append(part(0))
       case 10:
         commit = (part(0), part(1), [], part(2), [])
@@ -93,14 +108,27 @@ final class PocketHub {
     return (room, try served(room), try XCTUnwrap(infos[room]?[anchor.epoch]), sealedKeys, links, try sessions.map(served))
   }
 
-  /// Hands the device the log above its cursor. An entry behind what the device holds (its own Commit, a group's
-  /// Commits from before it joined) is passed over, as the client does.
+  /// Hands the device everything above its cursor, strictly by change number: the log's entries (its own accepted
+  /// Commits among them) and the stored envelopes. An entry behind what the device holds (a group's Commits from
+  /// before it joined) is passed over, as the client does. Returns what the log's entries did; `received` holds
+  /// what became of the envelopes.
   @discardableResult func deliver(to device: CoreDevice) throws -> [Processed] {
     var done = [Processed]()
-    for entry in log where entry.change > device.cursor {
+    received = []
+    let cursor = device.cursor
+    var stored = envelopes.filter { $0.change > cursor }[...]
+    func handEnvelopes(before change: UInt64) throws {
+      while let next = stored.first, next.change < change {
+        received.append(try device.receiveEnvelope(next.bytes, change: next.change, ordered: true, voidCode: nil, nowMs: nowMs()))
+        stored = stored.dropFirst()
+      }
+    }
+    for entry in log where entry.change > cursor {
+      try handEnvelopes(before: entry.change)
       do { done.append(try device.processLogEntry(entry)) }
       catch where device.logFinding(error) == .duplicate {}
     }
+    try handEnvelopes(before: .max)
     return done
   }
 }
@@ -308,8 +336,8 @@ final class RecoveryTests: XCTestCase {
   }
 
   /// Every device is lost (8.7): a new device with the code prepares the recovery, is told whom it removes, and builds
-  /// all of it. The Commits are kinds Core.swift cannot name yet: `outbox()` holds them back, in order, and
-  /// `heldBack()` lists them; nothing of the device changes until the hub accepted the finish.
+  /// all of it (outbox kinds 11 `recoveryCommit` and 12 `recoveryFinish`); nothing of the device changes until the
+  /// hub accepted the finish.
   func testAWholeRecovery() throws {
     let hub = PocketHub()
     let lost = try newDevice(), new = try newDevice()
@@ -325,11 +353,10 @@ final class RecoveryTests: XCTestCase {
     XCTAssertEqual(plan.removals.count, 1)
     XCTAssertEqual(plan.removals.first?.group, room)
     XCTAssertEqual(plan.removals.first?.devices, [lost.id])
-    // A Cut is owed for every leaf that goes.
-    XCTAssertEqual(refusedCode { _ = try new.recover(code, served: served, chains: [], account: [], nowMs: nowMs()) }, "incomplete")
 
     let account = utf8(#"{"kit":{"sealed_copy":"x"}}"#)
-    // (the lost device stored nothing: its chain in the room group has no head)
+    // The core takes each Cut from the chain of the device that goes, as the hub serves it. The lost device stored
+    // nothing: no chain is handed in, and it is cut at nothing.
     let built = try new.recover(code, served: served, chains: [], account: account, nowMs: nowMs())
     let waiting = PocketHub.waiting(new)
     XCTAssertEqual(waiting.map(\.id), built.outbox)

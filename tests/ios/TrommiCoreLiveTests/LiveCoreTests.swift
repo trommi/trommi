@@ -1,6 +1,6 @@
 // LiveCore and LiveDevice on the real Rust library, on Linux. That this file links and runs under `swift test` is the
 // proof that the static library of core/swift/build.sh, UniFFI's Swift file and the package's linker settings fit
-// together. Recovery (spec/v2.md section 8) runs here without a hub: `PocketHub` below keeps what a hub would.
+// together. No hub runs here: where a test needs the hub's one order, `PocketHub` (RecoveryTests.swift) keeps it.
 import Foundation
 import XCTest
 import TrommiClient
@@ -87,24 +87,13 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertTrue(steps.contains { $0.micros > 0 })
   }
 
-  /// What the binding does not have refuses by name, and never pretends. One call of each stubbed block.
-  func testAStubSaysItIsAStub() throws {
-    XCTAssertThrowsError(try tools.inviteReveal(joiner: [], reveal: [], signature: [])) { error in
-      XCTAssertEqual((error as? TrommiError)?.code, LiveCore.notBuiltCode)
-      XCTAssertEqual((error as? TrommiError)?.message, "inviteReveal(joiner:reveal:signature:): not in this build of the core binding")
-    }
-    // The two calls Core.swift guessed for recovery: the core cannot serve them in that shape (LiveRecovery.swift).
-    let fresh = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
-    XCTAssertEqual(refusedCode { _ = try self.tools.joinWithRecoveryCode(device: fresh, code: ZERO32, groupInfos: [], sealedKeys: [], nowMs: nowMs()) }, "not-built")
+  /// Nothing of Core.swift is stubbed against this binding, so no call answers "not in this build". What is left
+  /// of that: an error that carries no code of the core (a store's own, a newer hub's) is the device's fault, never
+  /// the entry's, so the caller stops instead of passing an item over.
+  func testAnErrorWithoutACodeOfTheCoreIsLocal() throws {
     let device = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
-    // A content key never leaves the core.
-    XCTAssertEqual(refusedCode { _ = try device.contentKey(group: ZERO32, epoch: 0) }, "not-built")
-    // Gone from the core: a device comes into a room by invite only.
-    XCTAssertEqual(refusedCode { _ = try device.addHumanDevice(ZERO32, keyPackage: [], nowMs: nowMs()) }, "not-built")
-    XCTAssertEqual(refusedCode { _ = try device.changeAgents(enrol: [ZERO32], remove: [], nowMs: nowMs()) }, "not-built")
-    XCTAssertEqual(refusedCode { _ = try (device as? LiveDevice)?.replaceRecoveryCode(nowMs: nowMs()) }, "not-built")
-    // A stubbed call is the device's fault, never the entry's: the caller stops instead of passing an item over.
     XCTAssertEqual(device.logFinding(TrommiError("not-built")), .local)
+    XCTAssertEqual(device.logFinding(StoreError.failed("the disk is full")), .local)
   }
 
   // ---- errors ---------------------------------------------------------------------------------------------
@@ -118,8 +107,8 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertEqual(refusedCode { _ = try self.tools.passwordKeys(email: "a@example.com", password: "a long password", kdf: #"{"alg":"argon2id","v":1,"m":8,"t":1,"p":1}"#) }, "bad-kdf")
     XCTAssertEqual(refusedCode { _ = try self.tools.openDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32)) }, "storage")
     let device = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
-    XCTAssertEqual(try (device as? LiveDevice)?.holdsKey(group: ZERO32, epoch: 0), false)
-    XCTAssertEqual(refusedCode { _ = try (device as? LiveDevice)?.holdsKey(group: [1, 2, 3], epoch: 0) }, "bad-format")
+    XCTAssertEqual(try device.holdsKey(group: ZERO32, epoch: 0), false)
+    XCTAssertEqual(refusedCode { _ = try device.holdsKey(group: [1, 2, 3], epoch: 0) }, "bad-format")
     XCTAssertEqual(refusedCode { _ = try device.signHubAuth(room: ZERO32, hub: "https://hub.example", challenge: [1]) }, "bad-format")
     // The message names what was refused and does not repeat the code in front of it.
     XCTAssertThrowsError(try device.signHubAuth(room: ZERO32, hub: "https://hub.example", challenge: [1])) { error in
@@ -280,11 +269,19 @@ final class LiveCoreTests: XCTestCase {
   // ---- two devices, no hub --------------------------------------------------------------------------------
 
   /// The first entry of the outbox with that kind, reported to the device as accepted under the next change number.
+  /// The answer merges nothing: a Commit takes effect when the device processes it from the log (`merge`).
   private func accept(_ device: CoreDevice, _ kind: OutboxKind, _ change: inout UInt64) throws -> OutboxEntry {
     let entry = try XCTUnwrap(device.outbox().first { $0.kind == kind })
     change += 1
     try device.outboxAccepted(entry.id, change: change)
     return entry
+  }
+  /// An accepted Commit of the device as the hub's log brings it back: the entry, processed as the device's own.
+  private func merge(_ device: CoreDevice, _ entry: OutboxEntry, part: Int = 0, _ change: UInt64) throws -> LogEntry {
+    let logged = LogEntry(change: change, group: try XCTUnwrap(entry.group), kind: .commit(bytes: entry.parts[part], recoveryAuth: nil))
+    XCTAssertEqual(try device.processLogEntry(logged), .ownCommit)
+    XCTAssertEqual(device.cursor, change)
+    return logged
   }
 
   private func newDevice() throws -> LiveDevice {
@@ -292,25 +289,38 @@ final class LiveCoreTests: XCTestCase {
   }
 
   /// A founds a room and takes B in by invite; B joins by the Welcome; both hold the same key for the room. Then a
-  /// later Commit of A reaches B through the log, an agent device is enrolled by invite, and its session is founded.
+  /// later Commit of A reaches B through the log, a stroke piece is relayed, an agent device is enrolled by invite,
+  /// and its session is founded.
   func testTwoDevicesShareTheRoomsKey() throws {
     var change: UInt64 = 0
     let a = try newDevice(), b = try newDevice(), agent = try newDevice()
     let room = try a.foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
     _ = try accept(a, .roomFounding, &change)
 
-    // A takes B in. The Commit's parts: Commit, GroupInfo, Welcome, SealedKey.
+    // The invite: opened by A, requested by B, accepted by A, revealed to B. Both show the same six numbers.
     let forB = try exchangeInvite(from: a, to: b, tools: tools)
+    XCTAssertEqual(forB.inviterShows.count, 6)
     XCTAssertEqual(forB.inviterShows, forB.newcomerShows)
-    let id = try a.inviteConfirm(invite: forB.invite, numbers: forB.inviterShows, requestHash: forB.requestHash, matches: true, nowMs: nowMs())
+    XCTAssertEqual(try a.inviteSteps(), [])
+    // Confirmed: A commits B. The Commit's parts: Commit, GroupInfo, Welcome, SealedKey.
+    let confirmed = try XCTUnwrap(try a.inviteConfirm(invite: forB.invite, numbers: forB.inviterShows, requestHash: forB.requestHash, matches: true, nowMs: nowMs()))
+    XCTAssertEqual(confirmed.newDevice, b.id)
+    XCTAssertEqual(confirmed.role, .human)
+    XCTAssertNil(confirmed.sessionId)
     XCTAssertEqual(try a.groups().first?.pending, true)
     XCTAssertEqual(try a.inviteSteps(), [.wait(invite: forB.invite)])
     let add = try accept(a, .commit, &change)
-    XCTAssertEqual(add.id, id)
+    XCTAssertEqual(add.id, confirmed.outboxId)
     XCTAssertEqual(add.group, room)
     XCTAssertEqual(add.epoch, 0)
     XCTAssertEqual(add.parts.count, 4)
     XCTAssertFalse(add.parts[2].isEmpty)
+    // The hub's answer merged nothing: A stands in its old epoch with the Commit pending, and the invite waits.
+    XCTAssertEqual(try a.groups().first?.epoch, 0)
+    XCTAssertEqual(try a.groups().first?.pending, true)
+    XCTAssertEqual(try a.inviteSteps(), [.wait(invite: forB.invite)])
+    // The log brings it back at its place: there it is merged.
+    let addEntry = try merge(a, add, change)
 
     let joined = try b.joinInvited(add.parts[2], nowMs: nowMs())
     XCTAssertEqual(joined, Joined(group: room, epoch: 1, addedBy: a.id))
@@ -325,17 +335,13 @@ final class LiveCoreTests: XCTestCase {
     // B was not there at epoch 0 and A has not handed that key over.
     XCTAssertFalse(try b.holdsKey(group: room, epoch: 0))
 
-    // The Commit that added B, as the log brings it: A applied it when the hub accepted it (a duplicate now); for B
-    // it lies behind the epoch its Welcome put it in, and is passed over.
-    let addEntry = LogEntry(change: change, group: room, kind: .commit(bytes: add.parts[0], recoveryAuth: nil))
-    XCTAssertThrowsError(try a.processLogEntry(addEntry)) {
-      XCTAssertEqual(($0 as? TrommiError)?.code, "wrong-epoch")
-      XCTAssertEqual(a.logFinding($0), .duplicate)
-    }
+    // The Commit that added B, handed to B after its Welcome: it lies behind the epoch the Welcome put it in, is
+    // passed over, and gives the join its place in the hub's order. For A it is a duplicate now.
     XCTAssertEqual(try b.processLogEntry(addEntry), .skipped)
     XCTAssertEqual(b.cursor, change)
+    XCTAssertThrowsError(try a.processLogEntry(addEntry)) { XCTAssertEqual(a.logFinding($0), .duplicate) }
 
-    // With the Add accepted, A sends B the key that authenticates the room's sealed keys (7.4), unasked: a stored
+    // With the Add merged, A sends B the key that authenticates the room's sealed keys (7.4), unasked: a stored
     // message of the room group, in the epoch the Add led to. B came by Welcome, not with the code, and has none.
     XCTAssertEqual(try b.holdsRecoveryMac(), false)
     let auth = try accept(a, .message, &change)
@@ -343,10 +349,12 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertEqual(try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: auth.parts[0]))), .message(.recoveryAuth(from: a.id)))
     XCTAssertEqual(try b.holdsRecoveryMac(), true)
 
-    // What the invite still asks for: the handover of the old key, a stored message of the room group, which B opens.
+    // What the invite still asks for: the handover of the old key, a stored message of the room group, which B
+    // opens. With that the invite is finished and listed no more.
     XCTAssertEqual(try a.inviteSteps(), [.handover(invite: forB.invite, group: room, device: b.id)])
     XCTAssertFalse(try a.inviteHandover(invite: forB.invite).isEmpty)
     XCTAssertEqual(try a.inviteSteps(), [])
+    XCTAssertEqual(refusedCode { _ = try a.inviteHandover(invite: forB.invite) }, "not-found")
     let handover = try accept(a, .message, &change)
     let taken = try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: handover.parts[0])))
     guard case .message(.keys(let from, let count, _)) = taken else { return XCTFail("\(taken)") }
@@ -354,12 +362,12 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertGreaterThan(count, 0)
     XCTAssertTrue(try bothHoldKey(b, a, group: room, epoch: 0))
 
-    // A's next Commit reaches B through the log: both stand at epoch 2 with one key.
+    // A's next Commit reaches both through the log: both stand at epoch 2 with one key.
     _ = try XCTUnwrap(try a.update(group: room, forced: true, nowMs: nowMs()))
     let update = try accept(a, .commit, &change)
     XCTAssertEqual(update.epoch, 1)
-    let done = try b.processLogEntry(LogEntry(change: change, group: room, kind: .commit(bytes: update.parts[0], recoveryAuth: nil)))
-    XCTAssertEqual(done, .commit(group: room, epoch: 2, superseded: nil, removed: false))
+    let updateEntry = try merge(a, update, change)
+    XCTAssertEqual(try b.processLogEntry(updateEntry), .commit(group: room, epoch: 2, superseded: nil, removed: false))
     XCTAssertEqual(b.cursor, change)
     XCTAssertTrue(try bothHoldKey(b, a, group: room, epoch: 2))
 
@@ -367,19 +375,20 @@ final class LiveCoreTests: XCTestCase {
     _ = try a.sendStrokePiece(board: ALL_DESKS_BOARD, piece: utf8(#"{"p":[1,2]}"#))
     let piece = try XCTUnwrap(a.outbox().first { $0.kind == .relayMessage })
     try a.outboxAccepted(piece.id, change: nil)
-    XCTAssertEqual(try b.processRelay(group: room, bytes: piece.parts[0]), .strokePiece(from: a.id, board: ALL_DESKS_BOARD, piece: utf8(#"{"p":[1,2]}"#)))
+    XCTAssertEqual(try b.receiveRelay(group: room, message: piece.parts[0], nowMs: nowMs()), .strokePiece(from: a.id, board: ALL_DESKS_BOARD, piece: utf8(#"{"p":[1,2]}"#)))
     XCTAssertEqual(b.cursor, change)
-    // A message of a group this device is no leaf of is dropped.
-    XCTAssertEqual(try agent.processRelay(group: room, bytes: piece.parts[0]), .dropped)
+    // A message of a group this device is no leaf of opens nothing.
+    XCTAssertNil(try agent.receiveRelay(group: room, message: piece.parts[0], nowMs: nowMs()))
 
     // An agent device is enrolled by invite: it follows the room group from the GroupInfo of the epoch its Offer
     // names (the update's), and the Commit that enrols it reaches it and B through the log.
     let forAgent = try exchangeInvite(from: a, to: agent, role: .agent, tools: tools)
     XCTAssertEqual(forAgent.inviterShows, forAgent.newcomerShows)
     try agent.joinObserve(groupInfo: update.parts[1])
-    _ = try a.inviteConfirm(invite: forAgent.invite, numbers: forAgent.inviterShows, requestHash: forAgent.requestHash, matches: true, nowMs: nowMs())
+    let enrolled = try XCTUnwrap(try a.inviteConfirm(invite: forAgent.invite, numbers: forAgent.inviterShows, requestHash: forAgent.requestHash, matches: true, nowMs: nowMs()))
+    XCTAssertEqual(enrolled.role, .agent)
     let enrol = try accept(a, .commit, &change)
-    let enrolEntry = LogEntry(change: change, group: room, kind: .commit(bytes: enrol.parts[0], recoveryAuth: nil))
+    let enrolEntry = try merge(a, enrol, change)
     _ = try b.processLogEntry(enrolEntry)
     XCTAssertEqual(try agent.processLogEntry(enrolEntry), .observed)
     XCTAssertEqual(try a.roomRoles()?.agents, [agent.id])
@@ -387,18 +396,22 @@ final class LiveCoreTests: XCTestCase {
 
     // The invite asks for the agent's main session, with the KeyPackage of its Request and one of every other human.
     let steps = try a.inviteSteps()
-    guard steps.count == 1, case .foundSession(let invite, let enrolled, let keyPackage) = steps[0] else { return XCTFail("\(steps)") }
+    guard steps.count == 1, case .foundSession(let invite, let enrolledDevice, let keyPackage) = steps[0] else { return XCTFail("\(steps)") }
     XCTAssertEqual(invite, forAgent.invite)
-    XCTAssertEqual(enrolled, agent.id)
+    XCTAssertEqual(enrolledDevice, agent.id)
     let session = try a.foundSession(agent: agent.id, keyPackages: [keyPackage, try b.keyPackage(nowMs: nowMs())], nowMs: nowMs())
     XCTAssertEqual(session.count, 16)
     // The founding's parts: GroupInfo 0, SealedKey 0, the first Commit, its GroupInfo, its Welcome, its SealedKey.
     let founding = try accept(a, .groupFounding, &change)
     XCTAssertEqual(founding.group, room + session)
     XCTAssertEqual(founding.parts.count, 6)
+    // The founding's first Commit is A's own like any other: merged from the log.
+    let foundingEntry = try merge(a, founding, part: 2, change)
     XCTAssertEqual(try a.inviteSteps(), [])
-    _ = try b.joinWelcome(founding.parts[4], room: room, committer: a.id, nowMs: nowMs())
-    _ = try agent.joinWelcome(founding.parts[4], room: room, committer: a.id, nowMs: nowMs())
+    for device in [b, agent] {
+      _ = try device.joinWelcome(founding.parts[4], room: room, committer: a.id, nowMs: nowMs())
+      XCTAssertEqual(try device.processLogEntry(foundingEntry), .skipped)
+    }
     for device in [a, b, agent] {
       let group = try XCTUnwrap(try device.groups().first { $0.session != nil })
       XCTAssertEqual(group.group, room + session)
@@ -411,104 +424,185 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertTrue(a.outbox().isEmpty)
   }
 
-  /// A and B in one room, B by invite, with the handover done. `change` is the hub's counter.
-  private func pair(_ change: inout UInt64) throws -> (a: LiveDevice, b: LiveDevice, room: RoomId) {
-    let a = try newDevice(), b = try newDevice()
+  /// A and B in one room, B by invite with the handover done, and an agent device with its main session, which all
+  /// three are leaves of. `PocketHub` (RecoveryTests.swift) keeps the hub's one order.
+  private func roomWithSession(_ hub: PocketHub) throws -> (a: LiveDevice, b: LiveDevice, agent: LiveDevice, room: RoomId, session: SessionId) {
+    let a = try newDevice(), b = try newDevice(), agent = try newDevice()
     let room = try a.foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
-    _ = try accept(a, .roomFounding, &change)
-    return (a, b, room)
-  }
-  private func bring(_ b: LiveDevice, into a: LiveDevice, room: RoomId, _ change: inout UInt64) throws {
-    let invite = try exchangeInvite(from: a, to: b, tools: tools)
-    _ = try a.inviteConfirm(invite: invite.invite, numbers: invite.inviterShows, requestHash: invite.requestHash, matches: true, nowMs: nowMs())
-    let add = try accept(a, .commit, &change)
-    _ = try b.joinInvited(add.parts[2], nowMs: nowMs())
-    let auth = try accept(a, .message, &change)
-    _ = try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: auth.parts[0])))
-    _ = try a.inviteHandover(invite: invite.invite)
-    let handover = try accept(a, .message, &change)
-    _ = try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: handover.parts[0])))
+    try hub.post(a)
+    let forB = try exchangeInvite(from: a, to: b, tools: tools)
+    _ = try a.inviteConfirm(invite: forB.invite, numbers: forB.inviterShows, requestHash: forB.requestHash, matches: true, nowMs: nowMs())
+    try hub.post(a)
+    _ = try b.joinInvited(try XCTUnwrap(hub.welcomes.last), nowMs: nowMs())
+    _ = try a.inviteHandover(invite: forB.invite)
+    try hub.post(a)
+    try hub.deliver(to: b)
+
+    let forAgent = try exchangeInvite(from: a, to: agent, role: .agent, tools: tools)
+    try agent.joinObserve(groupInfo: try XCTUnwrap(hub.infos[room]?[1]))
+    _ = try a.inviteConfirm(invite: forAgent.invite, numbers: forAgent.inviterShows, requestHash: forAgent.requestHash, matches: true, nowMs: nowMs())
+    try hub.post(a)
+    guard case .foundSession(_, _, let keyPackage)? = try a.inviteSteps().first else { throw TrommiError("test", "the invite asks for no session") }
+    let session = try a.foundSession(agent: agent.id, keyPackages: [keyPackage, try b.keyPackage(nowMs: nowMs())], nowMs: nowMs())
+    try hub.post(a)
+    let welcome = try XCTUnwrap(hub.welcomes.last)
+    for device in [b, agent] {
+      try hub.deliver(to: device)
+      _ = try device.joinWelcome(welcome, room: room, committer: a.id, nowMs: nowMs())
+    }
+    XCTAssertTrue(a.outbox().isEmpty)
+    return (a, b, agent, room, session)
   }
 
-  /// Stored content between two human devices (section 9): a board item and a Note, sealed by the one and opened by
-  /// the other after the checks of the sender's chain.
+  /// Stored content between two human devices (section 9), each sealed by the one (`seal`) and opened by the other
+  /// (`receiveEnvelope`) after the checks of the sender's chain: a Chat message, a register value and a Note. An
+  /// envelope handed over twice, or before the one its chain names in front of it, consumes nothing.
   func testStoredContentBetweenTwoDevices() throws {
-    var change: UInt64 = 0
-    let (a, b, room) = try pair(&change)
-    try bring(b, into: a, room: room, &change)
+    let hub = PocketHub()
+    let (a, b, agent, room, session) = try roomWithSession(hub)
+    let sessionGroup = room + session
+    /// Posts what `device` sealed last and returns it with the change number the hub gave it.
+    func posted(_ device: LiveDevice) throws -> (change: UInt64, bytes: Bytes) {
+      try hub.post(device)
+      return try XCTUnwrap(hub.envelopes.last)
+    }
 
-    // A board item: B takes it at its place.
-    let body = utf8(#"{"schema_version":1,"t":"now"}"#)
-    let sent = try a.sendEnvelope(.boardItem(board: ALL_DESKS_BOARD, payload: body, files: []), nowMs: nowMs())
+    // A Chat message to the session's agent: B, a leaf of the session group, takes it at its place.
+    let body = utf8(#"{"schema_version":1,"content_type":"message","text":"hello"}"#)
+    let sent = try a.seal(.sessionChat(session: session, payload: body), files: [], nowMs: nowMs())
     XCTAssertEqual(sent.seq, 1)
     XCTAssertEqual(sent.hash.count, 32)
-    let item = try accept(a, .envelope, &change)
-    XCTAssertEqual(item.id, sent.outboxId)
-    let got = try b.receiveEnvelope(item.parts[0], change: change, source: .live, voidCode: nil, nowMs: nowMs())
-    XCTAssertEqual(got.standing, .accepted)
+    XCTAssertEqual(sent.group, sessionGroup)
+    XCTAssertEqual(a.outbox().map(\.id), [sent.outboxId])
+    XCTAssertEqual(a.outbox().first?.kind, .envelope)
+    let chat = try posted(a)
+    let got = try b.receiveEnvelope(chat.bytes, change: chat.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(got.outcome, .applied)
+    XCTAssertNil(got.code)
+    XCTAssertEqual(got.change, chat.change)
     XCTAssertEqual(got.hash, sent.hash)
     XCTAssertEqual(got.payload, body)
-    XCTAssertEqual(got.senderRole, ROLE.HUMAN)
-    XCTAssertEqual(got.bind, EnvelopeBind.none)
-    XCTAssertEqual(got.header.kind, KIND.TIMELINE_ITEM)
-    XCTAssertEqual(got.header.group, room)
-    XCTAssertEqual(got.header.epoch, 1)
+    XCTAssertNil(got.bind)
+    XCTAssertEqual(got.header.kind, .item)
+    XCTAssertEqual(got.header.group, sessionGroup)
+    XCTAssertEqual(got.header.sessionId, session)
     XCTAssertEqual(got.header.sender, a.id)
     XCTAssertEqual(got.header.seq, 1)
-    XCTAssertEqual(got.header.timelineKind, TIMELINE.CANVAS)
-    XCTAssertEqual(got.header.timelineScope, TIMELINE_SCOPE.DESK)
-    XCTAssertEqual(got.header.timelineRef, ALL_DESKS_BOARD)
-    XCTAssertEqual(b.cursor, change)
-    // The cut of A for B is that envelope now.
-    XCTAssertEqual(try b.cut(group: room, device: a.id), Cut(device: a.id, seq: 1, hash: sent.hash))
-    // Fetched again out of order (a page): shown, and nothing moves.
-    let again = try b.receiveEnvelope(item.parts[0], change: change, source: .page, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(got.header.prev, ZERO32)
+    XCTAssertEqual(got.header.recipient, agent.id)
+    XCTAssertEqual(got.header.timeline, .sessionChat(session))
+    XCTAssertEqual(b.cursor, chat.change)
+    // The cut of A for B in that group is that envelope now.
+    XCTAssertEqual(try b.cutOf(group: sessionGroup, device: a.id), Cut(device: a.id, seq: 1, hash: sent.hash))
+    // Handed over again at its place: a replay, which consumes nothing.
+    let replayed = try b.receiveEnvelope(chat.bytes, change: chat.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(replayed.outcome, .refused)
+    XCTAssertEqual(replayed.code, "replay")
+    XCTAssertNil(replayed.payload)
+    // Read again out of order (a page of the Chat): the chain holds it, so it is the applied one, with its body.
+    let again = try b.receiveEnvelope(chat.bytes, change: chat.change, ordered: false, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(again.outcome, .applied)
     XCTAssertEqual(again.payload, body)
-    XCTAssertEqual(again.standing, .accepted)
+    XCTAssertEqual(try b.cutOf(group: sessionGroup, device: a.id), Cut(device: a.id, seq: 1, hash: sent.hash))
+
+    // Out of order: A's third envelope before its second is a gap in A's chain, and consumes nothing; the second
+    // then the third are taken.
+    let second = try a.seal(.sessionChat(session: session, payload: utf8(#"{"schema_version":1,"content_type":"message","text":"two"}"#)), files: [], nowMs: nowMs())
+    let two = try posted(a)
+    let third = try a.seal(.sessionChat(session: session, payload: utf8(#"{"schema_version":1,"content_type":"message","text":"three"}"#)), files: [], nowMs: nowMs())
+    let three = try posted(a)
+    XCTAssertEqual([second.seq, third.seq], [2, 3])
+    let early = try b.receiveEnvelope(three.bytes, change: three.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(early.outcome, .refused)
+    XCTAssertEqual(early.code, "gap")
+    XCTAssertEqual(try b.cutOf(group: sessionGroup, device: a.id).seq, 1)
+    XCTAssertEqual(try b.receiveEnvelope(two.bytes, change: two.change, ordered: true, voidCode: nil, nowMs: nowMs()).outcome, .applied)
+    let late = try b.receiveEnvelope(three.bytes, change: three.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(late.outcome, .applied)
+    XCTAssertEqual(late.header.prev, second.hash)
+    XCTAssertEqual(try b.cutOf(group: sessionGroup, device: a.id), Cut(device: a.id, seq: 3, hash: third.hash))
+
+    // A register value in the room group: B takes it, and reads it back as the current value of that name.
+    let value = utf8(#"{"name":"Ops","schema_version":1}"#)    // (the core keeps a value in canonical form: keys in order)
+    let name = "desk/\(hex(systemRandom(16)))"
+    XCTAssertNil(try b.register(group: room, name: name))
+    let set = try a.seal(.register(group: room, name: name, value: value), files: [], nowMs: nowMs())
+    XCTAssertEqual(set.group, room)
+    XCTAssertEqual(set.seq, 1)                       // a chain per group: A's first in the room group
+    let register = try posted(a)
+    let read = try b.receiveEnvelope(register.bytes, change: register.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(read.outcome, .applied)
+    XCTAssertEqual(read.header.kind, .register)
+    XCTAssertNotNil(read.header.registerId)
+    XCTAssertEqual(read.register, RegisterChange(name: name, of: nil, current: true))
+    XCTAssertEqual(try b.register(group: room, name: name), value)
 
     // A Note: its first version makes the object. A version's body names the version before it, zeros for the first:
-    // without `previous_version_hash` the core refuses the draft.
-    XCTAssertEqual(refusedCode { _ = try b.sendEnvelope(.note(object: nil, payload: utf8(#"{"schema_version":1,"text":"x"}"#), closed: false, files: []), nowMs: nowMs()) }, "bad-format")
+    // without `previous_version_hash` the core refuses the draft, and no number of B's chain is used.
+    XCTAssertEqual(refusedCode { _ = try b.seal(.noteFirst(payload: utf8(#"{"schema_version":1,"text":"x"}"#)), files: [], nowMs: nowMs()) }, "bad-format")
     let first = utf8(#"{"schema_version":1,"text":"x","previous_version_hash":"\#(b64u(ZERO32))"}"#)
-    let note = try b.sendEnvelope(.note(object: nil, payload: first, closed: false, files: []), nowMs: nowMs())
+    let note = try b.seal(.noteFirst(payload: first), files: [], nowMs: nowMs())
+    XCTAssertEqual(note.seq, 1)
     XCTAssertEqual(note.objectId?.count, 16)
-    let noteEntry = try accept(b, .envelope, &change)
-    let read = try a.receiveEnvelope(noteEntry.parts[0], change: change, source: .live, voidCode: nil, nowMs: nowMs())
-    XCTAssertEqual(read.standing, .accepted)
-    XCTAssertEqual(read.header.kind, KIND.OBJECT_VERSION)
-    XCTAssertEqual(read.header.objectId, note.objectId)
-    XCTAssertEqual(read.header.objectType, OBJECT_TYPE.NOTE)
-    XCTAssertEqual(read.header.objectState, CARD_STATE.OPEN)
+    let noted = try posted(b)
+    let opened = try a.receiveEnvelope(noted.bytes, change: noted.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(opened.outcome, .applied)
+    XCTAssertEqual(opened.payload, first)
+    XCTAssertEqual(opened.header.kind, .version)
+    XCTAssertEqual(opened.header.object?.objectId, note.objectId)
+    XCTAssertEqual(opened.header.object?.type, .note)
+    XCTAssertEqual(opened.header.object?.state, .open)
+    XCTAssertEqual(opened.objectAfter, ObjectView(objectId: try XCTUnwrap(note.objectId), type: .note, owner: b.id, state: .open, current: note.hash))
 
     // Bytes that are no envelope are refused, and nothing moves.
     let cursor = b.cursor
-    XCTAssertEqual(refusedCode { _ = try b.receiveEnvelope([1, 2, 3], change: change + 1, source: .live, voidCode: nil, nowMs: nowMs()) }, "bad-format")
+    XCTAssertEqual(refusedCode { _ = try b.receiveEnvelope([1, 2, 3], change: hub.change + 1, ordered: true, voidCode: nil, nowMs: nowMs()) }, "bad-format")
     XCTAssertEqual(b.cursor, cursor)
-    // An answer names its card without the session: the adapter finds the session group that holds it, or none.
-    XCTAssertEqual(refusedCode { _ = try a.sendEnvelope(.answer(object: systemRandom(16), choices: ["a"], closes: false, payload: [], files: []), nowMs: nowMs()) }, "not-found")
+    // An answer to a card nobody wrote (`not-found`) and a later version of a Note this device wrote no version of
+    // (`forbidden`: only its owner writes one) are refused before anything is signed.
+    XCTAssertEqual(refusedCode { _ = try a.seal(.answer(session: session, object: systemRandom(16), choices: ["a"], closes: false, payload: utf8(#"{"answer_action":"answer","choices":["a"],"schema_version":1}"#)), files: [], nowMs: nowMs()) }, "not-found")
+    let later = utf8(#"{"schema_version":1,"text":"y","previous_version_hash":"\#(b64u(systemRandom(32)))"}"#)
+    XCTAssertEqual(refusedCode { _ = try a.seal(.noteVersion(object: systemRandom(16), closed: false, payload: later), files: [], nowMs: nowMs()) }, "forbidden")
+    XCTAssertTrue(a.outbox().isEmpty)
   }
 
-  /// WHERE THE CORE STANDS TODAY (core/README.md: "a device holds a group's epochs from the one it joined at"): an
-  /// item written before a device came is `group-behind` for it, also after the handover brought that epoch's key
-  /// and also as a page; and the next item of that sender is a `gap`, since its chain cannot be taken from its
-  /// start. Both consume nothing. This test holds that down so that the day the core reads back it says so here.
-  func testAnItemFromBeforeADeviceCameIsNotReadYet() throws {
-    var change: UInt64 = 0
-    let (a, b, room) = try pair(&change)
-    _ = try a.sendEnvelope(.boardItem(board: ALL_DESKS_BOARD, payload: utf8(#"{"schema_version":1,"t":"early"}"#), files: []), nowMs: nowMs())
-    let early = try accept(a, .envelope, &change)
-    let earlyChange = change
-    try bring(b, into: a, room: room, &change)
+  /// An item written before a device came into its group is `group-behind` for it, also with that epoch's key from
+  /// the handover, until it learned the group's past from its public history (`learnHistory`); then the same
+  /// envelope is taken, and the sender's chain goes on from its start.
+  func testAnItemFromBeforeADeviceCameIsReadOnceThePastIsLearned() throws {
+    let hub = PocketHub()
+    let a = try newDevice(), b = try newDevice()
+    let room = try a.foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
+    try hub.post(a)
+    let body = utf8(#"{"schema_version":1,"t":"early"}"#)
+    _ = try a.seal(.boardItem(board: ALL_DESKS_BOARD, payload: body), files: [], nowMs: nowMs())
+    try hub.post(a)
+    let early = try XCTUnwrap(hub.envelopes.last)
+
+    let invite = try exchangeInvite(from: a, to: b, tools: tools)
+    _ = try a.inviteConfirm(invite: invite.invite, numbers: invite.inviterShows, requestHash: invite.requestHash, matches: true, nowMs: nowMs())
+    try hub.post(a)
+    _ = try b.joinInvited(try XCTUnwrap(hub.welcomes.last), nowMs: nowMs())
+    _ = try a.inviteHandover(invite: invite.invite)
+    try hub.post(a)
+    try hub.deliver(to: b)
     XCTAssertTrue(try b.holdsKey(group: room, epoch: 0))
-    for source in [EnvelopeSource.catchUp, .page] {
-      XCTAssertThrowsError(try b.receiveEnvelope(early.parts[0], change: earlyChange, source: source, voidCode: nil, nowMs: nowMs())) {
-        XCTAssertEqual(($0 as? TrommiError)?.code, "group-behind")
-        XCTAssertEqual(b.logFinding($0), .early)
-      }
-    }
-    _ = try a.sendEnvelope(.boardItem(board: ALL_DESKS_BOARD, payload: utf8(#"{"schema_version":1,"t":"now"}"#), files: []), nowMs: nowMs())
-    let next = try accept(a, .envelope, &change)
-    XCTAssertEqual(refusedCode { _ = try b.receiveEnvelope(next.parts[0], change: change, source: .live, voidCode: nil, nowMs: nowMs()) }, "gap")
+
+    // The envelope lies behind B's cursor, in an epoch before B came: nothing of it is taken.
+    let before = try b.receiveEnvelope(early.bytes, change: early.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(before.outcome, .refused)
+    XCTAssertEqual(before.code, "group-behind")
+    XCTAssertNil(before.payload)
+
+    // The room group's public history, as the hub serves it: the founding GroupInfo and every Commit since.
+    let served = try hub.served(room)
+    XCTAssertEqual(try b.learnHistory(group: room, founding: served.founding, commits: served.commits), 1)
+    let after = try b.receiveEnvelope(early.bytes, change: early.change, ordered: true, voidCode: nil, nowMs: nowMs())
+    XCTAssertEqual(after.outcome, .applied)
+    XCTAssertEqual(after.payload, body)
+    XCTAssertEqual(after.header.epoch, 0)
+    XCTAssertEqual(after.header.timeline, .board(ALL_DESKS_BOARD))
+    XCTAssertEqual(try b.cutOf(group: room, device: a.id).seq, 1)
   }
 
   /// The Welcome of an invite is taken only as the invite said: named for another room it is refused, and the
@@ -615,13 +709,11 @@ final class LiveCoreTests: XCTestCase {
 
   /// The 64 emoji of the check code and their words are the core's list.
   func testCheckEmoji() {
-    let all = tools.checkEmoji(Array(0..<64))
+    let all = tools.checkEmoji()
     XCTAssertEqual(all.count, 64)
     XCTAssertEqual(Set(all.map(\.emoji)).count, 64)
     XCTAssertEqual(Set(all.map(\.word)).count, 64)
     XCTAssertTrue(all.allSatisfy { !$0.emoji.isEmpty && !$0.word.isEmpty })
-    XCTAssertEqual(tools.checkEmoji([5, 5]).map(\.word), [all[5].word, all[5].word])
-    XCTAssertEqual(tools.checkEmoji([64]).map(\.emoji), ["?"])
   }
 
   /// A link that is none is refused before any hub is asked.
