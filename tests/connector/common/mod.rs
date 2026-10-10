@@ -767,6 +767,9 @@ impl Human {
         match received.outcome {
             EnvelopeOutcome::Applied => {}
             EnvelopeOutcome::Refused if matches!(code, "replay" | "group-behind") => return,
+            // a writer's older register value or Note version, pruned once a newer one came (v1.md 9.4.2): its
+            // header chains, there is nothing to apply, as the apps take it
+            EnvelopeOutcome::Chained if code == "pruned" => return,
             EnvelopeOutcome::Refused => {
                 self.findings.push(format!("envelope: {code}"));
                 return;
