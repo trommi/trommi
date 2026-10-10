@@ -140,6 +140,10 @@ export async function runRemote({ app, hub, shots = null }) {
       await A.reload()
       await ui.live(A, 'live after the reload', 60000)
       r.check(await A.js('return trommi.client.model.room.my_device_id') === device, 'the same device')
+      // the kit saved before the reload stays saved: its screen does not come back, not even for a moment
+      let shown = 0
+      for (let i = 0; i < 30; i++) { if (await A.js("return !!document.querySelector('#kit-gate[open]')").catch(() => false)) shown++; await sleep(100) }
+      r.check(shown === 0, 'no Emergency Kit screen after the reload', shown ? `shown in ${shown} of 30 looks over 3 s` : undefined)
     })
     // (behind a kit screen that does not close nothing can be pressed: the proof page then comes after the log in)
     if (!kitStuck) await proof()
