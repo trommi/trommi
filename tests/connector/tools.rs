@@ -267,7 +267,7 @@ async fn helper_sessions_and_assets() {
 
     human.sync().await;
     assert!(human.findings.is_empty(), "{:?}", human.findings);
-    let groups = human.vault.device.groups().expect("groups");
+    let groups = human.groups().await;
     let helper = groups
         .iter()
         .find(|g| g.session.is_some_and(|s| !s.parent.is_zero()))
@@ -379,7 +379,7 @@ async fn the_plugins_hooks_mirror_the_terminal_and_ask_for_permission() {
     let (_hub, mut human, seat, _group) = joined().await;
     let mut mcp = seat.serve_as_plugin().await;
     mcp.ready().await;
-    let me = human.vault.seat(&_group).expect("the agent");
+    let me = human.seat(&_group).await.expect("the agent");
 
     // The human types into the terminal; the agent works; its final answer ends the turn.
     let turn =
@@ -441,10 +441,9 @@ async fn the_plugins_hooks_mirror_the_terminal_and_ask_for_permission() {
     let request = loop {
         human.sync().await;
         if let Some(id) = human
-            .objects
-            .keys()
+            .object_ids()
+            .into_iter()
             .find(|id| human.has_request(id))
-            .cloned()
         {
             break id;
         }
@@ -472,7 +471,7 @@ async fn the_plugins_hooks_mirror_the_terminal_and_ask_for_permission() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_connector_killed_at_work_is_the_same_member_when_it_starts_again() {
     let (_hub, mut human, seat, group) = joined().await;
-    let me = human.vault.seat(&group).expect("the agent");
+    let me = human.seat(&group).await.expect("the agent");
     let mut said = Vec::new();
     for round in 0..3 {
         let mut mcp = seat.serve().await;
@@ -517,7 +516,7 @@ async fn a_connector_killed_at_work_is_the_same_member_when_it_starts_again() {
 #[tokio::test(flavor = "multi_thread")]
 async fn say_and_whoami_work_without_a_running_server() {
     let (_hub, mut human, seat, group) = joined().await;
-    let me = human.vault.seat(&group).expect("the agent");
+    let me = human.seat(&group).await.expect("the agent");
     let run = |args: &'static [&'static str]| {
         let mut command = seat.command(args);
         async move {
@@ -568,7 +567,7 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
     first
         .ok("reply", json!({ "text": "from the first machine" }))
         .await;
-    let old = human.vault.seat(&group).expect("the first agent device");
+    let old = human.seat(&group).await.expect("the first agent device");
 
     // The human reconnects the session on "another machine".
     let second_seat = Seat::new(&first_seat.hub_url);

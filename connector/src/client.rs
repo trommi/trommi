@@ -1,64 +1,71 @@
 //! The client: this device at work in its room. It signs in, holds the lease, takes Welcomes, follows the hub's
-//! order (the live stream, and catching up after it was away), posts what waits in the outbox, and hands a
-//! human's commands to the connector once the core's gate let them through.
+//! order (the live stream, and catching up after it was away), posts what waits in the device's outbox, and
+//! hands a human's commands to the connector once the core's gate let them through.
 //!
-//! **Where state lives.** The [`Vault`] (the core's device and the content chains) is kept on a thread of its
-//! own (`keeper.rs`). What is plain data lives in [`Core`] under one async lock: the model, the cursor in the
-//! hub's order, the envelopes of this device that the hub has not confirmed. Every step takes that lock, calls
-//! the vault, puts what follows from the answer into the journal and commits once: one record per step, and
-//! nothing leaves before it (`store.rs`).
+//! **Where state lives.** The [`Vault`] (the core's device over the journal) is kept on a thread of its own
+//! (`keeper.rs`). What is plain data lives in [`Core`] under one lock: the model of the board and a few notes
+//! beside the device's outbox. Every step takes that lock, calls the device, puts what follows from the answer
+//! into the journal and commits once: one record per step, and nothing leaves before it (`store.rs`).
 //!
 //! **The hub's order.** Everything of the room comes with one running change number (spec/v2.md 5.4.1). The
-//! client processes items strictly by it, its own envelopes included: an envelope this device sent counts in the
-//! model when it comes back at its place. A send therefore posts and then catches up; while the hub is away, the
-//! envelope waits in the outbox with the number it was signed under and is posted unchanged later.
+//! device has one cursor for the log's entries and the envelopes; the client hands it every item in that
+//! order, its own envelopes and Commits included: an envelope this device sent counts in the model when it
+//! comes back at its place, and a Commit it made is merged where the log shows it. A write therefore posts and
+//! then catches up; while the hub is away, what was sealed waits in the outbox and is posted unchanged later.
 use crate::error::{Fault, Result};
 use crate::hub::{b64, is_transient, unb64, Hub};
 use crate::keeper::Keeper;
 use crate::model::{Model, Seen};
 use crate::store::Journal;
 use crate::util::{hex, now_ms};
-use crate::vault::{side_key, ContentDevice, Vault};
+use crate::vault::{side_key, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use trommi_core::chain::{Mode, Outcome, Served};
 use trommi_core::device::{
-    log_finding, Accepted, LogEntry, LogFinding, LogKind, Processed, Received, WelcomeExpectation,
+    log_finding, refusal_is_passing, Accepted, EnvelopeOutcome, LogEntry, LogFinding, LogKind,
+    Processed, Received, ReceivedEnvelope, Sealed, WelcomeExpectation,
 };
-use trommi_core::envelope::{Envelope, RequestBind, Subject, Timeline};
+use trommi_core::envelope::{Envelope, Subject, Timeline};
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId};
-use trommi_core::mls::profile::Cut;
-use trommi_core::objects::{AnswerAction, Command as GateCommand, Decision, OwnRecord};
+use trommi_core::objects::{AnswerAction, Command as GateCommand, Decision};
+use trommi_core::recovery::ServedCommit;
 use trommi_core::store::{OutboxEntry, OutboxKind};
 
 /// A boxed future, for the traits the server implements.
 pub type BoxFut<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 const TAG_SYNC: u8 = b'x';
-const TAG_PENDING: u8 = b'q';
+/// What an envelope in the device's outbox was sealed from, by outbox id: to seal it again when the hub voided
+/// it for its epoch.
+const TAG_SPEC: u8 = b'q';
 const TAG_MODEL: u8 = b'm';
 const TAG_KV: u8 = b'k';
-const TAG_CUTS: u8 = b'u';
 /// Commands the gate let through that are not yet noted as handed to the agent, by envelope hash.
 const TAG_COMMAND: u8 = b'd';
+/// The number of this device's last sealed envelope, by group: what the rollback guard holds the hub's copy
+/// of its chain against.
+const TAG_OWN: u8 = b'w';
 
-/// How far one page of the hub's order may move the cursor beyond its last item: the hub looks at most 20 000
-/// numbers ahead per call.
-const CURSOR_REACH: u64 = 100_000;
 /// How often an envelope the hub voided for its epoch is sealed again before the sender hears of it.
 const RESEALS: u8 = 3;
+/// After this many rounds in a row in which what answered was no hub of this protocol, the client stops.
+const NO_HUB_ROUNDS: u32 = 3;
+/// A stream that lived at least this long was a working connection: the pause before the next starts small.
+const STREAM_LIVED: Duration = Duration::from_secs(30);
+/// The most envelopes that wait for the hub at once; a write beyond it is refused, not queued.
+const MAX_WAITING: usize = 500;
+/// The most work-trail steps that wait for the hub at once; a step beyond it is dropped (a trail is live).
+pub(crate) const MAX_WAITING_STEPS: usize = 100;
 /// How many items one catch-up request asks for.
 const CHANGES_LIMIT: u64 = 500;
 /// The hub pings every 25 s; a stream that is silent for this long is dead.
 const STREAM_SILENCE: Duration = Duration::from_secs(70);
 /// The lease lives 60 s and is renewed every 20 s (13.7).
 const LEASE_EVERY: Duration = Duration::from_secs(20);
-/// `heads` is written at most this often (9.0.7).
-const HEADS_EVERY_MS: u64 = 10 * 60_000;
 
 /// Sleeps `ms` milliseconds.
 pub async fn sleep(ms: u64) {
@@ -113,7 +120,7 @@ pub enum ClientEvent {
     Session { session_id: String },
 }
 
-/// What a joined slot knows of its room: stored once, when the invite was answered.
+/// What a joined slot knows of its room beside the device: stored when the invite was answered.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RoomRecord {
     /// The hub's canonical address.
@@ -122,27 +129,19 @@ pub struct RoomRecord {
     pub app: String,
     /// The room, base64url.
     pub room: String,
-    /// The human device that invited this one, base64url: it must have enrolled it (12.1.6).
-    pub inviter: String,
     /// The session the invite was for, as hex; empty for a new session.
     #[serde(default)]
     pub invited_session: String,
     /// The room epoch the Offer named: where this device starts to follow the room group.
     #[serde(default)]
     pub room_epoch: u64,
-    /// That epoch's `room_state`, base64url.
-    #[serde(default)]
-    pub room_state: String,
-    /// Whether the room group is followed already.
-    #[serde(default)]
-    pub observing: bool,
-    /// Whether the inviter's enrolment of this device was seen.
+    /// Whether the inviter's enrolment of this device was processed.
     #[serde(default)]
     pub enrolled: bool,
 }
 
-/// What an envelope of this device is, so that it can be sealed, and sealed again under a new number when the
-/// hub voided it for its epoch.
+/// What an envelope of this device is, so that it can be sealed, and sealed again when the hub voided it for its
+/// epoch.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Spec {
     /// A message in a session's Chat.
@@ -175,42 +174,28 @@ pub enum Spec {
     },
 }
 
-/// An envelope of this device that waits for the hub, or for its place in the hub's order.
+/// The note beside an envelope in the device's outbox.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Pending {
-    pub id: u64,
+struct Waiting {
     /// The group, base64url.
-    pub group: String,
-    pub spec: Spec,
+    group: String,
+    spec: Spec,
     /// The file ids its header names, base64url.
-    pub files: Vec<String>,
-    /// The sealed envelope, base64url: posted as it is, however often.
-    pub bytes: String,
-    /// Its hash, base64url.
-    pub hash: String,
-    pub seq: u64,
-    /// The change number the hub gave it, once it took it.
+    files: Vec<String>,
+    /// The hub voided the envelope for its epoch: it is sealed again in the group's next epoch.
     #[serde(default)]
-    pub change: Option<u64>,
-    /// The hub voided it for its epoch: it is sealed again under a new number, and until then it stays here
-    /// so that the wish to send it survives a crash.
+    rebuild: bool,
+    /// How often it was sealed again, and the outbox id of the first envelope it stands in for.
     #[serde(default)]
-    pub rebuild: bool,
-    /// How often it was sealed again, and the id of the first envelope it stands in for.
+    resealed: u8,
     #[serde(default)]
-    pub resealed: u8,
-    #[serde(default)]
-    pub first: Option<u64>,
+    first: Option<u64>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
 struct SyncRecord {
-    cursor: u64,
-    next_id: u64,
     #[serde(default)]
     halted: Option<String>,
-    #[serde(default)]
-    heads_at: u64,
 }
 
 /// What a send reports.
@@ -218,7 +203,7 @@ struct SyncRecord {
 pub struct SentInfo {
     /// The envelope's hash, base64url.
     pub hash: String,
-    /// The object a first version or a request made, as hex.
+    /// The object the envelope belongs to (of a first version or a request: the new object), as hex.
     pub object_id: Option<String>,
     /// The hub's change number, once the hub took the envelope.
     pub envelope_number: Option<u64>,
@@ -227,9 +212,9 @@ pub struct SentInfo {
 /// The plain state of the client. Taken with [`Client::core`]'s lock.
 pub struct Core {
     pub model: Model,
-    /// This device's envelopes the hub has not confirmed at their place yet, oldest first.
-    pub outbox: Vec<Pending>,
-    /// The highest change number processed.
+    /// The outbox ids of this device's envelopes the hub has not taken yet, oldest first.
+    pub outbox: Vec<u64>,
+    /// The device's cursor in the hub's order.
     pub cursor: u64,
     pub room: RoomRecord,
     /// The session groups this device is a leaf of, by session id as hex.
@@ -239,21 +224,20 @@ pub struct Core {
     journal: Journal,
     /// Why nothing is processed any more, if so.
     pub halted: Option<String>,
-    heads_at: u64,
     /// Groups whose envelopes are to be read again from the hub's first.
     reread: Vec<GroupId>,
+    /// Groups a reading-again was asked for since this client last went online: once each.
+    reread_asked: Vec<GroupId>,
     /// Groups a re-admission was asked for in this process.
     asked_readmit: Vec<GroupId>,
-    /// The hub's list of Welcomes for this device, as asked for while the current batch is processed.
-    welcomes: Option<Value>,
-    /// Envelopes that were sealed again after the hub voided them for their epoch, by the first one's id.
-    replaced: BTreeMap<u64, Pending>,
-    /// Groups a reading-again was asked for since this client last went online (a gap, another device's
-    /// heads): once each.
-    reread_asked: Vec<GroupId>,
-    /// Envelopes of this device the hub voided or refused for good, by pending id.
+    /// Requests of this device the hub voided or refused for good, by outbox id (of an envelope that was
+    /// sealed again: the first one's).
     failed: BTreeMap<u64, Fault>,
-    /// Files this process uploaded or fetched, by file id: the newest few.
+    /// Envelopes that were sealed again after the hub voided them for their epoch, by the first one's id.
+    replaced: BTreeMap<u64, Sealed>,
+    /// How many findings of the device were already said.
+    findings_said: usize,
+    /// Files this process uploaded or fetched, by their whole reference: the newest few.
     pub(crate) files: Vec<(String, Vec<u8>)>,
 }
 
@@ -309,26 +293,34 @@ impl Core {
                 None => self.journal.delete(key),
             }
         }
-        let record = SyncRecord {
-            cursor: self.cursor,
-            next_id: 0,
-            halted: self.halted.clone(),
-            heads_at: self.heads_at,
-        };
-        if let Ok(bytes) = serde_json::to_vec(&record) {
-            self.journal.put(side_key(TAG_SYNC, &[]), bytes);
-        }
     }
-    /// Writes everything staged, the model's changes and the cursor included, as one record.
+    /// Writes everything staged, the model's changes included, as one record.
     pub fn commit(&mut self) -> Result<()> {
         self.stage();
         Ok(self.journal.commit()?)
     }
-    fn put_pending(&self, pending: &Pending) {
-        if let Ok(bytes) = serde_json::to_vec(pending) {
+    fn waiting(&self, outbox_id: u64) -> Option<Waiting> {
+        self.journal
+            .get(&side_key(TAG_SPEC, &[&outbox_id.to_be_bytes()]))
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    }
+    fn put_waiting(&self, outbox_id: u64, waiting: &Waiting) {
+        if let Ok(bytes) = serde_json::to_vec(waiting) {
             self.journal
-                .put(side_key(TAG_PENDING, &[&pending.id.to_be_bytes()]), bytes);
+                .put(side_key(TAG_SPEC, &[&outbox_id.to_be_bytes()]), bytes);
         }
+    }
+    fn drop_waiting(&mut self, outbox_id: u64) {
+        self.outbox.retain(|id| *id != outbox_id);
+        self.journal
+            .delete(side_key(TAG_SPEC, &[&outbox_id.to_be_bytes()]));
+    }
+    /// The number of this device's last sealed envelope in `group`.
+    fn own_seq(&self, group: &GroupId) -> u64 {
+        self.journal
+            .get(&side_key(TAG_OWN, &[group.as_bytes()]))
+            .and_then(|bytes| bytes.as_slice().try_into().ok().map(u64::from_be_bytes))
+            .unwrap_or(0)
     }
     /// Asks for a group's envelopes to be read again, at most once per time online.
     fn ask_reread(&mut self, group: GroupId) {
@@ -337,22 +329,13 @@ impl Core {
             self.reread.push(group);
         }
     }
-    /// Reads the outbox again from the journal: what a step staged there is found even if the step did not
-    /// live to note it in memory.
-    fn reload_outbox(&mut self) {
-        let mut outbox: Vec<Pending> = self
-            .journal
-            .scan(&side_key(TAG_PENDING, &[])[..2])
-            .iter()
-            .filter_map(|(_, value)| serde_json::from_slice(value).ok())
-            .collect();
-        outbox.sort_by_key(|pending: &Pending| pending.id);
-        self.outbox = outbox;
-    }
-    fn drop_pending(&mut self, id: u64) {
-        self.outbox.retain(|pending| pending.id != id);
-        self.journal
-            .delete(side_key(TAG_PENDING, &[&id.to_be_bytes()]));
+    fn halt_record(&self) {
+        let record = SyncRecord {
+            halted: self.halted.clone(),
+        };
+        if let Ok(bytes) = serde_json::to_vec(&record) {
+            self.journal.put(side_key(TAG_SYNC, &[]), bytes);
+        }
     }
 }
 
@@ -408,10 +391,26 @@ pub fn put_room_record(journal: &Journal, record: &RoomRecord) {
     }
 }
 
+/// A hub client that signs in with the device a keeper holds (`Device::hub_sign_in`).
+pub fn hub_for(vault: &Arc<Keeper<Vault>>, address: &str, room: RoomId) -> Result<Hub> {
+    let parsed = trommi_core::hub_auth::HubAddress::parse(address)
+        .map_err(|_| Fault::new("bad-format", "the hub's address is not canonical"))?;
+    let vault = vault.clone();
+    let signer: crate::hub::Signer = Arc::new(move |challenge| {
+        let (vault, parsed) = (vault.clone(), parsed.clone());
+        Box::pin(async move {
+            Ok(vault
+                .call(move |v: &mut Vault| v.device.hub_sign_in(&parsed, challenge))
+                .await??)
+        })
+    });
+    Hub::new(address, Some(room), Some(signer))
+}
+
 /// This device at work. See the module's documentation.
 pub struct Client {
     pub core: CoreLock,
-    pub(crate) vault: Keeper<Vault>,
+    pub(crate) vault: Arc<Keeper<Vault>>,
     pub(crate) hub: Arc<Hub>,
     events: tokio::sync::mpsc::UnboundedSender<ClientEvent>,
     me: DeviceId,
@@ -427,6 +426,8 @@ pub struct Client {
     wake: tokio::sync::Notify,
     /// What this process last reported with its lease.
     report: std::sync::Mutex<Value>,
+    /// The code of the last fault the owner was told of: the same one is not said again and again.
+    told: std::sync::Mutex<String>,
 }
 
 fn group_of_item(item: &Value) -> Result<GroupId> {
@@ -436,6 +437,32 @@ fn group_of_item(item: &Value) -> Result<GroupId> {
 fn b64_group(text: &str) -> Result<GroupId> {
     let bytes = trommi_core::ids::base64url_decode(text)?;
     Ok(GroupId::from_bytes(&bytes)?)
+}
+
+/// What a log entry did, as far as the client acts on it.
+enum LogOutcome {
+    Nothing,
+    Early,
+    /// A Commit of a group this device is in was merged.
+    Epoch,
+    /// A Commit of a session group this device does not hold: its Welcome may wait.
+    Unheld,
+    Keys(GroupId),
+    Newer,
+    /// The room enrolled this device.
+    Enrolled,
+    Unenrolled,
+    RemovedFrom(GroupId),
+    BadInvite,
+    Bad(&'static str),
+}
+
+/// An envelope as the device took it, with what the client needs beside.
+struct Took {
+    received: ReceivedEnvelope,
+    /// The gate's answer, for an envelope it can be asked about.
+    decision: Option<Decision>,
+    cursor: u64,
 }
 
 impl Client {
@@ -456,23 +483,11 @@ impl Client {
         let room_id = RoomId::from_base64url(&room.room)
             .map_err(|_| Fault::new("state-damaged", "the stored room does not read"))?;
         let for_vault = journal.clone();
-        let vault = Keeper::spawn(move || Vault::open(for_vault))?;
-        let (me, key) = vault
-            .call(|v: &mut Vault| {
-                (
-                    v.me(),
-                    trommi_core::crypto::SigningKey::from_seed(v.signing_key().seed().duplicate()),
-                )
-            })
+        let vault = Arc::new(Keeper::spawn(move || Vault::open(for_vault))?);
+        let (me, cursor) = vault
+            .call(|v: &mut Vault| (v.me(), v.device.cursor()))
             .await?;
-        let address = trommi_core::hub_auth::HubAddress::parse(&room.hub)
-            .map_err(|_| Fault::new("state-damaged", "the stored hub address does not read"))?;
-        let signer: crate::hub::Signer = Arc::new(move |challenge| {
-            Ok(trommi_core::hub_auth::sign(
-                &key, room_id, &address, challenge,
-            )?)
-        });
-        let hub = Arc::new(Hub::new(&room.hub, Some(room_id), Some(signer))?);
+        let hub = Arc::new(hub_for(&vault, &room.hub, room_id)?);
 
         let mut model = Model::new();
         for (key, value) in journal.scan(&side_key(TAG_MODEL, &[])[..2]) {
@@ -496,36 +511,25 @@ impl Client {
             .get(&side_key(TAG_SYNC, &[]))
             .map(|bytes| serde_json::from_slice(&bytes))
             .transpose()
-            .map_err(|_| Fault::new("state-damaged", "the stored cursor does not read"))?
+            .map_err(|_| Fault::new("state-damaged", "the stored halt does not read"))?
             .unwrap_or_default();
-        let mut outbox: Vec<Pending> = Vec::new();
-        for (_, value) in journal.scan(&side_key(TAG_PENDING, &[])[..2]) {
-            outbox.push(serde_json::from_slice(&value).map_err(|_| {
-                Fault::new(
-                    "state-damaged",
-                    "a stored envelope of the outbox does not read",
-                )
-            })?);
-        }
-        outbox.sort_by_key(|pending| pending.id);
         let (events, rx) = tokio::sync::mpsc::unbounded_channel();
         let client = Arc::new(Client {
             core: CoreLock(tokio::sync::Mutex::new(Core {
                 model,
-                outbox,
-                cursor: sync.cursor,
+                outbox: Vec::new(),
+                cursor,
                 room,
                 groups: BTreeMap::new(),
                 main: None,
                 journal,
                 halted: sync.halted,
-                heads_at: sync.heads_at,
                 reread: Vec::new(),
-                asked_readmit: Vec::new(),
-                welcomes: None,
-                replaced: BTreeMap::new(),
                 reread_asked: Vec::new(),
+                asked_readmit: Vec::new(),
                 failed: BTreeMap::new(),
+                replaced: BTreeMap::new(),
+                findings_said: 0,
                 files: Vec::new(),
             })),
             vault,
@@ -540,7 +544,12 @@ impl Client {
             online: AtomicBool::new(false),
             wake: tokio::sync::Notify::new(),
             report: std::sync::Mutex::new(json!({})),
+            told: std::sync::Mutex::new(String::new()),
         });
+        {
+            let mut core = client.core.lock().await;
+            client.refresh_outbox(&mut core).await?;
+        }
         Ok((client, rx))
     }
 
@@ -576,6 +585,26 @@ impl Client {
 
     fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::SeqCst) || self.removed.load(Ordering::SeqCst)
+    }
+
+    /// Reads which of this device's envelopes still wait in the device's outbox, and its cursor.
+    async fn refresh_outbox(&self, core: &mut Core) -> Result<()> {
+        let (ids, cursor) = self
+            .vault
+            .call(|v: &mut Vault| {
+                let ids: Vec<u64> = v
+                    .device
+                    .outbox()
+                    .iter()
+                    .filter(|entry| entry.kind == OutboxKind::Envelope)
+                    .map(|entry| entry.id)
+                    .collect();
+                (ids, v.device.cursor())
+            })
+            .await?;
+        core.outbox = ids;
+        core.cursor = cursor;
+        Ok(())
     }
 
     /// Brings the groups the device holds into the core: which sessions there are, which is the main one, who
@@ -640,6 +669,7 @@ impl Client {
         {
             let mut core = self.core.lock().await;
             self.refresh_groups(&mut core).await?;
+            core.commit()?;
         }
         // Commands that were let through before this process started and never noted as handed over.
         let left: Vec<Command> = {
@@ -656,6 +686,13 @@ impl Client {
         }
         let first = self.go_online().await;
         if let Err(fault) = &first {
+            if crate::hub::is_no_hub(fault) {
+                // What answers is no hub of this protocol: said so, and not asked again by this client.
+                return Err(Fault::new(
+                    "hub-unusable",
+                    format!("the hub does not answer as a Trommi hub of this version ({}). Update the trommi plugin, then /mcp → trommi → Reconnect", fault.code),
+                ));
+            }
             if !is_transient(fault) {
                 self.fatal(fault).await;
                 return first;
@@ -679,7 +716,14 @@ impl Client {
     async fn fatal(&self, fault: &Fault) {
         match fault.code.as_str() {
             "not-member" | "removed-sender" | "no-room" => self.set_removed(false).await,
-            _ => self.emit(ClientEvent::Error(fault.clone())),
+            _ => {
+                // Said once per kind of fault, not once per try.
+                let mut told = self.told.lock().unwrap_or_else(|e| e.into_inner());
+                if *told != fault.code {
+                    *told = fault.code.clone();
+                    self.emit(ClientEvent::Error(fault.clone()));
+                }
+            }
         }
     }
 
@@ -730,6 +774,7 @@ impl Client {
     fn halt(&self, core: &mut Core, fault: &Fault) -> Result<()> {
         core.halted = Some(fault.code.clone());
         core.model.room.outbox_blocked = Some(fault.code.clone());
+        core.halt_record();
         core.commit()?;
         self.emit(ClientEvent::Error(fault.clone()));
         Ok(())
@@ -741,17 +786,13 @@ impl Client {
     async fn guard_rollback(&self, core: &mut Core) -> Result<()> {
         let groups: Vec<GroupId> = core.groups.values().copied().collect();
         for group in groups {
-            let own = self
-                .vault
-                .call(move |v: &mut Vault| v.own_head(&group))
-                .await?;
+            let own = core.own_seq(&group);
             let ahead = self
                 .hub
                 .get(&format!(
-                    "/v2/groups/{}/chains/{}?after={}&limit=1",
+                    "/v2/groups/{}/chains/{}?after={own}&limit=1",
                     b64(group.as_bytes()),
                     self.me.to_base64url(),
-                    own.seq
                 ))
                 .await;
             let me = self.me;
@@ -765,28 +806,35 @@ impl Client {
                     .flatten()
                     .filter_map(|item| unb64(item, "envelope").ok())
                     .filter_map(|bytes| Envelope::decode(&bytes).ok())
-                    .any(|envelope| {
-                        envelope.header.sender == me
-                            && envelope.header.group == group
-                            && envelope.header.seq > own.seq
-                            && envelope.verify().is_ok()
-                    }),
+                    .any(|envelope| Self::is_ahead(&envelope, &me, &group, own)),
                 Err(fault) if fault.code == "not-found" => false,
                 Err(fault) => return Err(fault),
             };
             if ahead {
-                let fault = Fault::new(
-                    "state-rolled-back",
-                    "this connector's stored state is older than what it already sent; nothing is signed with it",
-                );
-                self.halt(core, &fault)?;
-                return Err(fault);
+                return Err(self.rolled_back(core)?);
             }
         }
         Ok(())
     }
 
-    /// One round of being online: lease, room group, Welcomes, KeyPackages, the outbox, the hub's order.
+    /// Whether `envelope` is one this device signed in `group` under a number beyond `own`.
+    fn is_ahead(envelope: &Envelope, me: &DeviceId, group: &GroupId, own: u64) -> bool {
+        envelope.header.sender == *me
+            && envelope.header.group == *group
+            && envelope.header.seq > own
+            && envelope.verify().is_ok()
+    }
+
+    fn rolled_back(&self, core: &mut Core) -> Result<Fault> {
+        let fault = Fault::new(
+            "state-rolled-back",
+            "this connector's stored state is older than what it already sent; nothing is signed with it",
+        );
+        self.halt(core, &fault)?;
+        Ok(fault)
+    }
+
+    /// One round of being online: lease, room group, the hub's order, Welcomes, KeyPackages, the outbox.
     async fn go_online(&self) -> Result<()> {
         let report = self
             .report
@@ -802,29 +850,40 @@ impl Client {
         self.catch_up(&mut core).await?;
         self.take_welcomes(&mut core, None).await?;
         // A group whose past could not be learned when it was joined (the hub was away) is tried again.
-        let groups: Vec<GroupId> = core.groups.values().copied().collect();
-        for group in groups {
-            let known = self
-                .vault
-                .call(move |v: &mut Vault| v.past_known(&group))
-                .await?;
-            if !known && self.learn_past(&mut core, group).await.is_ok() {
+        let unlearned: Vec<GroupId> = self
+            .vault
+            .call(|v: &mut Vault| -> Result<Vec<GroupId>> {
+                Ok(v.device
+                    .groups()?
+                    .into_iter()
+                    .filter(|summary| !summary.past_learned && !summary.archived)
+                    .map(|summary| summary.group)
+                    .collect())
+            })
+            .await??;
+        for group in unlearned {
+            if self.learn_past(&mut core, group).await.is_ok() {
                 core.reread.push(group);
             }
         }
+        self.catch_up(&mut core).await?;
         self.publish_key_packages(&mut core).await?;
+        self.write_heads(&mut core).await?;
         self.pump(&mut core).await?;
         self.catch_up(&mut core).await?;
-        self.write_heads(&mut core, false).await?;
         core.model.room.connection = "connected".into();
         self.online.store(true, Ordering::SeqCst);
         Ok(())
     }
 
-    /// Starts following the room group (4.4, 12.1.6) at the GroupInfo of the epoch the Offer named, which must
-    /// hash to the state it named.
+    /// Starts following the room group (4.4, 12.1.6) at the GroupInfo of the epoch the Offer named; the
+    /// device holds it against the state the Offer named.
     async fn observe_room(&self, core: &mut Core) -> Result<()> {
-        if core.room.observing {
+        let observing = self
+            .vault
+            .call(|v: &mut Vault| v.device.room_history().is_some())
+            .await?;
+        if observing {
             return Ok(());
         }
         let room_group = GroupId::room(self.room);
@@ -837,13 +896,9 @@ impl Client {
             ))
             .await?;
         let group_info = unb64(&info, "group_info")?;
-        let expected = Hash32::from_base64url(&core.room.room_state)
-            .map_err(|_| Fault::new("state-damaged", "the stored room state does not read"))?;
         self.vault
-            .call(move |v: &mut Vault| v.device.observe_room(&group_info, Some(&expected)))
+            .call(move |v: &mut Vault| v.device.join_observe(&group_info))
             .await??;
-        core.room.observing = true;
-        put_room_record(&core.journal, &core.room);
         core.commit()
     }
 
@@ -867,15 +922,17 @@ impl Client {
                 Ok(_) => {}
                 Err(fault) if fault.code == "lease-lost" => {
                     self.stopped.store(true, Ordering::SeqCst);
+                    let _ = self.stop_signal.send(true);
                     self.emit(ClientEvent::Error(fault));
                     return;
                 }
                 Err(fault) if is_transient(&fault) => {}
                 Err(fault) => self.fatal(&fault).await,
             }
+            // 9.0.7: the device says when its heads are due.
             let mut core = self.core.lock().await;
-            if now_ms().saturating_sub(core.heads_at) >= HEADS_EVERY_MS {
-                let _ = self.write_heads(&mut core, true).await;
+            if self.active(&core).is_ok() && self.write_heads(&mut core).await.is_ok() {
+                let _ = self.pump(&mut core).await;
             }
         }
     }
@@ -889,10 +946,12 @@ impl Client {
     /// The loop: follow the stream; when it ends or fails, wait and go online again.
     async fn run(self: Arc<Self>) {
         let mut pause_ms = 1000u64;
+        let mut no_hub = 0u32;
         loop {
             if self.is_stopped() {
                 return;
             }
+            let began = std::time::Instant::now();
             let round = async {
                 if !self.is_online() {
                     self.go_online().await?;
@@ -900,10 +959,32 @@ impl Client {
                 self.follow().await
             };
             match round.await {
-                Ok(()) => pause_ms = 1000,
-                Err(fault) if is_transient(&fault) || fault.code == "unauthorised" => {}
+                // The stream ended (a token ran out). Only one that lived a while resets the pause: a hub
+                // that ends every stream at once is asked again more and more slowly.
+                Ok(()) => {
+                    no_hub = 0;
+                    self.told.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                    if began.elapsed() >= STREAM_LIVED {
+                        pause_ms = 1000;
+                    }
+                }
+                Err(fault) if is_transient(&fault) || fault.code == "unauthorised" => no_hub = 0,
+                Err(fault) if crate::hub::is_no_hub(&fault) => {
+                    no_hub += 1;
+                    if no_hub >= NO_HUB_ROUNDS {
+                        // What answers is no hub of this protocol. Asking on helps nothing.
+                        self.stopped.store(true, Ordering::SeqCst);
+                        let _ = self.stop_signal.send(true);
+                        self.emit(ClientEvent::Error(Fault::new(
+                            "hub-unusable",
+                            format!("the hub does not answer as a Trommi hub of this version ({}); the connector stopped asking. Update the trommi plugin, then /mcp → trommi → Reconnect", fault.code),
+                        )));
+                        return;
+                    }
+                }
                 Err(fault) if fault.code == "lease-lost" => {
                     self.stopped.store(true, Ordering::SeqCst);
+                    let _ = self.stop_signal.send(true);
                     self.emit(ClientEvent::Error(fault));
                     return;
                 }
@@ -947,6 +1028,7 @@ impl Client {
                     }
                     let mut core = self.core.lock().await;
                     self.pump(&mut core).await?;
+                    self.catch_up(&mut core).await?;
                     continue;
                 }
             };
@@ -959,13 +1041,15 @@ impl Client {
             let mut core = self.core.lock().await;
             match event.name.as_str() {
                 "envelope" | "log" => {
-                    let commands = self.process_items(&mut core, &[event.data], None).await?;
+                    let commands = self.process_items(&mut core, &[event.data]).await?;
+                    self.after_items(&mut core).await?;
                     drop(core);
                     self.deliver(commands).await;
                 }
                 "welcome" => {
-                    self.take_welcomes(&mut core, None).await?;
                     self.catch_up(&mut core).await?;
+                    self.take_welcomes(&mut core, None).await?;
+                    self.after_items(&mut core).await?;
                 }
                 _ => {}
             }
@@ -974,6 +1058,9 @@ impl Client {
 
     /// Hands commands to the owner.
     async fn deliver(&self, commands: Vec<Command>) {
+        if self.stopped.load(Ordering::SeqCst) {
+            return;
+        }
         for command in commands {
             self.emit(ClientEvent::Command(Box::new(command)));
         }
@@ -984,7 +1071,7 @@ impl Client {
         let hash = Hash32::from_base64url(envelope_hash)?;
         let mut core = self.core.lock().await;
         self.vault
-            .call(move |v: &mut Vault| v.gate_finish(&hash))
+            .call(move |v: &mut Vault| v.device.command_finished(&hash))
             .await??;
         core.journal
             .delete(side_key(TAG_COMMAND, &[envelope_hash.as_bytes()]));
@@ -1005,12 +1092,12 @@ impl Client {
             let answer = match answer {
                 Err(fault) if fault.code == "gone" => {
                     // 13.4: the hub no longer has the next entry. This installation is a new device.
-                    core.halted = Some("gone".into());
-                    core.commit()?;
-                    return Err(Fault::new(
+                    let fault = Fault::new(
                         "state-too-old",
                         "the hub no longer keeps what this connector missed; the human reconnects this session in the Trommi app",
-                    ));
+                    );
+                    self.halt(core, &fault)?;
+                    return Err(fault);
                 }
                 other => other?,
             };
@@ -1019,29 +1106,52 @@ impl Client {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            let upto = answer.get("change").and_then(Value::as_u64);
             let before = core.cursor;
-            let commands = self.process_items(core, &items, upto).await?;
+            let commands = self.process_items(core, &items).await?;
             self.deliver(commands).await;
             // A page that says there is more and moves nothing is not followed again and again.
             if answer.get("more") != Some(&Value::Bool(true)) || core.cursor == before {
                 break;
             }
         }
+        self.after_items(core).await
+    }
+
+    /// What follows a batch of items: groups to read again, and the device's findings, which are never
+    /// swallowed.
+    async fn after_items(&self, core: &mut Core) -> Result<()> {
         let again: Vec<GroupId> = std::mem::take(&mut core.reread);
         for group in again {
             self.reread(core, group).await?;
         }
+        let said = core.findings_said;
+        let findings: Vec<&'static str> = self
+            .vault
+            .call(move |v: &mut Vault| -> Result<Vec<&'static str>> {
+                Ok(v.device
+                    .findings()?
+                    .iter()
+                    .skip(said)
+                    .map(|finding| finding.code.code())
+                    .collect())
+            })
+            .await??;
+        core.findings_said += findings.len();
+        for code in findings {
+            eprintln!("[trommi] finding: {code}");
+            if matches!(code, "equivocation" | "bad-group" | "withheld") {
+                self.emit(ClientEvent::Error(Fault::new(
+                    code,
+                    "the device found something wrong in a session; the Trommi app shows it",
+                )));
+            }
+        }
         Ok(())
     }
 
-    /// Joins every group a Welcome waits for (12.1.5, 5.2.6), and records it.
-    ///
-    /// A Welcome is taken at its place in the hub's order (5.4.1): the room state its Commit names must have
-    /// been processed, or the group fails its first contact for good, and no later entry of the group may have
-    /// been passed. `at_item` says that the caller stands right before the first item of a group it does not
-    /// hold: everything before it is processed, so the Welcome is taken now. Otherwise the hub's order is
-    /// followed to its end first (which takes a Welcome at an item's place if there is one).
+    /// Joins the groups Welcomes wait for (12.1.6, 5.2.6): `only` that group's, or every one's. A Welcome
+    /// belongs at the place of the Commit that made it; after joining, the group's Commits are handed to
+    /// the device again from the hub's log, which gives the join its place and catches up what it passed.
     pub(crate) fn take_welcomes<'a>(
         &'a self,
         core: &'a mut Core,
@@ -1051,19 +1161,14 @@ impl Client {
     }
 
     async fn take_welcomes_now(&self, core: &mut Core, only: Option<GroupId>) -> Result<()> {
-        let at_item = only.is_some();
         let list = self.hub.get("/v2/welcomes").await?;
         let room = self.room;
         let mut joined_any = false;
-        if !at_item && list.as_array().is_some_and(|rows| !rows.is_empty()) {
-            self.catch_up(core).await?;
-        }
         for row in list.as_array().cloned().unwrap_or_default() {
             let (Ok(group), Ok(welcome)) = (group_of_item(&row), unb64(&row, "welcome")) else {
                 continue;
             };
-            // An agent device is never a leaf of the room group (5.1), and at an item's place only that
-            // item's group is joined: another Welcome waits for its own place.
+            // An agent device is never a leaf of the room group (5.1).
             if group.is_room() || only.is_some_and(|wanted| wanted != group) {
                 continue;
             }
@@ -1096,7 +1201,6 @@ impl Client {
                             "a Welcome was for another group than the hub said",
                         ));
                     }
-                    v.note_epoch(&group, None, &[], now)?;
                     Ok(Some(joined.offending))
                 })
                 .await?;
@@ -1104,23 +1208,41 @@ impl Client {
                 Ok(None) => {}
                 Ok(Some(offending)) => {
                     joined_any = true;
+                    core.commit()?;
                     if !offending.is_empty() {
-                        let me = self.me;
-                        eprintln!("[trommi] finding: a session this device was added to has {} leaf(s) the room does not allow{}: its content is not opened until a human device removes them", offending.len(), if offending.contains(&me) { " (this device among them)" } else { "" });
+                        eprintln!("[trommi] finding: a session this device was added to has {} leaf(s) the room does not allow: its content is not opened until a human device removes them", offending.len());
+                    }
+                    // The group's Commits again, from the log: the one that added this device gives the
+                    // join its place, later ones are caught up.
+                    if let Ok(commits) = self.commits_of(&group).await {
+                        for (bytes, auth, change) in commits {
+                            let now = now_ms();
+                            let _ = self
+                                .vault
+                                .call(move |v: &mut Vault| {
+                                    v.device.process_log_entry(
+                                        &LogEntry {
+                                            change,
+                                            group,
+                                            kind: LogKind::Commit {
+                                                bytes: &bytes,
+                                                recovery_auth: auth.as_deref(),
+                                            },
+                                        },
+                                        now,
+                                    )
+                                })
+                                .await?;
+                            core.commit()?;
+                        }
                     }
                     if let Err(fault) = self.learn_past(core, group).await {
-                        // The epochs before this device joined stay unknown: what devices wrote that left
-                        // before then is not taken. Named, never swallowed.
+                        // The epochs before this device joined stay unknown: what was written in them is
+                        // not taken. Named, never swallowed.
                         eprintln!(
                             "[trommi] finding: {} (a session's past was not learned)",
                             fault.code
                         );
-                        if fault.code == "bad-group" {
-                            self.emit(ClientEvent::Error(Fault::new(
-                                "bad-group",
-                                "a session this agent was added to does not verify from its founding",
-                            )));
-                        }
                     }
                     core.reread.push(group);
                 }
@@ -1130,6 +1252,10 @@ impl Client {
                     core.journal.poison();
                     self.emit(ClientEvent::Error(fault.clone()));
                     return Err(fault);
+                }
+                Err(fault) if fault.code == "room-behind" => {
+                    // The room group's log is to be processed further first; the Welcome is taken again.
+                    core.commit()?;
                 }
                 Err(fault) => {
                     // 3.7: a Welcome that does not open used up its KeyPackage: ask to be added again.
@@ -1142,42 +1268,19 @@ impl Client {
                     }
                 }
             }
-            core.commit()?;
         }
         if joined_any {
             self.refresh_groups(core).await?;
+            self.refresh_outbox(core).await?;
             core.commit()?;
         }
         Ok(())
     }
 
-    /// Whether a Welcome for `group` waits at the hub and an entry the hub took at `at` is not from before it:
-    /// then that entry's place is where the Welcome is taken. The list of Welcomes is asked for once per
-    /// batch of entries. The times are the hub's; a wrong one can only cost the join, which the core then
-    /// finds out at first contact.
-    async fn welcome_due(&self, core: &mut Core, group: &GroupId, at: u64) -> Result<bool> {
-        if core.welcomes.is_none() {
-            core.welcomes = Some(self.hub.get("/v2/welcomes").await?);
-        }
-        let wanted = b64(group.as_bytes());
-        let since = core
-            .welcomes
-            .as_ref()
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|row| row.get("group_id").and_then(Value::as_str) == Some(wanted.as_str()))
-            .map(|row| row.get("at").and_then(Value::as_u64).unwrap_or(0));
-        Ok(since.is_some_and(|since| at >= since))
-    }
-
-    /// Every Commit of a group's log, in order, with the `RecoveryAuth` beside a join from outside.
-    async fn commits_of(
-        &self,
-        group: &GroupId,
-    ) -> Result<(Vec<(Vec<u8>, Option<Vec<u8>>)>, Vec<u64>)> {
+    /// Every Commit of a group's log, in order, with the `RecoveryAuth` beside a join from outside and its
+    /// change number.
+    async fn commits_of(&self, group: &GroupId) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>, u64)>> {
         let mut out = Vec::new();
-        let mut changes = Vec::new();
         let mut after = 0u64;
         loop {
             let asked_after = after;
@@ -1202,67 +1305,76 @@ impl Client {
                     .filter(|v| !v.is_null())
                     .map(|_| unb64(item, "recovery_auth"))
                     .transpose()?;
-                out.push((unb64(item, "bytes")?, auth));
-                changes.push(item.get("change").and_then(Value::as_u64).unwrap_or(0));
+                let change = item.get("change").and_then(Value::as_u64).unwrap_or(0);
+                out.push((unb64(item, "bytes")?, auth, change));
                 after = after.max(item.get("n").and_then(Value::as_u64).unwrap_or(after));
             }
             // A log that says there is more and does not move on, or that is longer than any group's, ends.
-            if after == asked_after || out.len() > 1_000_000 {
-                return Ok((out, changes));
-            }
-            if page.get("more") != Some(&Value::Bool(true)) || items.is_empty() {
-                return Ok((out, changes));
+            if page.get("more") != Some(&Value::Bool(true))
+                || after == asked_after
+                || out.len() > 1_000_000
+            {
+                return Ok(out);
             }
         }
     }
 
-    /// Learns the epochs of a group before this device joined it, from what the hub keeps (`Vault::learn_past`).
+    /// Learns the past of a group this device joined later (4.6), from what the hub keeps and the device
+    /// verifies: the room group's first, then a helper session's main session, then the group's own.
     async fn learn_past(&self, core: &mut Core, group: GroupId) -> Result<()> {
-        let room_group = GroupId::room(self.room);
-        let info_of = |group: GroupId| async move {
-            let info = self
-                .hub
-                .get(&format!(
-                    "/v2/groups/{}/info?epoch=0",
-                    b64(group.as_bytes())
-                ))
-                .await?;
-            unb64(&info, "group_info")
-        };
-        let (room_commits, _) = self.commits_of(&room_group).await?;
-        let (commits, changes) = self.commits_of(&group).await?;
-        let current = self
-            .hub
-            .get(&format!("/v2/groups/{}/info", b64(group.as_bytes())))
-            .await?;
-        let past = crate::vault::Past {
-            room_info: info_of(room_group).await?,
-            room_commits,
-            info: info_of(group).await?,
-            commits,
-            changes,
-            current: unb64(&current, "group_info")?,
-        };
-        let anchor = (
-            core.room.room_epoch,
-            Hash32::from_base64url(&core.room.room_state)
-                .map_err(|_| Fault::new("state-damaged", "the stored room state does not read"))?,
-        );
-        let now = now_ms();
-        self.vault
-            .call(move |v: &mut Vault| -> Result<()> {
-                // 5.2.6 first, as the core's device checks it; then the epochs before this device's own.
-                v.first_contact(&group, &past)?;
-                v.learn_past(&group, &past, anchor, now)
+        let parent = self
+            .vault
+            .call(move |v: &mut Vault| {
+                v.device
+                    .group(&group)
+                    .ok()
+                    .and_then(|summary| summary.session)
+                    .filter(|session| !session.parent.is_zero())
+                    .map(|session| GroupId::session(session.room_id, session.parent))
             })
-            .await??;
-        core.commit()
+            .await?;
+        let mut order = vec![GroupId::room(self.room)];
+        order.extend(parent);
+        order.push(group);
+        for of in order {
+            let learned = self
+                .vault
+                .call(move |v: &mut Vault| -> Result<bool> {
+                    Ok(match v.device.group(&of) {
+                        Ok(summary) => summary.past_learned,
+                        Err(_) => v.device.group_past(&of)?.is_none_or(|past| past.learned),
+                    })
+                })
+                .await??;
+            if learned {
+                continue;
+            }
+            let founding = self
+                .hub
+                .get(&format!("/v2/groups/{}/info?epoch=0", b64(of.as_bytes())))
+                .await?;
+            let founding = unb64(&founding, "group_info")?;
+            let commits = self.commits_of(&of).await?;
+            self.vault
+                .call(move |v: &mut Vault| {
+                    let served: Vec<ServedCommit<'_>> = commits
+                        .iter()
+                        .map(|(bytes, auth, change)| ServedCommit {
+                            change: *change,
+                            commit: bytes,
+                            recovery_auth: auth.as_deref(),
+                        })
+                        .collect();
+                    v.device.learn_history(&of, &founding, &served)
+                })
+                .await??;
+            core.commit()?;
+        }
+        Ok(())
     }
 
     /// Tops the KeyPackages at the hub up (section 3: one last-resort always, a hundred single-use ones).
     async fn publish_key_packages(&self, core: &mut Core) -> Result<()> {
-        // What the hub still holds is not asked for: uploading again is harmless, and the device makes new
-        // ones only when its own count says so. A device that never uploaded has none there.
         // An upload of none is answered with how many single-use ones the hub still holds.
         let held = self
             .hub
@@ -1276,33 +1388,23 @@ impl Client {
         core.commit()
     }
 
-    /// Processes items of the hub's order above the cursor, one after another, and commits once. Returns the
-    /// commands the gate let through; they are handed out after the write.
+    /// Hands items of the hub's order to the device, one after another, one record each. Returns the commands
+    /// the gate let through; they are handed out after the write.
     pub(crate) async fn process_items(
         &self,
         core: &mut Core,
         items: &[Value],
-        upto: Option<u64>,
     ) -> Result<Vec<Command>> {
         let mut commands = Vec::new();
         if core.halted.is_some() {
             return Ok(commands);
         }
-        core.welcomes = None;
-        let mut stopped_early = false;
         for item in items {
             let Some(change) = item.get("change").and_then(Value::as_u64) else {
                 continue;
             };
             if change <= core.cursor {
                 continue;
-            }
-            if change > core.cursor.saturating_add(CURSOR_REACH) {
-                // The number is the hub's word. One that lies beyond anything a page can reach would carry
-                // the cursor past everything to come: the item is not taken, and the cursor stays.
-                eprintln!("[trommi] finding: an item of the hub's order names a change far beyond the last one; not taken");
-                stopped_early = true;
-                break;
             }
             let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
             let step = if kind == "envelope" {
@@ -1311,13 +1413,9 @@ impl Client {
                 self.take_log(core, item, change, kind == "commit").await
             };
             match step {
-                Ok(true) => {
-                    // One record per entry (13.2): the state after it, what was derived from it, the cursor.
-                    core.cursor = change;
-                    core.commit()?;
-                }
+                Ok(true) => core.commit()?,
                 Ok(false) => {
-                    stopped_early = true;
+                    core.commit()?;
                     break;
                 }
                 Err(fault) => {
@@ -1332,18 +1430,9 @@ impl Client {
                 }
             }
             if self.removed.load(Ordering::SeqCst) {
-                stopped_early = true;
                 break;
             }
         }
-        // The page's own end is the hub's word (numbers without items lie between): taken within the reach
-        // of one page only, so that a wrong number cannot carry the cursor past everything to come.
-        if let (false, Some(upto)) = (stopped_early, upto) {
-            if upto <= core.cursor.saturating_add(CURSOR_REACH) {
-                core.cursor = core.cursor.max(upto);
-            }
-        }
-        core.commit()?;
         Ok(commands)
     }
 
@@ -1362,25 +1451,12 @@ impl Client {
             .filter(|v| !v.is_null())
             .map(|_| unb64(item, "recovery_auth"))
             .transpose()?;
-        if !group.is_room()
-            && core
-                .session_of_group(&group)
-                .is_some_and(|sid| !core.groups.contains_key(&sid))
-        {
-            // A group this device does not hold. If a Welcome waits for it and this entry is not from before
-            // it, this is the Welcome's place in the hub's order (5.4.1): everything before is processed.
-            let at = item.get("at").and_then(Value::as_u64).unwrap_or(u64::MAX);
-            if self.welcome_due(core, &group, at).await? {
-                self.take_welcomes(core, Some(group)).await?;
-            }
-        }
         let me = self.me;
-        let inviter = core.room.inviter.clone();
         let was_enrolled = core.room.enrolled;
         let now = now_ms();
-        let outcome = self
+        let (outcome, cursor) = self
             .vault
-            .call(move |v: &mut Vault| -> Result<LogOutcome> {
+            .call(move |v: &mut Vault| -> Result<(LogOutcome, u64)> {
                 let kind = if commit {
                     LogKind::Commit {
                         bytes: &bytes,
@@ -1394,60 +1470,54 @@ impl Client {
                     group,
                     kind,
                 };
-                match v.device.process_log_entry(&entry) {
-                    Ok(Processed::Commit { facts, removed, .. }) => {
-                        if removed {
-                            return Ok(LogOutcome::RemovedFrom(group));
-                        }
-                        let (time, cuts): (u64, Vec<Cut>) = facts
-                            .note
-                            .map(|note| (note.time, note.cuts))
-                            .unwrap_or((now, Vec::new()));
-                        let (findings, dropped) = v.note_epoch(&group, Some(time), &cuts, now)?;
-                        Ok(LogOutcome::Epoch(findings.len(), dropped.then_some(group)))
-                    }
-                    Ok(Processed::Observed(facts)) if group.is_room() => {
+                let outcome = match v.device.process_log_entry(&entry, now) {
+                    Ok(Processed::Commit { removed: true, .. }) => LogOutcome::RemovedFrom(group),
+                    Ok(Processed::Commit { .. } | Processed::OwnCommit) => LogOutcome::Epoch,
+                    Ok(Processed::Observed(_)) if group.is_room() => {
                         let enrolled = v
                             .device
                             .room_history()
                             .is_some_and(|h| h.newest().is_agent(&me));
-                        if enrolled && !was_enrolled {
-                            // 12.1.6: only the inviter's enrolment counts.
-                            let by_inviter = facts.committer.to_base64url() == inviter;
-                            return Ok(LogOutcome::Enrolled(by_inviter));
+                        match (was_enrolled, enrolled) {
+                            (false, true) => LogOutcome::Enrolled,
+                            (true, false) => LogOutcome::Unenrolled,
+                            _ => LogOutcome::Nothing,
                         }
-                        if !enrolled && was_enrolled {
-                            return Ok(LogOutcome::Unenrolled);
-                        }
-                        Ok(LogOutcome::Nothing)
                     }
                     Ok(Processed::Message(Received::Keys { taken, .. })) if taken > 0 => {
-                        Ok(LogOutcome::Keys(group))
+                        LogOutcome::Keys(group)
                     }
-                    Ok(Processed::Message(Received::NewerVersion { .. })) => Ok(LogOutcome::Newer),
-                    Ok(_) => Ok(LogOutcome::Nothing),
-                    Err(error) => Ok(match log_finding(&error) {
+                    Ok(Processed::Message(Received::NewerVersion { .. })) => LogOutcome::Newer,
+                    Ok(Processed::Skipped)
+                        if commit && !group.is_room() && v.device.group(&group).is_err() =>
+                    {
+                        LogOutcome::Unheld
+                    }
+                    Ok(_) => LogOutcome::Nothing,
+                    // 12.1.6: only the inviter's Commit enrols this device.
+                    Err(trommi_core::Error::BadInvite) => LogOutcome::BadInvite,
+                    Err(error) => match log_finding(&error) {
                         LogFinding::Duplicate => LogOutcome::Nothing,
                         LogFinding::Early => LogOutcome::Early,
                         LogFinding::BadGroup => LogOutcome::Bad(error.code()),
                         LogFinding::Local => return Err(error.into()),
-                    }),
-                }
+                    },
+                };
+                Ok((outcome, v.device.cursor()))
             })
             .await??;
+        core.cursor = cursor;
         match outcome {
             LogOutcome::Nothing => {}
             LogOutcome::Early => return Ok(false),
-            LogOutcome::Epoch(findings, dropped) => {
-                if findings > 0 {
-                    eprintln!("[trommi] finding: equivocation at a removed device's Cut");
-                }
-                if let Some(group) = dropped {
-                    // 9.0.10: what lay beyond the Cut never came. Everything derived from the group's
-                    // envelopes is built again from what the hub still serves.
-                    core.reread.push(group);
-                }
+            LogOutcome::Epoch => {
                 self.refresh_groups(core).await?;
+                self.refresh_outbox(core).await?;
+            }
+            LogOutcome::Unheld => {
+                core.commit()?;
+                self.take_welcomes(core, Some(group)).await?;
+                self.refresh_outbox(core).await?;
             }
             LogOutcome::Keys(group) => core.reread.push(group),
             LogOutcome::Newer => {
@@ -1456,27 +1526,24 @@ impl Client {
                     "a message of a newer Trommi arrived",
                 )));
             }
-            LogOutcome::Enrolled(true) => {
+            LogOutcome::Enrolled => {
                 core.room.enrolled = true;
                 put_room_record(&core.journal, &core.room);
             }
-            LogOutcome::Enrolled(false) => {
+            LogOutcome::BadInvite => {
                 let fault = Fault::new(
                     "bad-invite",
                     "this device was enrolled by another device than the one that invited it",
                 );
-                core.cursor = change;
                 self.halt(core, &fault)?;
                 return Err(fault);
             }
             LogOutcome::Unenrolled => {
-                core.cursor = change;
                 core.commit()?;
                 self.set_removed_in(core, false, true);
             }
             LogOutcome::RemovedFrom(group) => {
                 let was_main = core.session_of_group(&group) == core.main;
-                core.cursor = change;
                 core.commit()?;
                 if was_main {
                     // 13.5: another connector continues the session. This one stops.
@@ -1506,7 +1573,36 @@ impl Client {
         Ok(true)
     }
 
-    /// One envelope at its place. `Ok(false)`: its group is not processed that far yet.
+    /// Hands one envelope to the device, and asks the gate about it if it may be a command.
+    async fn hand(
+        &self,
+        bytes: Vec<u8>,
+        change: u64,
+        ordered: bool,
+        void_code: Option<trommi_core::Error>,
+        ask_gate: bool,
+    ) -> Result<Took> {
+        let now = now_ms();
+        self.vault
+            .call(move |v: &mut Vault| -> Result<Took> {
+                let received =
+                    v.device
+                        .receive_envelope(&bytes, change, ordered, void_code.as_ref(), now)?;
+                let decision = if ask_gate && received.command {
+                    Some(v.device.command(&received.envelope_hash, now)?)
+                } else {
+                    None
+                };
+                Ok(Took {
+                    received,
+                    decision,
+                    cursor: v.device.cursor(),
+                })
+            })
+            .await?
+    }
+
+    /// One envelope at its place. `Ok(false)`: its group's log is to be processed further first.
     async fn take_envelope(
         &self,
         core: &mut Core,
@@ -1515,285 +1611,142 @@ impl Client {
         commands: &mut Vec<Command>,
     ) -> Result<bool> {
         let bytes = unb64(item, "envelope")?;
-        let served = match item.get("void_code").and_then(Value::as_str) {
-            Some(code) => Served::Void(
-                trommi_core::Error::from_code(code).unwrap_or(trommi_core::Error::BadFormat),
-            ),
-            None => Served::Stored,
-        };
-        // The header says which group; nothing of it is trusted before the checks.
-        let Ok(header) = Envelope::decode(&bytes).map(|envelope| envelope.header) else {
-            // 13.4: what the hub hands out here is no envelope (it may be something else under a wrong name).
-            // The cursor stays: nothing is passed over that could not be read.
+        let void_code = item.get("void_code").and_then(Value::as_str).map(|code| {
+            trommi_core::Error::from_code(code).unwrap_or(trommi_core::Error::BadFormat)
+        });
+        // The header says which group; nothing of it is trusted before the device's checks.
+        let Ok(envelope) = Envelope::decode(&bytes) else {
+            // 13.4: what the hub hands out here is no envelope. The cursor stays: nothing is passed over
+            // that could not be read.
             eprintln!("[trommi] finding: bad-format (the item at change {change} is no envelope); waiting for the hub to serve it right");
             return Ok(false);
         };
-        let group = header.group;
-        let Some(session) = core.session_of_group(&group) else {
-            return Ok(true);
-        };
-        if !core.groups.contains_key(&session) {
-            let at = item
-                .get("received_at")
-                .and_then(Value::as_u64)
-                .unwrap_or(u64::MAX);
-            if self.welcome_due(core, &group, at).await? {
-                self.take_welcomes(core, Some(group)).await?;
-            }
-            if !core.groups.contains_key(&session) {
-                // An envelope of a group this device is no leaf of (yet): from before its Welcome.
-                return Ok(true);
-            }
+        let group = envelope.header.group;
+        if Self::is_ahead(&envelope, &self.me, &group, core.own_seq(&group)) {
+            return Err(self.rolled_back(core)?);
         }
-        match self
-            .receive(core, bytes, served, None, change, &session, commands)
-            .await
-        {
-            Err(fault) if fault.code == "group-behind" => Ok(false),
-            Err(fault) if fault.code == "replay" => Ok(true),
-            Err(fault) if fault.code == "gap" => {
-                // An envelope before this one was not taken. The group's envelopes are read again from the
-                // hub's first, once per time online; if the gap is still there, it is a finding that stays.
-                eprintln!("[trommi] finding: gap (an envelope at change {change} does not follow its sender's last)");
-                core.ask_reread(group);
-                Ok(true)
+        let took = self.hand(bytes, change, true, void_code, true).await?;
+        core.cursor = took.cursor;
+        let received = &took.received;
+        if received.outcome == EnvelopeOutcome::Refused {
+            let code = received.code.as_ref().map_or("refused", |code| code.code());
+            if took.cursor < change {
+                // `group-behind` for a group this device holds: the log first.
+                return Ok(false);
             }
-            Err(fault) if fault.code == "state-rolled-back" => {
-                self.halt(core, &fault)?;
-                Err(fault)
-            }
-            Err(fault)
-                if fault.as_core().is_some()
-                    && fault.code != "storage"
-                    && fault.code != "internal" =>
-            {
+            if !matches!(code, "group-behind" | "replay" | "not-found") {
                 // Checks 1 to 6: the envelope takes no place. Never swallowed: named, with its place.
                 eprintln!(
-                    "[trommi] finding: {} (an envelope at change {change} was not taken)",
-                    fault.code
+                    "[trommi] finding: {code} (an envelope at change {change} was not taken)"
                 );
-                Ok(true)
+                if code == "gap" {
+                    core.ask_reread(group);
+                }
             }
-            Err(fault) => Err(fault),
-            Ok(()) => Ok(true),
+            return Ok(true);
         }
+        if received.replayed {
+            core.ask_reread(group);
+        }
+        if let Some(session) = core
+            .session_of_group(&group)
+            .filter(|sid| core.groups.contains_key(sid))
+        {
+            self.apply(core, &took, &session, commands);
+        }
+        Ok(true)
     }
 
-    /// Runs an envelope through the vault and puts what it means into the model; with `commands`, also
-    /// through the gate.
-    #[allow(clippy::too_many_arguments)]
-    async fn receive(
-        &self,
-        core: &mut Core,
-        bytes: Vec<u8>,
-        served: Served,
-        mode: Option<Mode>,
-        change: u64,
-        session: &str,
-        commands: &mut Vec<Command>,
-    ) -> Result<()> {
-        let now = now_ms();
-        let reading_back = mode == Some(Mode::ReadingBack);
-        let taken = self
-            .vault
-            .call(move |v: &mut Vault| {
-                let mode = mode.unwrap_or_else(|| {
-                    // An envelope of an epoch before this device joined is read back, not met in order.
-                    let header = Envelope::decode(&bytes).map(|e| e.header).ok();
-                    match header {
-                        Some(h) if v.first_epoch(&h.group).is_some_and(|first| h.epoch < first) => {
-                            Mode::ReadingBack
-                        }
-                        _ => Mode::InOrder,
-                    }
-                });
-                v.receive(&bytes, &served, mode, now)
-            })
-            .await??;
-        let taken_heads = taken.heads;
-        let receipt = &taken.receipt;
-        let header = receipt.envelope().header.clone();
-        let hash = receipt.hash();
+    /// Puts what a taken envelope means into the model, and what the gate let through into `commands`.
+    fn apply(&self, core: &mut Core, took: &Took, session: &str, commands: &mut Vec<Command>) {
+        let received = &took.received;
+        let header = &received.header;
         let mine = header.sender == self.me;
-        if mine {
-            let hash_text = hash.to_base64url();
-            if let Some(id) = core
-                .outbox
-                .iter()
-                .find(|pending| pending.hash == hash_text && !pending.rebuild)
-                .map(|pending| pending.id)
-            {
-                core.drop_pending(id);
-            }
-        }
         let human = core
             .model
             .sessions
             .get(session)
             .is_some_and(|s| !s.agent_device_ids.contains(&header.sender.to_base64url()));
-        match receipt.outcome() {
-            Outcome::Taken { body, .. } => {
-                let (payload, raw, bind) = match body {
-                    Ok(body) => {
-                        let raw = String::from_utf8_lossy(body.payload()).into_owned();
-                        let payload = serde_json::from_str::<Value>(&raw)
-                            .ok()
-                            .and_then(|v| v.as_object().cloned());
-                        (payload, raw, Some(body.bind().clone()))
-                    }
-                    Err(_) => (None, String::new(), None),
-                };
-                // The card as it stood before this envelope: what an answer is held against.
-                let before = match &header.subject {
-                    Subject::Answer(f) | Subject::TakeBack(f) => {
-                        core.model.cards.get(&hex(f.object_id.as_bytes())).cloned()
-                    }
-                    _ => None,
-                };
-                let request = match &header.subject {
-                    Subject::Verdict(f) => core
-                        .model
-                        .permissions
-                        .get(&hex(f.object_id.as_bytes()))
-                        .cloned(),
-                    _ => None,
-                };
-                core.model.apply(&Seen {
-                    change,
-                    session,
-                    header: &header,
-                    hash,
-                    payload: payload.as_ref(),
-                    raw: &raw,
-                    bind: bind.as_ref(),
-                    human,
-                });
-                if let Some(register) = &taken.register {
-                    if register.current {
-                        core.model.apply_register(
-                            session,
-                            &register.name,
-                            register.value.as_deref(),
-                            change,
-                            header.time,
-                        );
-                    }
-                }
-                let is_command = matches!(
-                    header.subject,
-                    Subject::Item(_)
-                        | Subject::Answer(_)
-                        | Subject::Verdict(_)
-                        | Subject::TakeBack(_)
-                );
-                if !mine && is_command && !reading_back && body.is_ok() {
-                    self.gate(
-                        core, taken, before, request, payload, change, session, commands,
-                    )
-                    .await?;
-                }
-            }
-            Outcome::Refused(code) | Outcome::Void { code, .. } => {
-                if mine {
-                    // The number is used up and the envelope counts for nothing.
-                    eprintln!(
-                        "[trommi] an envelope of this device was voided: {}",
-                        code.code()
-                    );
-                }
-                if let Outcome::Void {
-                    finding: Some(finding),
-                    ..
-                } = receipt.outcome()
-                {
-                    eprintln!("[trommi] finding: {}", finding.code());
-                }
-            }
-            Outcome::Reserved => {
-                // 9.0.4: a kind this build does not know. It is no command, whoever sent it: said once as a
-                // notice that a newer connector is needed.
-                if !mine && !reading_back {
+        if let Some(finding) = &received.finding {
+            eprintln!("[trommi] finding: {}", finding.code());
+        }
+        match received.outcome {
+            EnvelopeOutcome::Applied | EnvelopeOutcome::Provisional => {}
+            EnvelopeOutcome::Chained => {
+                let code = received.code.as_ref().map_or("", |code| code.code());
+                if code == "newer-version" && !mine {
+                    // 9.0.4: no command, whoever sent it: a notice that a newer connector is needed.
                     self.emit(ClientEvent::Error(Fault::new(
                         "newer-version",
                         "an item of a newer Trommi arrived that this connector cannot read",
                     )));
                 }
+                if mine {
+                    eprintln!("[trommi] an envelope of this device was not applied: {code}");
+                }
+                // One whose body alone failed still counts for its object's state (9.2.1).
+                if received.object_after.is_none() {
+                    return;
+                }
+            }
+            EnvelopeOutcome::Void => {
+                if mine {
+                    let code = received.code.as_ref().map_or("", |code| code.code());
+                    eprintln!("[trommi] an envelope of this device was voided: {code}");
+                }
+                return;
+            }
+            EnvelopeOutcome::Refused => return,
+        }
+        let (payload, raw) = match &received.body {
+            Some(body) => {
+                let raw = String::from_utf8_lossy(body.payload()).into_owned();
+                let payload = serde_json::from_str::<Value>(&raw)
+                    .ok()
+                    .and_then(|v| v.as_object().cloned());
+                (payload, raw)
+            }
+            None => (None, String::new()),
+        };
+        // The card as it stood before this envelope: what an answer's effect is told from.
+        let before = match &header.subject {
+            Subject::Answer(f) | Subject::TakeBack(f) => {
+                core.model.cards.get(&hex(f.object_id.as_bytes())).cloned()
+            }
+            _ => None,
+        };
+        core.model.apply(&Seen {
+            change: received.change,
+            session,
+            header,
+            hash: received.envelope_hash,
+            payload: payload.as_ref(),
+            raw: &raw,
+            bind: received.body.as_ref().map(|body| body.bind()),
+            human,
+        });
+        if let (Some(register), Some(payload)) = (&received.register, &payload) {
+            if register.current && register.of.is_none() {
+                let value = payload
+                    .get("value")
+                    .filter(|value| !value.is_null())
+                    .map(Value::to_string);
+                core.model.apply_register(
+                    session,
+                    &register.name,
+                    value.as_deref(),
+                    received.change,
+                    header.time,
+                );
             }
         }
-        if let (Some((behind, equivocation)), false) = (taken_heads, reading_back) {
-            if equivocation {
-                self.emit(ClientEvent::Error(Fault::new(
-                    "equivocation",
-                    "another device accepted a different envelope under a number this agent holds",
-                )));
-            }
-            if behind {
-                // 9.0.7: another device holds envelopes this one was not served. Read the group again; what
-                // is still missing then was withheld.
-                eprintln!("[trommi] finding: withheld (another device's heads name envelopes this agent was not served)");
-                core.ask_reread(header.group);
-            }
-        }
-        Ok(())
-    }
-
-    /// The command gate on a human's envelope (9.0.9, 13.6); what it lets through becomes a [`Command`].
-    #[allow(clippy::too_many_arguments)]
-    async fn gate(
-        &self,
-        core: &mut Core,
-        taken: crate::vault::Taken,
-        before: Option<crate::model::Card>,
-        request: Option<crate::model::Permission>,
-        payload: Option<Map<String, Value>>,
-        change: u64,
-        session: &str,
-        commands: &mut Vec<Command>,
-    ) -> Result<()> {
-        let now = now_ms();
-        let header = taken.receipt.envelope().header.clone();
-        let hash = taken.receipt.hash();
-        let decision = self
-            .vault
-            .call(move |v: &mut Vault| -> Result<Decision> {
-                let card_hash = before
-                    .as_ref()
-                    .and_then(|c| c.version_hash.as_deref())
-                    .and_then(|h| Hash32::from_base64url(h).ok());
-                let request_hash = request
-                    .as_ref()
-                    .and_then(|r| Hash32::from_base64url(&r.version_hash).ok());
-                let own = match (&taken.receipt.envelope().header.subject, &before, &request) {
-                    // A version whose body did not open leaves no payload to hold an answer against.
-                    (Subject::Answer(_), Some(card), _) if card.payload.is_empty() => {
-                        OwnRecord::None
-                    }
-                    (Subject::Answer(_), Some(card), _) => match card_hash {
-                        Some(hash) => OwnRecord::CardVersion {
-                            hash,
-                            payload: card.payload.as_bytes(),
-                        },
-                        None => OwnRecord::None,
-                    },
-                    (Subject::Verdict(fields), _, Some(request)) => match request_hash {
-                        Some(hash) => OwnRecord::Request {
-                            hash,
-                            bind: RequestBind {
-                                request_id: fields.object_id,
-                                expires_at: request.expires_at,
-                            },
-                        },
-                        None => OwnRecord::None,
-                    },
-                    _ => OwnRecord::None,
-                };
-                v.gate(&taken.receipt, &own, now)
-            })
-            .await??;
+        let Some(decision) = &took.decision else {
+            return;
+        };
         let mut command = Command {
             session_id: Some(session.to_string()),
-            envelope_number: change,
-            envelope_hash: hash.to_base64url(),
+            envelope_number: received.change,
+            envelope_hash: received.envelope_hash.to_base64url(),
             sender_device_id: header.sender.to_base64url(),
             sender_sequence: header.seq,
             sent_at: header.time,
@@ -1804,7 +1757,7 @@ impl Client {
             command.object_id = Some(hex(fields.object_id.as_bytes()));
         }
         match decision {
-            Decision::Done => return Ok(()),
+            Decision::Done => return,
             Decision::Refused(refusal) => {
                 // Not acted on (9.0.9). Said without content: which rule held it back.
                 if !matches!(
@@ -1814,7 +1767,7 @@ impl Client {
                 ) {
                     eprintln!("[trommi] a human's envelope was not acted on: {refusal:?}");
                 }
-                return Ok(());
+                return;
             }
             Decision::Uncertain => {
                 // Started before a crash and never finished: reported, not repeated.
@@ -1840,7 +1793,7 @@ impl Client {
                     .object_id
                     .as_ref()
                     .and_then(|id| core.model.cards.get(id));
-                command.settled = action == AnswerAction::Answer
+                command.settled = *action == AnswerAction::Answer
                     && card.is_some_and(|c| c.object_state == "closed");
                 command.command = match action {
                     AnswerAction::Read => "read",
@@ -1856,18 +1809,16 @@ impl Client {
                     AnswerAction::Answer => "answer",
                 }
                 .into();
-                command.choices = choices;
+                command.choices = choices.clone();
             }
             Decision::Act(GateCommand::Verdict(verdict)) => {
                 command.command = "verdict".into();
-                command.allow = verdict == trommi_core::envelope::Verdict::Allow;
+                command.allow = *verdict == trommi_core::envelope::Verdict::Allow;
             }
             Decision::Act(GateCommand::TakeBack) => {
                 command.command = "decide_again".into();
-                command.previous_choices = command
-                    .object_id
+                command.previous_choices = before
                     .as_ref()
-                    .and_then(|id| core.model.cards.get(id))
                     .and_then(|c| c.answers.last())
                     .map(|a| a.choice_strs())
                     .unwrap_or_default();
@@ -1884,11 +1835,11 @@ impl Client {
             }
         }
         commands.push(command);
-        Ok(())
     }
 
-    /// Reads a group's envelopes again from the hub's first (after joining it, and after a key handover opened
-    /// what could not be read): the chains are verified from number 1, nothing is acted on.
+    /// Reads a group's envelopes again from the hub's first: after joining it (its chains are verified from
+    /// number 1, 9.0.6), after a key handover opened what could not be read, and when the device built the
+    /// group's state again. The model of the session is built anew; nothing is acted on.
     async fn reread(&self, core: &mut Core, group: GroupId) -> Result<()> {
         let Some(session) = core.session_of_group(&group) else {
             return Ok(());
@@ -1899,7 +1850,7 @@ impl Client {
         // Everything is fetched first: nothing is forgotten before what replaces it is in hand.
         let upto = core.cursor;
         let mut after = 0u64;
-        let mut fetched: Vec<(u64, Vec<u8>, Served)> = Vec::new();
+        let mut fetched: Vec<(u64, Vec<u8>, Option<trommi_core::Error>)> = Vec::new();
         loop {
             let answer = self
                 .hub
@@ -1923,14 +1874,10 @@ impl Client {
                 if Envelope::decode(&bytes).map(|e| e.header.group).ok() != Some(group) {
                     continue;
                 }
-                let served = match item.get("void_code").and_then(Value::as_str) {
-                    Some(code) => Served::Void(
-                        trommi_core::Error::from_code(code)
-                            .unwrap_or(trommi_core::Error::BadFormat),
-                    ),
-                    None => Served::Stored,
-                };
-                fetched.push((change, bytes, served));
+                let void_code = item.get("void_code").and_then(Value::as_str).map(|code| {
+                    trommi_core::Error::from_code(code).unwrap_or(trommi_core::Error::BadFormat)
+                });
+                fetched.push((change, bytes, void_code));
             }
             let next = answer.get("change").and_then(Value::as_u64).unwrap_or(upto);
             if answer.get("more") != Some(&Value::Bool(true)) || next >= upto || next <= after {
@@ -1938,81 +1885,69 @@ impl Client {
             }
             after = next;
         }
-        self.vault
-            .call(move |v: &mut Vault| v.forget_received(&group))
-            .await??;
         for name in core.model.forget_session(&session) {
             core.journal.delete(side_key(TAG_MODEL, &[name.as_bytes()]));
         }
         let mut unused = Vec::new();
-        for (change, bytes, served) in fetched {
-            if let Err(fault) = self
-                .receive(
-                    core,
-                    bytes,
-                    served,
-                    Some(Mode::ReadingBack),
-                    change,
-                    &session,
-                    &mut unused,
-                )
-                .await
-            {
-                if fault.as_core().is_none() || fault.code == "storage" || fault.code == "internal"
-                {
-                    return Err(fault);
-                }
-                eprintln!(
-                    "[trommi] finding: {} (reading a session's history)",
-                    fault.code
+        for (change, bytes, void_code) in fetched {
+            // Along its sender's chain first: the next envelope of a chain is new, any other was taken
+            // before (`replay`). What the chain holds and did not open then is asked for out of order,
+            // which shows its body once the key is there (applied when the chain holds that very
+            // envelope, provisional otherwise).
+            let voided = void_code.is_some();
+            let mut took = self
+                .hand(bytes.clone(), change, true, void_code, false)
+                .await?;
+            let unopened = took.received.body.is_none()
+                && !voided
+                && matches!(
+                    took.received.code.as_ref().map(|code| code.code()),
+                    Some("replay" | "no-key" | "pruned" | "decrypt-failed")
                 );
+            if unopened {
+                let chained = took.received.outcome == EnvelopeOutcome::Chained;
+                let again = self.hand(bytes, change, false, None, false).await?;
+                if matches!(
+                    again.received.outcome,
+                    EnvelopeOutcome::Applied | EnvelopeOutcome::Provisional
+                ) && again.received.body.is_some()
+                {
+                    took = again;
+                } else if !chained && took.received.header.subject.object().is_some() {
+                    // Taken before, and still not to be opened: it counts for its object by its header.
+                    took.received.outcome = EnvelopeOutcome::Applied;
+                }
             }
+            core.cursor = core.cursor.max(took.cursor);
+            self.apply(core, &took, &session, &mut unused);
+            core.commit()?;
         }
         core.commit()
     }
 
-    /// Writes this device's `heads` register in every session group whose chains moved (9.0.7).
-    async fn write_heads(&self, core: &mut Core, send: bool) -> Result<()> {
-        core.heads_at = now_ms();
-        let groups: Vec<(String, GroupId)> = core
-            .groups
-            .iter()
-            .map(|(sid, g)| (sid.clone(), *g))
-            .collect();
-        for (sid, group) in groups {
-            let value = self
+    /// Writes this device's `heads` register in every session group where the device says it is due (9.0.7).
+    async fn write_heads(&self, core: &mut Core) -> Result<()> {
+        let groups: Vec<GroupId> = core.groups.values().copied().collect();
+        for group in groups {
+            let now = now_ms();
+            let due = self
                 .vault
-                .call(move |v: &mut Vault| v.heads_value(&group))
-                .await??;
-            let Some(value) = value else { continue };
-            let name = format!("heads/{sid}");
-            if core
-                .kv_get(&name)
-                .and_then(|v| v.as_str().map(String::from))
-                .as_deref()
-                == Some(&value)
-            {
-                continue;
-            }
+                .call(move |v: &mut Vault| v.device.heads_due(&group, now))
+                .await?;
+            // A group that takes no envelope now (stale, no key yet) gets its heads another time.
+            let Ok(Some(value)) = due else { continue };
             let spec = Spec::Register {
                 name: "heads".into(),
-                value: Some(value.clone()),
+                value: Some(String::from_utf8_lossy(&value).into_owned()),
             };
-            // A group that takes no envelope now (stale, no key yet) gets its heads another time.
-            if self.seal(core, group, spec, Vec::new()).await.is_ok() {
-                core.kv_set(&name, &json!(value));
-            }
-        }
-        core.commit()?;
-        if send {
-            self.pump(core).await?;
+            let _ = self.seal(core, group, spec, Vec::new(), None).await;
+            core.commit()?;
         }
         Ok(())
     }
 
-    /// Posts what waits: the device's outbox (Commits, messages, KeyPackages), then this device's envelopes in
-    /// their order. Stops at the first request the hub could not be reached for; that one and what follows are
-    /// sent again later, unchanged.
+    /// Posts what waits in the device's outbox, in its order. Stops at the first request the hub could not be
+    /// reached for; that one and what follows are sent again later, unchanged.
     pub(crate) async fn pump(&self, core: &mut Core) -> Result<()> {
         match self.pump_once(core).await {
             Err(fault) if fault.code == "lease-lost" => {
@@ -2035,31 +1970,40 @@ impl Client {
         // by a client that stopped.
         self.active(core)?;
         core.commit()?;
-        core.reload_outbox();
         // An envelope the hub voided for its epoch is sealed again, in the epoch the group stands in now.
-        let again: Vec<Pending> = core.outbox.iter().filter(|p| p.rebuild).cloned().collect();
-        for old in again {
+        let prefix = side_key(TAG_SPEC, &[]);
+        let again: Vec<(u64, Waiting)> = core
+            .journal
+            .scan(&prefix[..2])
+            .iter()
+            .filter_map(|(key, value)| {
+                let id = key.get(3..11)?.try_into().ok().map(u64::from_be_bytes)?;
+                let waiting: Waiting = serde_json::from_slice(value).ok()?;
+                waiting.rebuild.then_some((id, waiting))
+            })
+            .collect();
+        for (old_id, old) in again {
             let group = b64_group(&old.group)?;
+            let first = old.first.unwrap_or(old_id);
             let sealed = if old.resealed >= RESEALS {
                 Err(Fault::new(
                     "wrong-epoch",
                     "the hub keeps refusing this envelope for its epoch",
                 ))
             } else {
-                self.seal(core, group, old.spec.clone(), old.files.clone())
-                    .await
+                self.seal(
+                    core,
+                    group,
+                    old.spec.clone(),
+                    old.files.clone(),
+                    Some((old.resealed + 1, first)),
+                )
+                .await
             };
-            core.drop_pending(old.id);
-            let first = old.first.unwrap_or(old.id);
+            core.drop_waiting(old_id);
             match sealed {
-                Ok(mut new) => {
-                    // What the first one's sender is told of is the envelope that stands in its place.
-                    new.resealed = old.resealed + 1;
-                    new.first = Some(first);
-                    core.put_pending(&new);
-                    if let Some(kept) = core.outbox.iter_mut().find(|p| p.id == new.id) {
-                        *kept = new.clone();
-                    }
+                // What the first one's sender is told of is the envelope that stands in its place.
+                Ok(new) => {
                     core.replaced.insert(first, new);
                 }
                 Err(fault) => {
@@ -2068,154 +2012,119 @@ impl Client {
             }
             core.commit()?;
         }
-        let entries = self.vault.call(|v: &mut Vault| v.device.outbox()).await?;
-        for entry in entries {
+        let mut failed_before: Option<u64> = None;
+        for _ in 0..10_000 {
+            let Some(entry) = self
+                .vault
+                .call(|v: &mut Vault| v.device.outbox().into_iter().next())
+                .await?
+            else {
+                break;
+            };
+            if entry.kind == OutboxKind::Envelope && core.model.room.outbox_blocked.is_some() {
+                break;
+            }
             let id = entry.id;
-            let kind = entry.kind;
-            let group = entry.group;
-            match self.post_entry(&entry).await {
+            // An entry that failed and is still the first is not posted again in the same round.
+            if failed_before == Some(id) {
+                break;
+            }
+            let envelope = entry.kind == OutboxKind::Envelope;
+            let fault = match self.post_entry(&entry).await {
                 Ok(accepted) => {
-                    let cuts = core
-                        .journal
-                        .get(&side_key(TAG_CUTS, &[&id.to_be_bytes()]))
-                        .and_then(|bytes| {
-                            serde_json::from_slice::<Vec<(String, u64, String)>>(&bytes).ok()
-                        })
-                        .unwrap_or_default();
-                    core.journal
-                        .delete(side_key(TAG_CUTS, &[&id.to_be_bytes()]));
-                    let now = now_ms();
                     self.vault
-                        .call(move |v: &mut Vault| -> Result<()> {
-                            v.device.outbox_accepted(id, accepted)?;
-                            if let (true, Some(group)) = (
-                                matches!(kind, OutboxKind::Commit | OutboxKind::GroupFounding),
-                                group,
-                            ) {
-                                let cuts: Vec<Cut> = cuts
-                                    .iter()
-                                    .filter_map(|(device, seq, hash)| {
-                                        Some(Cut {
-                                            device: DeviceId::from_base64url(device).ok()?,
-                                            seq: *seq,
-                                            hash: Hash32::from_base64url(hash).ok()?,
-                                        })
-                                    })
-                                    .collect();
-                                v.note_epoch(&group, Some(now), &cuts, now)?;
-                            }
-                            Ok(())
-                        })
+                        .call(move |v: &mut Vault| v.device.outbox_accepted(id, accepted))
                         .await??;
-                    if kind == OutboxKind::KeyPackages {
-                        core.kv_set(
-                            "key_packages_unused",
-                            &json!(trommi_core::device::SINGLE_USE_KEY_PACKAGES),
-                        );
+                    if envelope {
+                        core.drop_waiting(id);
                     }
                     core.commit()?;
-                    if matches!(kind, OutboxKind::Commit | OutboxKind::GroupFounding) {
-                        self.refresh_groups(core).await?;
-                        core.commit()?;
-                    }
+                    continue;
                 }
-                Err(fault) if is_transient(&fault) => {
-                    self.online.store(false, Ordering::SeqCst);
-                    return Ok(());
+                Err(fault) => fault,
+            };
+            failed_before = Some(id);
+            // No hub of this protocol answered: the entry stays, and the caller hears why.
+            if crate::hub::is_no_hub(&fault) {
+                return Err(fault);
+            }
+            let code = fault
+                .as_core()
+                .unwrap_or(trommi_core::Error::Internal("refused by the hub"));
+            if fault.code == "lease-lost" || fault.code == "unauthorised" {
+                return Err(fault);
+            }
+            if is_transient(&fault) || refusal_is_passing(&code) {
+                self.online.store(false, Ordering::SeqCst);
+                return Ok(());
+            }
+            if !envelope {
+                // Final for its entry: the device undoes what it was for (an epoch that was taken is
+                // decided by the log).
+                self.vault
+                    .call(move |v: &mut Vault| v.device.outbox_refused(id, &code))
+                    .await??;
+                core.failed.insert(id, fault.clone());
+                core.commit()?;
+                if matches!(fault.code.as_str(), "not-member" | "removed-sender") {
+                    return Err(fault);
                 }
-                Err(fault) if fault.code == "lease-lost" || fault.code == "unauthorised" => {
-                    return Err(fault)
-                }
-                Err(fault) => {
-                    let code = fault
-                        .as_core()
-                        .unwrap_or(trommi_core::Error::Internal("refused by the hub"));
-                    core.journal
-                        .delete(side_key(TAG_CUTS, &[&id.to_be_bytes()]));
-                    self.vault
-                        .call(move |v: &mut Vault| v.device.outbox_refused(id, &code))
-                        .await??;
-                    core.failed.insert(u64::MAX - id, fault.clone());
-                    core.commit()?;
-                    if matches!(fault.code.as_str(), "not-member" | "removed-sender") {
-                        return Err(fault);
-                    }
+                if fault.code != "epoch-taken" {
                     eprintln!(
                         "[trommi] the hub refused a request of this device: {}",
                         fault.code
                     );
                 }
+                continue;
             }
-        }
-        // This device's envelopes, in the order they were signed.
-        let waiting: Vec<Pending> = core
-            .outbox
-            .iter()
-            .filter(|pending| pending.change.is_none() && !pending.rebuild)
-            .cloned()
-            .collect();
-        for pending in waiting {
-            if core.model.room.outbox_blocked.is_some() {
-                break;
-            }
-            let body = json!({ "envelope": pending.bytes });
-            match self.hub.post("/v2/envelopes", &body).await {
-                Ok(answer) => {
-                    let change = answer.get("change").and_then(Value::as_u64);
-                    if let Some(kept) = core.outbox.iter_mut().find(|p| p.id == pending.id) {
-                        kept.change = change.or(Some(0));
-                        let kept = kept.clone();
-                        core.put_pending(&kept);
-                    }
-                    core.commit()?;
-                }
-                Err(fault) if is_transient(&fault) => {
-                    self.online.store(false, Ordering::SeqCst);
-                    return Ok(());
-                }
-                Err(fault) if fault.code == "lease-lost" || fault.code == "unauthorised" => {
-                    return Err(fault)
-                }
-                Err(fault) if fault.extra.get("voided") == Some(&Value::Bool(true)) => {
-                    // 9.0.8: the number is used up, the chain goes on. What an epoch change voided is sealed
-                    // again in the new epoch: the wish stays in the outbox, marked, until the new envelope
-                    // is written in its place. Anything else is the sender's to hear.
-                    if fault.code == "wrong-epoch" {
-                        if let Some(kept) = core.outbox.iter_mut().find(|p| p.id == pending.id) {
-                            kept.rebuild = true;
-                            let kept = kept.clone();
-                            core.put_pending(&kept);
-                        }
+            let waiting = core.waiting(id);
+            let first = waiting.as_ref().and_then(|w| w.first).unwrap_or(id);
+            if fault.extra.get("voided") == Some(&Value::Bool(true)) {
+                // 9.0.8: the number is used up, the chain goes on. What an epoch change voided is sealed
+                // again in the new epoch: the wish stays noted, marked, until the new envelope is written in
+                // its place. Anything else is the sender's to hear.
+                self.vault
+                    .call(move |v: &mut Vault| v.device.outbox_voided(id))
+                    .await??;
+                match waiting {
+                    Some(mut waiting) if fault.code == "wrong-epoch" => {
+                        waiting.rebuild = true;
+                        core.put_waiting(id, &waiting);
+                        core.outbox.retain(|waits| *waits != id);
                         core.commit()?;
                         self.catch_up(core).await?;
-                    } else {
-                        core.drop_pending(pending.id);
-                        core.failed.insert(pending.id, fault);
+                        return Box::pin(self.pump(core)).await;
+                    }
+                    _ => {
+                        core.drop_waiting(id);
+                        core.failed.insert(first, fault);
                         core.commit()?;
                     }
-                    return Box::pin(self.pump(core)).await;
                 }
-                Err(fault) if fault.code == "group-behind" => {
-                    // The hub has not reached the epoch this was sealed in; it is posted again later.
-                    return Ok(());
-                }
-                Err(fault) if matches!(fault.code.as_str(), "not-member" | "removed-sender") => {
-                    return Err(fault);
-                }
-                Err(fault) => {
-                    // The hub took no number for it, and this device never signs that number again: the
-                    // chain in this room stops here rather than fork.
-                    eprintln!(
-                        "[trommi] the hub refused an envelope of this device for good: {}",
-                        fault.code
-                    );
-                    core.model.room.outbox_blocked = Some(fault.code.clone());
-                    core.failed.insert(pending.id, fault);
-                    core.commit()?;
-                }
+                continue;
             }
+            if fault.code == "group-behind" {
+                // The hub has not reached the epoch this was sealed in; it is posted again later.
+                return Ok(());
+            }
+            // The hub took no number for it, and this device signs no other envelope under that number
+            // (9.0.1): it gives the envelope up, and with it writing in that group from here.
+            self.vault
+                .call(move |v: &mut Vault| v.device.envelope_abandon(id))
+                .await??;
+            core.drop_waiting(id);
+            core.failed.insert(first, fault.clone());
+            core.commit()?;
+            if matches!(fault.code.as_str(), "not-member" | "removed-sender") {
+                return Err(fault);
+            }
+            eprintln!(
+                "[trommi] the hub refused an envelope of this device for good: {}",
+                fault.code
+            );
+            core.model.room.outbox_blocked = Some(fault.code.clone());
         }
-        Ok(())
+        self.refresh_outbox(core).await
     }
 
     /// One entry of the device's outbox as the hub's route for its kind.
@@ -2275,28 +2184,24 @@ impl Client {
                     .await?
             }
             // What only a human device or a device that holds the recovery code makes.
-            OutboxKind::RoomFounding
-            | OutboxKind::ExternalCommit
-            | OutboxKind::SealedKey
-            | OutboxKind::RecoveryCode
-            | OutboxKind::RecoveryCommit
-            | OutboxKind::RecoveryFinish => {
-                return Err(Fault::new("forbidden", "not a request of an agent device"))
-            }
+            _ => return Err(Fault::new("forbidden", "not a request of an agent device")),
         };
         Ok(Accepted {
             change: answer.get("change").and_then(Value::as_u64),
         })
     }
 
-    /// Seals an envelope of this device and stages it in the outbox. Nothing is posted.
+    /// Seals an envelope of this device: the device signs it and puts it in its outbox with the advanced
+    /// chain, and the note of what it was sealed from is staged with it. Nothing is posted. `again`: it
+    /// stands in for an envelope the hub voided (how often by now, and the first one's outbox id).
     pub(crate) async fn seal(
         &self,
         core: &mut Core,
         group: GroupId,
         spec: Spec,
         files: Vec<String>,
-    ) -> Result<Pending> {
+        again: Option<(u8, u64)>,
+    ) -> Result<Sealed> {
         if let Some(code) = &core.model.room.outbox_blocked {
             return Err(Fault::new(
                 "chain-halted",
@@ -2304,50 +2209,45 @@ impl Client {
             ));
         }
         self.active(core)?;
-        let session = core
-            .session_of_group(&group)
-            .ok_or_else(|| Fault::new("forbidden", "an agent writes into session groups only"))?;
-        let draft_spec = crate::agent::resolve(core, &session, &spec)?;
+        // Nothing is queued without a bound while the hub is away.
+        if core.outbox.len() >= MAX_WAITING {
+            return Err(Fault::new(
+                "offline",
+                "the hub has been away for too long and too much waits for it; nothing more is queued until it is back",
+            ));
+        }
+        let draft = crate::agent::draft(core, &group, &spec)?;
         let now = now_ms();
-        // Sealed and put into the outbox in one go on the vault's thread: the chain's step and the envelope it
-        // was for are staged together, whatever becomes of this call.
-        let pending = self
+        let sealed = self
             .vault
-            .call(move |v: &mut Vault| -> Result<Pending> {
-                let draft = crate::agent::draft(v, &group, &draft_spec, None, &files)?;
-                let sealed = v.seal(&group, &draft, now)?;
-                let prefix = side_key(TAG_PENDING, &[]);
-                let id = v
-                    .journal()
-                    .scan(&prefix[..2])
+            .call(move |v: &mut Vault| -> Result<Sealed> {
+                let file_ids: Vec<trommi_core::ids::FileId> = files
                     .iter()
-                    .filter_map(|(_, value)| serde_json::from_slice::<Pending>(value).ok())
-                    .map(|pending| pending.id)
-                    .max()
-                    .unwrap_or(0)
-                    + 1;
-                let pending = Pending {
-                    id,
+                    .filter_map(|id| trommi_core::ids::FileId::from_base64url(id).ok())
+                    .collect();
+                let sealed = v.device.seal(&draft, None, &file_ids, now)?;
+                // Staged with the device's batch: one record holds the envelope, its number and its note.
+                let waiting = Waiting {
                     group: b64(group.as_bytes()),
                     spec,
                     files,
-                    bytes: b64(&sealed.bytes),
-                    hash: sealed.hash.to_base64url(),
-                    seq: sealed.seq,
-                    change: None,
                     rebuild: false,
-                    resealed: 0,
-                    first: None,
+                    resealed: again.map_or(0, |(count, _)| count),
+                    first: again.map(|(_, first)| first),
                 };
                 v.journal().put(
-                    side_key(TAG_PENDING, &[&id.to_be_bytes()]),
-                    serde_json::to_vec(&pending)?,
+                    side_key(TAG_SPEC, &[&sealed.outbox_id.to_be_bytes()]),
+                    serde_json::to_vec(&waiting)?,
                 );
-                Ok(pending)
+                v.journal().put(
+                    side_key(TAG_OWN, &[group.as_bytes()]),
+                    sealed.seq.to_be_bytes().to_vec(),
+                );
+                Ok(sealed)
             })
             .await??;
-        core.outbox.push(pending.clone());
-        Ok(pending)
+        core.outbox.push(sealed.outbox_id);
+        Ok(sealed)
     }
 
     /// Seals, writes, posts, and follows the hub's order up to the envelope's place. With the hub away the
@@ -2360,8 +2260,9 @@ impl Client {
     ) -> Result<SentInfo> {
         let mut core = self.core.lock().await;
         let group = core.group_of(session_id)?;
-        let pending = self.seal(&mut core, group, spec, files).await?;
+        let sealed = self.seal(&mut core, group, spec, files, None).await?;
         core.commit()?;
+        let id = sealed.outbox_id;
         let sent = async {
             self.pump(&mut core).await?;
             self.catch_up(&mut core).await
@@ -2375,27 +2276,29 @@ impl Client {
                 return Err(fault);
             }
         }
-        if let Some(fault) = core.failed.remove(&pending.id) {
+        if let Some(fault) = core.failed.remove(&id) {
             return Err(fault);
         }
         // If the hub voided it for its epoch, another envelope stands in its place, under another number:
         // that one is what the caller is told of.
-        let pending = core.replaced.remove(&pending.id).unwrap_or(pending);
-        let object_id = trommi_core::envelope::object_id(&group, &self.me, pending.seq)
-            .ok()
-            .map(|id| hex(id.as_bytes()));
-        let envelope_number = match core.outbox.iter().find(|p| p.id == pending.id) {
-            Some(still) => still.change.filter(|change| *change > 0),
-            None => Some(core.cursor),
-        };
-        if envelope_number.is_none() {
+        let sealed = core.replaced.remove(&id).unwrap_or(sealed);
+        let waits = core.outbox.contains(&sealed.outbox_id);
+        if waits {
             self.wake.notify_one();
         }
         Ok(SentInfo {
-            hash: pending.hash,
-            object_id,
-            envelope_number,
+            hash: sealed.envelope_hash.to_base64url(),
+            object_id: sealed.object_id.map(|id| hex(id.as_bytes())),
+            envelope_number: (!waits).then_some(core.cursor),
         })
+    }
+
+    /// Posts what waits and follows the hub's order: for a caller that put a request of the device into its
+    /// outbox (a founding, a Commit, a message). The device's own Commit is merged where the log shows it.
+    pub(crate) async fn post_and_follow(&self, core: &mut Core) -> Result<()> {
+        core.commit()?;
+        self.pump(core).await?;
+        self.catch_up(core).await
     }
 
     /// Waits until nothing of this device waits for the hub, at most `timeout_ms`. `chain-halted` when the
@@ -2434,36 +2337,8 @@ impl Client {
         }
     }
 
-    /// Remembers the Cuts of a Commit this device built, until the hub answered it.
-    pub(crate) fn remember_cuts(core: &Core, outbox_id: u64, cuts: &[Cut]) {
-        let rows: Vec<(String, u64, String)> = cuts
-            .iter()
-            .map(|cut| (cut.device.to_base64url(), cut.seq, cut.hash.to_base64url()))
-            .collect();
-        if let Ok(bytes) = serde_json::to_vec(&rows) {
-            core.journal
-                .put(side_key(TAG_CUTS, &[&outbox_id.to_be_bytes()]), bytes);
-        }
-    }
-
     /// A refusal of the hub for a request of the device's outbox since the last call, if any.
     pub(crate) fn take_refusal(core: &mut Core, outbox_id: u64) -> Option<Fault> {
-        core.failed.remove(&(u64::MAX - outbox_id))
+        core.failed.remove(&outbox_id)
     }
-}
-
-/// What a log entry did, as far as the client acts on it.
-enum LogOutcome {
-    Nothing,
-    Early,
-    /// A Commit of a group this device is in was merged; how many findings its Cuts brought, and the group
-    /// if a Cut dropped envelopes this device had accepted.
-    Epoch(usize, Option<GroupId>),
-    Keys(GroupId),
-    Newer,
-    /// The room enrolled this device; whether its inviter did.
-    Enrolled(bool),
-    Unenrolled,
-    RemovedFrom(GroupId),
-    Bad(&'static str),
 }
