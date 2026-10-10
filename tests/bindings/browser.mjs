@@ -24,7 +24,7 @@ if (!appCsp.includes("script-src 'self' 'wasm-unsafe-eval'")) throw new Error("t
 const without = appCsp.replace(" 'wasm-unsafe-eval'", '')
 
 const TYPES = { '.mjs': 'text/javascript', '.js': 'text/javascript', '.json': 'application/json', '.wasm': 'application/wasm' }
-const SERVED = /^\/(core\/wasm\/pkg|tests\/bindings)\//
+const SERVED = /^\/(core\/wasm\/pkg|tests\/bindings|spec\/vectors)\//
 // The policy of the page (the document and everything but the worker's script) and of the worker script's response.
 const policy = { page: appCsp, worker: appCsp }
 const server = http.createServer((request, response) => {
