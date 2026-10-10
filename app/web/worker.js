@@ -1,9 +1,6 @@
 // The app's worker (wrangler.jsonc: it runs before the static assets of public/).
 //   - plain http goes to https (WebCrypto only exists on https pages);
-//   - /connect is the one-line connect script (curl -fsSL https://app.trommi.com/connect | sh -s '<invite link>',
-//     public/connect.sh), as plain text: the older way, still named by the iOS app and the website; it runs the
-//     connector's install.sh, setup and connect, the three commands the invite page shows. The connector itself is a
-//     signed GitHub release of trommi/trommi, never served from here;
+//   - the connector is a signed GitHub release of trommi/trommi (install.sh), never served from here;
 //   - /.well-known/apple-app-site-association (the iOS app's universal links: /card/…, /s/…, /settings… open in Trommi
 //     when it is installed; and `webcredentials`: the app may use this site's passkeys) is
 //     public/apple-app-site-association.json, served as JSON, no redirect;
@@ -29,11 +26,6 @@ export default {
     if (url.protocol === 'http:') {
       url.protocol = 'https:'
       return Response.redirect(url.toString(), 301)
-    }
-    if (url.pathname === '/connect' || url.pathname === '/connect/') {
-      const r = await env.ASSETS.fetch(new Request(new URL('/connect.sh', url), { method: request.method === 'HEAD' ? 'HEAD' : 'GET' }))
-      if (!r.ok) return r
-      return new Response(r.body, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' } })
     }
     if (url.pathname === SITE_ASSOCIATION.address) {
       const r = await env.ASSETS.fetch(new Request(new URL(SITE_ASSOCIATION.file, url), { method: request.method === 'HEAD' ? 'HEAD' : 'GET' }))

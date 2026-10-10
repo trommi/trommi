@@ -49,8 +49,6 @@ http.createServer((req, res) => {
 }).listen(port, '127.0.0.1', () => console.log(`app on http://127.0.0.1:${port}`))
 async function serve(req, res) {
   const url = new URL(req.url, 'http://x')
-  // The connect script (curl -fsSL <app>/connect | sh -s '<link>'), as worker.js serves it.
-  if (url.pathname === '/connect' || url.pathname === '/connect/') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, 'connect.sh'))) }
   if (url.pathname === SITE_ASSOCIATION.address) { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, SITE_ASSOCIATION.file))) }
   let rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
   if (rel.split('/').includes('..')) { res.writeHead(403); return res.end() }

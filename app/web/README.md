@@ -52,12 +52,12 @@ repository yet; these scripts wait for them.
 ## Layout
 
 ```
-worker.js              http -> https, /connect (the one-line connect script), the universal links' file
+worker.js              http -> https, the universal links' file
 wrangler.jsonc  THIRD-PARTY.md   fonts, Argon2, the QR reader, the word list: whose they are
 core/                  the client core (TypeScript): the room, sync, crypto, storage, the worker. core/README.md
 dev/                   serve, build, check, verify; look, perf and the browser tests (cdp.mjs drives Chromium)
 public/
-  index.html  sw.js  manifest.webmanifest  _headers  robots.txt  connect.sh  frame.html (the sandbox a published page runs in)
+  index.html  sw.js  manifest.webmanifest  _headers  robots.txt  frame.html (the sandbox a published page runs in)
   help.html            help and "how it works", its own style and script inline
   app.mjs  app.css     start, router, the room in the page (board state, actions, the pages and their live
                        pieces), frame, attachments, push, new versions; app.css: tokens, base layout, type, links, focus
@@ -76,9 +76,8 @@ public/
 **Inviting an agent.** The invite page (`auth.mjs` `clipboard()`) shows three commands to copy: once per machine
 `curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh` (the connector's signed release,
 `connector/README.md`), once per program `trommi-connector setup claude` (or `setup codex`), once per folder
-`trommi-connector connect '<link>'` with the invite's link. `public/connect.sh`, served by `worker.js` at `/connect`, is
-the older one-line way (`curl -fsSL https://app.trommi.com/connect | sh -s '<link>'`) that the iOS app and the website
-still show: it runs the same three. The app serves no connector binaries. Two of the connector's files feed the help
+`trommi-connector connect '<link>'` with the invite's link. The iOS app and the website show the same three. The app
+serves no connector binaries. Two of the connector's files feed the help
 page's list of tools: `connector/tools.json` and `connector/prompt.md`.
 
 ## Rules
