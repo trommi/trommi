@@ -1739,3 +1739,141 @@ fn a_revoked_key_has_no_role_in_an_epoch_that_kept_its_leaf() {
     assert_eq!(late.objects(&side).unwrap(), objects);
     assert_eq!(w.old.objects(&side).unwrap(), objects);
 }
+
+#[test]
+fn a_recovery_served_a_chain_cut_short_cuts_it_where_it_verified_it() {
+    use trommi_core::device::ServedEnvelope;
+    use trommi_core::recovery::{check_room, Replacement};
+
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    write(&mut hub, &mut a, &note(1));
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    // A lost device wrote three envelopes; the hub took them all.
+    let mut pen = Pen::new(&forger.key);
+    let written: Vec<envelope::Envelope> = (0..3)
+        .map(|_| pen.sign(&claim, &item, &Objects::new(), now()))
+        .collect();
+    for envelope in &written {
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(envelope))
+            .unwrap();
+    }
+    sync_all(&hub, &mut a);
+    assert_eq!(a.chain_head(&room, &pen.id()).unwrap().seq, 3);
+    drop((a, b));
+
+    let keys = test_keys();
+    let stored = trommi_tests::served_chains(&hub);
+    let recover = |hub: &mut Hub, device: &mut TestDevice, served: &[(Vec<u8>, u64)]| {
+        hub.open_recovery(&device.id()).unwrap();
+        let fetched = trommi_tests::fetch(hub, &keys);
+        let replacement = fetched.served(|served| {
+            let checked = check_room(&keys, served)?;
+            keys.replace(
+                &mut SystemEntropy,
+                &room.room_id(),
+                checked.observer.history().unwrap(),
+            )
+        })?;
+        let chains: Vec<ServedEnvelope<'_>> = served
+            .iter()
+            .map(|(bytes, change)| ServedEnvelope {
+                bytes,
+                change: *change,
+                void_code: None,
+            })
+            .collect();
+        let built = fetched.served(|served| {
+            device.recover(&keys, served, &replacement, &chains, b"copies", now())
+        });
+        if built.is_err() {
+            hub.drop_recovery();
+        }
+        built.map(|_| replacement)
+    };
+    let honest: Vec<(Vec<u8>, u64)> = stored
+        .iter()
+        .map(|stored| (stored.pruned(), stored.change))
+        .collect();
+    let at = |envelope: &envelope::Envelope| {
+        let hash = envelope.hash().unwrap();
+        stored
+            .iter()
+            .position(|stored| stored.hash == hash)
+            .unwrap()
+    };
+    let hash_of = |envelope: &envelope::Envelope| envelope.hash().unwrap();
+    let mut device = new_device();
+
+    // The hub serves an envelope under number 2 that nobody signed: the bytes of the real one with
+    // another signature. No Cut is taken from an envelope that does not verify, and none beyond it.
+    let mut unsigned = written[1].prune().unwrap();
+    let mut other_pen = Pen::new(&Forger::new().key);
+    other_pen.resign(&mut unsigned);
+    let mut forged = honest.clone();
+    forged[at(&written[1])].0 = unsigned.encode().unwrap();
+    let refused: Result<Replacement, Error> = recover(&mut hub, &mut device, &forged);
+    assert_eq!(refused.err(), Some(Error::BadSignature));
+    assert!(device.outbox().is_empty() && device.room().is_none());
+
+    // The hub withholds the newest envelopes of that chain. What is left links from number 1 without a
+    // hole: the recovery cannot tell it from the whole chain, and cuts at the head it verified. This is
+    // the limit of section 17: a hub can withhold the newest envelopes of a sender, and a Cut is the
+    // remover's view.
+    let mut short = honest.clone();
+    short.remove(at(&written[2]));
+    short.remove(at(&written[1]));
+    let replacement = recover(&mut hub, &mut device, &short).unwrap();
+    post_ok(&mut hub, &mut device);
+    let cut = device.chain_cut(&room, &pen.id()).unwrap().unwrap();
+    assert_eq!((cut.seq, cut.hash), (1, hash_of(&written[0])));
+    assert_eq!(device.chain_head(&room, &pen.id()).unwrap(), cut);
+
+    // What lies beyond the Cut is refused from then on, though its writer signed it before the recovery:
+    // by the device that recovered, by the hub, and by a device that signs in later and learns the Cut
+    // from the room's Commits.
+    let new_keys = RecoveryKeys::from_code(replacement.code.duplicate()).unwrap();
+    let mut later = new_device();
+    trommi_tests::join_room(&hub, &mut later, &new_keys).unwrap();
+    post_ok(&mut hub, &mut later);
+    assert_eq!(later.chain_cut(&room, &pen.id()).unwrap(), Some(cut));
+    for reader in [&mut device, &mut later] {
+        for (ordered, envelope) in [(true, &written[1]), (false, &written[2])] {
+            let at = reader.cursor() + 1;
+            let got = reader
+                .receive_envelope(&envelope.encode().unwrap(), at, ordered, None, now())
+                .unwrap();
+            assert_eq!(
+                (got.outcome, got.code),
+                (EnvelopeOutcome::Refused, Some(Error::RemovedSender))
+            );
+        }
+        // The envelope at the Cut is the chain's own.
+        let at = reader.cursor() + 1;
+        let got = reader
+            .receive_envelope(&written[0].encode().unwrap(), at, true, None, now())
+            .unwrap();
+        assert_ne!(got.code, Some(Error::RemovedSender));
+    }
+    let next = pen.sign(&claim, &item, &Objects::new(), now());
+    assert_eq!(
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(&next)),
+        Err(Error::RemovedSender)
+    );
+}
