@@ -547,7 +547,10 @@ async fn a_removal_is_verified_only_by_the_commit_the_device_processes_itself() 
             break verified;
         }
     };
-    eprintln!("the removal came as {}", if claimed { "verified" } else { "a claim" });
+    eprintln!(
+        "the removal came as {}",
+        if claimed { "verified" } else { "a claim" }
+    );
     // (the Commit may have reached it before the hub cut it off; then it is verified already)
     if !claimed {
         // Commits that have nothing to do with it verify nothing.
