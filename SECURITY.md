@@ -7,7 +7,7 @@ How Trommi protects content, releases, server and repository.
 - One suite only: `MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519`.
 - The hub cannot read content, files or keys.
 - The hub sees: e-mail, members, sizes, times, push tokens.
-- Sign-in: password or passkey. The hub keeps no passwords.
+- Sign-in: password. The hub keeps no passwords.
 - Wrong passwords slow the source down. No lockout.
 - Recovery code: stored only sealed, AES-256-GCM under Argon2id and HKDF.
 - Nobody can reset an account.
@@ -54,8 +54,8 @@ How Trommi protects content, releases, server and repository.
 - Browser keys are only as safe as the server of the app.
 - A rollback does not roll back the database.
 - Rulesets (signed commits, no force push, tags): off for now.
-- Web and iOS read history whole; the core's paged calls are unused.
 - iOS: recovery and new code not yet run against a real hub.
+- Passkeys: built, off for now (needs PRF, which some password managers lack).
 - Planned: a post-quantum suite once OpenMLS ships one.
 - Planned: deleted content really gone, also on devices and backups.
 
