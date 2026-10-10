@@ -15,9 +15,11 @@
 //! epoch, and the walk verified each against the state it had reached. So equality at one epoch fixes every
 //! Commit before it and every state between: the leaves, the room's roles, the notes with their room epochs,
 //! times and Cuts. This rests on SHA-256 being collision resistant and on an Ed25519 signature fitting one
-//! key and one message. The hub's change numbers are not covered and decide nothing here: a session
-//! Commit is judged against the room state its own note names, and a helper session's against its main
-//! session's agent leaf at that room epoch.
+//! key and one message. The hub's change numbers are its word alone: a walk places each session Commit by
+//! its change number, which must lie in the room epoch the Commit's own note names (5.2.1), and records
+//! where each room epoch began. A wrong number can fail a walk; in a walk that is taken it changes nothing
+//! of what is recorded but those places. A helper session's Commit is judged against its main session's
+//! agent leaf at the room epoch its note names.
 //!
 //! **Order.** A session Commit names a room state, and a helper session's the agent leaf of its main
 //! session: the room group's past is learned first (`room-behind` otherwise), then a main session's, then
