@@ -15,11 +15,12 @@
 // good (the outbox item is `failed` in that change, then gone). While the pump is halted on an envelope the item
 // is `blocked` and `room.outbox_blocked` says why.
 //
-// The local cache (store-idb.ts `Cache`) holds the model's records, written after each batch (debounced, one
-// `setMany`) together with the device's cursor. It is NOT authoritative: the core's state is. A warm start shows
-// the cached model at once if it was written at exactly the cursor the device holds; a cache that is ahead or
-// behind is dropped, and the model is built again from the device's groups, the hub's Desk (`GET /v2/desk`, read
-// back through the core) and a rescan of the room's changes.
+// The local cache (store-idb.ts `Cache`) holds the model's records, written shortly after each batch (one
+// `setMany`) together with the cursor up to which the model holds everything the core took. It is NOT
+// authoritative: the core's state is. At a start, a cache at the device's cursor is the model. One behind it (the
+// page went away after the core took an item and before the cache was written) is shown, and everything after
+// its cursor is read back from the hub through the core before it counts as whole again. One ahead of the device
+// is dropped, and the model is built again from the device's groups, the hub's Desk and all of the room's changes.
 //
 // Nothing here logs. A file key, a share link's secret and a recovery code never go into an error's text.
 import { attachmentRef, encodeBodyBytes, encodePiece, encodeRegister, fileIdsOf, fileRefOf, UPDATE_MESSAGE } from './codec.ts'
@@ -42,6 +43,9 @@ const fail = (code: string, message: string): never => { throw new ClientError(c
 type Listener = (data: any) => void
 type Sent = { local_id: string; envelope_hash: string; seq: number }
 
+/** How long the model's changes are gathered before one write to the cache. Short: a page that goes away meanwhile
+ *  finds its cache behind the device and reads the difference back (see `open`). */
+const FLUSH_MS = 40
 const CHUNK = 65_536
 const DAY = 86_400_000
 const INVITE_CONFIRM_MS = 5 * 60_000
@@ -161,7 +165,13 @@ export class Client {
   private lamport = 0
   private started = false
   private removed = false
-  private rebuild = false
+  /** Not null: the model is not all the device holds; everything after this change is being read back. */
+  private rebuild: number | null = null
+  /** The cursor up to which everything the core took is in the model and handed to the cache; -1 while rebuilding. */
+  private stamped = -1
+  private rebuilding = false
+  /** The cursor the cache was last written with. */
+  private written = -2
   private goalsTimer: ReturnType<typeof setTimeout> | null = null
   private readonly offs: (() => void)[] = []
 
@@ -184,11 +194,18 @@ export class Client {
   async open(): Promise<this> {
     const e = this.engine
     const kept = (await this.cache.get('client/at').catch(() => null)) as { cursor: number; device: string } | null
-    if (kept && kept.device === this.my_device_id && kept.cursor === e.cursor) {
+    // The cache belongs to the cursor it was written at. At the device's cursor: it is the model. Behind it (the
+    // page went away between "the core took an item" and "the cache was written", or a rebuild was cut short,
+    // which is written as -1): what it holds is still true, and everything after its cursor is read back from
+    // the hub through the core before the cache counts as whole again. Ahead of the device, or another device's:
+    // dropped.
+    if (kept && kept.device === this.my_device_id && kept.cursor <= e.cursor) {
       this.model = M.modelFromCache(await this.cache.range(''))
+      if (kept.cursor === e.cursor) this.stamped = this.written = kept.cursor
+      else this.rebuild = Math.max(0, kept.cursor)
     } else {
       if (kept) await this.dropCache()
-      this.rebuild = e.cursor > 0
+      if (e.cursor > 0) this.rebuild = 0
     }
     const room = this.model.room
     Object.assign(room, { room_id: hex(this.room_id), hub_url: this.hub.hub_url, my_device_id: this.my_device_id, my_role: e.is_human ? 'human' : 'agent', last_envelope_number: e.position, connection: 'offline', outbox_blocked: null })
@@ -222,7 +239,10 @@ export class Client {
     const ch = this.change
     if (this.model.room.last_envelope_number !== this.engine.position) { this.model.room.last_envelope_number = this.engine.position; ch.room = true }
     M.project(this.model, ch, this.now())
-    if (M.changeIsEmpty(ch)) return
+    // (the engine moves its cursor only after an item's effects were reported: at any publish the model holds
+    // everything up to it, and this change carries what the cache lacks of it)
+    if (this.rebuild === null) this.stamped = this.engine.cursor
+    if (M.changeIsEmpty(ch)) { if (this.rebuild === null && this.written !== this.stamped) this.touched(); return }
     this.change = M.emptyChange()
     this.record(ch)
     this.emit('change', ch)
@@ -230,21 +250,23 @@ export class Client {
     if (this.alertsSeen.size > 1000) this.alertsSeen = new Set(this.model.alerts.map(a => a.alert_id))
     if (this.is_human && (ch.sessions.size || [...ch.registers].some(k => k.startsWith('desk/') || k.startsWith('session/')))) this.goalsSoon()
   }
+  /** The cache's cursor is to be written although no record changed. */
+  private touched(): void { if (this.flushTimer === null) this.flushTimer = setTimeout(() => { this.flushTimer = null; void this.flush().catch(() => {}) }, FLUSH_MS) }
   /** A change made outside the engine's batches (an action's echo): published at once. */
   private tell(make: (ch: Change) => void): void { make(this.change); this.publish() }
   private record(ch: Change): void {
     for (const [key, value] of M.cacheRecords(this.model, ch)) this.dirty.set(key, value)
-    if (this.flushTimer === null) this.flushTimer = setTimeout(() => { this.flushTimer = null; void this.flush().catch(() => {}) }, 250)
+    if (this.flushTimer === null) this.flushTimer = setTimeout(() => { this.flushTimer = null; void this.flush().catch(() => {}) }, FLUSH_MS)
   }
   /** Writes what changed to the cache now: one transaction, with the cursor it belongs to. */
   flush(): Promise<void> {
     if (this.flushTimer !== null) { clearTimeout(this.flushTimer); this.flushTimer = null }
     return this.flushing = this.flushing.catch(() => {}).then(async () => {
-      if (!this.dirty.size) return
-      const taken = [...this.dirty]
+      if (!this.dirty.size && this.written === (this.rebuild === null ? this.stamped : -1)) return
+      const taken = [...this.dirty], stamp = this.rebuild === null ? this.stamped : -1
       this.dirty.clear()
-      const entries: [string, unknown | undefined][] = [...taken, ['client/at', { cursor: this.engine.cursor, device: this.my_device_id }]]
-      try { await this.cache.setMany(entries) } catch (e) {
+      const entries: [string, unknown | undefined][] = [...taken, ['client/at', { cursor: stamp, device: this.my_device_id }]]
+      try { await this.cache.setMany(entries); this.written = stamp } catch (e) {
         // not written: the records stay due (a newer value of one wins), so a later write cannot stamp the cursor
         // over a cache that lacks them
         for (const [key, value] of taken) if (!this.dirty.has(key)) this.dirty.set(key, value)
@@ -292,6 +314,7 @@ export class Client {
     on('alert', a => { M.pushAlert(this.model, this.change, { code: a.code, message: a.message, envelope_number: a.change, at: this.now() }) })
     on('stream', event => this.onStream(event))
     on('invites', ({ open }) => this.invitesDone(open))
+    on('rescanned', () => { if (this.rebuilding) { this.rebuilding = false; this.rebuild = null; this.touched() } })
     on('batch', () => this.publish())
     on('reopened', () => { void this.reconcile().catch(() => {}) })
     on('closed', ({ code }) => {
@@ -355,11 +378,11 @@ export class Client {
   async start({ stream = true }: { stream?: boolean; process_instance?: string | null } = {}): Promise<void> {
     if (this.started) return
     this.started = true
-    if (this.rebuild) await this.fromDesk().catch(() => {})
+    if (this.rebuild !== null) await this.fromDesk().catch(() => {})
     if (!this.started) return
     await this.engine.start({ stream })
     if (!this.started) return     // stopped meanwhile: no timer is left behind
-    if (this.rebuild) { this.rebuild = false; await this.engine.wantRescan() }
+    if (this.rebuild !== null) { this.rebuilding = true; await this.engine.wantRescan(this.rebuild) }
     this.inviteTimer = setInterval(() => this.watchInvites(), 1000)
     void this.nameDevice().catch(() => {})
   }
