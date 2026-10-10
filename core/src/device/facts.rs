@@ -40,6 +40,7 @@ pub(super) const SUB_FINDING: u8 = 6;
 pub(super) const SUB_OWN_CUTS: u8 = 7;
 pub(super) const SUB_PROVISIONAL: u8 = 8;
 pub(super) const SUB_BY_HASH: u8 = 9;
+pub(super) const SUB_ORIGIN: u8 = 10;
 /// The parts of the table of registers.
 pub(super) const SUB_REGISTERS: u8 = 0;
 pub(super) const SUB_OWN_IDS: u8 = 1;
@@ -87,6 +88,9 @@ pub(super) struct EpochFacts {
     pub seat: Option<DeviceId>,
     /// The Commit that ended the epoch.
     pub end: Option<EpochEnd>,
+    /// The device did not stand in this epoch: it learned it from the group's public history
+    /// ([`super::history`]). Its end was not processed live, so an envelope of it is judged as read back.
+    pub learned: bool,
 }
 
 impl Encode for EpochFacts {
@@ -101,6 +105,7 @@ impl Encode for EpochFacts {
         writer.u8(u8::from(self.end.is_some()));
         writer.u64(self.end.map_or(0, |end| end.processed_at));
         writer.u64(self.end.map_or(0, |end| end.time));
+        writer.u8(u8::from(self.learned));
         Ok(())
     }
 }
@@ -123,10 +128,16 @@ impl Decode for EpochFacts {
             processed_at: reader.u64()?,
             time: reader.u64()?,
         };
+        let learned = match reader.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::BadFormat),
+        };
         Ok(Self {
             leaves,
             seat: Some(seat).filter(|seat| !seat.is_zero()),
             end: ended.then_some(end),
+            learned,
         })
     }
 }
@@ -260,9 +271,9 @@ impl Decode for GroupState {
 
 /// The removal of a device from a group: its Cut, and the epoch that began without its leaf. The first one
 /// for a device stands.
-struct Removal {
-    cut: Head,
-    epoch: u64,
+pub(super) struct Removal {
+    pub cut: Head,
+    pub epoch: u64,
 }
 
 impl Encode for Removal {
@@ -364,6 +375,9 @@ pub(super) fn check_entry(key: &[u8], value: &[u8]) -> Result<(), Error> {
                     .ok_or(Error::BadFormat),
                 SUB_OWN_CUTS => codec::decode::<OwnCuts>(value, value.len()).map(|_| ()),
                 SUB_PROVISIONAL => Hash32::from_slice(value).map(|_| ()),
+                SUB_ORIGIN => {
+                    codec::decode::<super::history::Origin>(value, value.len()).map(|_| ())
+                }
                 SUB_BY_HASH => {
                     if value.len() == 40 {
                         Ok(())
@@ -494,7 +508,7 @@ impl<S: Storage> Device<S> {
 
     /// The roles of `leaves` under the room state that the Commit naming `room_epoch` was judged with, and the
     /// seat among them.
-    fn roles(
+    pub(super) fn roles(
         &self,
         group: &GroupId,
         leaves: &[(LeafNodeIndex, DeviceId)],
@@ -506,6 +520,7 @@ impl<S: Storage> Device<S> {
                 leaves: devices.map(|device| (device, Some(Role::Human))).collect(),
                 seat: None,
                 end: None,
+                learned: false,
             });
         }
         let session = self
@@ -550,6 +565,7 @@ impl<S: Storage> Device<S> {
             leaves,
             seat,
             end: None,
+            learned: false,
         })
     }
 
@@ -565,6 +581,10 @@ impl<S: Storage> Device<S> {
     ) -> Result<(), Error> {
         let merging = self.memory.wire.merging.take();
         let facts = self.roles(group, leaves, room_epoch)?;
+        // The first epoch this device stands in is where its own knowledge of the group begins.
+        if self.newest_epoch(group).is_none() {
+            self.put_origin(batch, group, epoch)?;
+        }
         // The device's own chain in the group exists from its first epoch there on.
         let own_chain = group_key(table::CHAIN, SUB_OWN_CHAIN, group, &[]);
         if self.stored(&own_chain).is_none() {
@@ -610,18 +630,20 @@ impl<S: Storage> Device<S> {
 
     /// This device's own Commit with the outbox entry `outbox`, made at `time`, is being merged. The moment
     /// it processes the Commit is the latest clock it was told, and no earlier than the making. The Cuts are
-    /// the ones kept with that outbox entry: `Error::Storage` when they are not there, since a Commit that
-    /// removes a leaf must end its chain.
+    /// the ones kept with that outbox entry: `Error::Storage` when they are not there, or are not the Cuts
+    /// `noted` in the Commit as the log shows it, since a Commit that removes a leaf must end its chain.
     pub(super) fn merging_own(
         &mut self,
         group: &GroupId,
         outbox: u64,
         time: u64,
+        noted: &[Cut],
     ) -> Result<(), Error> {
+        // The Cuts kept are the ones the Commit's note carries, which every other device applies.
         let cuts = self
             .stored(&group_key(table::CHAIN, SUB_OWN_CUTS, group, &[]))
             .and_then(|value| codec::decode::<OwnCuts>(value, value.len()).ok())
-            .filter(|own| own.outbox == outbox)
+            .filter(|own| own.outbox == outbox && own.cuts == noted)
             .map(|own| own.cuts)
             .ok_or_else(|| damaged("the Cuts of an own Commit"))?;
         self.memory.wire.merging = Some(Merging {
@@ -897,7 +919,11 @@ impl<S: Storage> Device<S> {
 
     // ---- Cuts ----
 
-    fn removal(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Removal>, Error> {
+    pub(super) fn removal(
+        &self,
+        group: &GroupId,
+        device: &DeviceId,
+    ) -> Result<Option<Removal>, Error> {
         self.stored(&group_key(table::CHAIN, SUB_CUT, group, device.as_bytes()))
             .map(|value| codec::decode(value, value.len()).map_err(|_| damaged("a Cut")))
             .transpose()
@@ -920,6 +946,18 @@ impl<S: Storage> Device<S> {
         if self.cut(group, &cut.device)?.is_some() {
             return Ok(());
         }
+        self.end_chain(batch, group, cut, epoch)
+    }
+
+    /// Writes the Cut of a removed device and does to its chain what the Cut says, whatever Cut was held
+    /// for it before.
+    pub(super) fn end_chain(
+        &mut self,
+        batch: &mut Batch,
+        group: &GroupId,
+        cut: &Cut,
+        epoch: u64,
+    ) -> Result<(), Error> {
         let head = Head {
             seq: cut.seq,
             hash: cut.hash,

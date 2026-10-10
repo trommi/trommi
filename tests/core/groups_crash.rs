@@ -158,12 +158,22 @@ fn a_commit_survives_a_crash_or_a_failed_write_at_every_step() {
             assert_eq!(hub.post(&device.id(), &entry), Ok(answer));
             device.outbox_accepted(entry.id, answer)
         });
+        // The answer is written, and the Commit waits for its place in the log: the group stands in the old
+        // epoch, also after a crash.
+        let waiting = run.device.group(&room_group).unwrap();
+        assert_eq!((waiting.epoch, waiting.pending), (1, true));
+        assert!(run.device.outbox().is_empty());
+        assert_eq!(
+            run.device.update(&room_group, true, now()),
+            Err(Error::Busy)
+        );
         // The same bytes under the same id every time, and one Commit for the epoch in the log.
         assert!(posted.iter().all(|parts| *parts == entry.parts));
         assert_eq!(run.hub.log.len(), log_before + 1);
         assert_eq!(run.hub.log.last().unwrap().bytes, entry.parts[0]);
         assert_eq!(run.hub.epoch(&room_group), Some(2));
-        // 4: the log is processed: the peer followed the Commit and made the next one.
+        // 4: the log is processed: the device merges its Commit where the log shows it; the peer followed the
+        // Commit and made the next one.
         sync_ok(&run.hub, &mut run.peer);
         run.peer.update(&room_group, true, now()).unwrap().unwrap();
         post_ok(&mut run.hub, &mut run.peer);
@@ -176,11 +186,14 @@ fn a_commit_survives_a_crash_or_a_failed_write_at_every_step() {
         });
         assert!(matches!(
             &processed[..],
-            [Processed::Commit {
-                superseded: None,
-                removed: false,
-                ..
-            }]
+            [
+                Processed::OwnCommit,
+                Processed::Commit {
+                    superseded: None,
+                    removed: false,
+                    ..
+                }
+            ]
         ));
 
         // The end is the one of an uninterrupted run: merged, nothing pending, nothing to send, and the keys
@@ -421,20 +434,36 @@ fn a_founding_survives_a_crash_and_a_refusal_leaves_nothing() {
         );
     }
 
+    // The agent device already has its session: a second founding for it is not built.
+    let packages = run.hub.claim(&needed).unwrap();
+    assert_eq!(
+        run.device.found_session(&agent_id, &packages, now()),
+        Err(Error::BadCommit)
+    );
+    run.memory_is_what_is_stored();
+
     // A founding the hub refuses, reported after a crash: the group and its keys are gone.
     let mut second = new_device();
     enrol(&mut run.hub, &mut run.device, &mut second);
-    let packages = run.hub.claim(&needed).unwrap();
+    publish_some(&mut run.hub, &mut second, 1);
+    let second_id = second.id();
+    let packages = run.hub.claim(&[run.peer.id(), second_id]).unwrap();
     run.crash_after = Some(2);
-    // The agent device already has its session: this founding is refused.
     let refused = run.step(2, |_, device| {
-        device.found_session(&agent_id, &packages, now())
+        device.found_session(&second_id, &packages, now())
     });
     let refused = GroupId::session(run.room_group.room_id(), refused);
     assert!(run.device.content_key(&refused, 0).is_ok());
+    // The room goes on before the founding reaches the hub: it names a room epoch behind.
+    settle(&run.hub, &mut run.peer);
+    run.peer
+        .update(&run.room_group, true, now())
+        .unwrap()
+        .unwrap();
+    post_ok(&mut run.hub, &mut run.peer);
     assert_eq!(
         post_all(&mut run.hub, &mut run.device),
-        [Err(Error::BadCommit)]
+        [Err(Error::RoomBehind)]
     );
     assert_eq!(run.device.group(&refused).err(), Some(Error::NotFound));
     assert_eq!(run.device.content_key(&refused, 0), Err(Error::NoKey));
