@@ -697,7 +697,7 @@ export const steps = [
     await E.until("document.querySelector('#way-forgot')", 'the login screen')
     await E.click('#way-forgot')
     await E.until("document.querySelector('#forgot-form')", 'the forgot password screen')
-    await E.type('#forgot-form input[name=email]', ctx.email)
+    await E.type('#forgot-form input[name=account]', ctx.email)
     await E.type('#forgot-form textarea[name=words]', ctx.words)
     await E.type('#forgot-form input[name=password]', newPassword)
     await E.shot('standin-24-forgot')
@@ -741,7 +741,7 @@ export const steps = [
       await G.click('#way-login')
       await sleep(2000)
       const asked = since().filter(r => r.path === '/v2/account/passkey/challenge').length
-      const usable = await G.js("const f = document.querySelector('#login-form input[name=email]'); return !!f && f.getClientRects().length > 0")
+      const usable = await G.js("const f = document.querySelector('#login-form input[name=account]'); return !!f && f.getClientRects().length > 0")
       await G.go('about:blank')
       ctx.run.check(asked <= 2, 'at most two passkey challenges were asked of the hub in two seconds', asked)
       ctx.run.check(usable, 'the login form stands still, to type into')

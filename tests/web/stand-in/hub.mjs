@@ -371,14 +371,27 @@ export async function startFakeHub(opts = {}) {
     const id = scope ? Buffer.from(scope.user_handle, 'base64url') : idOfChallenge(challenge)
     return { challenge: c, account: idText(id), user_handle: b64(id) }
   }
+  /** The credential id in an attestation object's authenticator data (WebAuthn 6.1: rpIdHash 32, flags 1, counter 4,
+   *  then, with the flag 0x40, aaguid 16, length 2, the id), or null. The CBOR around it is not read: the data is
+   *  the byte string after the text "authData". */
+  function attestedCredentialId(attestation) {
+    const at = attestation.indexOf('authData')
+    if (at < 0) return null
+    const head = at + 8, kind = attestation[head]
+    const start = kind === 0x58 ? head + 2 : kind === 0x59 ? head + 3 : -1
+    if (start < 0 || attestation.length < start + 55 || !(attestation[start + 32] & 0x40)) return null
+    const length = attestation.readUInt16BE(start + 53)
+    return length >= 1 && length <= 1023 && attestation.length >= start + 55 + length ? attestation.subarray(start + 55, start + 55 + length) : null
+  }
   /** A registration on a challenge of `scope`: null for a sign-up, else the account it was handed out for, as it was then. */
   function passkey(v, scope = null) {
     const attestation = unb64(v?.attestation_object), client = unb64(v?.client_data_json)
     if (!attestation?.length || !client?.length) throw refuse('bad-format', 'attestation_object: base64url')
     const held = takePasskeyChallenge(client, 'bad-passkey')
     if ((held?.account ?? null) !== (scope?.account ?? null) || (held && held.revision !== scope.revision)) throw refuse('bad-passkey', 'challenge')
-    // the real hub reads the credential id out of the attestation; the fake names it by the attestation's hash
-    return { credential_id: b64(sha256(attestation).subarray(0, 16)), sealed_copy: sealedCopy(v, 'sealed_copy'), transports: v.transports ?? [], created_at: now(), last_used_at: null, algorithm: -7, sign_count: 0 }
+    // the credential id is read out of the attestation as the real hub reads it, where it is one (a browser's);
+    // bytes that are no attestation (a unit test's) are named by their hash. Nothing of it is verified.
+    return { credential_id: b64(attestedCredentialId(attestation) ?? sha256(attestation).subarray(0, 16)), sealed_copy: sealedCopy(v, 'sealed_copy'), transports: v.transports ?? [], created_at: now(), last_used_at: null, algorithm: -7, sign_count: 0 }
   }
   /** Uses a challenge up; returns the scope it was handed out for (null: no account's). */
   function takePasskeyChallenge(client_data, code) {
