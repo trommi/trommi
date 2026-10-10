@@ -100,7 +100,8 @@ extension BoardModel {
     case "create-busy": signing = true; phase = .create
     case "create-offline": error = "Can’t reach Trommi. Check your connection."; phase = .create
     case "create-limit": error = "Too many sign-ups with this email. Try tomorrow."; phase = .create
-    case "kit", "kit-shown": demoKit = KitGate(email: lastEmail, words: words)
+    // (a made-up account id, so that the sheet is drawn whole: the id as text and its QR code)
+    case "kit", "kit-shown": demoKit = KitGate(email: lastEmail, words: words, accountId: "0f8fad5b-d9cb-469f-a165-70867728950e")
     case "kit-again", "kit-wrong": demoKit = KitGate(email: lastEmail, words: nil)
     case "login": phase = .email
     case "login-error": error = "Wrong email or password."; phase = .email

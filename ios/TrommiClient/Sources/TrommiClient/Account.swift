@@ -1,8 +1,13 @@
-// Account.swift: the account of a room (spec/v2.md 8.8, which is spec/v1.md section 16): an e-mail with a password,
-// passkeys or both, and an Emergency Kit of twelve words. An account is a way to the room's recovery code: the hub
-// keeps one sealed copy of the code per way in and hands it out to who proves that way; the device opens the copy and
-// joins the room with the code (RoomAccount.swift). The hub never sees the password, the words, a passkey's output or
-// the code.
+// Account.swift: the account of a room (spec/v2.md 8.8, which is spec/v1.md section 16; the routes: spec/hub-api.md
+// "The account"): a password, passkeys or both, and an Emergency Kit of twelve words. An account is a way to the
+// room's recovery code: the hub keeps one sealed copy of the code per way in and hands it out to who proves that
+// way; the device opens the copy and joins the room with the code (RoomAccount.swift). The hub never sees the
+// password, the words, a passkey's output or the code.
+//
+// How an account is named. Every account has an account id, a UUID the hub mints (a public value, printed on the
+// kit). It may have an e-mail: a password needs one (its keys are derived from it), a passkey does not. At log-in
+// and recovery ONE field names the account, `account`: an e-mail address if it contains "@", else the id. The kit's
+// keys are derived from the e-mail if the account has one, else from the id (`kit_form`: "email" or "id").
 //
 // Nothing here computes a key or seals anything: every derivation, the word list and the sealed copies are the core's
 // (`Core.tools`). This file names the hub's routes (hub/src/accounts.rs) and moves the bytes between the two. The
@@ -29,31 +34,91 @@ public func parseRecoveryWords(_ text: String) throws -> String { try Core.tools
 /** The fixed input every passkey of an account evaluates its prf over (spec/v1.md 16.7): a constant, not a secret. */
 public let PASSKEY_PRF_INPUT: Bytes = utf8("trommi/v1/passkey-prf")
 
-/** The Emergency Kit as a text file, the web's download word for word; `made` is shown as a UTC day. */
+/**
+ * Whether a text has the form of an account id as a person may type it: 32 hex digits, without regard to case,
+ * spaces and dashes (spec/hub-api.md). A check of a field's form only: the id is read by the core
+ * (`accountIdParse`) and by the hub.
+ */
+public func looksLikeAccountId(_ text: String) -> Bool {
+  let digits = text.filter { $0 != " " && $0 != "-" }
+  return digits.count == 32 && digits.allSatisfy { $0.isASCII && $0.isHexDigit }
+}
+
+/**
+ * The one field that names an account at log-in and recovery: an e-mail address if it contains "@", else the account
+ * id. `bad-email` for an address that is none, `bad-account` for a text that is neither.
+ */
+public func accountName(_ field: String) throws -> AccountName {
+  let text = field.trimmingCharacters(in: .whitespacesAndNewlines)
+  if text.contains("@") { return .email(try Core.tools.normaliseEmail(text)) }
+  guard looksLikeAccountId(text) else { throw TrommiError("bad-account", "neither an e-mail address nor an account id") }
+  return .id(try Core.tools.accountIdParse(text))
+}
+extension AccountName {
+  /** What goes into the hub's field `account`. */
+  var wire: String { switch self { case .email(let email): return email; case .id(let id): return id } }
+}
+
+/** An Emergency Kit as it is shown once: its words, and what the sheet prints beside them. */
+public struct EmergencyKit: Equatable {
+  /** The twelve words. They are kept nowhere. */
+  public var words: String
+  /** The account's e-mail; empty for an account without one. */
+  public var email: String
+  /** The account id in its canonical text; empty if the hub did not say it. */
+  public var accountId: String
+  public init(words: String, email: String, accountId: String) { self.words = words; self.email = email; self.accountId = accountId }
+}
+
+/** The web app's address: where the Emergency Kit sends a person, and the origin of the kit's QR code. */
+public let APP_ORIGIN = "https://app.trommi.com"
+
+/**
+ * The text of the Emergency Kit's QR code (spec/hub-api.md "The kit sheet"): an address of the app that opens the
+ * recovery screen with hub and account id filled in, `https://<app>/#k1.<hub, base64url>.<id, 32 hex digits>`. It is
+ * in the fragment, so it reaches no server, and it never holds the words. nil without an account id.
+ */
+public func kitQRText(hubURL: String, accountId: String, app: String = APP_ORIGIN) -> String? {
+  guard looksLikeAccountId(accountId), !hubURL.isEmpty else { return nil }
+  return "\(app)/#k1.\(b64u(utf8(hubURL))).\(accountId.filter { $0 != " " && $0 != "-" }.lowercased())"
+}
+
+/**
+ * The Emergency Kit as a text file; `made` is shown as a UTC day. The account id is printed always; the words open
+ * the account together with the e-mail if it has one, else together with the id.
+ */
 public let KIT_FILE_NAME = "Trommi-Emergency-Kit.txt"
-public func emergencyKitText(email: String, words: String, made: Date = Date()) -> String {
+public func emergencyKitText(_ kit: EmergencyKit, made: Date = Date()) -> String {
   let day = DateFormatter()
   day.locale = Locale(identifier: "en_US_POSIX"); day.timeZone = TimeZone(identifier: "UTC"); day.dateFormat = "yyyy-MM-dd"
-  return """
-  Trommi Emergency Kit
-
-  Email: \(email)
-  Recovery words: \(words)
-
-  Forgot your password? Open https://app.trommi.com, choose "Log in", then "Forgot password?".
-  Enter your email and these 12 words, then choose a new password.
-
-  Keep this kit private and offline: with these words and your email, anyone can get into your account.
-  If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.
-
-  Made \(day.string(from: made))
-
-  """
+  let name = kit.email.isEmpty ? "account ID" : "email"
+  var lines = ["Trommi Emergency Kit", ""]
+  if !kit.accountId.isEmpty { lines.append("Account ID: \(kit.accountId)") }
+  if !kit.email.isEmpty { lines.append("Email: \(kit.email)") }
+  lines += [
+    "Recovery words: \(kit.words)",
+    "",
+    "Forgot your password? Open \(APP_ORIGIN), choose \"Log in\", then \"Forgot password?\".",
+    kit.email.isEmpty ? "Enter your account ID and these 12 words." : "Enter your email and these 12 words, then choose a new password.",
+    "",
+    "Keep this kit private and offline: with these words and your \(name), anyone can get into your account.",
+    "If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.",
+    "",
+    "Made \(day.string(from: made))",
+    "",
+  ]
+  return lines.joined(separator: "\n")
 }
 
 /** The account as a human device of its room sees it (GET /v2/account). */
 public struct AccountStatus {
+  /** The account's e-mail; empty for an account without one (it then has no password). */
   public var email: String
+  /** The account id in its canonical text (lower case, with dashes); empty if the hub said none. */
+  public var accountId: String
+  /** What the Emergency Kit's keys are derived from, as the hub says it (`kit_form`): the e-mail, or the id. */
+  public enum KitForm: String { case email, id }
+  public var kitForm: KitForm
   /** Whether this hub confirms e-mail addresses at all. A v2 hub does not yet: then there is nothing to confirm. */
   public var confirmsEmail: Bool
   public var emailVerifiedAt: UInt64?
@@ -66,14 +131,19 @@ public struct AccountStatus {
   public var kdfRecord: String?
   /** The code sealed under the password; nil for an account that has only passkeys. */
   var passwordCopy: Bytes?
+  /** The code sealed under the Emergency Kit's words. */
+  var kitCopy: Bytes?
   /** What every passkey of the account is made with, so that the system keeps them as one account. */
   public var userHandle: Bytes
   /** The credential ids of the account's passkeys. */
   public var passkeys: [Bytes]
 
   init?(_ j: JSON) {
-    guard let e = j["email"] as? String else { return nil }
-    email = e
+    // (an account without an e-mail says `email: null`; what every account has is its id)
+    guard j["email"] is String || j["account"] is String else { return nil }
+    email = j["email"] as? String ?? ""
+    accountId = j["account"] as? String ?? ""
+    kitForm = (j["kit_form"] as? String).flatMap(KitForm.init) ?? (email.isEmpty ? .id : .email)
     confirmsEmail = j["email_verified_at"] != nil
     emailVerifiedAt = (j["email_verified_at"] as? NSNumber)?.uint64Value
     hasRecovery = j["kit_copy"] is String
@@ -81,16 +151,24 @@ public struct AccountStatus {
     revision = (j["revision"] as? NSNumber)?.intValue ?? 0
     kdfRecord = (j["kdf"] as? JSON).flatMap { try? JSONSerialization.data(withJSONObject: $0) }.map { String(decoding: $0, as: UTF8.self) }
     passwordCopy = (j["password_copy"] as? String).flatMap { try? unb64u($0) }
+    kitCopy = (j["kit_copy"] as? String).flatMap { try? unb64u($0) }
     userHandle = (j["user_handle"] as? String).flatMap { try? unb64u($0) } ?? []
     passkeys = (j["passkeys"] as? [JSON] ?? []).compactMap { ($0["credential_id"] as? String).flatMap { try? unb64u($0) } }
   }
+  /** What the kit's keys of this account are derived from. */
+  var kitName: AccountName { kitForm == .email ? .email(email) : .id(accountId) }
 }
 
 /** What the system needs to make a passkey for the account. */
 public struct PasskeyRequest {
   public let challenge: Bytes
+  /** The 16 bytes of the account id: the system keeps every passkey made with them as one account. */
   public let userHandle: Bytes
+  /** The account's e-mail; empty for an account without one. */
   public let email: String
+  public let accountId: String
+  /** What the system shows as the passkey's name: the e-mail, or the account id where there is none. */
+  public var name: String { email.isEmpty ? accountId : email }
   /** The account's passkeys so far: the system does not make a second one beside them. */
   public let existing: [Bytes]
 }
@@ -122,12 +200,28 @@ public struct PasskeyAssertion {
 private let KDF_RECORD: JSON = ["alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1]
 
 /** The password's part of an account: what the hub checks a login with, and the code sealed under the password. */
-private func passwordPart(_ keys: PasswordKeys, email: String, room: RoomId, code: Bytes) throws -> JSON {
-  ["auth_key": keys.authKey, "sealed_copy": b64u(try Core.tools.sealCode(code, email: email, room: room, way: .password(wrapKey: keys.wrapKey))), "kdf": KDF_RECORD]
+private func passwordPart(_ keys: PasswordKeys, room: RoomId, code: Bytes) throws -> JSON {
+  ["auth_key": keys.authKey, "sealed_copy": b64u(try Core.tools.sealCode(code, room: room, way: .password(wrapKey: keys.wrapKey))), "kdf": KDF_RECORD]
 }
-/** The Emergency Kit's part: what the hub checks before it hands out the kit's copy, and the code sealed under the words. */
-private func kitPart(words: String, email: String, room: RoomId, code: Bytes) throws -> JSON {
-  ["auth_key": try Core.tools.kitAuthKey(email: email, words: words), "sealed_copy": b64u(try Core.tools.sealCode(code, email: email, room: room, way: .kit(words: words)))]
+/**
+ * The Emergency Kit's part: what the hub checks before it hands out the kit's copy, and the code sealed under the
+ * words. `keys`: the words' keys for this account (`kitKeysFor`). The hub is not told which form they have: it
+ * knows it from the account (with an e-mail "email", else "id").
+ */
+private func kitPart(_ keys: PasswordKeys, room: RoomId, code: Bytes) throws -> JSON {
+  ["auth_key": keys.authKey, "sealed_copy": b64u(try Core.tools.sealCode(code, room: room, way: .kit(wrapKey: keys.wrapKey)))]
+}
+/** A new passkey's part: what the system made, and the code sealed under the passkey's prf output. */
+private func passkeyPart(_ made: PasskeyMade, room: RoomId, code: Bytes) throws -> JSON {
+  ["attestation_object": b64u(made.attestationObject), "client_data_json": b64u(made.clientDataJSON),
+   "sealed_copy": b64u(try Core.tools.sealCode(code, room: room, way: .passkey(prf: made.prf, credentialId: made.credentialId))),
+   // (a passkey of the platform: on this device, or on another one by its QR code)
+   "transports": ["internal", "hybrid"]]
+}
+/** A passkey challenge of the hub: 32 bytes. */
+private func passkeyChallenge(_ answer: JSON) throws -> Bytes {
+  guard let challenge = (answer["challenge"] as? String).flatMap({ try? unb64u($0) }), challenge.count == 32 else { throw TrommiError("bad-format", "the hub's passkey challenge") }
+  return challenge
 }
 
 extension Room {
@@ -146,7 +240,7 @@ extension Room {
   private func codeFromPassword(_ password: String, _ st: AccountStatus) throws -> Bytes {
     guard let copy = st.passwordCopy else { throw TrommiError("wrong-login", "this account has no password") }
     let keys = try Core.tools.passwordKeys(email: st.email, password: password, kdf: st.kdfRecord)
-    return try Core.tools.openCode(copy, email: st.email, room: roomId, way: .password(wrapKey: keys.wrapKey))
+    return try Core.tools.openCode(copy, room: roomId, way: .password(wrapKey: keys.wrapKey))
   }
 
   /** A new password: the code is sealed again under it and the hub swaps what it checks a login with; nothing else changes. */
@@ -154,20 +248,39 @@ extension Room {
     try Core.tools.checkPassword(next)
     let st = try await status()
     let code = try codeFromPassword(current, st)
-    var body = try passwordPart(try Core.tools.passwordKeys(email: st.email, password: next, kdf: nil), email: st.email, room: roomId, code: code)
+    var body = try passwordPart(try Core.tools.passwordKeys(email: st.email, password: next, kdf: nil), room: roomId, code: code)
     body["revision"] = st.revision
     try await hub.request("PUT", "/account/password", body: body)
   }
 
   /** A new Emergency Kit, which replaces the one before: its twelve words, to be shown once and kept nowhere. */
-  public func makeEmergencyKit(password: String) async throws -> (words: String, email: String) {
+  public func makeEmergencyKit(password: String) async throws -> EmergencyKit {
     let st = try await status()
     let code = try codeFromPassword(password, st)
     let words = try Core.tools.generateKitWords()
-    var body = try kitPart(words: words, email: st.email, room: roomId, code: code)
+    var body = try kitPart(try Core.tools.kitKeysFor(st.kitName, words: words), room: roomId, code: code)
     body["revision"] = st.revision
     try await hub.request("PUT", "/account/kit", body: body)
-    return (words, st.email)
+    return EmergencyKit(words: words, email: st.email, accountId: st.accountId)
+  }
+
+  /**
+   * Gives an account without an e-mail one, once (PUT /v2/account/email). The kit's keys are derived from the
+   * e-mail from then on, so the same request carries the kit made anew: the person types the kit's words once more,
+   * they open the code under the account id and seal it again under the e-mail. The words stay the same; the sheet
+   * is to be printed again, since the account is opened with the e-mail from now on. `forbidden` for an account
+   * that has an e-mail, `wrong-recovery` for words that are not the kit's, `account-exists` for an address taken.
+   */
+  public func setEmail(_ email: String, words: String) async throws -> EmergencyKit {
+    let tools = Core.tools
+    let e = try tools.normaliseEmail(email)
+    let kit = try tools.parseKitWords(words)
+    let st = try await status()
+    guard st.email.isEmpty else { throw TrommiError("forbidden", "the e-mail of an account is set once") }
+    guard let copy = st.kitCopy else { throw TrommiError("wrong-recovery", "this account has no Emergency Kit") }
+    let code = try tools.openCode(copy, room: roomId, way: .kit(wrapKey: try tools.kitKeysFor(st.kitName, words: kit).wrapKey))
+    try await hub.request("PUT", "/account/email", body: ["email": e, "kit": try kitPart(try tools.kitKeysFor(.email(e), words: kit), room: roomId, code: code), "revision": st.revision])
+    return EmergencyKit(words: kit, email: e, accountId: st.accountId)
   }
 
   /**
@@ -178,16 +291,10 @@ extension Room {
   public func addPasskey(password: String, make: (PasskeyRequest) async throws -> PasskeyMade) async throws {
     let st = try await status()
     let code = try codeFromPassword(password, st)
-    let r = try await hub.request("POST", "/account/passkeys/challenge", body: [:])
-    guard let challenge = (r["challenge"] as? String).flatMap({ try? unb64u($0) }), challenge.count == 32 else { throw TrommiError("bad-format", "the hub's passkey challenge") }
-    let made = try await make(PasskeyRequest(challenge: challenge, userHandle: st.userHandle, email: st.email, existing: st.passkeys))
+    let challenge = try passkeyChallenge(try await hub.request("POST", "/account/passkeys/challenge", body: [:]))
+    let made = try await make(PasskeyRequest(challenge: challenge, userHandle: st.userHandle, email: st.email, accountId: st.accountId, existing: st.passkeys))
     guard made.prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
-    let copy = try Core.tools.sealCode(code, email: st.email, room: roomId, way: .passkey(prf: made.prf, credentialId: made.credentialId))
-    try await hub.request("POST", "/account/passkeys", body: [
-      "attestation_object": b64u(made.attestationObject), "client_data_json": b64u(made.clientDataJSON), "sealed_copy": b64u(copy),
-      // (a passkey of the platform: on this device, or on another one by its QR code)
-      "transports": ["internal", "hybrid"],
-    ])
+    try await hub.request("POST", "/account/passkeys", body: try passkeyPart(made, room: roomId, code: code))
   }
 
   /** A v2 hub does not confirm e-mail addresses (spec/hub-api.md has no route for it): said as one error, nothing is sent. */
@@ -197,22 +304,54 @@ extension Room {
   // ---- before the room: creating an account, signing in ------------------------------------------------------
 
   /**
-   * Create an account: this device founds the room and the hub makes the account in the same request (the founding
-   * carries the account: e-mail, the password's part and the Emergency Kit's part), so there is no room without its
-   * account and no account without its kit. The kit's words are returned to be shown once; the code does not leave
-   * this function.
+   * Create an account with e-mail and password: this device founds the room and the hub makes the account in the same
+   * request (the founding carries the account: e-mail, the password's part and the Emergency Kit's part), so there
+   * is no room without its account and no account without its kit. A password needs an e-mail: its keys are derived
+   * from it. The hub mints the account id; it is read back for the kit's sheet. The kit is returned to be shown
+   * once; the code does not leave this function.
    */
-  public static func createAccount(hubURL: String, email: String, password: String, base: URL = Store.defaultBase(), foundToken: String? = nil) async throws -> (room: Room, kit: (words: String, email: String)) {
+  public static func createAccount(hubURL: String, email: String, password: String, base: URL = Store.defaultBase(), foundToken: String? = nil) async throws -> (room: Room, kit: EmergencyKit) {
     let tools = Core.tools
     let e = try tools.normaliseEmail(email)
     try tools.checkPassword(password)
     // (the slow step, about a second, before anything is founded)
     let keys = try tools.passwordKeys(email: e, password: password, kdf: nil)
     let words = try tools.generateKitWords()
+    let kitKeys = try tools.kitKeysFor(.email(e), words: words)
     let made = try await foundRoom(hubURL: hubURL, base: base, foundToken: foundToken) { room, code in
-      ["email": e, "password": try passwordPart(keys, email: e, room: room, code: code), "kit": try kitPart(words: words, email: e, room: room, code: code)]
+      ["email": e, "password": try passwordPart(keys, room: room, code: code), "kit": try kitPart(kitKeys, room: room, code: code)]
     }
-    return (made.room, (words, e))
+    // (the founding's answer names the room only: the id comes from the account. Without it the sheet shows none.)
+    let id = (try? await made.room.accountStatus())?.accountId ?? ""
+    return (made.room, EmergencyKit(words: words, email: e, accountId: id))
+  }
+
+  /**
+   * Create an account with a passkey; an e-mail is optional beside it (nil or empty: none). The hub's challenge
+   * (no token, no name) comes with the id the account will have: the passkey carries its 16 bytes as its user
+   * handle, and without an e-mail the kit's keys are derived from it, so both are known before the account exists.
+   * `make` is the system's step (the app: Passkeys.swift); then the founding carries the account: the kit's part,
+   * the passkey's part and, if given, the e-mail. Nothing is founded unless the passkey gives a key (`no-prf`).
+   */
+  public static func createAccountWithPasskey(hubURL: String, email: String? = nil, base: URL = Store.defaultBase(), foundToken: String? = nil,
+                                              make: (PasskeyRequest) async throws -> PasskeyMade) async throws -> (room: Room, kit: EmergencyKit) {
+    let tools = Core.tools
+    let typed = (email ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let e = typed.isEmpty ? nil : try tools.normaliseEmail(typed)
+    let c = try await HubClient(hubURL: try tools.canonicalHub(hubURL)).request("POST", "/account/passkey/challenge", body: [:], auth: false)
+    let challenge = try passkeyChallenge(c)
+    guard let id = c["account"] as? String, let handle = (c["user_handle"] as? String).flatMap({ try? unb64u($0) }), handle.count == 16 else { throw TrommiError("bad-format", "the hub's passkey challenge names no account id") }
+    let words = try tools.generateKitWords()
+    // (before the system is asked: a core that cannot make this kit ends here, with no passkey made for nothing)
+    let kitKeys = try tools.kitKeysFor(e.map { .email($0) } ?? .id(id), words: words)
+    let passkey = try await make(PasskeyRequest(challenge: challenge, userHandle: handle, email: e ?? "", accountId: id, existing: []))
+    guard passkey.prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
+    let made = try await foundRoom(hubURL: hubURL, base: base, foundToken: foundToken) { room, code in
+      var account: JSON = ["kit": try kitPart(kitKeys, room: room, code: code), "passkey": try passkeyPart(passkey, room: room, code: code)]
+      if let e = e { account["email"] = e }
+      return account
+    }
+    return (made.room, EmergencyKit(words: words, email: e ?? "", accountId: id))
   }
 
   /**
@@ -222,38 +361,40 @@ extension Room {
   public enum LoginOutcome { case joined(Room) }
 
   /** Log in with the account's e-mail and password and return the room. */
-  public static func loginWithPassword(hubURL: String, email: String, password: String, base: URL = Store.defaultBase()) async throws -> Room {
-    switch try await signInWithPassword(hubURL: hubURL, email: email, password: password, base: base) {
+  public static func loginWithPassword(hubURL: String, account: String, password: String, base: URL = Store.defaultBase()) async throws -> Room {
+    switch try await signInWithPassword(hubURL: hubURL, account: account, password: password, base: base) {
     case .joined(let room): return room
     }
   }
 
   /**
-   * Sign in on this device with e-mail and password: the hub checks the login key and hands back the code sealed
-   * under the password, the device opens it and joins the room with it. One error for an unknown e-mail and a wrong
-   * password: `wrong-login`.
+   * Sign in on this device with a password: the hub checks the login key and hands back the code sealed under the
+   * password, the device opens it and joins the room with it. `account` is the one field that names the account.
+   * A password's keys are derived from the e-mail, so with a password the field must hold the e-mail: an account id
+   * is `needs-email`, and nothing is sent. One error for an unknown e-mail and a wrong password: `wrong-login`.
    */
-  public static func signInWithPassword(hubURL: String, email: String, password: String, base: URL = Store.defaultBase()) async throws -> LoginOutcome {
+  public static func signInWithPassword(hubURL: String, account: String, password: String, base: URL = Store.defaultBase()) async throws -> LoginOutcome {
     let tools = Core.tools
-    let e = try tools.normaliseEmail(email)
+    if !account.contains("@") && looksLikeAccountId(account.trimmingCharacters(in: .whitespacesAndNewlines)) { throw TrommiError("needs-email", "a password opens the account together with its e-mail") }
+    guard case .email(let e) = try accountName(account) else { throw TrommiError("bad-account", "neither an e-mail address nor an account id") }
     let keys = try tools.passwordKeys(email: e, password: password, kdf: nil)
     let r: JSON
-    do { r = try await HubClient(hubURL: try tools.canonicalHub(hubURL)).request("POST", "/account/login", body: ["email": e, "auth_key": keys.authKey], auth: false) }
-    catch let h as HubError where h.code == "wrong-login" { throw TrommiError("wrong-login", "email or password is wrong") }
+    do { r = try await HubClient(hubURL: try tools.canonicalHub(hubURL)).request("POST", "/account/login", body: ["account": e, "auth_key": keys.authKey], auth: false) }
+    catch let h as HubError where h.code == "wrong-login" { throw TrommiError("wrong-login", "the account's name or the password is wrong") }
     return try await loginAnswer(r, hubURL: hubURL, base: base) { room, sealed in
-      try tools.openCode(sealed, email: e, room: room, way: .password(wrapKey: keys.wrapKey))
+      try tools.openCode(sealed, room: room, way: .password(wrapKey: keys.wrapKey))
     }.outcome
   }
 
   /**
-   * Sign in with a passkey: the hub hands out a challenge, `assert` is the system's step (the app: Passkeys.swift),
-   * the hub checks the signature and hands back the code sealed under that passkey, which its prf output opens.
+   * Sign in with a passkey, without a name: the hub hands out a challenge, `assert` is the system's step (the app:
+   * Passkeys.swift), the hub finds the account by the credential, checks the signature and hands back the code
+   * sealed under that passkey, which its prf output opens.
    */
   public static func signInWithPasskey(hubURL: String, base: URL = Store.defaultBase(), assert: (Bytes) async throws -> PasskeyAssertion) async throws -> LoginOutcome {
     let tools = Core.tools
     let hub = try HubClient(hubURL: try tools.canonicalHub(hubURL))
-    let c = try await hub.request("POST", "/account/passkey/challenge", body: [:], auth: false)
-    guard let challenge = (c["challenge"] as? String).flatMap({ try? unb64u($0) }), challenge.count == 32 else { throw TrommiError("bad-format", "the hub's passkey challenge") }
+    let challenge = try passkeyChallenge(try await hub.request("POST", "/account/passkey/challenge", body: [:], auth: false))
     let a = try await assert(challenge)
     // (without the prf output nothing could be opened: nothing is sent)
     guard a.prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
@@ -263,14 +404,16 @@ extension Room {
     do { r = try await hub.request("POST", "/account/passkey/login", body: body, auth: false) }
     catch let h as HubError where h.code == "wrong-login" { throw TrommiError("wrong-login", "this passkey does not open an account") }
     return try await loginAnswer(r, hubURL: hubURL, base: base) { room, sealed in
-      // (a passkey's wrap key is made from the room id, not the e-mail, which is not known here)
-      try tools.openCode(sealed, email: "", room: room, way: .passkey(prf: a.prf, credentialId: a.credentialId))
+      // (a passkey's wrap key is made from the room id and the credential: no e-mail and no account id is in it)
+      try tools.openCode(sealed, room: room, way: .passkey(prf: a.prf, credentialId: a.credentialId))
     }.outcome
   }
 
   /**
-   * The hub's answer to a login, the one place it is read: { rooms: [{ room_id, sealed_copy, challenge }], kdf }. An
-   * account has a list of rooms, one for now: the first is joined. `open` turns the sealed copy into the code.
+   * The hub's answer to a login, the one place it is read: { rooms: [{ room_id, sealed_copy, challenge }], kdf,
+   * account, email }. An account has a list of rooms, one for now: the first is joined. `open` turns the sealed copy
+   * into the code. The account's id and e-mail are not taken from here: the joined device asks for them
+   * (`accountStatus`).
    */
   private static func loginAnswer(_ r: JSON, hubURL: String, base: URL, open: (RoomId, Bytes) throws -> Bytes) async throws -> (outcome: LoginOutcome, room: Room) {
     guard let first = (r["rooms"] as? [JSON])?.first,
@@ -283,28 +426,44 @@ extension Room {
   }
 
   /**
-   * Forgot password: e-mail, the Emergency Kit's words and a new password. The words open the kit's copy of the code,
-   * the device joins the room with it and then sets the new password (the old one stops working). One error for an
-   * unknown e-mail and wrong words: `wrong-recovery`.
+   * The way back with the Emergency Kit ("Forgot password"): `account` is the one field that names the account, and
+   * the kit's words open the kit's copy of the code; the device joins the room with it. Named by e-mail, the words'
+   * keys are derived from the e-mail, and `newPassword`, if given, is then set (the old one stops working). Named by
+   * account id, the keys are derived from the id: that opens the kit of an account without an e-mail, which has no
+   * password, so none is set. (The kit of an account with an e-mail opens with the e-mail only.) One error for an
+   * unknown name and wrong words: `wrong-recovery`.
    */
-  public static func resetPassword(hubURL: String, email: String, words: String, newPassword: String, base: URL = Store.defaultBase()) async throws -> Room {
+  public static func resetPassword(hubURL: String, account: String, words: String, newPassword: String?, base: URL = Store.defaultBase()) async throws -> Room {
     let tools = Core.tools
-    let e = try tools.normaliseEmail(email)
-    try tools.checkPassword(newPassword)
+    let name = try accountName(account)
+    var next: (email: String, password: String)?
+    if case .email(let e) = name, let p = newPassword { try tools.checkPassword(p); next = (e, p) }
     let kit = try tools.parseKitWords(words)
+    let keys = try tools.kitKeysFor(name, words: kit)
     let r: JSON
-    do { r = try await HubClient(hubURL: try tools.canonicalHub(hubURL)).request("POST", "/account/recover", body: ["email": e, "auth_key": try tools.kitAuthKey(email: e, words: kit)], auth: false) }
-    catch let h as HubError where h.code == "wrong-recovery" { throw TrommiError("wrong-recovery", "email or recovery words are wrong") }
+    do { r = try await HubClient(hubURL: try tools.canonicalHub(hubURL)).request("POST", "/account/recover", body: ["account": name.wire, "auth_key": keys.authKey], auth: false) }
+    catch let h as HubError where h.code == "wrong-recovery" { throw TrommiError("wrong-recovery", "the account's name or the recovery words are wrong") }
     // The code is needed once more after the join, to seal it under the new password: it is kept for this call only.
     var code = Bytes()
     let room = try await loginAnswer(r, hubURL: hubURL, base: base) { room, sealed in
-      code = try tools.openCode(sealed, email: e, room: room, way: .kit(words: kit))
+      code = try tools.openCode(sealed, room: room, way: .kit(wrapKey: keys.wrapKey))
       return code
     }.room
+    guard let next = next else { return room }
     let st = try await room.status()
-    var body = try passwordPart(try tools.passwordKeys(email: e, password: newPassword, kdf: nil), email: e, room: room.roomId, code: code)
+    var body = try passwordPart(try tools.passwordKeys(email: next.email, password: next.password, kdf: nil), room: room.roomId, code: code)
     body["revision"] = st.revision
     try await room.hub.request("PUT", "/account/password", body: body)
     return room
   }
+}
+
+/** The seconds a refusal of the hub asks to wait (`rate-limited`, `overloaded`), or nil. For a form's one line. */
+public func retryWait(of error: Error) -> Int? { (error as? HubError)?.retryAfter }
+
+/** A wait in a person's words: "1 second", "40 seconds", "1 minute", "12 minutes" (rounded up to whole minutes). */
+public func waitText(seconds: Int) -> String {
+  if seconds < 60 { return seconds == 1 ? "1 second" : "\(max(1, seconds)) seconds" }
+  let minutes = (seconds + 59) / 60
+  return minutes == 1 ? "1 minute" : "\(minutes) minutes"
 }

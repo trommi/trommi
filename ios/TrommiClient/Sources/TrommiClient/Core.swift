@@ -587,6 +587,7 @@ public protocol CoreDevice: CoreSigner {
 
 // ---- the stateless modules ------------------------------------------------------------------------------
 
+/** The two keys of one way in to the account: of the password, or of the Emergency Kit's words. Both are secrets. */
 public struct PasswordKeys: Equatable {
   /** What the hub checks the login with (base64url). */
   public var authKey: String
@@ -594,10 +595,19 @@ public struct PasswordKeys: Equatable {
   public var wrapKey: Bytes
   public init(authKey: String, wrapKey: Bytes) { self.authKey = authKey; self.wrapKey = wrapKey }
 }
-/** Which sealed copy of the recovery code (core `account::Way`). */
+/**
+ * What names an account where its Emergency Kit's keys are derived (spec/v2.md 8.8.2): its e-mail address, or, for an
+ * account without one, its account id in the canonical text. An account with an e-mail is always named by the e-mail
+ * here, although its kit shows its id as well: the two give unrelated keys.
+ */
+public enum AccountName: Equatable {
+  case email(String)
+  case id(String)
+}
+/** Which sealed copy of the recovery code (core `account::Way`), with the key that seals it. */
 public enum AccountWay: Equatable {
   case password(wrapKey: Bytes)
-  case kit(words: String)
+  case kit(wrapKey: Bytes)
   case passkey(prf: Bytes, credentialId: Bytes)
 }
 /** An invite link, taken apart. The link's secret is not among the parts. */
@@ -655,14 +665,21 @@ public protocol CoreTools: AnyObject {
   func normaliseEmail(_ email: String) throws -> String
   func checkPassword(_ password: String) throws
   func passwordKeys(email: String, password: String, kdf: String?) throws -> PasswordKeys
-  func kitAuthKey(email: String, words: String) throws -> String
+  /** The two keys of the Emergency Kit's words, as typed, for the account `name` names (core `kit_keys_for`). */
+  func kitKeysFor(_ name: AccountName, words: String) throws -> PasswordKeys
+  /**
+   * An account id as a person typed it, in its one text form (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, lower case);
+   * `bad-format` for anything else (core `account_id_parse`). The id is a public value.
+   */
+  func accountIdParse(_ text: String) throws -> String
   func generateKitWords() throws -> String
   func parseKitWords(_ text: String) throws -> String
   func generateRecoveryCode() throws -> Bytes
   func formatRecoveryCode(_ code: Bytes) -> String
   func parseRecoveryCode(_ text: String) throws -> Bytes
-  func sealCode(_ code: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes
-  func openCode(_ sealed: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes
+  func sealCode(_ code: Bytes, room: RoomId, way: AccountWay) throws -> Bytes
+  /** `wrong-recovery` when the kit's copy does not open, `wrong-login` for the others. */
+  func openCode(_ sealed: Bytes, room: RoomId, way: AccountWay) throws -> Bytes
 
   // hub_auth (12.3)
   func canonicalHub(_ text: String) throws -> String

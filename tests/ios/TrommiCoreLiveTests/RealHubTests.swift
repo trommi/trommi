@@ -89,11 +89,11 @@ final class RealHubTests: XCTestCase {
   /// What the hub answers a login with: the room and the code, opened from the copy sealed under the password.
   private func login(hubURL: String, email: String, password: String) async throws -> (room: RoomId, code: Bytes, challenge: Bytes?) {
     let keys = try tools.passwordKeys(email: email, password: password, kdf: nil)
-    let answer = try await HubClient(hubURL: hubURL).request("POST", "/account/login", body: ["email": email, "auth_key": keys.authKey], auth: false)
+    let answer = try await HubClient(hubURL: hubURL).request("POST", "/account/login", body: ["account": email, "auth_key": keys.authKey], auth: false)
     let first = try XCTUnwrap((answer["rooms"] as? [JSON])?.first)
     let room = try unb64u(try XCTUnwrap(first["room_id"] as? String))
     let sealed = try unb64u(try XCTUnwrap(first["sealed_copy"] as? String))
-    return (room, try tools.openCode(sealed, email: email, room: room, way: .password(wrapKey: keys.wrapKey)), (first["challenge"] as? String).flatMap { try? unb64u($0) })
+    return (room, try tools.openCode(sealed, room: room, way: .password(wrapKey: keys.wrapKey)), (first["challenge"] as? String).flatMap { try? unb64u($0) })
   }
 
   private func leaves(_ room: Room, of group: GroupId) async throws -> Set<Bytes> {
@@ -156,13 +156,13 @@ final class RealHubTests: XCTestCase {
     let revision = try await room.accountStatus()?.revision
     XCTAssertEqual(revision, 3)
     // The words of the first kit open nothing any more: one error for that and for an unknown e-mail.
-    do { _ = try await Room.resetPassword(hubURL: hubURL, email: "ada@example.com", words: made.kit.words, newPassword: "a fourth long password", base: try scratchFolder(self)); XCTFail("an old kit reset the password") }
+    do { _ = try await Room.resetPassword(hubURL: hubURL, account: "ada@example.com", words: made.kit.words, newPassword: "a fourth long password", base: try scratchFolder(self)); XCTFail("an old kit reset the password") }
     catch let refused as TrommiError { XCTAssertEqual(refused.code, "wrong-recovery") }
-    do { _ = try await Room.signInWithPassword(hubURL: hubURL, email: "ada@example.com", password: "a wrong long password", base: try scratchFolder(self)); XCTFail("a wrong password signed in") }
+    do { _ = try await Room.signInWithPassword(hubURL: hubURL, account: "ada@example.com", password: "a wrong long password", base: try scratchFolder(self)); XCTFail("a wrong password signed in") }
     catch let refused as TrommiError { XCTAssertEqual(refused.code, "wrong-login") }
     // The right password gets the sealed code from the hub, and RoomAccount.joinWithRecoveryCode joins with it
     // (LiveCore.joinWithRecoveryCode); testASecondDeviceSignsInWithThePassword looks at that join closely.
-    let outcome = try await Room.signInWithPassword(hubURL: hubURL, email: "ada@example.com", password: "another long password", base: try scratchFolder(self))
+    let outcome = try await Room.signInWithPassword(hubURL: hubURL, account: "ada@example.com", password: "another long password", base: try scratchFolder(self))
     if case .joined(let second) = outcome { XCTAssertEqual(second.roomId, room.roomId); second.close() }
     _ = try await room.sync()
     let base = try device.groups().first?.epoch ?? 0
@@ -265,10 +265,10 @@ final class RealHubTests: XCTestCase {
     // The code is replaced by the first device: the Commit, the link and the account's new copies in one request.
     let next = try a.newRecoveryCode(current: opened.code)
     let keys = try tools.passwordKeys(email: email, password: password, kdf: nil)
-    let words = try tools.generateKitWords()
+    let kit = try tools.kitKeysFor(.email(email), words: try tools.generateKitWords())
     let account: JSON = [
-      "kit": ["auth_key": try tools.kitAuthKey(email: email, words: words), "sealed_copy": b64u(try tools.sealCode(next, email: email, room: roomId, way: .kit(words: words)))] as JSON,
-      "password": ["sealed_copy": b64u(try tools.sealCode(next, email: email, room: roomId, way: .password(wrapKey: keys.wrapKey)))] as JSON,
+      "kit": ["auth_key": kit.authKey, "sealed_copy": b64u(try tools.sealCode(next, room: roomId, way: .kit(wrapKey: kit.wrapKey)))] as JSON,
+      "password": ["sealed_copy": b64u(try tools.sealCode(next, room: roomId, way: .password(wrapKey: keys.wrapKey)))] as JSON,
     ]
     let id = try a.replaceCode(current: opened.code, account: Bytes(try JSONSerialization.data(withJSONObject: account)), nowMs: nowMs())
     let entry = try XCTUnwrap(a.outbox().first { $0.id == id })
