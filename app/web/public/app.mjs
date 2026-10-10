@@ -6,7 +6,7 @@ import * as desk from './desk.mjs'
 import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
 import { DRAWER_VEIL, SIDE_FOOT, cornerNote, markCurrent, phoneBar, sidebarRows, tabBar, topbar } from './sidebar.mjs'
-import { Controller, WORDS, calm, readAttachmentsWith, controller, copyLater, curlHTML, html, hueFor, isKnock, keySheet, raw, showToast, sk, startUi, toast } from './ui.mjs'
+import { Controller, WORDS, calm, readAttachmentsWith, controller, copyLater, curlHTML, html, hueFor, isKnock, keySheet, raw, showToast, sk, startUi, toast, sayError } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { rowSheet } from './desk.mjs'
 // The views a cold start needs (the Desk, its frame, the notes) come with this module; every other view is loaded
@@ -935,7 +935,7 @@ controller('sharelink', class extends Controller {
     let made = null
     const link = had ? Promise.resolve(had.link) : sharing.shareFile(att).then(async r => { made = r; await loadShares(); return r.link })
     let ok = false
-    try { ok = await copyLater(link) } catch (err) { this.busy = false; return showToast({ head: 'Not shared', line: err.message, role: 'alert' }) }
+    try { ok = await copyLater(link) } catch (err) { this.busy = false; return showToast({ head: 'Not shared', line: sayError(err), role: 'alert' }) }
     this.busy = false
     paintShare(att, ok ? 'Link copied' : '')
     clearTimeout(this.timer)
@@ -946,7 +946,7 @@ controller('sharelink', class extends Controller {
   }
   async stop() {
     const att = this.attValue
-    try { for (const sh of shares.filter(x => x.attachment_id === att)) await sharing.stopSharing(sh.share_id, att) } catch (err) { return showToast({ head: 'Not stopped', line: err.message, role: 'alert' }) } finally { await loadShares(); paintShare(att) }
+    try { for (const sh of shares.filter(x => x.attachment_id === att)) await sharing.stopSharing(sh.share_id, att) } catch (err) { return showToast({ head: 'Not stopped', line: sayError(err), role: 'alert' }) } finally { await loadShares(); paintShare(att) }
     showToast({ head: 'Sharing stopped', line: `The link to “${this.titleValue}” opens nothing any more` })
   }
 })
@@ -1700,7 +1700,7 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     if (url.origin !== location.origin || method !== 'POST' || !isAppPath(url.pathname)) return realFetch(input, init)
     if (url.pathname === '/note' || url.pathname === '/desk') {
       const body = JSON.parse(String(init.body ?? '{}'))
-      const out = url.pathname === '/note' ? await board.t.hub.note(body) : await board.t.hub.desk(body).then(d => ({ code: 200, text: JSON.stringify(d) }), err => ({ code: err.status ?? 400, text: JSON.stringify({ error: err.message }) }))
+      const out = url.pathname === '/note' ? await board.t.hub.note(body) : await board.t.hub.desk(body).then(d => ({ code: 200, text: JSON.stringify(d) }), err => ({ code: err.status ?? 400, text: JSON.stringify({ error: sayError(err) }) }))
       return new Response(out.text, { status: out.code, headers: { 'Content-Type': 'application/json' } })
     }
     let form
@@ -1785,7 +1785,7 @@ function startPush(client) {
         await client.pushSubscribe(sub.toJSON(), false, v)
         try { localStorage.setItem(LEVEL_KEY, v) } catch {}
       }
-    } catch (err) { say(err.message) }
+    } catch (err) { say(sayError(err)) }
     paintAll(await shown())
     others()
   }
@@ -1928,15 +1928,13 @@ async function start(client, { fresh = false } = {}) {
   // The hub says this app is too old (426, or upgrade_required on the stream): a calm notice, reload takes the new build.
   client.on('error', err => { if (err?.code === 'client-too-old') notice('Please reload: this app needs a newer version.', err.message, true) })
   // README "Versioning and compatibility": something on the board was written by a newer Trommi (model.newer): it shows
-  // as a placeholder in its place, and once per page a calm line offers the reload that brings the new build. A newer
-  // version the hub recommends (GET /v1/version) is offered the same way, quieter (the app keeps working).
+  // as a placeholder in its place, and once per page a calm line offers the reload that brings the new build.
   let newerSaid = false
   const newerNotice = () => {
     if (newerSaid || !client.model?.newer?.count) return
     newerSaid = true
     notice('Some things here need a newer version of Trommi.', `${client.model.newer.what.join(', ')}: reload to update`, true, 'newer')
   }
-  recommendNewer(client).catch(() => {})
   const board = new BoardState(client)
   board.update()
   let desk = read('trommi-desk')
@@ -2147,22 +2145,6 @@ if (typeof window !== 'undefined') boot()
 
 /** Ask the browser to keep this origin's storage (no eviction under storage pressure; Safari weighs it too). */
 function keepStorage() { try { navigator.storage?.persist?.().catch(() => {}) } catch {} }
-
-/** Semver "a > b" for x.y.z strings (suffixes ignored). */
-function versionNewer(a, b) {
-  const p = v => String(v ?? '').split(/[-+]/)[0].split('.').map(n => Number(n) || 0)
-  const x = p(a), y = p(b)
-  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
-  return false
-}
-/** The hub recommends a newer app (GET /v1/version recommended_client_versions.app): a quiet "Reload" line, once. */
-async function recommendNewer(client) {
-  const hub = client.model?.room?.hub_url
-  if (!hub || mock) return
-  const r = await fetch(new URL('/v1/version', hub), { headers: { accept: 'application/json' } })
-  const rec = r.ok ? (await r.json())?.recommended_client_versions?.app : null
-  if (rec && versionNewer(rec, APP_VERSION)) notice('A newer version of Trommi is ready.', `recommended: ${rec}, this is ${APP_VERSION}`, true, 'recommended')
-}
 
 /** A calm full-width line at the foot (styled by auth.css), with "Reload". update: fetch the new build first. */
 function notice(text, detail, update, why = '') {

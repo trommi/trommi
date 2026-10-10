@@ -88,6 +88,8 @@ export interface EngineEvents {
   invites: { open: string[] }
   alert: { code: string; message: string; group: Uint8Array | null; change: number | null }
   batch: null
+  /** A rescan is through: what the hub holds up to the position was handed to the core once more. */
+  rescanned: null
   /** The device was opened again from its store: everything derived from the old object is to be built again. */
   reopened: null
   /** Over: `removed` (this device is no member any more), `device-closed` (another owner, or the store does not open). */
@@ -134,6 +136,12 @@ const MOVED: readonly string[] = ['epoch-taken', 'room-behind', 'wrong-epoch', '
 const PAGE = 500
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 
+/** JSON with its keys in order: two values are the same value exactly when these texts are equal. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`
+  return JSON.stringify(v) ?? 'null'
+}
 /** A catch-up or stream batch stopped at an item that did not process; the position is before it. */
 class Halt extends EngineError {}
 
@@ -176,6 +184,8 @@ export class Engine {
   /** Per group, the log number up to which `handLog` handed the log to the device. */
   private readonly logRead = new Map<string, number>()
   private rescanDue = false
+  /** The change after which the next rescan reads (0: everything). */
+  private rescanFrom = 0
   private learnDue = false
   /** How often a rescan was asked for: one asked for while a rescan runs is not lost. */
   private rescanAsked = 0
@@ -208,7 +218,9 @@ export class Engine {
       this.cursor = await d.cursor()
       this.position = Math.max(this.position, this.cursor)
       await this.refresh()
-      this.rescanDue = (await this.opts.meta.get('rescan').catch(() => null)) === true
+      const due = await this.opts.meta.get('rescan').catch(() => null)
+      this.rescanDue = due === true || typeof due === 'number'
+      this.rescanFrom = typeof due === 'number' ? due : 0
       this.learnDue = (await this.opts.meta.get('learn').catch(() => null)) === true
     })
     // the signer asks whatever device the engine holds at that moment: a reopened one signs as the same key
@@ -625,12 +637,32 @@ export class Engine {
     }
     return again
   }
+  /**
+   * A register value that was read back (an envelope its chain already holds): the core hands its body but does
+   * not say again whether it is the current value of its name. It is, if the core's current value of that name
+   * (the shared one, else this sender's own) is this body's. Without that, a model built again from what the core
+   * holds would show no register at all.
+   */
+  private async readBack(received: ReceivedEnvelope): Promise<ReceivedEnvelope> {
+    if (received.header.kind !== 'register' || received.register || received.outcome !== 'applied' || !received.payload) return received
+    try {
+      const body = JSON.parse(new TextDecoder().decode(received.payload)) as { name?: unknown; value?: unknown }
+      if (typeof body.name !== 'string') return received
+      const name = body.name, { group, sender } = received.header
+      const held = await this.call(async d => (await d.register(group, name)) ?? d.registerOf(group, name, sender))
+      const current = held !== null && canonical(JSON.parse(new TextDecoder().decode(held))) === canonical(body.value ?? null)
+      return { ...received, register: { name, of: sender, current } }
+    } catch (e) {
+      if (this.isLocal(e)) throw e
+      return received
+    }
+  }
   /** Envelopes fetched out of the hub's order (a page of a Chat, a board's items, an object): shown as the core
    *  says, provisional until their chain reaches them. */
   receivePage(items: readonly EnvelopeItem[]): Promise<ReceivedEnvelope[]> {
     return this.serial(async () => {
       const out: ReceivedEnvelope[] = []
-      for (const item of items) { const r = await this.receive(item, false); if (r) out.push(r) }
+      for (const item of items) { const r = await this.receive(item, false); if (r) out.push(await this.readBack(r)) }
       return out
     })
   }
@@ -669,24 +701,27 @@ export class Engine {
     if (this.rescanDue) await this.rescan()
   }
   /** Asks for a rescan (see the header): also the client's, when it has to build its model again from nothing. */
-  async wantRescan(): Promise<void> {
+  async wantRescan(from = 0): Promise<void> {
     this.rescanAsked++
-    if (this.rescanDue) return
+    // (asked for twice: from the earlier of the two places)
+    const start = this.rescanDue ? Math.min(this.rescanFrom, from) : from
+    if (this.rescanDue && start === this.rescanFrom) return
     this.rescanDue = true
-    await this.opts.meta.set('rescan', true).catch(() => {})
+    this.rescanFrom = start
+    await this.opts.meta.set('rescan', start).catch(() => {})
     this.keepSoon(0)
   }
   /** Reads the room's envelopes once more from the start, up to the position (see the header). */
   private async rescan(): Promise<void> {
     const asked = this.rescanAsked
     const upTo = this.position
-    for (let after = 0; after < upTo;) {
+    for (let after = this.rescanFrom; after < upTo;) {
       const page = await this.hub.changes(after, PAGE)
       await this.serial(async () => {
         for (const item of page.items) {
           if (item.kind !== 'envelope' || item.change > upTo) continue
           let received = await this.receive(item, true)
-          if (received?.outcome === 'refused' && received.code === 'replay') received = await this.receive(item, false)
+          if (received?.outcome === 'refused' && received.code === 'replay') { received = await this.receive(item, false); if (received) received = await this.readBack(received) }
           if (received && received.outcome !== 'refused') this.emit('envelope', { received, how: 'again' })
         }
         this.emit('batch', null)
@@ -697,7 +732,10 @@ export class Engine {
     // asked for again meanwhile (keys that came while this one ran): it stays due, and upkeep runs the next
     if (this.rescanAsked !== asked) { this.keepSoon(0); return }
     this.rescanDue = false
+    this.rescanFrom = 0
     await this.opts.meta.delete('rescan').catch(() => {})
+    this.emit('rescanned', null)
+    this.emit('batch', null)
   }
 
   // ---- the live stream
@@ -959,7 +997,15 @@ export class Engine {
       if (this.is_human && !g.pending) await this.do(d => d.update(g.group, false, this.now())).catch(() => {})
       await this.do(async d => {
         const value = await d.headsDue(g.group, this.now())
-        if (value) await d.seal({ kind: 'register', group: g.group, name: 'heads', value }, null, [], this.now())
+        if (!value) return
+        // `heads` is itself an envelope of this device's chain, so its own head has always moved since the last
+        // one: written only when another sender's head changed (9.0.7), or every start would add an envelope
+        const heads = JSON.parse(new TextDecoder().decode(value)) as Record<string, unknown>
+        delete heads[this.core.base64urlEncode(this.device_id)]
+        const others = canonical(heads), key = `heads/${hex(g.group)}`
+        if ((await this.opts.meta.get(key).catch(() => null)) === others) return
+        await d.seal({ kind: 'register', group: g.group, name: 'heads', value }, null, [], this.now())
+        await this.opts.meta.set(key, others).catch(() => {})
       }).catch(() => {})
     }
     this.later(this.timing.upkeep_every, () => this.keepSoon(0))
