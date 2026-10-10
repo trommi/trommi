@@ -400,23 +400,36 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     passkeyOffer().then(o => { canPasskey = o.get; if (canPasskey && m().room.account) client._setRoom?.({ account: { ...m().room.account } }) })
     /** The way in for a change on this page: the form's password, or a passkey of the account (a prompt). */
     const unlockOf = async (f, st) => (st?.has_password === false ? { passkey: await passkeyUnlock(st) } : { password: String(f.get('password') ?? '') })
-    t.live('settings', { take: () => JSON.stringify([m().room.account ?? null, m().room.account_error ?? null, canPasskey]), diff: (was, now) => (was !== now ? String(t.stream('refresh')) : '') })
-    t.get(/^\/settings\/account$/, ({ req, res, url }) => { if (m().room.account === undefined) loadAccount(); page(req, res, 'Account · Settings', settingsMain('', DONE[url.searchParams.get('done')] ?? ''), { view: 'settings' }) })
+    // A kit just made is held here (memory only) for ten minutes, so that the page drawn again (a stream's refresh, a
+    // visit back) still shows it; while it is held the page is not refreshed by the account's own change.
+    let held = null
+    const holding = () => (held && Date.now() - held.at < 600_000 ? held : (held = null))
+    const accountSnap = () => JSON.stringify([m().room.account ?? null, m().room.account_error ?? null, canPasskey])
+    t.live('settings', { take: () => holding()?.snap ?? accountSnap(), diff: (was, now) => (was !== now ? String(t.stream('refresh')) : '') })
+    t.get(/^\/settings\/account$/, ({ req, res, url }) => {
+      if (m().room.account === undefined) loadAccount()
+      const h = holding()
+      page(req, res, 'Account · Settings', h ? settingsMain('', h.said, h.kit, h.first) : settingsMain('', DONE[url.searchParams.get('done')] ?? ''), { view: 'settings' })
+    })
     const accountPost = (path, fn, done) => t.post(path, async ({ req, res, form }) => {
       let out
       try { out = await fn(form, await account()) } catch (err) {
         console.error(err)
         return page(req, res, 'Settings', settingsMain(accountError(err)), { view: 'settings' }, 422)
       }
-      if (out?.kit) return page(req, res, 'Settings', settingsMain('', out.said ?? 'Your new Emergency Kit:', out.kit, out.first), { view: 'settings' })
+      if (out?.kit) {
+        held = { at: Date.now(), snap: held?.snap ?? out.snap ?? accountSnap(), kit: out.kit, said: out.said ?? 'Your new Emergency Kit:', first: out.first }
+        if (out.account) client._setRoom(out.account)
+        return page(req, res, 'Settings', settingsMain('', held.said, held.kit, held.first), { view: 'settings' })
+      }
+      held = null
       client._setRoom({ account: undefined }); loadAccount()
       t.redirect(res, `/settings/account?done=${done}`)
     })
     // (the login comes with its Emergency Kit, in the same request: shown here once, like a new kit)
     accountPost(/^\/settings\/account$/, async (f, A) => {
       const { kit } = await A.addAccount(client, { email: String(f.get('email')), password: String(f.get('password')), recovery_code: String(f.get('recovery_code')).trim() })
-      client._setRoom({ account: await A.accountStatus(client), account_error: undefined })
-      return { kit, said: 'Login added. Your Emergency Kit:', first: true }
+      return { kit, said: 'Login added. Your Emergency Kit:', first: true, account: { account: await A.accountStatus(client), account_error: undefined } }
     }, 'added')
     accountPost(/^\/settings\/password$/, (f, A) => A.changePassword(client, { current: String(f.get('current')), next: String(f.get('password')) }), 'changed')
     // A new passkey: the way in is checked first (a wrong password leaves no stray passkey), then the passkey is made
@@ -435,16 +448,14 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     accountPost(/^\/settings\/password\/add$/, async (f, A) => A.setPassword(client, { unlock: { passkey: await passkeyUnlock(await A.accountStatus(client)) }, next: String(f.get('password')) }), 'password-added')
     accountPost(/^\/settings\/kit$/, async (f, A) => {
       const kit = await A.makeEmergencyKit(client, await unlockOf(f, await A.accountStatus(client)))
-      client._setRoom({ account: { ...m().room.account, has_recovery: true, kit_form: kit.form } })
-      return { kit }
+      return { kit, account: { account: { ...m().room.account, has_recovery: true, kit_form: kit.form } } }
     })
     // An account without email gets one, once (a second name for it, and what a password needs). Its kit is sealed
     // anew under the email in the same request, with the same words: its sheet is shown again, to print once more.
     accountPost(/^\/settings\/email$/, async (f, A) => {
       try {
         const kit = await A.setEmail(client, { email: String(f.get('email')), words: String(f.get('words')) })
-        client._setRoom({ account: await A.accountStatus(client), account_error: undefined })
-        return { kit, said: 'Email added. Your Emergency Kit opens with your email now:', first: true }
+        return { kit, said: 'Email added. Your Emergency Kit opens with your email now:', first: true, account: { account: await A.accountStatus(client), account_error: undefined } }
       } catch (err) { throw err.code === 'account-exists' ? Object.assign(err, { message: EMAIL_HELD, code: 'email-held' }) : err.code === 'forbidden' || err.code === 'email-set' ? Object.assign(err, { message: 'This account has an email already.', code: 'email-set' }) : err.code === 'wrong-recovery' ? Object.assign(err, { message: 'Those are not the words of your Emergency Kit.', code: 'kit-words' }) : err }
     })
 
@@ -527,8 +538,6 @@ async function generateInto(button) {
 /** Said by "Create account" for an email that has one (in Settings the same refusal is about this account's login). */
 const EMAIL_TAKEN = 'This email has an account already. Log in instead.'
 const EMAIL_HELD = 'This email has an account already.'
-/** Said where an account without email cannot be made: this version's core lacks the kit's keys for it (core-missing). */
-const NEEDS_EMAIL_YET = 'An account without an email is not possible in this version yet. Enter your email.'
 /** Said where an account ID meets a password: a password's keys are derived from the email. */
 const ID_NO_PASSWORD = 'Enter your email to log in with a password.'
 const NOT_A_NAME = 'That is not an email address or an account ID.'
@@ -536,8 +545,8 @@ const NO_RECOVERY = 'If you lose your password and your Emergency Kit, nobody (n
 const NO_RECOVERY_PASSKEY = 'If you lose your passkeys and your Emergency Kit, nobody (not even Trommi) can recover your data.'
 /** What an Emergency Kit opens with, in words: the email it was made under, or the account's ID. */
 const kitOpensWith = kit => (kit.form === 'id' || !kit.email ? 'account ID' : 'email')
-/** Said once on the kit of an account without email: there is no address to reach the person at. */
-const NO_REACH = 'If you lose your passkey and this kit, your account is lost, and nobody can reach you about it.'
+/** The one plain sentence on the kit's step: the way in and the kit lost together are the account lost. */
+const LOST = way => `If you lose your ${way} and this kit, your account is lost. Nobody can recover it, not even Trommi.`
 /** The Emergency Kit as a text file. `link`: the address its QR code holds (hub and account ID; never the words). */
 const kitText = (kit, link) => `Trommi Emergency Kit
 
@@ -547,7 +556,7 @@ Lost your way in? Open https://app.trommi.com, choose "Log in", then "Forgot?".
 Enter your ${kitOpensWith(kit)} and these 12 words, then choose a new ${kit.email ? 'password or passkey' : 'passkey'}.
 ${link ? `Or open ${link} (it fills in the account ID; it holds no words).\n` : ''}
 Keep this kit private and offline: with these words and your ${kitOpensWith(kit)}, anyone can get into your account.
-${kit.email ? (kit.has_password === false ? NO_RECOVERY_PASSKEY : NO_RECOVERY) : NO_REACH}
+${LOST(kit.has_password === false || !kit.email ? 'passkey' : 'password')}
 
 Made ${new Date().toISOString().slice(0, 10)}
 `
@@ -629,7 +638,7 @@ function kitPage(root, { kit = { email: null, account: null, form: 'email' }, wo
 <div class="kit-stage"><div class="kit-cover" id="kit-cover">${kitSheet(kit, shown ? words : null, kit.account ? linkOf(kit.account) : null)}</div>
 <button type="button" class="ob-chip kit-show" id="kit-show" aria-pressed="${shown ? 'true' : 'false'}">${shown ? 'Hide' : 'Show'}</button></div>
 <div class="ob-row"><button type="button" class="ob-second" id="kit-download">Download</button><button type="button" class="ob-second" id="kit-print">Print</button></div>
-<p class="ob-warn" id="kit-warn">${kit.email ? `Without it or your ${ways.password ? 'password' : 'passkey'}, nobody can recover your account. Not even Trommi.` : NO_REACH}</p>
+<p class="ob-warn" id="kit-warn">${LOST(ways.password ? 'password' : 'passkey')}</p>
 ${obError(error)}<button type="button" class="ob-go" id="kit-done"${saved ? '' : raw(' disabled')}>Open Trommi</button>
 <p class="ob-hint ob-center" id="kit-first"${saved ? raw(' hidden') : ''}>Download, print or show it first.</p>`
       : html`<form id="kit-form" class="ob-form" novalidate>${ways.password ? html`<input type="text" name="email" value="${kit.email ?? ''}" autocomplete="username" hidden>${obPassword()}` : ''}
@@ -796,6 +805,16 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
     lastEmail = field.value.trim()
     return { A, named, text: named.kind === 'email' ? named.email : named.account }
   }
+  /** The email of "Create with passkey", which may be left empty: { A, email: string | null }; null (and the word said) for a text that is no address. */
+  const optionalEmail = async form => {
+    const A = await account(), email = form.elements.email
+    if (!email.value.trim()) return { A, email: null }
+    try { A.normaliseEmail(email.value) } catch { say('That is not an email address.', email); return null }
+    lastEmail = email.value.trim()
+    return { A, email: lastEmail }
+  }
+  /** What the email field of "Create account" starts with: what was typed before, if it is an address. */
+  const typedEmail = () => (lastEmail.includes('@') ? lastEmail : '')
   /** A form's email and password, checked with a human word each; null (and the word said) when one is missing. */
   const fields = async (form, { fresh = false } = {}) => {
     const A = await account(), email = form.elements.email, pw = form.elements.password
@@ -829,8 +848,8 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   // An Emergency Kit's code was scanned: the way back with the kit, its account ID filled in, at the hub it names.
   // (A fragment that is no kit address is dropped without a word: the start page comes.)
   const kitLink = kitHash ? pageHelpers?.parseKitAddress(kitHash) ?? null : null
-  if (kitLink) return forgotFlow({ way: offer.get ? 'passkey' : 'password', kit: kitLink })
-  if (location.pathname === '/recover') recoverFlow()
+  if (kitLink) forgotFlow({ way: offer.get ? 'passkey' : 'password', kit: kitLink })
+  else if (location.pathname === '/recover') recoverFlow()
   else if (wayLogin) loginFlow()
   else welcome()
 
@@ -872,17 +891,6 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
     kitGate(window.trommi?.client, { fresh: true })   // (app.mjs opened it already, unless this browser keeps no mark)
     if (!gate) root.remove()
   }
-  /** The email of "Create with passkey", which may be left empty: { A, email: string | null }; null (and the word said) for a text that is no address. */
-  const optionalEmail = async form => {
-    const A = await account(), email = form.elements.email
-    if (!email.value.trim()) return { A, email: null }
-    try { A.normaliseEmail(email.value) } catch { say('That is not an email address.', email); return null }
-    lastEmail = email.value.trim()
-    return { A, email: lastEmail }
-  }
-  /** What the email field of "Create account" starts with: what was typed before, if it is an address. */
-  const typedEmail = () => (lastEmail.includes('@') ? lastEmail : '')
-
   // Passkey first: where the device has its own passkeys, the one button is "Create with passkey" and the password is
   // the quiet way; where it has none (a passkey on a phone or a key may still do), the password's form comes first and
   // the passkey is the quiet way; a browser without WebAuthn: only the password's form, and one line that says so. A passkey that cannot unlock (no prf): the password's form, the email kept.
@@ -940,7 +948,7 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
       if (made && cameToNothing(err)) passkeyForget(made.credential_id)   // made, and no account came of it
       if (err.code === 'room-exists') return roomExists()
       if (err.code === 'no-prf') return createFlow({ way: 'password', note: NO_PRF })
-      idle(form); say(err.code === 'passkey-cancelled' ? 'No passkey made.' : err.code === 'account-exists' ? EMAIL_TAKEN : err.code === 'core-missing' && !f.email ? NEEDS_EMAIL_YET : accountError(err), err.code === 'core-missing' && !f.email ? form.elements.email : null)
+      idle(form); say(err.code === 'passkey-cancelled' ? 'No passkey made.' : err.code === 'account-exists' ? EMAIL_TAKEN : accountError(err))
     }
   }
 

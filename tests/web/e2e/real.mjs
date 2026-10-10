@@ -449,7 +449,7 @@ export const steps = [
       await E.until("document.querySelector('#way-forgot')", 'the login screen')
       await E.click('#way-forgot')
       await E.until("document.querySelector('#forgot-form')", 'the forgot password screen')
-      await E.type('#forgot-form input[name=email]', ctx.email)
+      await E.type('#forgot-form input[name=account]', ctx.email)
       await E.type('#forgot-form textarea[name=words]', ctx.words)
       await E.type('#forgot-form input[name=password]', next)
       await E.click('#forgot-form button[type=submit]')
