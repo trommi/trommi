@@ -175,9 +175,12 @@ const DEVICE_CALLS = [
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
   'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
-  'learn_history', 'group_past',
+  'learn_history', 'group_past', 'learn_start', 'learn_slice', 'learn_finish', 'learn_abandon',
+  'code_check_start', 'code_check_slice', 'join_room_checked', 'recover_checked',
+  'session_check_start', 'session_check_slice', 'join_session_checked',
+  'recovery_plan_start', 'recovery_plan_slice', 'recovery_plan_finish',
   'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_checked', 'invite_forget',
-  'join_request', 'join_reveal', 'join_observe', 'join_invited',
+  'join_link', 'join_request', 'join_reveal', 'join_observe', 'join_invited',
   'seal', 'outbox_voided', 'envelope_abandon', 'receive_envelope', 'receive_relay', 'heads_due', 'compare_heads',
   'cut_of', 'chain_head', 'chain_cut', 'object', 'objects', 'object_owner', 'register', 'register_of', 'board_load',
   'command', 'command_finished', 'commands_pending', 'commands_uncertain', 'findings', 'findings_read',
@@ -416,6 +419,9 @@ export const recoveryAnchor = plain('recovery_anchor')
 export const recoverySignIn = plain('recovery_sign_in')
 export const boardReduce = plain('board_reduce')
 export const inviteLinkParse = plain('invite_link_parse')
+export const inviteLinkCheck = plain('invite_link_check')
+export const inviteLifeMs = plain('invite_life_ms')
+export const inviteClockToleranceMs = plain('invite_clock_tolerance_ms')
 export const checkEmoji = plain('check_emoji')
 export const hubAddress = plain('hub_address')
 export const kitKeysFor = plain('kit_keys_for')
