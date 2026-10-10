@@ -1,4 +1,4 @@
-// Signing in to the hub (spec/v2.md 12.3) against the fake hub: the token is taken once, shared, renewed, and taken
+// Signing in to the hub (spec/v1.md 12.3) against the fake hub: the token is taken once, shared, renewed, and taken
 // again once after the hub forgot it.
 import test from 'node:test'
 import assert from 'node:assert/strict'

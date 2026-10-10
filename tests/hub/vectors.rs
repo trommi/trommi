@@ -1,4 +1,4 @@
-//! Fixed bytes for every struct of spec/v2.md that the hub reads, written out by hand from the spec's
+//! Fixed bytes for every struct of spec/v1.md that the hub reads, written out by hand from the spec's
 //! definitions (field by field, with the length prefixes of RFC 9420 section 2.1.2), and digests computed outside
 //! this code base (Python's hashlib over the same hand-written layout). Three things must agree with them: what
 //! the hub parses, what the hub encodes, and what the test clients' own encoder (`common/enc.rs`) encodes. A

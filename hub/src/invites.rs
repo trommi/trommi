@@ -1,4 +1,4 @@
-//! Joining by link (spec/v2.md 12.1, D4): the hub keeps the three signed messages of the ceremony (Offer,
+//! Joining by link (spec/v1.md 12.1, D4): the hub keeps the three signed messages of the ceremony (Offer,
 //! Request, Reveal) by `invite_id`. It never sees the link's secret, cannot check the Request's MAC and takes no
 //! part in the emoji; what it enforces is 12.1.7: the room group takes a new device only as the outcome of an
 //! invite its inviter revealed.

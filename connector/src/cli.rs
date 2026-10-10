@@ -297,7 +297,7 @@ pub async fn last_word(cfg: &member::Cfg, room_id: &str, t: &Value) -> bool {
         return false;
     }
     let r: Result<()> = async {
-        // The hub itself notices a connector that is gone: its lease runs out after 60 s (spec/v2.md 13.7), and
+        // The hub itself notices a connector that is gone: its lease runs out after 60 s (spec/v1.md 13.7), and
         // the board shows the agent as lost. What is left to the witness is to note that the loss was seen.
         let mut mark = t.as_object().cloned().unwrap_or_default();
         let file = mark.remove("file").and_then(|f| f.as_str().map(String::from)).unwrap_or_default();

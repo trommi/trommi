@@ -1,6 +1,6 @@
 # trommi-core
 
-The one implementation of Trommi's protocol ([`spec/v2.md`](../spec/v2.md)) on OpenMLS, used by the web app
+The one implementation of Trommi's protocol ([`spec/v1.md`](../spec/v1.md)) on OpenMLS, used by the web app
 (WASM, `core/wasm`), the iOS app (UniFFI, `core/swift`), the connector (Rust) and the hub (as observer).
 Production code only; every scenario, conformance and vector test lives in [`tests/`](../tests) at the repository
 root.

@@ -1,4 +1,4 @@
-// LiveRecovery.swift: recovery and signing in on a new device (spec/v2.md section 8) on the Rust core, as the binding
+// LiveRecovery.swift: recovery and signing in on a new device (spec/v1.md section 8) on the Rust core, as the binding
 // has it (core/swift/src/recovery.rs and the recovery calls of core/swift/src/device.rs), one call for one call.
 //
 // WHY THESE ARE NOT Core.swift's TWO AWAITED CALLS. Core.swift guessed `joinWithRecoveryCode(device:code:groupInfos:

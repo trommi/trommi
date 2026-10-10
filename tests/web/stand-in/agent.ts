@@ -7,7 +7,7 @@
 // engine and room functions as the web app (app/web/core/room.ts joinRoom). "Stand-in" is what it is for the
 // connector, not for the core.
 //
-// The command gate (spec/v2.md 9.0.9) is the core's: an envelope the core marks `command` is put to
+// The command gate (spec/v1.md 9.0.9) is the core's: an envelope the core marks `command` is put to
 // `Device.command`, handed to `onCommand` only when the gate says `act`, and reported with `commandFinished`.
 //
 // `AgentHub` exists because the fake hub's catch-up and stream leave an agent device the room group's Commits out

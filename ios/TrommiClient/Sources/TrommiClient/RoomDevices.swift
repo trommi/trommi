@@ -1,7 +1,7 @@
 // RoomDevices.swift: the devices of the room, from this one: pair another device of the person (link or QR code,
 // six emoji), invite an agent (its connector) or let one take a session over, remove devices, sign out.
 //
-// The steps and their order are spec/v2.md 12.1 (joining by link), 5.2.7 (a new human device into every live session
+// The steps and their order are spec/v1.md 12.1 (joining by link), 5.2.7 (a new human device into every live session
 // group), 5.3 (takeover) and 9.0.10 (cuts). The core makes every Commit and checks every answer; this file fetches
 // KeyPackages, posts what the core put into its outbox and waits for the hub's word before the next step.
 import Foundation

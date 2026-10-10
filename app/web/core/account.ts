@@ -1,4 +1,4 @@
-// account.ts: the Trommi account on protocol v2 (spec/v2.md 8.4, 8.6, 8.7, 8.8; spec/hub-api.md "The account").
+// account.ts: the Trommi account on protocol v2 (spec/v1.md 8.4, 8.6, 8.7, 8.8; spec/hub-api.md "The account").
 //
 // An account has passkeys, a password or both, and an Emergency Kit (twelve words, made with the account and with
 // every new recovery code). It has an id, a UUID the hub mints, which is public and printed on every kit; an e-mail

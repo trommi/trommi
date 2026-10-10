@@ -1,6 +1,6 @@
 // Hub.swift: the hub's routes as a client needs them (spec/hub-api.md, normative). Every route is under /v2; bodies
 // are JSON; byte strings are base64url; an MLS message, a GroupInfo, a KeyPackage and an envelope travel as their
-// bytes in one string. A refusal is { error, message } with the status of spec/v2.md section 16.
+// bytes in one string. A refusal is { error, message } with the status of spec/v1.md section 16.
 //
 // The hub is not trusted with content and is not believed about it: what it returns goes to the core, which checks
 // signatures, chains and group state. This file only moves bytes and keeps the sign-in token.
@@ -54,7 +54,7 @@ public final class HubClient: @unchecked Sendable {
 
   /** Tests answer the hub's routes in the process (URLProtocol classes); empty in the app. */
   nonisolated(unsafe) static var transportForTests: [AnyClass] = []
-  /** The largest answer taken: of a JSON route, and of a file (the largest stored file of spec/v2.md section 11). */
+  /** The largest answer taken: of a JSON route, and of a file (the largest stored file of spec/v1.md section 11). */
   static let maxJSON = 16 << 20, maxFile = (64 << 20) + (1 << 20)
   private var transport = Transport()
   /** A fresh connection pool (after a transport failure: the hub restarted and closed the pooled connections). */

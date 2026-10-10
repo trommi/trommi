@@ -2282,7 +2282,7 @@ fn what_the_second_review_found_stays_refused() {
     assert!(refused >= 3);
 }
 
-/// spec/v2.md section 19, conformance test 3: removal of a human device across 50 live sessions, with a crash
+/// spec/v1.md section 19, conformance test 3: removal of a human device across 50 live sessions, with a crash
 /// after the room Commit and another device finishing; nothing is accepted from or for the removed device in
 /// between.
 #[test]
@@ -2433,7 +2433,7 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
     }
 }
 
-/// spec/v2.md section 19, conformance test 4, the hub's side: a catch-up of more than 1 000 changes across 20
+/// spec/v1.md section 19, conformance test 4, the hub's side: a catch-up of more than 1 000 changes across 20
 /// groups with devices coming and going is one order in which every session Commit meets the room state it
 /// names; the same log in another order does not.
 #[test]

@@ -1,4 +1,4 @@
-//! Refusals: the stable codes of spec/v2.md section 16 and their statuses.
+//! Refusals: the stable codes of spec/v1.md section 16 and their statuses.
 
 use serde_json::{json, Value};
 

@@ -1,10 +1,10 @@
-// Wire.swift: byte strings and their text forms, the error every refusal is, and the numbers of spec/v2.md that the
+// Wire.swift: byte strings and their text forms, the error every refusal is, and the numbers of spec/v1.md that the
 // model reads from a signed header. No cryptography: that is trommi-core (Core.swift).
 import Foundation
 
 public typealias Bytes = [UInt8]
 
-/** Every refusal carries a stable machine-readable code: the codes of spec/v2.md section 16, and a few local ones. */
+/** Every refusal carries a stable machine-readable code: the codes of spec/v1.md section 16, and a few local ones. */
 public struct TrommiError: Error, CustomStringConvertible, Equatable {
   public let code: String
   public let message: String
@@ -16,7 +16,7 @@ public struct TrommiError: Error, CustomStringConvertible, Equatable {
 public let ZERO32 = Bytes(repeating: 0, count: 32)
 public let ZERO16 = Bytes(repeating: 0, count: 16)
 
-/** The kinds of a stored item (spec/v2.md section 9). 8 to 255 are reserved: read, chained, never applied. */
+/** The kinds of a stored item (spec/v1.md section 9). 8 to 255 are reserved: read, chained, never applied. */
 public enum KIND {
   public static let TIMELINE_ITEM = 1, OBJECT_VERSION = 2, ANSWER = 3, PERMISSION_REQUEST = 4, VERDICT = 5, STATUS = 6, DECIDE_AGAIN = 7
   static let MAX = 7
@@ -129,7 +129,7 @@ public func nowMs() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
 
 /** Numbers of an untrusted JSON answer (the hub's), read exactly. */
 public enum Wire {
-  /** The most a counter of the protocol may be (spec/v2.md 15.2: 2^53 − 1), so that no JSON reader rounds it. */
+  /** The most a counter of the protocol may be (spec/v1.md 15.2: 2^53 − 1), so that no JSON reader rounds it. */
   public static let maxCount: UInt64 = (1 << 53) - 1
   /** A whole number from 0 to 2^53 − 1; nil for anything else (negative, a fraction, a boolean, text, too large). */
   public static func uint(_ v: Any?) -> UInt64? {
