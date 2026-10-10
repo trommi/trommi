@@ -158,6 +158,16 @@ impl Bench {
     /// Runs the installer with nothing of this machine but its PATH.
     /// The machine's own claude and codex are never reached: the folders that hold them are left out.
     fn install(&self, args: &[&str], path_first: Option<&Path>) -> Output {
+        self.install_env(args, path_first, &[])
+    }
+
+    /// As `install`, with these variables set besides HOME and PATH.
+    fn install_env(
+        &self,
+        args: &[&str],
+        path_first: Option<&Path>,
+        env: &[(&str, &str)],
+    ) -> Output {
         let mut dirs: Vec<PathBuf> = path_first.into_iter().map(Path::to_path_buf).collect();
         dirs.extend(
             std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
@@ -170,6 +180,7 @@ impl Bench {
             .env_clear()
             .env("HOME", self.home())
             .env("PATH", path)
+            .envs(env.iter().copied())
             .current_dir(self.dir.path())
             .output()
             .expect("install.sh runs")
@@ -375,17 +386,56 @@ fn what_does_not_check_is_refused_and_nothing_is_installed() {
 }
 
 #[test]
-fn the_installer_refuses_root_and_unknown_arguments_and_goes_nowhere_but_github() {
+fn the_installer_installs_for_root_refuses_sudo_by_another_user_and_goes_nowhere_but_github() {
     let Some(bench) = Bench::new() else { return };
     let release = bench.release("seven", "trommi-connector", 7, &verified(7), None);
-    // root: `id -u` answers 0
-    let fake = bench.dir.path().join("fake");
-    std::fs::create_dir_all(&fake).expect("a folder");
-    executable(&fake.join("id"), "#!/bin/sh\necho 0\n");
-    let output = bench.install(&["--from", release.to_str().expect("plain")], Some(&fake));
-    assert!(!output.status.success());
-    assert!(said(&output).contains("root"), "{}", said(&output));
+    let from = ["--from", release.to_str().expect("plain")];
+    // a stand-in `id`: who runs the script
+    let as_user = |uid: &str, name: &str| {
+        let fake = bench.dir.path().join(format!("id-{name}"));
+        std::fs::create_dir_all(&fake).expect("a folder");
+        executable(
+            &fake.join("id"),
+            &format!("#!/bin/sh\ncase $* in -un) echo {name} ;; *) echo {uid} ;; esac\n"),
+        );
+        fake
+    };
+    let as_root = as_user("0", "root");
+
+    // sudo by a user: refused with the way that works, nothing installed
+    let output = bench.install_env(&from, Some(&as_root), &[("SUDO_USER", "alice")]);
+    let text = said(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("run it as alice without sudo"), "{text}");
     assert!(!bench.installed("trommi-connector").exists());
+    // sudo -u from one user to another: refused all the same
+    let bob = as_user("1001", "bob");
+    let output = bench.install_env(&from, Some(&bob), &[("SUDO_USER", "alice")]);
+    assert!(
+        said(&output).contains("run it as alice without sudo"),
+        "{}",
+        said(&output)
+    );
+    assert!(!bench.installed("trommi-connector").exists());
+
+    // a root login (no sudo): installed into root's home like any user's, with a note and the PATH line
+    let output = bench.install(&from, Some(&as_root));
+    let text = said(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("Installed for root."), "{text}");
+    assert!(
+        text.contains("export PATH=\"$HOME/.local/bin:$PATH\""),
+        "{text}"
+    );
+    assert!(bench.installed("trommi-connector").is_file());
+    // root through sudo from root (SUDO_USER=root) is root as well
+    let output = bench.install_env(&from, Some(&as_root), &[("SUDO_USER", "root")]);
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(said(&output).contains("Installed for root."));
+    // an ordinary user gets no such note
+    let output = bench.install(&from, None);
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(!said(&output).contains("Installed for root."));
 
     for args in [
         &["--key", "x"][..],
