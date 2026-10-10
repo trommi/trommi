@@ -137,6 +137,16 @@ fn a_draft_that_lacks_what_its_kind_needs_is_bad_format_and_uses_no_number() {
         code_of(device.seal(empty.clone(), None, Vec::new(), now())),
         ErrorCode::BadFormat
     );
+    // Nothing is filled in for a field a kind names: a version says whether it closes.
+    let version = Draft {
+        kind: DraftKind::NoteVersion,
+        object_id: Some(vec![1; 16]),
+        ..empty.clone()
+    };
+    assert_eq!(
+        code_of(device.seal(version, None, Vec::new(), now())),
+        ErrorCode::BadFormat
+    );
     assert_eq!(format!("{empty:?}"), "Draft(<redacted>)");
     let id = device.id().expect("an id");
     assert_eq!(
@@ -195,7 +205,14 @@ fn a_refusal_that_judges_the_request_undoes_its_outbox_entry() {
     let (device, _) = founder(MemoryStorage::new());
     let entry = device.outbox().expect("the outbox").remove(0);
     // No hub answers with these: nothing is changed.
-    for code in [ErrorCode::Storage, ErrorCode::Busy, ErrorCode::WeakPassword] {
+    for code in [
+        ErrorCode::Storage,
+        ErrorCode::Busy,
+        ErrorCode::WeakPassword,
+        ErrorCode::NoKey,
+        ErrorCode::DecryptFailed,
+        ErrorCode::Withheld,
+    ] {
         assert_eq!(
             code_of(device.outbox_refused(entry.id, code)),
             ErrorCode::BadFormat
@@ -239,6 +256,8 @@ fn a_second_owner_is_found_out_and_the_first_signs_nothing_more() {
     second.key_package(now()).expect("the second writes");
     assert_eq!(code_of(first.key_package(now())), ErrorCode::Storage);
     assert!(!first.is_owner().expect("asked"));
+    // What it is asked about keys is refused too, not answered with "none held".
+    assert_eq!(code_of(first.holds_key(vec![7; 32], 0)), ErrorCode::Storage);
     assert_eq!(
         code_of(first.hub_sign_in("https://hub.example".into(), vec![1; 32])),
         ErrorCode::Storage

@@ -195,8 +195,8 @@ impl Draft {
         let payload =
             || Ok::<_, CoreError>(SecretBytes::new(needed(self.payload.clone(), "payload")?));
         let urgency = || Ok::<_, CoreError>(needed(self.urgency, "urgency")?.into());
-        let push = self.push.unwrap_or(false);
-        let closed = self.closed.unwrap_or(false);
+        let push = || needed(self.push, "push");
+        let closed = || needed(self.closed, "closed");
         Ok(match self.kind {
             DraftKind::SessionChat => core::Draft::SessionChat {
                 session: session()?,
@@ -221,14 +221,14 @@ impl Draft {
             },
             DraftKind::NoteVersion => core::Draft::NoteVersion {
                 object_id: object()?,
-                closed,
+                closed: closed()?,
                 payload: payload()?,
             },
             DraftKind::Answer => core::Draft::Answer {
                 session: session()?,
                 object_id: object()?,
-                choices: self.choices.clone().unwrap_or_default(),
-                closes: self.closes.unwrap_or(false),
+                choices: needed(self.choices.clone(), "choices")?,
+                closes: needed(self.closes, "closes")?,
                 payload: payload()?,
             },
             DraftKind::TakeBack => core::Draft::TakeBack {
@@ -245,22 +245,22 @@ impl Draft {
             DraftKind::CardFirst => core::Draft::CardFirst {
                 session: session()?,
                 urgency: urgency()?,
-                push,
+                push: push()?,
                 payload: payload()?,
             },
             DraftKind::CardVersion => core::Draft::CardVersion {
                 session: session()?,
                 object_id: object()?,
-                closed,
+                closed: closed()?,
                 urgency: urgency()?,
-                push,
+                push: push()?,
                 payload: payload()?,
             },
             DraftKind::PermissionRequest => core::Draft::PermissionRequest {
                 session: session()?,
                 urgency: urgency()?,
                 expires_at: needed(self.expires_at, "expiresAt")?,
-                push,
+                push: push()?,
                 payload: payload()?,
             },
             DraftKind::ArtifactFirst => core::Draft::ArtifactFirst {
@@ -270,7 +270,7 @@ impl Draft {
             DraftKind::ArtifactVersion => core::Draft::ArtifactVersion {
                 session: session()?,
                 object_id: object()?,
-                closed,
+                closed: closed()?,
                 payload: payload()?,
             },
         })
@@ -407,6 +407,10 @@ record! {
         pub object: Option<ObjectHeader>,
         /// The files the body refers to, 16 bytes each.
         pub file_ids: Vec<Vec<u8>>,
+        /// For a kind a newer Trommi defines: its number, 8 or above.
+        pub reserved_kind: Option<u8>,
+        /// For such a kind: its object block as it came, unread.
+        pub reserved_block: Option<Vec<u8>>,
     }
 }
 
@@ -449,7 +453,13 @@ impl From<&Header> for EnvelopeHeader {
             Subject::TakeBack(fields) => (EnvelopeKind::TakeBack, None, None, Some(object(fields))),
             Subject::Reserved { .. } => (EnvelopeKind::Reserved, None, None, None),
         };
+        let (reserved_kind, reserved_block) = match &header.subject {
+            Subject::Reserved { kind, block } => (Some(*kind), Some(block.to_vec())),
+            _ => (None, None),
+        };
         Self {
+            reserved_kind,
+            reserved_block,
             group: header.group.as_bytes().to_vec(),
             session_id: header
                 .group
@@ -708,9 +718,14 @@ impl From<core::ReceivedEnvelope> for ReceivedEnvelope {
     }
 }
 
-/// The void code a hub served an envelope with, as the core takes it.
-pub(crate) fn void_code(code: Option<ErrorCode>) -> Option<Error> {
-    code.map(core_error)
+/// The void code a hub served an envelope with, as the core takes it; `bad-format` for a code that no hub
+/// voids with and the core has no error for.
+pub(crate) fn void_code(code: Option<ErrorCode>) -> Result<Option<Error>, CoreError> {
+    match code {
+        None => Ok(None),
+        Some(code) if crate::error::is_core_code(code) => Ok(Some(core_error(code))),
+        Some(_) => Err(CoreError::bad_format("not a code a hub voids with")),
+    }
 }
 
 record! {
