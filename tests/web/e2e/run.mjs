@@ -5,8 +5,8 @@
 //     all       both; `real` is skipped, loudly, when TROMMI_HUB_BIN is not set
 //   node tests/web/e2e/run.mjs real --app <app URL> --hub <hub URL> [--shots <folder>]
 //     remote.mjs: the real run's core steps against an app and a hub that are already deployed. Nothing is built
-//     or started; it makes ONE account `e2e-<random>@example.invalid` there. Read remote.mjs before pointing it
-//     at a hub that is not yours.
+//     or started; it makes TWO accounts `e2e-<random>@example.invalid` there (the second for "forgot password"
+//     alone). Read remote.mjs before pointing it at a hub that is not yours. stack.mjs serves a local stand for it.
 // Exit 0: every step of every run passed · 1: a step failed · 2: a run could not start (Chromium, esbuild, the
 // core's WASM package or the hub's binary is missing: the message says which).
 // It needs Chromium (`chromium` on the PATH or CHROMIUM), which cannot run inside a command sandbox. Everything it
