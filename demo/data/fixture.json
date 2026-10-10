@@ -5244,7 +5244,7 @@
             "card_type": "decision",
             "title": "How long do we keep the raw events?",
             "teaser": "The models need 90 days. Longer costs storage and means more personal data kept.",
-            "body": "Raw events are 4.2 million a day. The models and the dashboard only read the last 90 days; everything older lives on in aggregates.",
+            "body": "Raw events are 4.2 million a day. The models and the dashboard only read the last 90 days; everything older lives on in aggregates.\n\n| Keep | Storage | Cost / month |\n| --- | --- | --- |\n| 30 days | 38 GB | €1 |\n| 90 days | 115 GB | €3 |\n| 1 year | 470 GB | €11 |",
             "options": [
               {
                 "key": "30",
@@ -5263,7 +5263,7 @@
               }
             ],
             "sections": null,
-            "html": "<table><tr><th>Keep</th><th>Storage</th><th>Cost / month</th></tr><tr><td>30 days</td><td class=\"num\">38 GB</td><td class=\"num\">€1</td></tr><tr><td>90 days</td><td class=\"num\">115 GB</td><td class=\"num\">€3</td></tr><tr><td>1 year</td><td class=\"num\">470 GB</td><td class=\"num\">€11</td></tr></table>",
+            "html": null,
             "allows_multiple": false,
             "recommended": "90",
             "urgency_reason": "",
@@ -5299,7 +5299,7 @@
       "card_type": "decision",
       "title": "How long do we keep the raw events?",
       "teaser": "The models need 90 days. Longer costs storage and means more personal data kept.",
-      "body": "Raw events are 4.2 million a day. The models and the dashboard only read the last 90 days; everything older lives on in aggregates.",
+      "body": "Raw events are 4.2 million a day. The models and the dashboard only read the last 90 days; everything older lives on in aggregates.\n\n| Keep | Storage | Cost / month |\n| --- | --- | --- |\n| 30 days | 38 GB | €1 |\n| 90 days | 115 GB | €3 |\n| 1 year | 470 GB | €11 |",
       "options": [
         {
           "key": "30",
@@ -5318,7 +5318,7 @@
         }
       ],
       "sections": null,
-      "html": "<table><tr><th>Keep</th><th>Storage</th><th>Cost / month</th></tr><tr><td>30 days</td><td class=\"num\">38 GB</td><td class=\"num\">€1</td></tr><tr><td>90 days</td><td class=\"num\">115 GB</td><td class=\"num\">€3</td></tr><tr><td>1 year</td><td class=\"num\">470 GB</td><td class=\"num\">€11</td></tr></table>",
+      "html": null,
       "allows_multiple": false,
       "recommended": "90",
       "urgency_reason": "",
