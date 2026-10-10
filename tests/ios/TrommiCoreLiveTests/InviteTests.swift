@@ -31,9 +31,9 @@ final class InviteTests: XCTestCase {
     let room = try room(a, hub: hub)
 
     // A session to come into: the agent device by invite, its main session by the invite's step.
-    let forAgent = try exchangeInvite(from: a, to: agent, role: ROLE.AGENT, tools: tools)
+    let forAgent = try exchangeInvite(from: a, to: agent, role: .agent, tools: tools)
     try agent.joinObserve(groupInfo: try XCTUnwrap(hub.infos[room]?[1]))
-    _ = try a.confirmInvite(invite: forAgent.invite, numbers: forAgent.inviterShows, nowMs: nowMs())
+    _ = try a.inviteConfirm(invite: forAgent.invite, numbers: forAgent.inviterShows, requestHash: forAgent.requestHash, matches: true, nowMs: nowMs())
     try hub.post(a)
     guard case .foundSession(_, _, let agentKeyPackage)? = try a.inviteSteps().first else { return XCTFail("the invite asks for no session") }
     let sessionGroup = room + (try a.foundSession(agent: agent.id, keyPackages: [agentKeyPackage], nowMs: nowMs()))
@@ -43,23 +43,23 @@ final class InviteTests: XCTestCase {
     XCTAssertEqual(roomEpoch, 2)
 
     // The invite: the link is for the new device alone, and names the hub and the room.
-    let opened = try a.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
-    XCTAssertEqual(opened.invite.count, 16)
+    let opened = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
+    XCTAssertEqual(opened.inviteId.count, 16)
     XCTAssertTrue(opened.link.hasPrefix("https://app.example/join#v2."))
     XCTAssertGreaterThan(opened.expiresAt, nowMs())
-    let asked = try tools.inviteRequest(link: opened.link, offer: opened.offer, offerSignature: opened.offerSignature, device: b, nowMs: nowMs())
-    XCTAssertEqual(asked.invite, opened.invite)
+    let asked = try b.joinRequest(link: opened.link, offer: opened.offer, nowMs: nowMs())
+    XCTAssertEqual(asked.invite, opened.inviteId)
     XCTAssertEqual(asked.hub, "https://hub.example")
     XCTAssertEqual(asked.room, room)
     XCTAssertEqual(asked.role, ROLE.HUMAN)
     XCTAssertEqual(asked.inviter, a.id)
-    let accepted = try a.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: nowMs())
+    let accepted = try a.inviteAccept(invite: opened.inviteId, request: asked.request, nowMs: nowMs())
     XCTAssertEqual(accepted.newDevice, b.id)
     // Asked again with the same Request, the same comes back.
-    XCTAssertEqual(try a.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: nowMs()), accepted)
+    XCTAssertEqual(try a.inviteAccept(invite: opened.inviteId, request: asked.request, nowMs: nowMs()), accepted)
 
     // The six numbers are the same on both sides, and so are the emoji and their words.
-    let shown = try tools.inviteReveal(device: b, reveal: accepted.reveal, signature: accepted.revealSignature)
+    let shown = try b.joinReveal(accepted.reveal)
     XCTAssertEqual(shown, accepted.numbers)
     XCTAssertEqual(shown.count, 6)
     XCTAssertTrue(shown.allSatisfy { $0 < 64 })
@@ -67,15 +67,15 @@ final class InviteTests: XCTestCase {
     XCTAssertEqual(emoji.count, 6)
     XCTAssertTrue(emoji.allSatisfy { !$0.emoji.isEmpty && $0.emoji != "?" && !$0.word.isEmpty })
     // The link names the hub, the room and the invite's id, which is all a new device needs to ask for the Offer.
-    XCTAssertEqual(try tools.parseInviteLink(opened.link), InviteLinkParts(hub: "https://hub.example", room: room, invite: opened.invite))
+    XCTAssertEqual(try tools.parseInviteLink(opened.link), InviteLinkParts(hub: "https://hub.example", room: room, invite: opened.inviteId))
 
     // Nothing of the room changed yet; B is in none.
     XCTAssertEqual(try a.inviteSteps(), [])
     XCTAssertNil(b.room)
 
     // Confirmed: the Add in the room group, and B joins from its Welcome, which the stored invite describes.
-    _ = try a.confirmInvite(invite: opened.invite, numbers: accepted.numbers, nowMs: nowMs())
-    XCTAssertEqual(try a.inviteSteps(), [.wait(invite: opened.invite)])
+    _ = try a.inviteConfirm(invite: opened.inviteId, numbers: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: nowMs())
+    XCTAssertEqual(try a.inviteSteps(), [.wait(invite: opened.inviteId)])
     try hub.post(a)
     let joined = try b.joinInvited(try XCTUnwrap(hub.welcomes.last), nowMs: nowMs())
     XCTAssertEqual(joined, Joined(group: room, epoch: roomEpoch + 1, addedBy: a.id))
@@ -90,10 +90,10 @@ final class InviteTests: XCTestCase {
     XCTAssertFalse(try b.holdsKey(group: room, epoch: 0))
 
     // What follows, step by step: the handover in the room group, then the Add into the live session group.
-    XCTAssertEqual(try a.inviteSteps(), [.handover(invite: opened.invite, group: room, device: b.id)])
-    XCTAssertFalse(try a.inviteHandover(invite: opened.invite).isEmpty)
+    XCTAssertEqual(try a.inviteSteps(), [.handover(invite: opened.inviteId, group: room, device: b.id)])
+    XCTAssertFalse(try a.inviteHandover(invite: opened.inviteId).isEmpty)
     try hub.post(a)
-    XCTAssertEqual(try a.inviteSteps(), [.addToSession(invite: opened.invite, group: sessionGroup, device: b.id)])
+    XCTAssertEqual(try a.inviteSteps(), [.addToSession(invite: opened.inviteId, group: sessionGroup, device: b.id)])
     _ = try a.addToSession(group: sessionGroup, device: b.id, keyPackage: try b.keyPackage(nowMs: nowMs()), nowMs: nowMs())
     try hub.post(a)
     XCTAssertEqual(try a.inviteSteps(), [])
@@ -117,8 +117,8 @@ final class InviteTests: XCTestCase {
       XCTAssertTrue(try bothHoldKey(b, a, group: sessionGroup, epoch: epoch), "session epoch \(epoch)")
     }
     // A device joins one room, once.
-    let again = try a.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
-    XCTAssertEqual(refusedCode { _ = try self.tools.inviteRequest(link: again.link, offer: again.offer, offerSignature: again.offerSignature, device: b, nowMs: nowMs()) }, "room-exists")
+    let again = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
+    XCTAssertEqual(refusedCode { _ = try b.joinRequest(link: again.link, offer: again.offer, nowMs: nowMs()) }, "room-exists")
   }
 
   /// "They don't match": the invite is burned, nobody is added, and the invite answers no more.
@@ -126,14 +126,14 @@ final class InviteTests: XCTestCase {
     let hub = PocketHub()
     let a = try newDevice(), b = try newDevice()
     let room = try room(a, hub: hub)
-    let opened = try a.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
-    let asked = try tools.inviteRequest(link: opened.link, offer: opened.offer, offerSignature: opened.offerSignature, device: b, nowMs: nowMs())
-    let accepted = try a.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: nowMs())
-    _ = try tools.inviteReveal(device: b, reveal: accepted.reveal, signature: accepted.revealSignature)
+    let opened = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
+    let asked = try b.joinRequest(link: opened.link, offer: opened.offer, nowMs: nowMs())
+    let accepted = try a.inviteAccept(invite: opened.inviteId, request: asked.request, nowMs: nowMs())
+    _ = try b.joinReveal(accepted.reveal)
 
-    try a.burnInvite(invite: opened.invite)
-    XCTAssertEqual(refusedCode { _ = try a.confirmInvite(invite: opened.invite, numbers: accepted.numbers, nowMs: nowMs()) }, "code-not-confirmed")
-    XCTAssertEqual(refusedCode { _ = try a.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: nowMs()) }, "invite-burned")
+    try a.burnInvite(invite: opened.inviteId)
+    XCTAssertEqual(refusedCode { _ = try a.inviteConfirm(invite: opened.inviteId, numbers: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: nowMs()) }, "code-not-confirmed")
+    XCTAssertEqual(refusedCode { _ = try a.inviteAccept(invite: opened.inviteId, request: asked.request, nowMs: nowMs()) }, "invite-burned")
     XCTAssertTrue(a.outbox().isEmpty)
     XCTAssertEqual(try a.inviteSteps(), [])
     XCTAssertEqual(try a.roomRoles()?.humans, [a.id])
@@ -149,35 +149,35 @@ final class InviteTests: XCTestCase {
     let hub = PocketHub()
     let a = try newDevice(), b = try newDevice(), stranger = try newDevice()
     _ = try room(a, hub: hub)
-    let opened = try a.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
+    let opened = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
     // Before any Request was accepted there is no code to confirm.
-    XCTAssertEqual(refusedCode { _ = try a.confirmInvite(invite: opened.invite, numbers: [1, 2, 3, 4, 5, 6], nowMs: nowMs()) }, "code-not-confirmed")
-    let asked = try tools.inviteRequest(link: opened.link, offer: opened.offer, offerSignature: opened.offerSignature, device: b, nowMs: nowMs())
+    XCTAssertEqual(refusedCode { _ = try a.inviteConfirm(invite: opened.inviteId, numbers: [1, 2, 3, 4, 5, 6], requestHash: accepted.requestHash, matches: true, nowMs: nowMs()) }, "code-not-confirmed")
+    let asked = try b.joinRequest(link: opened.link, offer: opened.offer, nowMs: nowMs())
     // A Request with a wrong MAC (someone without the link) is refused and the invite stays open.
     var forged = asked.mac
     forged[0] ^= 1
-    XCTAssertNotNil(refusedCode { _ = try a.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: forged, signature: asked.signature, nowMs: nowMs()) })
-    let accepted = try a.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: nowMs())
+    XCTAssertNotNil(refusedCode { _ = try a.acceptInviteRequest(invite: opened.inviteId, request: asked.request, mac: forged, signature: asked.signature, nowMs: nowMs()) })
+    let accepted = try a.inviteAccept(invite: opened.inviteId, request: asked.request, nowMs: nowMs())
 
     var wrong = accepted.numbers
     wrong[0] = (wrong[0] + 1) % 64
-    XCTAssertEqual(refusedCode { _ = try a.confirmInvite(invite: opened.invite, numbers: wrong, nowMs: nowMs()) }, "code-not-confirmed")
-    XCTAssertEqual(refusedCode { _ = try a.confirmInvite(invite: opened.invite, numbers: [1, 2, 3], nowMs: nowMs()) }, "bad-format")
+    XCTAssertEqual(refusedCode { _ = try a.inviteConfirm(invite: opened.inviteId, numbers: wrong, requestHash: accepted.requestHash, matches: true, nowMs: nowMs()) }, "code-not-confirmed")
+    XCTAssertEqual(refusedCode { _ = try a.inviteConfirm(invite: opened.inviteId, numbers: [1, 2, 3], requestHash: accepted.requestHash, matches: true, nowMs: nowMs()) }, "bad-format")
     XCTAssertTrue(a.outbox().isEmpty)
     // A Reveal is checked on the device that made the Request.
-    XCTAssertEqual(refusedCode { _ = try self.tools.inviteReveal(device: stranger, reveal: accepted.reveal, signature: accepted.revealSignature) }, "not-found")
-    XCTAssertEqual(try tools.inviteReveal(device: b, reveal: accepted.reveal, signature: accepted.revealSignature), accepted.numbers)
+    XCTAssertEqual(refusedCode { _ = try stranger.joinReveal(accepted.reveal) }, "not-found")
+    XCTAssertEqual(try b.joinReveal(accepted.reveal), accepted.numbers)
 
-    _ = try a.confirmInvite(invite: opened.invite, numbers: accepted.numbers, nowMs: nowMs())
+    _ = try a.inviteConfirm(invite: opened.inviteId, numbers: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: nowMs())
     try hub.post(a)
     XCTAssertEqual(try b.joinInvited(try XCTUnwrap(hub.welcomes.last), nowMs: nowMs()).addedBy, a.id)
     // Used: the invite takes no second device, and is not confirmed twice.
-    XCTAssertEqual(refusedCode { _ = try a.confirmInvite(invite: opened.invite, numbers: accepted.numbers, nowMs: nowMs()) }, "code-not-confirmed")
+    XCTAssertEqual(refusedCode { _ = try a.inviteConfirm(invite: opened.inviteId, numbers: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: nowMs()) }, "code-not-confirmed")
     // Only a human device invites.
-    XCTAssertEqual(refusedCode { _ = try stranger.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs()) }, "no-room")
+    XCTAssertEqual(refusedCode { _ = try stranger.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs()) }, "no-room")
     // The app's origin and the hub's address are the core's to judge.
-    XCTAssertEqual(refusedCode { _ = try a.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example/join", hub: "https://hub.example", nowMs: nowMs()) }, "bad-format")
-    XCTAssertEqual(refusedCode { _ = try a.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example", hub: "https://Hub.example/", nowMs: nowMs()) }, "bad-format")
-    XCTAssertEqual(refusedCode { _ = try a.openInvite(role: 3, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs()) }, "bad-format")
+    XCTAssertEqual(refusedCode { _ = try a.inviteOpen(role: .human, session: nil, app: "https://app.example/join", hub: "https://hub.example", nowMs: nowMs()) }, "bad-format")
+    XCTAssertEqual(refusedCode { _ = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: "https://Hub.example/", nowMs: nowMs()) }, "bad-format")
+    XCTAssertEqual(refusedCode { _ = try a.inviteOpen(role: 3, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs()) }, "bad-format")
   }
 }

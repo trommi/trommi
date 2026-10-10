@@ -89,9 +89,8 @@ final class AccountTools: CoreTools {
   func openDevice(store: CoreStorage) throws -> CoreDevice { try base.openDevice(store: store) }
   func canonicalHub(_ text: String) throws -> String { try base.canonicalHub(text) }
   func parseInviteLink(_ text: String) throws -> InviteLinkParts { try base.parseInviteLink(text) }
-  func inviteRequest(link: String, offer: Bytes, offerSignature: Bytes, device: CoreDevice, nowMs: UInt64) throws -> JoinRequest { try base.inviteRequest(link: link, offer: offer, offerSignature: offerSignature, device: device, nowMs: nowMs) }
-  func inviteReveal(joiner: Bytes, reveal: Bytes, signature: Bytes) throws -> [UInt8] { try base.inviteReveal(joiner: joiner, reveal: reveal, signature: signature) }
-  func checkEmoji(_ numbers: [UInt8]) -> [(emoji: String, word: String)] { base.checkEmoji(numbers) }
+  func checkEmoji() -> [(emoji: String, word: String)] { base.checkEmoji() }
+  func boardReduce(snapshot: Bytes?, snapshotFrontier: [WriterHead], items: [BoardItemBody], frontier: [WriterHead]) throws -> Bytes { try base.boardReduce(snapshot: snapshot, snapshotFrontier: snapshotFrontier, items: items, frontier: frontier) }
   func encryptFile(_ plain: Bytes) throws -> SealedFile { try base.encryptFile(plain) }
   func decryptFile(fileId: FileId, fileKey: Bytes, sha256: Bytes, stored: Bytes) throws -> Bytes { try base.decryptFile(fileId: fileId, fileKey: fileKey, sha256: sha256, stored: stored) }
   func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts { try base.createShareLink(app: app, fileId: fileId, fileKey: fileKey, sha256: sha256) }

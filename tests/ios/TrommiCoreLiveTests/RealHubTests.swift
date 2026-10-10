@@ -236,7 +236,7 @@ final class RealHubTests: XCTestCase {
     func field(_ json: JSON, _ name: String) throws -> Bytes { try unb64u(try XCTUnwrap(json[name] as? String, name)) }
 
     // The inviter opens the invite and publishes its Offer.
-    let opened = try a.openInvite(role: ROLE.HUMAN, session: nil, app: "https://app.example", hub: hubURL, nowMs: nowMs())
+    let opened = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: hubURL, nowMs: nowMs())
     try await first.hub.postInvite(offer: opened.offer, signature: opened.offerSignature)
 
     // The new device, in a folder of its own: it reads the Offer by the invite's id and answers it.
@@ -244,26 +244,26 @@ final class RealHubTests: XCTestCase {
     let state = try store.openState(create: true)
     let b = try XCTUnwrap(try tools.createDevice(store: state) as? LiveDevice)
     let newcomer = try HubClient(hubURL: hubURL, room: roomId, signer: b)
-    let offer = try await newcomer.getInvite(opened.invite)
+    let offer = try await newcomer.getInvite(opened.inviteId)
     let asked = try tools.inviteRequest(link: opened.link, offer: try field(offer, "offer"), offerSignature: try field(offer, "signature"), device: b, nowMs: nowMs())
-    XCTAssertEqual(asked.invite, opened.invite)
+    XCTAssertEqual(asked.invite, opened.inviteId)
     XCTAssertEqual(asked.hub, hubURL)
     XCTAssertEqual(asked.room, roomId)
     try await newcomer.postInviteRequest(asked.invite, request: asked.request, mac: asked.mac, signature: asked.signature)
 
     // The inviter finds the Request at the hub, accepts it and publishes the Reveal; both show the same numbers.
-    let waiting = try await first.hub.getInviteRequests(opened.invite)
+    let waiting = try await first.hub.getInviteRequests(opened.inviteId)
     let request = try XCTUnwrap((waiting["requests"] as? [JSON])?.first)
-    let accepted = try a.acceptInviteRequest(invite: opened.invite, request: try field(request, "request"), mac: try field(request, "mac"),
+    let accepted = try a.acceptInviteRequest(invite: opened.inviteId, request: try field(request, "request"), mac: try field(request, "mac"),
                                              signature: try field(request, "signature"), nowMs: nowMs())
     XCTAssertEqual(accepted.newDevice, b.id)
-    try await first.hub.putInviteReveal(opened.invite, reveal: accepted.reveal, signature: accepted.revealSignature)
-    let reveal = try await newcomer.getInviteReveal(opened.invite)
+    try await first.hub.putInviteReveal(opened.inviteId, reveal: accepted.reveal, signature: accepted.revealSignature)
+    let reveal = try await newcomer.getInviteReveal(opened.inviteId)
     let shown = try tools.inviteReveal(device: b, reveal: try field(reveal, "reveal"), signature: try field(reveal, "signature"))
     XCTAssertEqual(shown, accepted.numbers)
 
     // Confirmed: the hub takes the Add, and what the device queues on hearing that.
-    let id = try a.confirmInvite(invite: opened.invite, numbers: accepted.numbers, nowMs: nowMs())
+    let id = try a.inviteConfirm(invite: opened.inviteId, numbers: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: nowMs())
     let welcome = try XCTUnwrap(a.outbox().first { $0.id == id }).parts[2]
     first.pumpOutbox()
     try await first.flush(timeoutMs: 5_000)
@@ -291,8 +291,8 @@ final class RealHubTests: XCTestCase {
     XCTAssertEqual(try kept.map { try field($0, "welcome") }, [welcome])
 
     // What the invite still asks of the inviter: the handover of the old keys.
-    XCTAssertEqual(try a.inviteSteps(), [.handover(invite: opened.invite, group: roomId, device: b.id)])
-    XCTAssertFalse(try a.inviteHandover(invite: opened.invite).isEmpty)
+    XCTAssertEqual(try a.inviteSteps(), [.handover(invite: opened.inviteId, group: roomId, device: b.id)])
+    XCTAssertFalse(try a.inviteHandover(invite: opened.inviteId).isEmpty)
     first.pumpOutbox()
     try await first.flush(timeoutMs: 5_000)
     XCTAssertEqual(try a.inviteSteps(), [])
