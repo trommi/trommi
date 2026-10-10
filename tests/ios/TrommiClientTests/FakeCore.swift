@@ -1,7 +1,8 @@
 // FakeCore: a core that seals nothing, for testing the client layer on Linux without the Rust library. It keeps the
 // CONTRACT of Core.swift, not the protocol: every operation writes its state and what it wants sent in one batch of
 // the store, the outbox survives a restart unchanged, a device that meets a conflict stops being the owner, log
-// entries and envelopes are taken in the hub's order and refused out of it. Its "envelopes" and "Commits" are
+// entries and envelopes are taken in the hub's order and refused out of it, and a Commit of its own is merged only
+// when the log hands it back, never by the hub's answer. Its "envelopes" and "Commits" are
 // readable JSON; nothing here is a security claim. FakeHub answers the routes of spec/hub-api.md the same way.
 import Foundation
 #if canImport(FoundationNetworking)
@@ -19,6 +20,7 @@ final class FakeDevice: CoreDevice {
     var sessions: [String: [String]] = [:]         // session id (hex) -> agent devices (hex)
     var seqs: [String: UInt64] = [:]               // "<group>/<sender>" -> last accepted number
     var registers: [String: String] = [:]          // "<group>/<name>" -> value (JSON text)
+    var pending: String?                           // an own Commit of the room group that the log has not handed back (hex)
   }
   let store: CoreStorage
   var state: State
@@ -70,7 +72,7 @@ final class FakeDevice: CoreDevice {
   func signHubAuth(room: RoomId, hub: String, challenge: Bytes) throws -> (auth: Bytes, signature: Bytes) { (j(["device": state.id, "room": hex(room), "hub": hub, "challenge": hex(challenge)]), [1]) }
   func groups() throws -> [GroupSummary] {
     guard isOwner, let r = state.room else { return [] }
-    return [GroupSummary(group: try unhex(r), session: nil, epoch: state.epoch, leaves: [id], archived: false, pending: false)] + state.sessions.keys.sorted().map { s in
+    return [GroupSummary(group: try unhex(r), session: nil, epoch: state.epoch, leaves: [id], archived: false, pending: state.pending != nil)] + state.sessions.keys.sorted().map { s in
       GroupSummary(group: Self.sessionGroup(r, s), session: SessionInfo(session: try! unhex(s), parent: nil, agents: state.sessions[s]!.map { try! unhex($0) }), epoch: 1, leaves: [id] + state.sessions[s]!.map { try! unhex($0) }, archived: false, pending: false)
     }
   }
@@ -87,7 +89,14 @@ final class FakeDevice: CoreDevice {
   func removeAgents(_ remove: [DeviceId], nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func removeHumanDevices(_ cuts: [Cut], nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func cleanSession(group: GroupId, cuts: [Cut], replacement: (device: DeviceId, keyPackage: Bytes)?, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
-  func update(group: GroupId, forced: Bool, nowMs: UInt64) throws -> UInt64? { nil }
+  /** A Commit that only moves the room group's epoch, and only when forced. `busy` while one is pending. */
+  func update(group: GroupId, forced: Bool, nowMs: UInt64) throws -> UInt64? {
+    guard forced else { return nil }
+    guard state.pending == nil else { throw TrommiError("busy") }
+    let commit = j(["update": hex(systemRandom(8)), "by": state.id])
+    state.pending = hex(commit)
+    return try queue(.commit, group: group, parts: [commit, [0], [], [0]])
+  }
   func archive(group: GroupId) throws {}
   func joinWelcome(_ welcome: Bytes, room: RoomId, committer: DeviceId?, nowMs: UInt64) throws -> Joined { throw TrommiError("not-built") }
 
@@ -97,6 +106,13 @@ final class FakeDevice: CoreDevice {
     state.cursor = entry.change
     switch entry.kind {
     case .commit(let bytes, _):
+      // The device's own Commit, at its place in the log: merged here, with or without the hub's answer before it.
+      if state.pending == hex(bytes) {
+        state.pending = nil
+        state.epoch += 1
+        try write([], drop: box.values.filter { $0.kind == .commit && $0.parts.first == bytes }.map(\.id))
+        return .ownCommit
+      }
       let c = parse(bytes)
       if let s = c["session"] as? String, let a = c["agent"] as? String { state.sessions[s] = [a] } else { state.epoch += 1 }
       try write([])
@@ -114,7 +130,11 @@ final class FakeDevice: CoreDevice {
   func sendHandover(group: GroupId, recipient: DeviceId) throws -> [UInt64] { [] }
   func sendStrokePiece(board: BoardId, piece: Bytes) throws -> UInt64 { try queue(.relayMessage, group: room, parts: [piece]) }
   func outbox() -> [OutboxEntry] { isOwner ? box.keys.sorted().map { box[$0]! } : [] }
-  func outboxAccepted(_ id: UInt64, change: UInt64?) throws { try write([], drop: [id]) }
+  /** The entry goes; a Commit stays pending until the log hands it back. `not-found` for an entry that is gone. */
+  func outboxAccepted(_ id: UInt64, change: UInt64?) throws {
+    guard box[id] != nil else { throw TrommiError("not-found") }
+    try write([], drop: [id])
+  }
   /** An envelope's entry stays whatever the code (9.0.8); every other entry goes. */
   func outboxRefused(_ id: UInt64, code: String) throws { if box[id]?.kind != .envelope { try write([], drop: [id]) } }
   func outboxVoided(_ id: UInt64) throws { try write([], drop: [id]) }
@@ -217,6 +237,18 @@ final class FakeDevice: CoreDevice {
   func replaceCode(current: Bytes, account: Bytes, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
 }
 
+/** A store in memory, for a FakeDevice a test asks something without a room around it. */
+final class MemoryStore: CoreStorage {
+  var revision: UInt64 = 0, entries: [Bytes: Bytes] = [:]
+  func load() throws -> StoreLoaded { StoreLoaded(revision: revision, entries: entries.map { StoreEntry(key: $0.key, value: $0.value) }) }
+  func apply(expectedRevision: UInt64, batch: StoreBatch) throws {
+    guard expectedRevision == revision else { throw StoreError.conflict }
+    for k in batch.delete { entries[k] = nil }
+    for e in batch.put { entries[e.key] = e.value }
+    revision += 1
+  }
+}
+
 final class FakeTools: CoreTools {
   var version: String { "fake" }
   func selfTest() -> [SelfTestStep] { [SelfTestStep(suite: "fake", name: "nothing", ok: true, micros: 1)] }
@@ -258,6 +290,8 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
     var refuse: [String: (status: Int, code: String, voided: Bool)] = [:]   // path -> refusal; `voided`: the hub kept the envelope's number as a void record
     var offline = false
     var rooms = 0
+    /** Set: the answer to a posted Commit waits for a signal, while the Commit is in the changes already. */
+    var holdCommitAnswer: DispatchSemaphore?
     func add(_ item: [String: Any]) -> UInt64 { change += 1; var i = item; i["change"] = change; items.append(i); return change }
     /** A Commit in the log of a group. */
     func commit(group: Bytes, _ body: [String: Any]) { lock.withLock { _ = add(["kind": "commit", "group_id": b64u(group), "bytes": b64u(j(body))]) } }
@@ -289,6 +323,11 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
         envelopePosts.append(e)
         if let had = items.first(where: { $0["envelope"] as? String == e }) { return (200, ["change": had["change"]!]) }   // the first answer again
         return (200, ["change": add(["kind": "envelope", "envelope": e])])
+      case ("POST", _) where path.hasSuffix("/commits"):
+        // As POST /v2/groups/{group}/commits: the Commit takes its place in the log, the answer names it.
+        let group = String(path.dropFirst("/v2/groups/".count).dropLast("/commits".count))
+        let epoch = (body["epoch"] as? NSNumber)?.uint64Value ?? 0
+        return (200, ["epoch": epoch + 1, "change": add(["kind": "commit", "group_id": group, "bytes": body["commit"] as! String])])
       case ("POST", _) where path.hasSuffix("/messages"): return (200, ["n": 1])
       case ("PUT", _) where path.hasPrefix("/v2/files/"), ("GET", _) where path.hasPrefix("/v2/files/"): return (200, [:] as [String: Any])
       default: return (404, ["error": "not-found", "message": path])
@@ -307,8 +346,13 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
     if data.isEmpty, let s = request.httpBodyStream { s.open(); var buf = [UInt8](repeating: 0, count: 65536); while s.hasBytesAvailable { let n = s.read(&buf, maxLength: buf.count); if n <= 0 { break }; data.append(buf, count: n) }; s.close() }
     let (status, answer) = hub.answer(request.httpMethod ?? "GET", url.path, query, parse(Bytes(data)))
     let res = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["content-type": "application/json"])!
-    client?.urlProtocol(self, didReceive: res, cacheStoragePolicy: .notAllowed)
-    client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: answer))
-    client?.urlProtocolDidFinishLoading(self)
+    let deliver = { [self] in
+      client?.urlProtocol(self, didReceive: res, cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: answer))
+      client?.urlProtocolDidFinishLoading(self)
+    }
+    // A held answer waits on a thread of its own: the loading thread serves the other requests meanwhile.
+    if url.path.hasSuffix("/commits"), let hold = hub.lock.withLock({ hub.holdCommitAnswer }) { Thread.detachNewThread { hold.wait(); deliver() } }
+    else { deliver() }
   }
 }

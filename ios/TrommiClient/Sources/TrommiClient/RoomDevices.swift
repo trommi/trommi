@@ -33,8 +33,9 @@ extension Room {
   }
 
   /**
-   * Runs one step that ends in an own Commit and waits until the hub took it (or refused it: thrown). The Commit
-   * takes effect when it comes back in the hub's order, so the changes are read before this returns.
+   * Runs one step that ends in an own Commit and waits until the hub took it (or refused it: thrown) and the Commit
+   * came back in the hub's order, where it takes effect (the outbox reads the changes before it calls the entry
+   * done: `pumpOutbox`).
    */
   private func commit(_ step: @escaping (CoreDevice) throws -> UInt64?) async throws {
     let id: UInt64? = try await serial { [self] in
@@ -44,16 +45,6 @@ extension Room {
       return id
     }
     if let id = id { try await awaitOutcome(id, ms: 20_000, orThrow: true) }
-    await readOwnChanges()
-  }
-  /** Reads what the hub has after the cursor (an own Commit among it) and the groups as they stand then. */
-  private func readOwnChanges() async {
-    _ = try? await serial { [self] in
-      var report = SyncReport(), ch = Change()
-      defer { self.board.project(ch); self.emit(ch) }
-      try? await self.readChanges(&report, &ch)
-      try await self.refreshGroups(&ch)
-    }
   }
 
   private func openInvite(role: InviteRole, session: SessionId?, app: String) async throws -> Pairing {
@@ -162,7 +153,6 @@ extension Room {
           return r
         }
         if let id = founding { try await awaitOutcome(id, ms: 20_000, orThrow: true) }
-        await readOwnChanges()
         founded = sid
       case .takeOver(_, let group, let cuts, let agent, let keyPackage):
         // The core names one such step for the main session's group, then one per live helper session under it
