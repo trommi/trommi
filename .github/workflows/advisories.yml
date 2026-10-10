@@ -1,0 +1,54 @@
+# Known vulnerabilities in the Rust dependencies (the RustSec database, read by cargo-deny): every day, and on every
+# commit on main that changes Cargo.lock. The hub and the connector are static binaries: a fix in a library reaches
+# them only by a new release, so a red run here means "raise the crate and release".
+#
+# cargo-deny, not cargo-audit: cargo-audit reads Cargo.lock alone and counts crates nothing builds. On 2026-10-10 it
+# named RUSTSEC-2026-0330 and -0331 in libcrux-kem 0.0.9, which is in the lock only as an optional dependency of
+# hpke-rs-libcrux that no feature of this workspace switches on (`cargo tree -i libcrux-kem` prints nothing).
+# cargo-deny checks the crates of the resolved graph with all features. If libcrux-kem ever is built, it fails here.
+#
+# It fails on a vulnerability or a yanked version of a crate the workspace builds (.github/tools/deny.toml), not on
+# crates that are only unmaintained. It deploys nothing and reads no secret.
+name: advisories
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  push:
+    branches: [main]
+    paths: [Cargo.lock, .github/tools/deny.toml, .github/workflows/advisories.yml]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: advisories
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Rust dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      DENY_VERSION: 0.20.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compiler (rust-toolchain.toml)
+        run: |
+          rustup toolchain install || rustup show
+          rustc --version
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: deny
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ runner.os }}-${{ env.DENY_VERSION }}-${{ hashFiles('rust-toolchain.toml') }}
+      - name: cargo-deny
+        if: steps.deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --version "$DENY_VERSION" --locked
+      - name: Check
+        run: cargo deny --locked --all-features --config .github/tools/deny.toml check advisories
