@@ -4,12 +4,10 @@
 //! The code is 32 bytes that the host holds only while it founds a room, joins with the code, recovers or
 //! replaces the code; a device keeps nothing of it but the key that authenticates the room's sealed keys.
 
-use crate::records::{room_id, Cut, SignedHubAuth};
+use crate::records::{room_id, SignedHubAuth};
 use crate::{CoreError, ErrorCode};
 use trommi_core::crypto::Secret;
 use trommi_core::hub_auth::{self, HubAddress, CHALLENGE_LEN};
-use trommi_core::ids::GroupId;
-use trommi_core::mls::profile::Cut as CoreCut;
 use trommi_core::recovery::{self as core, RecoveryKeys};
 
 /// The keys of the recovery code `code`, 32 bytes.
@@ -156,24 +154,65 @@ impl From<trommi_core::device::CodeJoin> for CodeJoin {
 }
 
 record! {
-    /// The Cut of one leaf a recovery removes, with its group.
-    pub struct GroupCut {
-        /// The group.
-        pub group: Vec<u8>,
-        /// Where the leaf's chain ends there.
-        pub cut: Cut,
+    /// One envelope of a chain as the hub's chain route serves it.
+    pub struct ServedEnvelope {
+        /// The envelope, in pruned or in full form.
+        pub bytes: Vec<u8>,
+        /// The hub's change number it was taken under.
+        pub change: u64,
+        /// The code of a void record.
+        pub void_code: Option<ErrorCode>,
     }
 }
 
-/// The cuts as the core takes them.
-pub(crate) fn group_cuts(cuts: &[GroupCut]) -> Result<Vec<(GroupId, CoreCut)>, CoreError> {
-    cuts.iter()
-        .map(|entry| Ok((GroupId::from_bytes(&entry.group)?, entry.cut.to_core()?)))
-        .collect()
+/// Runs `call` with served envelopes as the core reads them.
+pub(crate) fn with_chains<R>(
+    chains: &[ServedEnvelope],
+    call: impl FnOnce(&[trommi_core::device::ServedEnvelope<'_>]) -> Result<R, CoreError>,
+) -> Result<R, CoreError> {
+    let codes = chains
+        .iter()
+        .map(|envelope| crate::content::void_code(envelope.void_code))
+        .collect::<Result<Vec<_>, _>>()?;
+    let served: Vec<_> = chains
+        .iter()
+        .zip(&codes)
+        .map(|(envelope, code)| trommi_core::device::ServedEnvelope {
+            bytes: &envelope.bytes,
+            change: envelope.change,
+            void_code: code.as_ref(),
+        })
+        .collect();
+    call(&served)
 }
 
 record! {
-    /// The leaves a recovery removes from one group. The caller verifies each one's chain and names its Cut.
+    /// What learning a group's past recorded.
+    pub struct Learned {
+        /// How many epochs were recorded; 0 when there was nothing to learn.
+        pub epochs: u64,
+    }
+}
+
+/// The Commits of a served history as the core reads them.
+pub(crate) fn with_commits<R>(
+    served: &[ServedCommit],
+    call: impl FnOnce(&[core::ServedCommit<'_>]) -> Result<R, CoreError>,
+) -> Result<R, CoreError> {
+    let commits: Vec<_> = served
+        .iter()
+        .map(|commit| core::ServedCommit {
+            change: commit.change,
+            commit: &commit.commit,
+            recovery_auth: commit.recovery_auth.as_deref(),
+        })
+        .collect();
+    call(&commits)
+}
+
+record! {
+    /// The leaves a recovery removes from one group. The caller fetches each one's chain there and hands the
+    /// envelopes to `recover`, which verifies them and takes each Cut from the head it verified.
     pub struct Removals {
         /// The group.
         pub group: Vec<u8>,

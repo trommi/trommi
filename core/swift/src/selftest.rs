@@ -171,6 +171,8 @@ struct Relay {
     session_infos: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
     /// Every SealedKey posted.
     rows: Vec<Vec<u8>>,
+    /// The clock of the test.
+    now_ms: u64,
 }
 
 impl Relay {
@@ -251,7 +253,8 @@ impl Relay {
             };
             device.outbox_accepted(entry.id, change)?;
         }
-        Ok(())
+        // What the hub accepted comes back in its log: a device merges its own Commits there, at their place.
+        self.feed(device, None).map(|_| ())
     }
 
     /// Hands the device everything after its cursor, in order, with every Welcome at its place. Returns what
@@ -261,8 +264,18 @@ impl Relay {
         &self,
         device: &CoreDevice,
         room: &[u8],
-        now_ms: u64,
+        _now_ms: u64,
     ) -> Result<(Vec<Processed>, Vec<ReceivedEnvelope>), CoreError> {
+        self.feed(device, Some(room))
+    }
+
+    /// The feed after the device's cursor; with `room`, also the Welcomes at their places.
+    fn feed(
+        &self,
+        device: &CoreDevice,
+        room: Option<&[u8]>,
+    ) -> Result<(Vec<Processed>, Vec<ReceivedEnvelope>), CoreError> {
+        let now_ms = self.now_ms;
         let mut done = Vec::new();
         let mut envelopes = Vec::new();
         let cursor = device.cursor()?;
@@ -281,9 +294,10 @@ impl Relay {
                     now_ms,
                 )?),
             }
-            for (_, welcome) in self.welcomes.iter().filter(|(at, _)| *at == fed.change()) {
+            let welcomes = self.welcomes.iter().filter(|(at, _)| *at == fed.change());
+            for (welcome, room) in welcomes.zip(room.into_iter().cycle()) {
                 // A Welcome for another device does not open here: that is no finding.
-                let _ = device.join_welcome(welcome.clone(), room.to_vec(), None, now_ms);
+                let _ = device.join_welcome(welcome.1.clone(), room.to_vec(), None, now_ms);
             }
         }
         Ok((done, envelopes))
@@ -461,7 +475,10 @@ pub fn self_test(now_ms: u64) -> SelfTestReport {
 
 fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
     let store = MemoryStore::default();
-    let mut relay = Relay::default();
+    let mut relay = Relay {
+        now_ms,
+        ..Relay::default()
+    };
     let mut devices: Vec<CoreDevice> = Vec::new();
     let mut room = Vec::new();
     let mut session = Vec::new();

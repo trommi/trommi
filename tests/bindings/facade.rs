@@ -10,9 +10,8 @@ use trommi_core_ffi::{
     base64url_decode, check_emoji, error_code_from_text, error_code_text, format_recovery_code,
     generate_kit_words, generate_recovery_code, hub_address, invite_link_parse, kit_keys,
     log_finding, open_recovery_code, parse_recovery_code, recovery_anchor, recovery_sign_in,
-    seal_recovery_code, self_test, versions, AccountWay, CoreDevice, CoreError, Cut, Draft,
-    DraftKind, ErrorCode, FileDecryptor, FileEncryptor, GroupCut, LogFinding, OutboxKind,
-    ServedGroup, ServedRoom,
+    seal_recovery_code, self_test, versions, AccountWay, CoreDevice, CoreError, Draft, DraftKind,
+    ErrorCode, FileDecryptor, FileEncryptor, LogFinding, OutboxKind, ServedGroup, ServedRoom,
 };
 use trommi_tests::{now, MemoryStorage};
 
@@ -315,16 +314,14 @@ fn a_recovery_is_prepared_and_built_on_a_new_device() {
     assert_eq!(plan.removals.len(), 1);
     assert_eq!(plan.removals[0].devices, vec![lost_id.clone()]);
     assert_eq!(format!("{plan:?}"), "RecoveryPlan(<redacted>)");
-    let cuts = vec![GroupCut {
-        group: room.clone(),
-        cut: Cut {
-            device: lost_id,
-            seq: 0,
-            hash: vec![0; 32],
-        },
-    }];
     let built = device
-        .recover(code.clone(), served, cuts, b"sealed copies".to_vec(), now())
+        .recover(
+            code.clone(),
+            served,
+            Vec::new(),
+            b"sealed copies".to_vec(),
+            now(),
+        )
         .expect("the recovery is built");
     assert!(built.unverified.is_empty());
     let outbox = device.outbox().expect("the outbox");
