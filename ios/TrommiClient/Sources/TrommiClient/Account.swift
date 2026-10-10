@@ -137,6 +137,8 @@ public struct AccountStatus {
   public var userHandle: Bytes
   /** The credential ids of the account's passkeys. */
   public var passkeys: [Bytes]
+  /** The code sealed under each passkey, by credential id. */
+  var passkeyCopies: [Bytes: Bytes]
 
   init?(_ j: JSON) {
     // (an account without an e-mail says `email: null`; what every account has is its id)
@@ -154,6 +156,10 @@ public struct AccountStatus {
     kitCopy = (j["kit_copy"] as? String).flatMap { try? unb64u($0) }
     userHandle = (j["user_handle"] as? String).flatMap { try? unb64u($0) } ?? []
     passkeys = (j["passkeys"] as? [JSON] ?? []).compactMap { ($0["credential_id"] as? String).flatMap { try? unb64u($0) } }
+    passkeyCopies = [:]
+    for p in j["passkeys"] as? [JSON] ?? [] {
+      if let id = (p["credential_id"] as? String).flatMap({ try? unb64u($0) }), let copy = (p["sealed_copy"] as? String).flatMap({ try? unb64u($0) }) { passkeyCopies[id] = copy }
+    }
   }
   /** What the kit's keys of this account are derived from. */
   var kitName: AccountName { kitForm == .email ? .email(email) : .id(accountId) }
@@ -218,6 +224,26 @@ private func passkeyPart(_ made: PasskeyMade, room: RoomId, code: Bytes) throws 
    // (a passkey of the platform: on this device, or on another one by its QR code)
    "transports": ["internal", "hybrid"]]
 }
+/**
+ * The way into the account that a person just used on this device: it opens the recovery code in force, and it is
+ * the one way in that keeps working when the code is replaced (spec/v2.md 8.6). Both hold a secret.
+ */
+public enum WayIn {
+  case password(String)
+  /** A passkey of the account with its prf output over `PASSKEY_PRF_INPUT`. */
+  case passkey(credentialId: Bytes, prf: Bytes)
+}
+
+/**
+ * The account's new sealed copies of a new recovery code, as the hub takes them with new recovery keys (spec/hub-api.md
+ * "The account": a new kit and one way in; every other way in is removed in the same request). The JSON of `account`.
+ */
+private func newCopies(kit: PasswordKeys, way: JSON, room: RoomId, code: Bytes) throws -> Bytes {
+  var account = way
+  account["kit"] = try kitPart(kit, room: room, code: code)
+  return Bytes(try JSONSerialization.data(withJSONObject: account, options: [.sortedKeys]))
+}
+
 /** A passkey challenge of the hub: 32 bytes. */
 private func passkeyChallenge(_ answer: JSON) throws -> Bytes {
   guard let challenge = (answer["challenge"] as? String).flatMap({ try? unb64u($0) }), challenge.count == 32 else { throw TrommiError("bad-format", "the hub's passkey challenge") }
@@ -295,6 +321,51 @@ extension Room {
     let made = try await make(PasskeyRequest(challenge: challenge, userHandle: st.userHandle, email: st.email, accountId: st.accountId, existing: st.passkeys))
     guard made.prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
     try await hub.request("POST", "/account/passkeys", body: try passkeyPart(made, room: roomId, code: code))
+  }
+
+  /**
+   * Replaces the room's recovery code (spec/v2.md 8.6): for after a device was removed that is not in the person's
+   * hands, since whoever holds it may have learned the code. `way` is the way in the person just proved here: it
+   * opens the code in force. The core makes the new code and the room Commit that puts its keys in force; the same
+   * request carries the account's new copies: one under a new Emergency Kit, one under `way`. The hub applies all of
+   * it or nothing, and removes every other way in (a password beside the passkey used, the other passkeys): the
+   * person sets those up again. This device then hands the other human devices the new key for the sealed keys by
+   * itself. Returns the new kit, to be shown once: the old kit opens nothing any more.
+   *
+   * `wrong-login` for a way that does not open the code (nothing is sent). `pending` when the hub has not answered
+   * in time: the request waits in the outbox and is sent again, and the kit returned is not shown, so the person
+   * then makes a new Emergency Kit with the way in they used. A refusal of the hub is thrown and changes nothing.
+   */
+  public func replaceRecoveryCode(way: WayIn) async throws -> EmergencyKit {
+    let tools = Core.tools, room = roomId
+    let st = try await status()
+    // The code in force, and how the new one is sealed under the same way.
+    let current: Bytes
+    let sealWay: (Bytes) throws -> JSON
+    switch way {
+    case .password(let password):
+      guard let copy = st.passwordCopy else { throw TrommiError("wrong-login", "this account has no password") }
+      let keys = try tools.passwordKeys(email: st.email, password: password, kdf: st.kdfRecord)
+      current = try tools.openCode(copy, room: room, way: .password(wrapKey: keys.wrapKey))
+      sealWay = { ["password": ["sealed_copy": b64u(try tools.sealCode($0, room: room, way: .password(wrapKey: keys.wrapKey)))]] }
+    case .passkey(let credentialId, let prf):
+      guard let copy = st.passkeyCopies[credentialId] else { throw TrommiError("wrong-login", "this passkey does not open the account") }
+      current = try tools.openCode(copy, room: room, way: .passkey(prf: prf, credentialId: credentialId))
+      sealWay = { ["passkey": ["credential_id": b64u(credentialId), "sealed_copy": b64u(try tools.sealCode($0, room: room, way: .passkey(prf: prf, credentialId: credentialId)))]] }
+    }
+    let words = try tools.generateKitWords()
+    let kitKeys = try tools.kitKeysFor(st.kitName, words: words)
+    let id: UInt64 = try await serial { [self] in
+      if !self.synced { _ = try await self.catchUp() }
+      let id = try await self.onCore { device in
+        let next = try device.newRecoveryCode(current: current)
+        return try device.replaceCode(current: current, account: try newCopies(kit: kitKeys, way: try sealWay(next), room: room, code: next), nowMs: nowMs())
+      }
+      self.pumpOutbox()
+      return id
+    }
+    try await awaitOutcome(id, ms: 20_000, orThrow: true)
+    return EmergencyKit(words: words, email: st.email, accountId: st.accountId)
   }
 
   /** A v2 hub does not confirm e-mail addresses (spec/hub-api.md has no route for it): said as one error, nothing is sent. */

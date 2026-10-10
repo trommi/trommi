@@ -42,7 +42,9 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
     if let code = refuseOnce.removeValue(forKey: line) { return refuse(code == "internal" ? 500 : 400, code) }
     func bytes(_ field: String, in json: JSON? = nil) -> Bytes { ((json ?? body)[field] as? String).flatMap { try? unb64u($0) } ?? [] }
     func id(_ text: String) -> Bytes { (try? unb64u(text)) ?? [] }
-    let epoch = Wire.uint(body["epoch"]) ?? 0
+    // (a request's body is read by Foundation, where a 1 may come as a Bool, which the client's own reader of numbers refuses)
+    func number(_ value: Any?) -> UInt64 { (value as? NSNumber)?.uint64Value ?? 0 }
+    let epoch = number(body["epoch"])
     let sender = token.flatMap { try? unhex($0) } ?? []
     let after = UInt64(query["after"] ?? "0") ?? 0
     switch (method, path.count, path.first ?? "") {
@@ -57,7 +59,7 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
     case ("POST", 3, "rooms") where path[2] == "recovery": return (200, ["recovery_id": b64u(Bytes(repeating: 7, count: 16)), "expires_at": nowMs() + 600_000])
     case ("POST", 3, "rooms") where path[2] == "recovery-code":
       let commit = body["commit"] as? JSON ?? [:]
-      let at = Wire.uint(commit["epoch"]) ?? 0
+      let at = number(commit["epoch"])
       let account = (body["account"] as? JSON).flatMap { try? JSONSerialization.data(withJSONObject: $0) }.map { Bytes($0) } ?? []
       let change = hub.take(kind: 10, group: id(path[1]), epoch: at, parts: [bytes("commit", in: commit), bytes("group_info", in: commit), bytes("sealed_key", in: commit), bytes("recovery_link"), account])
       return (200, ["epoch": at + 1, "change": change ?? 0])
@@ -92,7 +94,7 @@ final class PocketRoutes: URLProtocol, @unchecked Sendable {
     case ("GET", 4, "groups") where path[2] == "chains":
       var seq: UInt64 = 0
       let items = hub.chains.filter { $0.group == id(path[1]) && $0.sender == id(path[3]) }.map { e -> JSON in seq += 1; return ["change": e.change, "envelope": b64u(e.bytes), "seq": seq] }
-      return (200, ["items": items.filter { (Wire.uint($0["seq"]) ?? 0) > after }, "more": false])
+      return (200, ["items": items.filter { number($0["seq"]) > after }, "more": false])
     case ("POST", 3, "groups") where path[2] == "commits":
       let join = bytes("recovery_auth")
       let parts = join.isEmpty ? [bytes("commit"), bytes("group_info"), bytes("welcome"), bytes("sealed_key")] : [bytes("commit"), bytes("group_info"), bytes("sealed_key"), join]
