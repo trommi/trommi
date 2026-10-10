@@ -52,6 +52,14 @@ const TAG_OWN: u8 = b'w';
 
 /// How often an envelope the hub voided for its epoch is sealed again before the sender hears of it.
 const RESEALS: u8 = 3;
+/// After this many rounds in a row in which what answered was no hub of this protocol, the client stops.
+const NO_HUB_ROUNDS: u32 = 3;
+/// A stream that lived at least this long was a working connection: the pause before the next starts small.
+const STREAM_LIVED: Duration = Duration::from_secs(30);
+/// The most envelopes that wait for the hub at once; a write beyond it is refused, not queued.
+const MAX_WAITING: usize = 500;
+/// The most work-trail steps that wait for the hub at once; a step beyond it is dropped (a trail is live).
+pub(crate) const MAX_WAITING_STEPS: usize = 100;
 /// How many items one catch-up request asks for.
 const CHANGES_LIMIT: u64 = 500;
 /// The hub pings every 25 s; a stream that is silent for this long is dead.
@@ -418,6 +426,8 @@ pub struct Client {
     wake: tokio::sync::Notify,
     /// What this process last reported with its lease.
     report: std::sync::Mutex<Value>,
+    /// The code of the last fault the owner was told of: the same one is not said again and again.
+    told: std::sync::Mutex<String>,
 }
 
 fn group_of_item(item: &Value) -> Result<GroupId> {
@@ -534,6 +544,7 @@ impl Client {
             online: AtomicBool::new(false),
             wake: tokio::sync::Notify::new(),
             report: std::sync::Mutex::new(json!({})),
+            told: std::sync::Mutex::new(String::new()),
         });
         {
             let mut core = client.core.lock().await;
@@ -675,6 +686,13 @@ impl Client {
         }
         let first = self.go_online().await;
         if let Err(fault) = &first {
+            if crate::hub::is_no_hub(fault) {
+                // What answers is no hub of this protocol: said so, and not asked again by this client.
+                return Err(Fault::new(
+                    "hub-unusable",
+                    format!("the hub does not answer as a Trommi hub of this version ({}). Update the trommi plugin, then /mcp → trommi → Reconnect", fault.code),
+                ));
+            }
             if !is_transient(fault) {
                 self.fatal(fault).await;
                 return first;
@@ -698,7 +716,14 @@ impl Client {
     async fn fatal(&self, fault: &Fault) {
         match fault.code.as_str() {
             "not-member" | "removed-sender" | "no-room" => self.set_removed(false).await,
-            _ => self.emit(ClientEvent::Error(fault.clone())),
+            _ => {
+                // Said once per kind of fault, not once per try.
+                let mut told = self.told.lock().unwrap_or_else(|e| e.into_inner());
+                if *told != fault.code {
+                    *told = fault.code.clone();
+                    self.emit(ClientEvent::Error(fault.clone()));
+                }
+            }
         }
     }
 
@@ -921,10 +946,12 @@ impl Client {
     /// The loop: follow the stream; when it ends or fails, wait and go online again.
     async fn run(self: Arc<Self>) {
         let mut pause_ms = 1000u64;
+        let mut no_hub = 0u32;
         loop {
             if self.is_stopped() {
                 return;
             }
+            let began = std::time::Instant::now();
             let round = async {
                 if !self.is_online() {
                     self.go_online().await?;
@@ -932,8 +959,29 @@ impl Client {
                 self.follow().await
             };
             match round.await {
-                Ok(()) => pause_ms = 1000,
-                Err(fault) if is_transient(&fault) || fault.code == "unauthorised" => {}
+                // The stream ended (a token ran out). Only one that lived a while resets the pause: a hub
+                // that ends every stream at once is asked again more and more slowly.
+                Ok(()) => {
+                    no_hub = 0;
+                    self.told.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                    if began.elapsed() >= STREAM_LIVED {
+                        pause_ms = 1000;
+                    }
+                }
+                Err(fault) if is_transient(&fault) || fault.code == "unauthorised" => no_hub = 0,
+                Err(fault) if crate::hub::is_no_hub(&fault) => {
+                    no_hub += 1;
+                    if no_hub >= NO_HUB_ROUNDS {
+                        // What answers is no hub of this protocol. Asking on helps nothing.
+                        self.stopped.store(true, Ordering::SeqCst);
+                        let _ = self.stop_signal.send(true);
+                        self.emit(ClientEvent::Error(Fault::new(
+                            "hub-unusable",
+                            format!("the hub does not answer as a Trommi hub of this version ({}); the connector stopped asking. Update the trommi plugin, then /mcp → trommi → Reconnect", fault.code),
+                        )));
+                        return;
+                    }
+                }
                 Err(fault) if fault.code == "lease-lost" => {
                     self.stopped.store(true, Ordering::SeqCst);
                     let _ = self.stop_signal.send(true);
@@ -1964,6 +2012,7 @@ impl Client {
             }
             core.commit()?;
         }
+        let mut failed_before: Option<u64> = None;
         for _ in 0..10_000 {
             let Some(entry) = self
                 .vault
@@ -1976,6 +2025,10 @@ impl Client {
                 break;
             }
             let id = entry.id;
+            // An entry that failed and is still the first is not posted again in the same round.
+            if failed_before == Some(id) {
+                break;
+            }
             let envelope = entry.kind == OutboxKind::Envelope;
             let fault = match self.post_entry(&entry).await {
                 Ok(accepted) => {
@@ -1990,6 +2043,11 @@ impl Client {
                 }
                 Err(fault) => fault,
             };
+            failed_before = Some(id);
+            // No hub of this protocol answered: the entry stays, and the caller hears why.
+            if crate::hub::is_no_hub(&fault) {
+                return Err(fault);
+            }
             let code = fault
                 .as_core()
                 .unwrap_or(trommi_core::Error::Internal("refused by the hub"));
@@ -2151,6 +2209,13 @@ impl Client {
             ));
         }
         self.active(core)?;
+        // Nothing is queued without a bound while the hub is away.
+        if core.outbox.len() >= MAX_WAITING {
+            return Err(Fault::new(
+                "offline",
+                "the hub has been away for too long and too much waits for it; nothing more is queued until it is back",
+            ));
+        }
         let draft = crate::agent::draft(core, &group, &spec)?;
         let now = now_ms();
         let sealed = self
