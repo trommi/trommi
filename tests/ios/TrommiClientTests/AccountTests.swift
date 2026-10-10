@@ -217,6 +217,14 @@ final class AccountHub: URLProtocol, @unchecked Sendable {
       case ("POST", "/v1/account/passkey/login"):
         guard let copy = passkeys[body["credential_id"] as? String ?? ""] else { return refuse(401, "wrong-login") }
         return login(copy)
+      case ("DELETE", "/v1/account"):
+        guard account != nil else { return refuse(404, "not-found") }
+        let byPassword = (body["password"] as? [String: Any])?["auth_key"] as? String
+        let byPasskey = (body["passkey"] as? [String: Any])?["credential_id"] as? String
+        let proven = byPassword.map { $0 == password?["auth_key"] as? String } ?? byPasskey.map { passkeys[$0] != nil } ?? false
+        guard proven else { return refuse(401, "wrong-login") }
+        account = nil; passkeys = [:]
+        return (200, ["deleted": true])
       case ("GET", _) where path.hasSuffix("/challenge"): return (200, ["challenge": b64u(Bytes(repeating: 9, count: 32))])
       case ("POST", _) where path.hasSuffix("/tokens"): return (200, ["token": "t", "expires_at": nowMs() + 600_000, "role": "human"])
       case ("POST", _) where path.hasSuffix("/recovery"): return (200, ["recovery_id": "r1"])
@@ -660,6 +668,41 @@ final class AccountTests: XCTestCase {
     XCTAssertNil(tools.joinedWith)
     XCTAssertEqual([1, 7, 59, 60, 61, 900].map { waitText(seconds: $0) }, ["1 second", "7 seconds", "59 seconds", "1 minute", "2 minutes", "15 minutes"])
     room.close()
+  }
+
+  func testDeletingTheAccountSendsTheLoginKeyAndLeavesNothingHere() async throws {
+    let (room, _) = try await created()
+    // a wrong password ends here: nothing is sent
+    let wrong = await failure { try await room.deleteAccount(password: self.other) }
+    XCTAssertEqual(code(of: try XCTUnwrap(wrong)), "wrong-login")
+    XCTAssertFalse(hub.paths("DELETE").contains("/v1/account"))
+    XCTAssertEqual(Store.rooms(base: device("first")), [room.roomIdHex])
+
+    try await room.deleteAccount(password: password)
+    let body = try XCTUnwrap(hub.body("DELETE", "/v1/account"))
+    XCTAssertEqual(Set(body.keys), ["password"])
+    XCTAssertEqual((body["password"] as? [String: Any])?["auth_key"] as? String, try tools.passwordKeys(email: "ada@example.org", password: password, kdf: nil).authKey)
+    XCTAssertFalse(String(decoding: try JSONSerialization.data(withJSONObject: body), as: UTF8.self).contains(password), "the password itself is never sent")
+    XCTAssertEqual(Store.rooms(base: device("first")), [], "nothing of the room is left on the device")
+    // the account is gone: its e-mail signs in nowhere
+    let gone = await failure { _ = try await Room.signInWithPassword(hubURL: self.hubURL, account: self.email, password: self.password, base: self.device("second")) }
+    XCTAssertEqual(code(of: try XCTUnwrap(gone)), "wrong-login")
+  }
+
+  func testAPasskeyAccountIsDeletedWithAnAssertionOnTheAccountsChallenge() async throws {
+    let (room, _) = try await createdWithPasskey()
+    var offered: [Bytes] = []
+    var challenged: Bytes = []
+    try await room.deleteAccount { challenge, passkeys in
+      challenged = challenge; offered = passkeys
+      return PasskeyAssertion(credentialId: self.credential, authenticatorData: [1], clientDataJSON: [2], signature: [3], userHandle: nil, prf: [])
+    }
+    XCTAssertEqual(challenged, Bytes(repeating: 8, count: 32), "the challenge of POST /v1/account/passkeys/challenge")
+    XCTAssertEqual(offered, [credential])
+    let body = try XCTUnwrap(hub.body("DELETE", "/v1/account")?["passkey"] as? [String: Any])
+    XCTAssertEqual(Set(body.keys), ["credential_id", "authenticator_data", "client_data_json", "signature"])
+    XCTAssertEqual(body["credential_id"] as? String, b64u(credential))
+    XCTAssertEqual(Store.rooms(base: device("first")), [])
   }
 
   func testLoggingOutEndsTheTokenBeforeTheDeviceForgets() async throws {

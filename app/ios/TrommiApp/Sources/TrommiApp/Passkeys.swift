@@ -92,6 +92,15 @@ enum Passkeys {
     return .passkey(credentialId: a.credentialId, prf: a.prf)
   }
 
+  /**
+   * A passkey of the account proves the way in to the hub once more (deleting the account): an assertion on the hub's
+   * challenge for this account, among the account's passkeys (`only`). Its prf output is not used.
+   */
+  static func prove(challenge: Bytes, only: [Bytes]) async throws -> PasskeyAssertion {
+    guard !only.isEmpty else { throw TrommiError("wrong-login", "this account has no passkey") }
+    return try await assertion(challenge: challenge, only: only)
+  }
+
   private static func assertion(challenge: Bytes, only: [Bytes]?) async throws -> PasskeyAssertion {
     let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingParty)
     let request = provider.createCredentialAssertionRequest(challenge: Data(challenge))

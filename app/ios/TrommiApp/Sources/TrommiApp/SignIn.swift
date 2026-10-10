@@ -242,6 +242,7 @@ struct StartView: View {
   var body: some View {
     ObShell(title: "Your agents ring. You decide.", lead: "Claude Code and Codex ask as cards on your phone. One tap, and they keep working. End-to-end encrypted.", home: false, underlined: true) {
       if model.loggedOut { Text("Logged out.").font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
+      if model.accountDeleted { Text("Your account was deleted.").font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
       if model.removed { Text("This device was removed from your account by another device. Nothing of it is left here.").font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
       if let e = model.error { ObError(text: e) }
       VStack(spacing: 12) {

@@ -301,6 +301,7 @@ not. Log-in and recovery name the account in ONE field, `account`: an e-mail if 
 | An e-mail for an account without one | `PUT /v1/account/email` `{ email, kit: { auth_key, sealed_copy }, revision }` (`Room.setEmail`; no screen yet) |
 | Add passkey | `POST /v1/account/passkeys/challenge`, `POST /v1/account/passkeys` |
 | Log Out | `DELETE /v1/push`, `DELETE /v1/token`, then the device forgets the room |
+| Delete Account | `GET /v1/account`; password: `DELETE /v1/account` `{ password: { auth_key } }` (the password is checked here first); passkey: `POST /v1/account/passkeys/challenge`, then `DELETE /v1/account` `{ passkey: { credential_id, authenticator_data, client_data_json, signature } }`; then the device forgets the room and the start screen says "Your account was deleted." |
 
 The kit's keys are derived from the e-mail if the account has one, else from the account id (`kit_form` in the hub's
 answers; never sent). So the kit of an account with an e-mail opens with the e-mail only, and the id in the field

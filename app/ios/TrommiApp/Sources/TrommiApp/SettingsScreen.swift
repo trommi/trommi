@@ -390,6 +390,9 @@ struct AccountPage: View {
   @State private var passkeyPassword = ""
   @State private var codeAsk = false
   @State private var codePassword = ""
+  @State private var deleteAsk = false
+  @State private var deletePasswordAsk = false
+  @State private var deletePassword = ""
   var body: some View {
     SettingsPage(title: "Account") {
       if !said.isEmpty { Text(said).font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
@@ -524,6 +527,29 @@ struct AccountPage: View {
         .confirmationDialog("Log Out of This Device?", isPresented: $leave, titleVisibility: .visible) {
           Button("Log Out", role: .destructive) { model.logOut() }
         } message: { Text("This phone logs in again with email and password or by scanning the code of a signed-in device.") }
+      }
+      // (App Store 5.1.1(v): an account made in the app is deleted in the app; the demo only says it is the demo)
+      if model.demo || (model.room != nil && status != nil) {
+        SettingsGroup(footer: "Deletes your account and everything Trommi keeps for it. This cannot be undone.") {
+          Button { deleteAsk = true } label: { SettingsRow(title: "Delete Account…", tint: Ink.urgCritical) { Sketch("bin", color: Ink.urgCritical) } }.buttonStyle(.plain)
+        }
+        .confirmationDialog("Delete Your Account?", isPresented: $deleteAsk, titleVisibility: .visible) {
+          Button("Delete Account", role: .destructive) {
+            if model.demo { run { try await model.deleteAccount(password: nil) } }
+            else if status?.hasPassword == true { deletePasswordAsk = true }
+            // (an account without a password: one of its passkeys confirms it)
+            else { run(passkey: true) { try await model.deleteAccount(password: nil) } }
+          }
+        } message: { Text("Your account and everything Trommi keeps for it on the hub are deleted: every desk, card, note, file and agent link. Your agents lose their connection. This cannot be undone.") }
+        .alert("Delete Account", isPresented: $deletePasswordAsk) {
+          SecureField("Your Password", text: $deletePassword)
+          Button("Delete", role: .destructive) {
+            let p = deletePassword
+            deletePassword = ""
+            run { try await model.deleteAccount(password: p) }
+          }
+          Button("Cancel", role: .cancel) { deletePassword = "" }
+        } message: { Text("Your password confirms that it is you. Then the account is deleted.") }
       }
     }
     .task { await load() }

@@ -383,6 +383,39 @@ extension Room {
     return EmergencyKit(words: words, email: st.email, accountId: st.accountId)
   }
 
+  /**
+   * Deletes the account (DELETE /v1/account, spec/hub-api.md "Deleting an account"): the hub removes the account, its
+   * room and everything it keeps of them (every desk, card, note, file and agent link), all at once; agents lose their
+   * connection. It cannot be undone. The password is the proof: its login key, derived as for a login, after it was
+   * checked here against the account's copy (`wrong-login` for a wrong one, and nothing is sent). Once the hub has
+   * answered, nothing of the room is left on this device either.
+   */
+  public func deleteAccount(password: String) async throws {
+    let st = try await status()
+    guard let copy = st.passwordCopy else { throw TrommiError("wrong-login", "this account has no password") }
+    let keys = try Core.tools.passwordKeys(email: st.email, password: password, kdf: st.kdfRecord)
+    _ = try Core.tools.openCode(copy, room: roomId, way: .password(wrapKey: keys.wrapKey))
+    try await deleteAccount(proof: ["password": ["auth_key": keys.authKey]])
+  }
+  /**
+   * The same for an account that opens with a passkey: `assert` is the system's step (the app: Passkeys.swift), on the
+   * hub's challenge for this account, offering the account's passkeys (`passkeys`).
+   */
+  public func deleteAccount(assert: (_ challenge: Bytes, _ passkeys: [Bytes]) async throws -> PasskeyAssertion) async throws {
+    let st = try await status()
+    guard !st.passkeys.isEmpty else { throw TrommiError("wrong-login", "this account has no passkey") }
+    let challenge = try passkeyChallenge(try await hub.request("POST", "/account/passkeys/challenge", body: [:]))
+    let a = try await assert(challenge, st.passkeys)
+    try await deleteAccount(proof: ["passkey": ["credential_id": b64u(a.credentialId), "authenticator_data": b64u(a.authenticatorData),
+                                                "client_data_json": b64u(a.clientDataJSON), "signature": b64u(a.signature)]])
+  }
+  private func deleteAccount(proof: JSON) async throws {
+    try await hub.request("DELETE", "/account", body: proof)
+    // (the room is gone at the hub, with this device's token and push registration: nothing is left to tell it)
+    await shutdown()
+    Store.lifecycle.withLock { store.wipe() }
+  }
+
   /** The hub does not confirm e-mail addresses (spec/hub-api.md has no route for it): said as one error, nothing is sent. */
   public func verifyEmail(code: String) async throws { throw TrommiError("not-supported", "this hub does not confirm e-mail addresses") }
   public func resendEmailCode() async throws { throw TrommiError("not-supported", "this hub does not confirm e-mail addresses") }

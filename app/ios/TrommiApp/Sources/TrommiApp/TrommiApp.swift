@@ -92,6 +92,8 @@ final class BoardModel: ObservableObject {
   @Published var demoSheet: String?
   /** This device was removed by another device (removedHere): the start screen says so once. */
   @Published var removed = false
+  /** The account was deleted from this device (deleteAccount): the start screen says so once. */
+  @Published var accountDeleted = false
   /** The Emergency Kit's page is up (KitScreen.swift); its words live here only, until "Open Trommi". */
   @Published var kit: KitGate?
   private var kitWriting = false
@@ -308,7 +310,7 @@ final class BoardModel: ObservableObject {
 
   // ---- sign in -----------------------------------------------------------------------------------------
 
-  func go(_ p: Phase) { error = nil; signing = false; if p != .start { loggedOut = false; removed = false }; phase = p }
+  func go(_ p: Phase) { error = nil; signing = false; if p != .start { loggedOut = false; removed = false; accountDeleted = false }; phase = p }
 
   /** The states of these screens are only drawn in the demo: nothing is made, sent or asked. */
   private func drawnOnly() -> Bool {
@@ -795,9 +797,33 @@ final class BoardModel: ObservableObject {
       ShareImport.shared.signedOut()
       self.kit = nil
       UserDefaults.standard.removeObject(forKey: Self.kitMark)
-      self.error = nil; self.loggedOut = true
+      self.error = nil; self.loggedOut = true; self.accountDeleted = false
       self.phase = .start
     }
+  }
+  /**
+   * Delete the account (Settings → Account → Delete Account…): the hub removes the account, its room and all it keeps
+   * of them (Room.deleteAccount), proved with the password, or with a passkey of the account when `password` is nil.
+   * Then nothing of the room is left here, as after a log out, and the start screen says the account was deleted.
+   * In the demo nothing is deleted: it says so.
+   */
+  func deleteAccount(password: String?) async throws {
+    if demo { say("Demo", "This is the demo: there is no account to delete."); return }
+    guard let r = room else { return }
+    if let p = password { try await r.deleteAccount(password: p) }
+    else { try await r.deleteAccount { challenge, passkeys in try await Passkeys.prove(challenge: challenge, only: passkeys) } }
+    liveTask?.cancel(); liveTask = nil
+    NotifyBridge.shared.signedOut()
+    #if canImport(ActivityKit) && os(iOS)
+    LiveActivities.endAll()
+    #endif
+    room = nil; desk = nil; path = []
+    ShareImport.shared.signedOut()
+    kit = nil
+    UserDefaults.standard.removeObject(forKey: Self.kitMark)
+    error = nil; loggedOut = false; removed = false; accountDeleted = true
+    phase = .start
+    version &+= 1
   }
   /**
    * This device was removed from the room by another of his devices, and its core confirmed it from the room
