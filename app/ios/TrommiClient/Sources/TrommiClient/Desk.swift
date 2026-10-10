@@ -51,6 +51,8 @@ public struct Agent: Identifiable, Equatable {
   public var link: AgentLink?
   public var heardUpTo: Int?
   public var hue: Int = 162
+  /** Whether the human gave it a place in the order (its register's position; the sidebar's drag on the web). */
+  public var placed: Bool = false
 }
 
 public struct LinkWords: Equatable {
@@ -439,6 +441,7 @@ public final class DeskModel {
                     deviceActive: s.agentDeviceId.flatMap { lastOfDevice[$0] } ?? 0, removed: !s.isActive,
                     own: s.agentDeviceId == m.myDeviceId || (s.agentDeviceId.flatMap { m.members[$0]?.deviceRole } == "human"), link: s.link, heardUpTo: s.heardUpTo)
       a.hue = Pen.hueFor(id: a.id, mark: a.mark)
+      a.placed = set["position"].int != nil
       return a
     }
     let ids = Dictionary(uniqueKeysWithValues: out.map { ($0.id, $0) })

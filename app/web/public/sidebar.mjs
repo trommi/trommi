@@ -4,7 +4,7 @@ import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
 import { BELL, Controller, PLUS, agoSpan, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast, sayError } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
-function row(u, base, current) {
+function row(u, base, current, order = null) {
   const a = u.agent
   const shut = Boolean(u.subs)   // a main is rendered folded; the island "folds" opens the ones this browser unfolded
   const shown = shut ? u.whole : u
@@ -12,8 +12,8 @@ function row(u, base, current) {
   const tip = u.subs ? `Unfold ${a.name}'s ${names.length === 1 ? 'sub' : `${names.length} subs`}: ${names.join(', ')}` : ''
   const lie = u.subs ? (u.subs.length > EDGES ? [...u.subs].sort((x, y) => Boolean(y.blocked) - Boolean(x.blocked)).slice(0, EDGES) : u.subs) : []
   const cls = ['agent-row', u.parent && 'is-sub', (a.main || u.subs) && 'is-main', shown.open || shown.blocked ? 'has-badge' : '', !u.online && 'is-offline', current === u.id && 'is-active', ['asleep', 'cut', 'gone'].includes(u.parent?.link?.state) && 'is-hushed', u.subs?.some(x => x.id === current) && 'has-active'].filter(Boolean).join(' ')
-  return html`<div class="${cls}" id="agent-${a.id}" data-folds-target="row" data-unit="${a.id}" data-members="${a.id}"${u.parent ? html` data-parent="${u.parent.id}" hidden` : ''}${u.subs ? html` data-fold="shut" style="--ghue:${a.hue};--n:${lie.length}" data-controller="lean" data-action="pointermove->lean#follow pointerleave->lean#rest"` : ''}>
-<a class="agent-entry" data-nav href="${base}/chat/${encodeURIComponent(a.id)}" draggable="false" title="${shown.online && shown.running ? `Working${a.task ? `: ${a.task}` : ''}` : a.task ?? ''}"${current === u.id ? raw(' aria-current="page"') : ''}>${avatar(a, { crown: !u.subs, working: Boolean(shown.online && shown.running) })}<span class="agent-text"><strong>${a.name}</strong>${shown.online && shown.running ? html`<span class="sr-only"> (working)</span>` : ''}${linkCap(shown.link, shown.unheard)}</span></a>
+  return html`<div class="${cls}" id="agent-${a.id}" data-folds-target="row" data-unit="${a.id}" data-members="${a.id}"${u.parent ? html` data-parent="${u.parent.id}" hidden` : ''}${order && !u.parent ? html` data-order="${order}"` : ''}${u.subs ? html` data-fold="shut" style="--ghue:${a.hue};--n:${lie.length}" data-controller="lean" data-action="pointermove->lean#follow pointerleave->lean#rest"` : ''}>
+<a class="agent-entry" data-nav href="${base}/chat/${encodeURIComponent(a.id)}" draggable="false"${order && !u.parent ? raw(' aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"') : ''} title="${shown.online && shown.running ? `Working${a.task ? `: ${a.task}` : ''}` : a.task ?? ''}"${current === u.id ? raw(' aria-current="page"') : ''}>${avatar(a, { crown: !u.subs, working: Boolean(shown.online && shown.running) })}<span class="agent-text"><strong>${a.name}</strong>${shown.online && shown.running ? html`<span class="sr-only"> (working)</span>` : ''}${linkCap(shown.link, shown.unheard)}</span></a>
 ${u.subs ? html`<button class="crown-fold${a.starred ? '' : ' is-plain'}" type="button" aria-expanded="false" title="${tip}" aria-label="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${a.starred ? raw(crownSvg()) : ''}</button>
 <svg class="crown-bracket" aria-hidden="true" data-folds-target="bracket"><path/><path class="crown-bracket-hit" data-action="click->folds#toggle" data-folds-id-param="${a.id}"><title>Fold ${a.name}'s subs</title></path></svg>
 <span class="crown-edges" title="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${lie.map((s, i) => { const q = edgeQuirk(s.id); return html`<i${s.blocked ? raw(' class="is-knock"') : ''} style="--i:${i};--hue:${s.agent.hue};--tilt:${q.tilt}deg;--dx:${q.dx}px">${raw(q.svg)}</i>` })}</span>` : ''}
@@ -329,8 +329,9 @@ function deskDivider(model, base, d) {
  *  shape says their order, so that a change within one row replaces that row only (app.mjs, the board's live streams). */
 function sidebarParts(model, base, current = null) {
   const top = model.units.filter(u => !u.parent)
-  const rows = u => [[u.id, row(u, base, current)], ...(u.subs ?? []).map(s => [s.id, row(s, base, current)])]
   const live = u => u.online || Boolean(u.subs?.some(s => s.online))
+  // (data-order: the part a main row is reordered within: its desk, connected or not; the controller "order" below)
+  const rows = u => { const g = `${model.all ? model.deskOf(u.agent) : model.desk ?? ''}:${live(u) ? 'on' : 'off'}`; return [[u.id, row(u, base, current, g)], ...(u.subs ?? []).map(s => [s.id, row(s, base, current)])] }
   // All desks: every session, desk by desk, each desk under its divider (connected and not, the way they stand)
   if (model.all) {
     const groups = desksOf(model).flatMap(d => { const mine = top.filter(u => model.deskOf(u.agent) === d.id); return mine.length ? [[`desk-${d.id}`, deskDivider(model, base, d)], ...[...mine.filter(live), ...mine.filter(u => !live(u))].flatMap(rows)] : [] })
@@ -405,6 +406,128 @@ controller('folds', class extends Controller {
     row.querySelector('.crown-fold')?.setAttribute('aria-expanded', String(is))
     const edges = row.querySelector('.crown-edges')
     if (edges) edges.hidden = is
+  }
+})
+
+// ---- the sessions' order: a main row is picked up and dragged up or down within its part (its desk, connected or
+// not); its helpers go with it. A mouse lifts it as soon as it moves, a finger after a short hold (a swipe still
+// scrolls). A ghost of the row follows the pointer; where it would land the row's place stays open, outlined in
+// pencil, and the others make room. Escape puts it back. On a focused row Alt+↑/↓ moves it one place. Let go, and
+// the new place is written (POST /sessions/<id>/move { before | after }: the sessions' registers, on every device). ----
+controller('order', class extends Controller {
+  connect() {
+    this.grab = e => this.down(e)
+    this.keys = e => this.key(e)
+    this.noClick = e => { if (this.dragged) { e.preventDefault(); e.stopImmediatePropagation(); this.dragged = false } }
+    this.element.addEventListener('pointerdown', this.grab)
+    this.element.addEventListener('keydown', this.keys)
+    this.element.addEventListener('click', this.noClick, true)
+  }
+  disconnect() {
+    this.cancel?.()
+    this.element.removeEventListener('pointerdown', this.grab)
+    this.element.removeEventListener('keydown', this.keys)
+    this.element.removeEventListener('click', this.noClick, true)
+  }
+  /** The main rows of one part, in the order they stand. */
+  peers(row) { return [...this.element.querySelectorAll(`:scope > .agent-row[data-order="${CSS.escape(row.dataset.order)}"]`)] }
+  /** A main row and the rows of its helpers after it. */
+  block(row) { const out = [row]; for (let n = row.nextElementSibling; n?.dataset.parent === row.dataset.unit; n = n.nextElementSibling) out.push(n); return out }
+  /** Puts a block directly before `ref` (null: after the last row of `last`'s block), the others sliding into place. */
+  place(rows, ref, peers) {
+    const was = new Map(peers.map(p => [p, p.getBoundingClientRect().top]))
+    const anchor = ref ?? this.block(peers.at(-1)).at(-1).nextSibling
+    for (const r of rows) this.element.insertBefore(r, anchor)
+    for (const [p, top] of was) { const dy = top - p.getBoundingClientRect().top; if (dy && !p.classList.contains('is-carried')) p.animate?.([{ translate: `0 ${dy}px` }, { translate: '0 0' }], { duration: 140, easing: 'ease-out' }) }
+  }
+  /** Where the row stands now among its peers: { before } the next one, or { after } the one above, or null alone. */
+  spot(row) { const p = this.peers(row), i = p.indexOf(row); return p[i + 1] ? { before: p[i + 1].dataset.unit } : p[i - 1] ? { after: p[i - 1].dataset.unit } : null }
+  save(row) {
+    const at = this.spot(row), id = row.dataset.unit
+    if (!at) return
+    fetch(`${BASE}/sessions/${encodeURIComponent(id)}/move`, { method: 'POST', headers: { Accept: 'text/vnd.turbo-stream.html', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ stay: '1', ...at }) })
+      .then(r => r.text()).then(text => { if (text) renderStreamMessage(text) }).catch(err => console.warn('session order', err))
+  }
+
+  key(e) {
+    if (!e.altKey || e.ctrlKey || e.metaKey || !['ArrowUp', 'ArrowDown'].includes(e.key)) return
+    const row = e.target.closest?.('.agent-row[data-order]')
+    if (!row || row.parentElement !== this.element) return
+    e.preventDefault()
+    const peers = this.peers(row), i = peers.indexOf(row), j = e.key === 'ArrowUp' ? i - 1 : i + 1
+    if (j < 0 || j >= peers.length) return
+    this.place(this.block(row), e.key === 'ArrowUp' ? peers[j] : peers[j + 1] ?? null, peers)
+    e.target.focus()
+    this.save(row)
+    // (the live stream draws the sidebar again when the order arrives: the keyboard stays on the row)
+    const id = row.dataset.unit, until = Date.now() + 2000
+    const back = () => { if (!row.isConnected && document.activeElement === document.body) document.getElementById(`agent-${id}`)?.querySelector(':scope > .agent-entry')?.focus(); else if (Date.now() < until) requestAnimationFrame(back) }
+    requestAnimationFrame(back)
+  }
+
+  down(event) {
+    const row = event.target.closest?.('.agent-row[data-order]')
+    if (!row || row.parentElement !== this.element || event.button > 0 || event.target.closest('button, .agent-badge, .crown-edges, .crown-bracket')) return
+    if (document.documentElement.dataset.rail === 'folded' || this.peers(row).length < 2) return
+    const id = event.pointerId, touch = event.pointerType !== 'mouse', x0 = event.clientX, y0 = event.clientY
+    let live = false, timer = 0, ghost = null, grabAt = 0, home = null, start = ''
+    const rows = this.block(row)
+    const lift = () => {
+      live = true
+      try { row.setPointerCapture(id) } catch {}
+      start = this.peers(row).map(r => r.dataset.unit).join()
+      home = rows.at(-1).nextSibling
+      const box = row.getBoundingClientRect()
+      grabAt = y0 - box.top
+      ghost = row.cloneNode(true)
+      for (const n of [ghost, ...ghost.querySelectorAll('[id], [data-controller], [data-folds-target], [data-action]')]) { n.removeAttribute('id'); n.removeAttribute('data-controller'); n.removeAttribute('data-folds-target'); n.removeAttribute('data-action') }
+      delete ghost.dataset.unit; delete ghost.dataset.order
+      ghost.classList.add('order-ghost'); ghost.classList.remove('is-active', 'has-active')
+      ghost.setAttribute('aria-hidden', 'true'); ghost.inert = true
+      Object.assign(ghost.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` })
+      this.element.append(ghost)
+      row.classList.add('is-carried')
+      for (const r of rows.slice(1)) r.classList.add('is-carried-sub')
+      this.element.classList.add('is-ordering')
+      if (touch) navigator.vibrate?.(8)
+    }
+    const move = e => {
+      if (e.pointerId !== id) return
+      if (!live) {
+        if (touch) { if (Math.hypot(e.clientX - x0, e.clientY - y0) > 8) end(e, true); return }
+        if (Math.abs(e.clientY - y0) < 5) return
+        lift()
+      }
+      e.preventDefault()
+      if (!row.isConnected) return end(e, true)   // (the sidebar was drawn anew under the pointer)
+      ghost.style.top = `${e.clientY - grabAt}px`
+      const peers = this.peers(row), others = peers.filter(p => p !== row)
+      const next = others.find(p => { const b = p.getBoundingClientRect(); return e.clientY < b.top + b.height / 2 }) ?? null
+      const now = peers[peers.indexOf(row) + 1] ?? null
+      if (next !== now) this.place(rows, next, peers)
+    }
+    const stopScroll = e => { if (live) e.preventDefault() }
+    const esc = e => { if (e.key === 'Escape' && live) { e.preventDefault(); e.stopPropagation(); end({ pointerId: id, type: 'escape' }, true) } }
+    const end = (e, cancel = false) => {
+      if (e.pointerId !== id) return
+      clearTimeout(timer)
+      removeEventListener('pointermove', move); removeEventListener('pointerup', end); removeEventListener('pointercancel', end)
+      removeEventListener('touchmove', stopScroll); removeEventListener('keydown', esc, true)
+      this.cancel = null
+      if (!live) return
+      this.dragged = e.type !== 'escape'; setTimeout(() => { this.dragged = false }, 0)
+      cancel ||= e.type === 'pointercancel'
+      if (cancel && row.isConnected) for (const r of rows) this.element.insertBefore(r, home?.parentNode === this.element ? home : null)
+      ghost?.remove()
+      row.classList.remove('is-carried')
+      for (const r of rows.slice(1)) r.classList.remove('is-carried-sub')
+      this.element.classList.remove('is-ordering')
+      if (!cancel && row.isConnected && this.peers(row).map(r => r.dataset.unit).join() !== start) this.save(row)
+    }
+    if (touch) timer = setTimeout(lift, 300)
+    this.cancel = () => end({ pointerId: id, type: 'escape' }, true)
+    addEventListener('pointermove', move, { passive: false }); addEventListener('pointerup', end); addEventListener('pointercancel', end)
+    addEventListener('touchmove', stopScroll, { passive: false }); addEventListener('keydown', esc, true)
   }
 })
 

@@ -236,16 +236,18 @@ export function register(t) {
       if (form.has('archived')) body.archived = form.get('archived') === '1'
       return hub.editSession(body)
     },
-    /** One place up or down among its own kind: the mains and lone sessions of its part (connected or not), or the subs of its main. */
+    /** A new place: directly before or after another session (the sidebar's drag: `before` or `after`), or one place up
+     *  or down among its own kind (`dir`: Move Up/Down, Alt+arrows): the mains and lone sessions of its desk and part
+     *  (connected or not), or the subs of its main. */
     move(id, form, m) {
+      if (form.has('before') || form.has('after')) return hub.editSession({ agent: id, before: form.get('before') || null, after: form.get('after') || null })
       const u = m.units.find(x => x.id === id)
       if (!u) throw new Error(`no agent ${id}`)
       const live = x => x.online || Boolean(x.subs?.some(s => s.online))
-      const among = u.parent ? u.parent.subs : m.units.filter(x => !x.parent && live(x) === live(u))
+      const among = u.parent ? u.parent.subs : m.units.filter(x => !x.parent && live(x) === live(u) && m.deskOf(x.agent) === m.deskOf(u.agent))
       const at = among.indexOf(u), down = form.get('dir') === 'down'
       if (down ? at >= among.length - 1 : at <= 0) return
-      // (The hub's own order: directly before another session, or last.)
-      return hub.editSession({ agent: id, before: down ? among[at + 2]?.id ?? null : among[at - 1].id })
+      return hub.editSession(down ? { agent: id, after: among[at + 1].id } : { agent: id, before: among[at - 1].id })
     },
     star: (id, form) => hub.starSession({ agent: id, starred: form.get('starred') === '1' }),
     /** Lay this session together with another (or with the group the other is in). */

@@ -560,6 +560,61 @@ export const steps = [
     check(await A.js("return !document.querySelector('#corner-note-box .corner-note-file')"), 'the note is empty again')
   }],
 
+  ['sidebar order: a second agent joins; its row is dragged above the first, kept after a reload; Alt+↓ puts it back', async ctx => {
+    const { check } = ctx.run
+    const A = await ctx.profile('A')
+    await ui.openDesk(A)
+    await A.click('#sidebar-invite')
+    await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy[data-line=connect] code')", 'the agent invite page')
+    const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
+    const link = /'(http\S+\/join#v1\.[^']+)'/.exec(command)?.[1]
+    ctx.second = await joinAgent(ctx, link, async () => {
+      await A.until("document.querySelector('[data-state=confirm_code] .clip-ask .check-yes')", 'the second agent\'s emoji')
+      await A.click('[data-state=confirm_code] .clip-ask .check-yes')
+    }, 'second')
+    await A.until("document.querySelector('[data-state=joined]')", 'the second agent is in', 20000)
+    await ctx.second.setRegister('profile', { model: 'claude-opus-5-5', task: 'Order', agent_name: 'second-agent' })
+    await ui.openDesk(A)
+    const order = () => A.js("return [...document.querySelectorAll('#agents > .agent-row[data-order]')].map(r => r.querySelector('strong').textContent)")
+    // both in one part (connected or not): the fake hub tells no presence by itself
+    const room = ctx.fake.state.rooms.values().next().value
+    const devices = await A.js("return [...trommi.client.model.sessions.values()].filter(s => s.group_id && !s.parent_session_id).map(s => s.agent_device_id)")
+    for (const d of devices) ctx.fake.push(room.room_id, `event: presence\ndata: ${JSON.stringify({ device: Buffer.from(d, 'hex').toString('base64url'), online: true, hears: true })}\n\n`)
+    await A.until("(() => { const r = [...document.querySelectorAll('#agents > .agent-row[data-order]')]; return r.length === 2 && r[0].dataset.order === r[1].dataset.order && r.some(x => x.textContent.includes('second-agent')) })()", 'two connected sessions in the sidebar', 20000)
+    const was = await order()
+    check(was[1] === 'second-agent', 'the new session stands last (its default place)', was)
+    await A.shot('standin-30-order-before')
+    // a drag with the mouse: pressed on the second row, carried above the first, let go
+    const from = await A.point('#agents > .agent-row[data-order] ~ .agent-row[data-order] > .agent-entry')
+    const to = await A.js("const r = document.querySelector('#agents > .agent-row[data-order]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 4 }")
+    await A.mouse('mouseMoved', from.x, from.y, false)
+    await A.mouse('mousePressed', from.x, from.y)
+    for (let i = 1; i <= 8; i++) { await A.mouse('mouseMoved', from.x, from.y + (to.y - from.y) * i / 8, true); await sleep(30) }
+    check(await A.js("return !!document.querySelector('#agents .order-ghost') && !!document.querySelector('#agents .agent-row.is-carried')"), 'while carried: a ghost follows the pointer, its place stays open')
+    await A.shot('standin-31-order-dragging')
+    await A.mouse('mouseReleased', to.x, to.y)
+    check(await A.js("return !document.querySelector('#agents .order-ghost, #agents .is-carried')"), 'let go: no ghost, no open place')
+    check(await A.js("return location.pathname === '/'"), 'the drag did not open the session')
+    await A.until("(() => { const r = [...document.querySelectorAll('#agents > .agent-row[data-order] strong')]; return r[0]?.textContent === 'second-agent' })()", 'the second agent on top')
+    await A.until("[...trommi.client.model.human.session_settings.values()].filter(v => Number.isFinite(v?.position)).length >= 2 && ![...trommi.client.model.human.raw.values()].some(r => r.pending)", 'the places written and taken by the hub', 15000)
+    await A.reload()
+    await ui.live(A)
+    await A.until("document.querySelectorAll('#agents > .agent-row[data-order]').length === 2", 'the sidebar after the reload')
+    check(JSON.stringify(await order()) === JSON.stringify([was[1], was[0]]), 'after a reload the order is kept', await order())
+    await A.shot('standin-32-order-after')
+    // the keyboard: Alt+↓ on the focused row puts it back
+    await A.js("document.querySelector('#agents > .agent-row[data-order] .agent-entry').focus()")
+    await A.key('ArrowDown', 40, 1)
+    await A.until("(() => { const r = [...document.querySelectorAll('#agents > .agent-row[data-order] strong')]; return r[1]?.textContent === 'second-agent' })()", 'Alt+↓ moved it down')
+    await A.until("![...trommi.client.model.human.raw.values()].some(r => r.pending)", 'the places taken by the hub', 15000)
+    check(JSON.stringify(await order()) === JSON.stringify(was), 'the order as before', await order())
+    // (the second agent leaves: the steps after this one press the first session's row)
+    const second = await A.js("return [...trommi.client.model.sessions.values()].find(s => s.group_id && !s.parent_session_id && s.profile?.agent_name === 'second-agent')?.agent_device_id")
+    if (second) ctx.fake.push(room.room_id, `event: presence\ndata: ${JSON.stringify({ device: Buffer.from(second, 'hex').toString('base64url'), online: false })}\n\n`)
+    await ctx.second.stop().catch(() => {})
+    await A.until("document.querySelector('#agents > .agent-row[data-order] strong')?.textContent !== 'second-agent'", 'the first session first again')
+  }],
+
   ['a new profile logs in with e-mail and password and lands on the Desk with history; a wrong password is refused', async ctx => {
     const { check } = ctx.run
     await ctx.within('D', async D => {

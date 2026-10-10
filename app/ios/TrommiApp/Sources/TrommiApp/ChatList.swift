@@ -53,11 +53,15 @@ struct ChatsScreen: View {
     .refreshable { await model.refresh() }
   }
 
-  /** Grouped by desk on All Desks (the desks' order), one group otherwise; the crowned session first, then by what happened last. */
+  /** Grouped by desk on All Desks (the desks' order), one group otherwise. The order the human set (dragged in the web's
+   *  sidebar: each session's position) first; the sessions he never placed after it: the crowned one first, then by
+   *  what happened last. */
   private func makeGroups(_ v: DeskModel.View?, _ d: DeskModel?, _ units: [DeskUnit], _ byId: [String: DeskUnit]) -> [DeskGroup] {
     let list: [(String, String?)] = v?.all == true ? (d?.desks ?? []).map { ($0.id, Optional($0.name)) } : [(v?.deskId ?? "", nil)]
     return list.compactMap { id, name in
       let tops = units.filter { $0.parent == nil && (name == nil || (d?.deskOf($0.agent) ?? list.first?.0) == id) }.sorted { a, b in
+        if a.agent.placed != b.agent.placed { return a.agent.placed }
+        if a.agent.placed { return (a.agent.position, a.agent.id) < (b.agent.position, b.agent.id) }
         if a.agent.starred != b.agent.starred { return a.agent.starred }
         return a.agent.active > b.agent.active
       }

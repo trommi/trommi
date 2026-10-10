@@ -1134,3 +1134,16 @@ html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-row:fir
   html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-row:first-child .menu-desk-rename { right: 88px; }
 }
 @media (max-width: 860px) { html body .topbar #brand-doors .menu-desk-add.is-plus { width: 40px !important; height: 40px; top: 5px; } html body .topbar #brand-doors .menu-desk.is-all b { font-weight: 800 !important; } }
+
+/* ---- the sessions' order (sidebar.mjs, controller "order") ----
+   The row being carried leaves its place open: an empty slot outlined in pencil, where it lands when let go. A
+   ghost of it follows the pointer, a touch askew; its helpers fold away under it until it is set down. */
+#agents .agent-row[data-order] { -webkit-touch-callout: none; }
+#agents.is-ordering { cursor: grabbing; -webkit-user-select: none; user-select: none; }
+#agents.is-ordering .agent-entry { cursor: grabbing; }
+#agents .agent-row.is-carried > * { visibility: hidden; }
+#agents .agent-row.is-carried::after { content: ""; position: absolute; inset: 3px 4px; pointer-events: none; border: 1.5px dashed color-mix(in srgb, var(--fg) 38%, transparent); border-radius: 14px 10px 15px 11px / 11px 14px 10px 15px; }
+#agents .agent-row.is-carried-sub { display: none; }
+#agents .order-ghost { position: fixed; z-index: 60; margin: 0; pointer-events: none; rotate: -1.4deg; opacity: .93; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 14px 24px -14px rgb(20 30 25 / .45); }
+#agents .order-ghost[hidden] { display: flex; }
+@media (prefers-reduced-motion: reduce) { #agents .order-ghost { rotate: 0deg; } }

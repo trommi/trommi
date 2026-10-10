@@ -432,6 +432,24 @@ function parentClaim(m, s) {
  * the others go to the archive as replaced: never one with an open question, never one he fetched back himself.
  * Their helpers go with them. Settings, Sessions, Archive lists them (Fetch Back shows one again).
  */
+/** The places a session moved in the sidebar's order takes, and those of the others it passes: [[id, position], …]
+ *  to write into each one's register session/<id>. `list`: every session in its present order (BoardState.agents:
+ *  { id, position, placed, parent, archived }); the session `id` goes directly before `before`, or directly after
+ *  `after`, or last. A target that is not in the list (gone since the page drew it) moves nothing. A main session
+ *  without a place of its own yet is given one, so that every device reads the same order (the phone reads only
+ *  places that were written); helpers stand under their main whatever their place says. */
+export function orderWrites(list, id, { before = null, after = null } = {}) {
+  const a = list.find(x => x.id === id)
+  if (!a || before === id || after === id) return []
+  const order = list.filter(x => x !== a)
+  const target = before ?? after
+  const at = target == null ? order.length : order.findIndex(x => x.id === target)
+  if (at < 0) return []
+  order.splice(after != null ? at + 1 : at, 0, a)
+  if (order.every((x, i) => x === list[i])) return []
+  return order.flatMap((x, i) => (x.position !== i || (!x.placed && !x.parent && !x.archived) ? [[x.id, i]] : []))
+}
+
 export function replaceInSlots(agents) {
   const bySlot = new Map()
   for (const a of agents) if (a.slot && !a.archived) { const l = bySlot.get(a.slot); if (l) l.push(a); else bySlot.set(a.slot, [a]) }
@@ -634,7 +652,7 @@ export class BoardState {
       return {
         id, device_id: key, session_id: s.session_id ?? null, agent_device_id: s.agent_device_id, name: p.agent_name || s.device_name || id, label: set.name || '', icon: set.icon || p.icon || '', icon_by: set.icon ? 'human' : 'agent',
         online: Boolean(s.is_online), offline_since: s.offline_since ?? null, model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === key || crown === s.agent_device_id, parent, main: Boolean(p.is_main),
-        desk: set.desk ?? null, archived: chosen && !back, replaced: false, group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0, device_active: lastOfDevice.get(s.agent_device_id) ?? 0,
+        desk: set.desk ?? null, archived: chosen && !back, replaced: false, group: set.group ?? null, position: Number.isFinite(set.position) ? set.position : i, placed: Number.isFinite(set.position), seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0, device_active: lastOfDevice.get(s.agent_device_id) ?? 0,
         removed: s.is_active === false,
         // (a session on a person's own device, not an agent's: it is never deleted from the board: session.mjs Delete)
         own: s.agent_device_id === m.room.my_device_id || m.members.get(s.agent_device_id)?.device_role === 'human',
@@ -1090,11 +1108,10 @@ function hubFacade(client, board) {
       if ('group' in body) put(a, { group: body.group ? String(body.group).slice(0, 40) : null })
       if ('desk' in body) put(a, { desk: body.desk })
       if ('parent' in body) put(a, { parent: body.parent ?? null })
-      if ('before' in body) {
-        const order = agents.filter(x => x.id !== a.id)
-        const at = body.before == null ? order.length : Math.max(0, order.findIndex(x => x.id === body.before))
-        order.splice(at < 0 ? order.length : at, 0, a)
-        order.forEach((x, i) => { if (x.position !== i) put(x, { position: i }) })
+      // A new place in the order (the sidebar's drag, Alt+arrows, Move Up/Down): directly before or after another session.
+      if ('before' in body || 'after' in body) {
+        const byId = new Map(agents.map(x => [x.id, x]))
+        for (const [x, position] of orderWrites(agents, a.id, { before: body.before ?? null, after: body.after ?? null })) put(byId.get(x), { position })
       }
       if (Object.keys(writes).length) await client.setRegisters(writes)
     },
@@ -1422,7 +1439,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
     if (model) parts.push({ key: 'phonebar', html: String(phoneBar(model, base, { view, current, title })) })
     parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk', view === 'session' ? current : null)) })
     // (the same rows on every page: the session in view is marked after the paint, sidebar.mjs markCurrent)
-    parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds">${sidebarRows(model, base)}</nav>`) })
+    parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds order">${sidebarRows(model, base)}</nav>`) })
     parts.push({ key: 'foot', html: String(SIDE_FOOT) })
     parts.push({ key: 'veil', html: String(DRAWER_VEIL) })
     if (model) parts.push({ key: 'note', html: String(cornerNote(model, base)) })
