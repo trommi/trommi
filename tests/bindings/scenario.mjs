@@ -120,6 +120,8 @@ export async function runScenario(scenario, world) {
   const groups = new Map()     // name -> group id
   const remembered = new Map() // device name -> its outbox, as remembered
   let room = null
+  let spoken = 0       // how many messages same_key had written
+  const seen = new Map() // device name -> the envelopes its last syncs brought
   let code = null      // the recovery code in force
   const device = name => devices.get(name) ?? (() => { throw new Error(`no device ${name}`) })()
   const group = name => groups.get(name) ?? (() => { throw new Error(`no group ${name}`) })()
@@ -149,7 +151,7 @@ export async function runScenario(scenario, world) {
       check(asked.role === step.role && same(asked.inviter, await inviter.call('id')), 'the Request is for another invite')
       const accepted = await inviter.call('inviteAccept', opened.inviteId, { request: asked.request, mac: asked.mac, signature: asked.signature }, Date.now())
       const shown = await newcomer.call('joinReveal', { reveal: accepted.reveal, signature: accepted.signature })
-      check(same(shown.numbers, accepted.code.numbers) && shown.emoji.length === 6 && shown.emoji.join() === accepted.code.emoji.join(), 'the two sides show different codes')
+      check(same(shown.numbers, accepted.code.numbers) && shown.emoji.length === 6 && shown.emoji.join() === accepted.code.emoji.join() && shown.words.join() === accepted.code.words.join(), 'the two sides show different codes')
       // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
       if (step.role === 'agent') await newcomer.call('joinObserve', hub.roomInfos[asked.roomEpoch])
       const confirmed = await inviter.call('inviteConfirm', opened.inviteId, accepted.code.numbers, accepted.requestHash, true, Date.now())
@@ -169,6 +171,28 @@ export async function runScenario(scenario, world) {
       const [first, ...others] = await Promise.all(step.devices.map(name => keyOf(name, step.group)))
       check(first.held, `the key of ${step.group} is not held`)
       for (const other of others) check(other.epoch === first.epoch && other.held, `the devices do not share the key of ${step.group}`)
+      // Holding a key says little: in a session, what the first writes now, every other one must open.
+      if (step.group === 'room' || step.keys_only) return
+      const said = `same key ${++spoken}`
+      await run.chat({ device: step.devices[0], group: step.group, text: said })
+      await hub.post(device(step.devices[0]))
+      for (const name of step.devices.slice(1)) {
+        const { envelopes } = await hub.sync(world, device(name), room)
+        check(chatWith(envelopes, said)?.outcome === 'applied', `${name} did not open what ${step.devices[0]} wrote in ${step.group}`)
+      }
+    },
+    /** The command gate of an agent device, for the Chat message with this text: act once, then done. */
+    async gate(step) {
+      const agent = device(step.device)
+      const envelope = seen.get(step.device)?.findLast(envelope => envelope.payload && JSON.parse(text(envelope.payload)).text === step.text)
+      check(envelope?.command === true, 'the message is not one the gate is asked about')
+      check((await agent.call('commandsPending')).some(hash => same(hash, envelope.envelopeHash)), 'the command is not pending')
+      const first = await agent.call('command', envelope.envelopeHash, Date.now())
+      check(first.gate === 'act' && first.command === 'chat', `the gate answered ${first.gate} ${first.refusal}`)
+      check((await agent.call('commandsUncertain')).some(hash => same(hash, envelope.envelopeHash)), 'a started command is not known as unfinished')
+      await agent.call('commandFinished', envelope.envelopeHash)
+      check((await agent.call('command', envelope.envelopeHash, Date.now())).gate === 'done', 'a finished command was let through again')
+      check(await refusal(() => agent.call('command', new Uint8Array(32), Date.now())) === 'not-found', 'the gate answered for an envelope it never saw')
     },
     async sign_in(step) {
       const signed = await device(step.device).call('hubSignIn', 'https://hub.example', new Uint8Array(32).fill(9))
@@ -176,6 +200,7 @@ export async function runScenario(scenario, world) {
     },
     async sync(step) {
       const { done, envelopes } = await hub.sync(world, device(step.device), room)
+      seen.set(step.device, [...(seen.get(step.device) ?? []), ...envelopes])
       if (step.message !== undefined) {
         const message = done.find(processed => processed.kind === 'message')?.message
         check(message?.kind === 'workTrail' && text(message.payload) === step.message, 'the message did not arrive as it was sent')
@@ -241,6 +266,10 @@ export async function runScenario(scenario, world) {
       check(await refusal(() => reader.call('boardLoad', board, [])) === 'withheld', 'a withheld item went unnoticed')
       const loaded = await reader.call('boardLoad', board, [{ sender: writerId, seq: second.seq, hash: second.envelopeHash }])
       check(loaded.fresh.length === 1 && loaded.fresh[0] === 0 && loaded.covered.length === 0 && loaded.frontier[0].seq === second.seq, 'the board did not load as written')
+      // The board itself: the items the reader opened, merged for the frontier it verified.
+      const items = [envelopes[0], envelopes[2]].map(envelope => ({ sender: envelope.header.sender, seq: envelope.header.seq, payload: envelope.payload }))
+      const merged = JSON.parse(text(core.boardReduce(null, [], items, loaded.frontier)))
+      check(merged !== null && typeof merged === 'object', 'the board did not reduce to a snapshot file')
       const cut = await reader.call('cutOf', roomGroup, writerId)
       check(cut.seq === second.seq && same(cut.hash, second.envelopeHash), 'the Cut is not the last accepted envelope')
     },
