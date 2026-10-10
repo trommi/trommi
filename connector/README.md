@@ -12,8 +12,34 @@ trommi-connector permission|notice|denied|resolved    the plugin's hooks (JSON o
 trommi-connector prompt|stop         the terminal mirror's hooks (UserPromptSubmit, Stop)
 trommi-connector trail               the work trail's hooks (PreToolUse, PostToolUse, …)
 trommi-connector monitor             the plugin's monitor: one line per board event
+trommi-connector setup claude|codex  make the installed connector known to Claude Code (plugin) or Codex (MCP server)
+trommi-connector update [--check]    install the newest signed release in place of the installed one
 trommi-connector whoami | allow-tools | --version
 ```
+
+## Install
+
+Once per machine, then once per program, then once per project folder:
+
+```
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh
+trommi-connector setup claude          # or: trommi-connector setup codex
+trommi-connector connect '<invite link>'
+```
+
+`install.sh` (repository root, POSIX sh, curl and OpenSSL 3) finds the newest release that holds `manifest.json` and
+the connector for this machine, checks the manifest's Ed25519 signature against its own copy of
+`release/public-key.pem`, then product, repository, tag, version (never older than the installed one), size and
+SHA-256, and only then puts the program into `~/.local/share/trommi/bin/` with a link in `~/.local/bin/`. It ends by
+running `trommi-connector --version`, which must say "signature verified", and prints the version and the
+manifest's SHA-256. It refuses root and only talks https to github.com and GitHub's release store.
+
+`setup claude` adds the marketplace of this repository (`.claude-plugin/marketplace.json`, sparse checkout) and
+installs the plugin `trommi@trommi` for the user. The plugin (`plugin/`) holds no program: its MCP server, channel,
+hooks and monitor name `${HOME}/.local/share/trommi/bin/trommi-connector`, so `trommi-connector update` needs no new
+plugin. `setup codex` registers the same program as Codex's MCP server `trommi` (with `TROMMI_CHANNEL_EVENTS=off`:
+Codex shows no channel events, board events wait for the `inbox` tool). Both can be run again and say what they
+changed.
 
 ## What is where
 
@@ -52,7 +78,7 @@ Nothing is loaded into a running process. A new binary at the connector's path i
 (`kind="update"`); `reload_connector` answers with the restart line.
 
 Releases are built and signed in CI: GitHub releases `connector-v<N>` of `trommi/trommi` with the four binaries,
-the plugin's archive, `manifest.json` and `manifest.json.sig` (`release/manifest.sh`, `release/sign.sh`: Ed25519 over
+`manifest.json` and `manifest.json.sig` (`release/manifest.sh`, `release/sign.sh`: Ed25519 over
 the manifest's exact bytes). The connector holds the public key (`release/public-key.pem`, compiled in by
 `build.rs`) and checks a binary against a manifest that lies beside it (`src/update.rs`): the signature, then
 product, repository, tag and version (never older than the one running; CI compiles the release number in with
@@ -64,7 +90,7 @@ never announced as an update.
 
 ```
 cargo build --release -p trommi-connector
-node connector/build-plugin.mjs [dir]      # four targets, the plugin's zip and its marketplace file
+node connector/build-plugin.mjs [dir]      # the four targets' binaries, as named in a release
 cargo test -p trommi-tests                 # tests/connector/*: units, and scenarios against the real v2 hub
 ```
 

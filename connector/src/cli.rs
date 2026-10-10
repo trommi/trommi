@@ -461,6 +461,35 @@ pub async fn run(argv: &[String]) -> i32 {
                 1
             }
         },
+        "setup" => {
+            let done = match given.as_deref() {
+                Some("claude") => crate::setup::claude(),
+                Some("codex") => crate::setup::codex(),
+                _ => Err("use `setup claude` or `setup codex`".to_string()),
+            };
+            match done {
+                Ok(lines) => {
+                    for line in lines {
+                        println!("{line}");
+                    }
+                    0
+                }
+                Err(why) => {
+                    eprintln!("[trommi] {why}");
+                    1
+                }
+            }
+        }
+        "update" => match crate::update::update(given.as_deref() == Some("--check")).await {
+            Ok(said) => {
+                println!("{said}");
+                0
+            }
+            Err(why) => {
+                eprintln!("[trommi] {why}");
+                1
+            }
+        },
         "--version" | "version" => {
             println!(
                 "trommi-connector {} ({}, {}; {})",
@@ -472,7 +501,7 @@ pub async fn run(argv: &[String]) -> i32 {
             0
         }
         other => {
-            eprintln!("[trommi] unknown command {other}; use join <link>, say \"<text>\" [--session <name>] [--urgent] or whoami, or no argument for the MCP server");
+            eprintln!("[trommi] unknown command {other}; use connect <link>, say \"<text>\" [--session <name>] [--urgent], whoami, setup claude|codex, update [--check] or --version, or no argument for the MCP server");
             1
         }
     }
