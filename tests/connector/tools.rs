@@ -760,3 +760,54 @@ async fn an_expired_link_is_refused_before_anything_is_asked() {
         .collect();
     assert!(left.is_empty(), "nothing was written: {left:?}");
 }
+
+/// A restart whose old process has not ended: the new process takes the lease, and its stream (which carries
+/// the lease) replaces the old one's at the hub. The old process is answered `lease-lost` and ends without
+/// asking again; only the new one hears the human.
+#[tokio::test(flavor = "multi_thread")]
+async fn of_two_processes_of_one_device_only_the_lease_holder_streams() {
+    let (_hub, mut human, seat, group) = joined().await;
+    let signal = |what: &str, pid: u32| {
+        let sent = std::process::Command::new("kill")
+            .args([what, &pid.to_string()])
+            .status()
+            .expect("kill runs");
+        assert!(sent.success());
+    };
+    let mut old = seat.serve().await;
+    old.ready().await;
+    let pid = old.child.id().expect("the old process");
+    // the old process stands still while its state is copied, and while the new one starts
+    signal("-STOP", pid);
+    let twin = seat.twin(pid);
+    let mut new = twin.serve().await;
+    new.ready().await;
+    signal("-CONT", pid);
+
+    // the old process ends by itself, soon, and does not come back
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(60), old.child.wait()).await;
+    assert!(
+        ended.is_ok(),
+        "the process that lost the lease ended (no reconnect loop)"
+    );
+
+    // the new one hears the human
+    human
+        .say(
+            &group,
+            json!({ "content_type": "message", "text": "Only the new one hears this." }),
+        )
+        .await
+        .expect("the human writes");
+    let heard = new.event("chat").await;
+    assert!(
+        heard.to_string().contains("Only the new one hears this."),
+        "{heard}"
+    );
+    // and signs and sends: its state is the device's, nothing halted it
+    let sent = new
+        .ok("reply", json!({ "text": "The new one answers." }))
+        .await;
+    assert!(sent.starts_with("sent"), "{sent}");
+    new.close().await;
+}
