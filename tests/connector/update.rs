@@ -406,7 +406,20 @@ fn the_release_tags_are_read_from_githubs_feed_newest_first() {
     .concat();
     assert_eq!(
         tags_in_feed(&feed),
-        ["hub-v40", "v21", "connector-v19", "connector-v9"]
+        ["v21", "connector-v19", "connector-v9"]
+    );
+    // releases of other parts share the numbers: the connector's release of the same number stays
+    let shared = [
+        ours("hub-v34"),
+        ours("connector-v34"),
+        ours("hub-v29"),
+        ours("connector-v29"),
+        ours("v34"),
+    ]
+    .concat();
+    assert_eq!(
+        tags_in_feed(&shared),
+        ["v34", "connector-v34", "connector-v29"]
     );
     assert!(tags_in_feed("<html>rate limited</html>").is_empty());
     assert_eq!(tag_number("connector-v22"), Some(22));

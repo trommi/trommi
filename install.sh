@@ -147,14 +147,16 @@ else
     case $code in 30[12378]) return 0 ;; 404) return 1 ;; *) fail "github.com answers $code for $2 of $1" ;; esac
   }
   if [ -z "$tag" ]; then
-    # GitHub's feed of releases names the newest; each, highest number first, is asked for the two files.
+    # GitHub's feed of releases names the newest; each, highest number first, is asked for the two files. (Releases
+    # of other parts share the numbers: hub-v34 beside connector-v34.)
     get -f --max-time 60 --max-filesize "$MAX_LISTING" -o "$work/releases.atom" "https://github.com/$REPOSITORY/releases.atom" \
       || fail "could not read the releases of $REPOSITORY from github.com"
     sed -n 's|.*href="https://github.com/'"$REPOSITORY"'/releases/tag/\([a-z-]*v[1-9][0-9]*\)".*|\1|p' "$work/releases.atom" \
       | while read -r candidate; do
-          printf '%s' "$candidate" | grep -Eq '^([a-z]+-)?v[1-9][0-9]{0,11}$' || continue
+          # only the series that hold a connector: connector-v<N>, and v<N> of a release of everything
+          printf '%s' "$candidate" | grep -Eq '^(connector-)?v[1-9][0-9]{0,11}$' || continue
           printf '%s %s\n' "${candidate##*v}" "$candidate"
-        done | sort -n -r -u | head -n 20 > "$work/tags"
+        done | sort -k1,1nr -k2,2 -u | head -n 20 > "$work/tags"
     while read -r _ candidate; do
       if has "$candidate" "$name" && has "$candidate" manifest.json; then tag=$candidate; break; fi
     done < "$work/tags"
