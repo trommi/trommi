@@ -306,8 +306,7 @@ encrypted.
     token registered anew is sent the counts in a round after it is stored. "Lost" is never told after the `online` of a
     stream the agent opened first.
 28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
-39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`; the hub also takes them
-    beside the other members. New recovery keys are refused if the room held either of them before, as
+39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`. New recovery keys are refused if the room held either of them before, as
     either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
 40. **The admin page** is not part of the API and not on the public port: a second listener on 127.0.0.1:8791
