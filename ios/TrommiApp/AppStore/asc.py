@@ -12,6 +12,8 @@ JWT is signed with the openssl command line tool, so it runs on a stock macOS ru
   asc.py notes BUILD_ID TEXT        TestFlight "What to Test" of that build (every localization; de-DE if none)
   asc.py next-build                 the highest build number App Store Connect has for the app, plus one
   asc.py last-sha                   the commit of the newest build whose What to Test names one ("(abc1234)")
+  asc.py export-code                the code of the app's APPROVED export compliance documentation (the newest if
+                                    several), read only; fails listing every declaration's state and date if none is
 
 Environment: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (the .p8 file). Nothing here prints key material or tokens.
 """
@@ -239,6 +241,46 @@ def last_sha():
                 return
 
 
+def pick_code(rows):
+    """Of the app's encryption declarations (the API's `data`), the APPROVED one's code, the newest if several: (code,
+    state, date). None when none is approved."""
+    def date(r):
+        a = r.get("attributes") or {}
+        return a.get("uploadedDate") or a.get("createdDate") or ""
+    approved = [r for r in rows if (r.get("attributes") or {}).get("appEncryptionDeclarationState") == "APPROVED"
+                and (r.get("attributes") or {}).get("codeValue")]
+    if not approved:
+        return None
+    best = sorted(approved, key=date, reverse=True)[0]
+    return best["attributes"]["codeValue"], "APPROVED", date(best)
+
+
+def export_code():
+    aid = app_id(os.environ["BUNDLE_ID"])
+    if not aid:
+        print("::error::no app record", file=sys.stderr, flush=True)
+        sys.exit(1)
+    rows, path = [], f"/v1/apps/{aid}/appEncryptionDeclarations?limit=200"
+    while path:
+        page = call("GET", path)
+        rows += page["data"]
+        nxt = page.get("links", {}).get("next")
+        path = nxt[len(API):] if nxt else None
+    picked = pick_code(rows)
+    if not picked:
+        listed = ", ".join(f"{(r.get('attributes') or {}).get('appEncryptionDeclarationState', '?')} "
+                           f"({(r.get('attributes') or {}).get('uploadedDate') or (r.get('attributes') or {}).get('createdDate') or 'no date'})"
+                           for r in rows) or "none"
+        # (on stderr: stdout is the code the script takes)
+        print(f"::error::no APPROVED export compliance documentation for {os.environ['BUNDLE_ID']} in App Store Connect "
+              f"(declarations: {listed}); set the repository variable IOS_EXPORT_COMPLIANCE_CODE or wait for the approval",
+              file=sys.stderr, flush=True)
+        sys.exit(1)
+    code, state, when = picked
+    print(f"export compliance code from App Store Connect: {code} ({state}, {when or 'no date'})", file=sys.stderr)
+    print(code)
+
+
 def gh_out(name, value):
     print(f"{name}: {value}")
     if os.environ.get("GITHUB_OUTPUT"):
@@ -248,7 +290,7 @@ def gh_out(name, value):
 
 if __name__ == "__main__":
     cmds = {"prepare": prepare, "wait": wait, "internal": internal, "notes": notes, "next-build": next_build,
-            "last-sha": last_sha}
+            "last-sha": last_sha, "export-code": export_code}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         sys.exit(__doc__)
     cmds[sys.argv[1]](*sys.argv[2:])
