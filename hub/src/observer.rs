@@ -304,14 +304,31 @@ fn tree_nodes(bytes: &[u8]) -> Res<usize> {
     r.take(4).map_err(cut)?;
     r.vec().map_err(cut)?;
     r.take(8).map_err(cut)?;
-    for _ in 0..3 {
-        r.vec().map_err(cut)?;
+    r.vec().map_err(cut)?;
+    r.vec().map_err(cut)?;
+    // OpenMLS unpacks every extension before it looks for duplicates: every tree in either list is counted, and
+    // a list that names a type twice is refused here
+    let in_context = trees(r.vec().map_err(cut)?)?;
+    let in_info = trees(r.vec().map_err(cut)?)?;
+    match (in_context, in_info) {
+        (None, Some(count)) => Ok(count),
+        (Some(_), _) => Err(bad("a ratchet tree in the group context")),
+        (None, None) => Err(bad("GroupInfo without the tree")),
     }
-    let extensions = r.vec().map_err(cut)?;
+}
+
+/// The nodes of the ratchet tree in a list of extensions, if it has one; no extension type twice.
+fn trees(extensions: &[u8]) -> Res<Option<usize>> {
+    let cut = |_| bad("GroupInfo encoding");
     let mut e = Reader::new(extensions);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut found = None;
     while e.position() < extensions.len() {
         let kind = e.take(2).map_err(cut)?;
         let data = e.vec().map_err(cut)?;
+        if !seen.insert([kind[0], kind[1]]) {
+            return Err(bad("an extension named twice"));
+        }
         if kind != [0, 2] {
             continue;
         }
@@ -330,9 +347,9 @@ fn tree_nodes(bytes: &[u8]) -> Res<usize> {
                 _ => return Err(bad("GroupInfo encoding")),
             }
         }
-        return Ok(count);
+        found = Some(count);
     }
-    Err(bad("GroupInfo without the tree"))
+    Ok(found)
 }
 
 fn skip_node(t: &mut Reader) -> wire::Parse<()> {

@@ -916,8 +916,12 @@ fn commit_in(
             "INSERT OR IGNORE INTO welcome_bytes (group_id, epoch, bytes) VALUES (?1, ?2, ?3)",
         )?
         .execute(params![group_id, new_epoch as i64, welcome])?;
-        x.c.prepare_cached("INSERT INTO welcomes (room_id, device, group_id, at, bytes, epoch) VALUES (?1, ?2, ?3, ?4, x'', ?5)")?
-            .execute(params![&room[..], &add.device[..], group_id, x.now as i64, new_epoch as i64])?;
+        let id: i64 = x.c.prepare_cached(
+            "UPDATE welcome_ids SET last = max(last, (SELECT coalesce(max(id), 0) FROM welcomes)) + 1 WHERE one = 1 RETURNING last",
+        )?
+        .query_row([], |r| r.get(0))?;
+        x.c.prepare_cached("INSERT INTO welcomes (id, room_id, device, group_id, at, bytes, epoch) VALUES (?1, ?2, ?3, ?4, ?5, x'', ?6)")?
+            .execute(params![id, &room[..], &add.device[..], group_id, x.now as i64, new_epoch as i64])?;
         fx.events.push(Event {
             room,
             audience: Audience {

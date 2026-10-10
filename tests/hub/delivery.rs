@@ -356,6 +356,16 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
     // it writes in the group: the Welcome is no longer kept
     bea.send(&w.hub, &room, &register(&random(), "x")).ok();
     assert_eq!(bea.get(&w.hub, "/v2/welcomes").ok(), json!([]));
+    // an id is never given twice: the next Welcome comes after the last one the device saw, although every row
+    // up to it is gone
+    // (the row put in by hand above took its id outside the hub's counter; the hub's own last one counts)
+    let seen = last;
+    w.catch_up(&mut bea, &room);
+    bea.upload_key_packages(&w.hub, 1).ok();
+    let (_, group) = w.found_main(&mut [&mut bea], None);
+    let next = bea.get(&w.hub, &format!("/v2/welcomes?after={seen}")).ok();
+    assert_eq!(next.as_array().unwrap().len(), 1);
+    assert_eq!(next[0]["group_id"], b64(&group));
 }
 
 #[test]
