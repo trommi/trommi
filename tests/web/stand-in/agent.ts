@@ -1,17 +1,14 @@
 // agent.ts: a STAND-IN for an agent device, for tests that need "an agent asks a question". TEST ONLY. The real
 // connector is Rust; nothing here is shipped or is evidence of how the connector behaves.
 //
-// What is real: its device is a binding `Device` that is enrolled as an agent device (it joins by an invite link,
-// observes the room group, gets its main session by Welcome, sends the work trail with the binding's
-// `sendWorkTrail`). It runs on the same engine and room functions as the web app (app/web/core/room.ts joinRoom).
-// What is stand-in: every stored item it writes (card versions, permission requests, Artifacts, Chat messages,
-// registers) is a plain JSON envelope of the stand-in core (core.ts `sealAgent`, `seal`).
+// Everything it does is the real core's: its device is enrolled as an agent device (it joins by an invite link,
+// observes the room group, gets its main session by Welcome), and every item it writes (card versions, permission
+// requests, Artifacts, Chat messages, registers, the work trail) is a real envelope or message. It runs on the same
+// engine and room functions as the web app (app/web/core/room.ts joinRoom). "Stand-in" is what it is for the
+// connector, not for the core.
 //
-// The command gate (spec/v2.md 9.0.9), as far as the stand-in core carries it: a command is handed to `onCommand`
-// only if its envelope was applied in the hub's order, its sender is a human device now, its recipient is this
-// device, and it is a Chat message, or an answer, verdict or take back of an object this device owns. Each
-// command is recorded by its envelope hash before the callback and never handed over twice. Not checked here:
-// the two-minute rule on epochs, the choices against the card's options, a request's expiry.
+// The command gate (spec/v2.md 9.0.9) is the core's: an envelope the core marks `command` is put to
+// `Device.command`, handed to `onCommand` only when the gate says `act`, and reported with `commandFinished`.
 //
 // `AgentHub` exists because the fake hub's catch-up and stream leave an agent device the room group's Commits out
 // (the real hub serves them: hub-api.md "Who may read"). It reads them from the room group's log and puts them at
@@ -20,12 +17,11 @@ import { getDecrypted, putEncrypted } from '../../../app/web/core/client.ts'
 import type { Client } from '../../../app/web/core/client.ts'
 import { attachmentRef, encodeBodyBytes, fileIdsOf, fileRefOf } from '../../../app/web/core/codec.ts'
 import type { Fields } from '../../../app/web/core/codec.ts'
-import type { Urgency } from '../../../app/web/core/core-api.ts'
+import type { Draft, Urgency } from '../../../app/web/core/core-api.ts'
 import { Hub } from '../../../app/web/core/hub.ts'
 import type { ChangeItem, StreamEvent } from '../../../app/web/core/hub.ts'
 import { hex, unhex } from '../../../app/web/core/ids.ts'
 import type { AttachmentRef } from '../../../app/web/core/types.ts'
-import type { AgentDraft, StandInDevice } from './core.ts'
 
 const utf8 = new TextEncoder()
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
@@ -74,7 +70,6 @@ export class AgentStandIn {
   readonly device_id: string
   onCommand: (command: Command) => void = () => {}
   readonly commands: Command[] = []
-  private readonly acted = new Set<string>()
   /** The objects this agent wrote: their newest version, as it sealed it. */
   private readonly objects = new Map<string, { version: number; hash: string; kind: 'card' | 'artifact'; fields: Fields }>()
 
@@ -82,23 +77,22 @@ export class AgentStandIn {
     this.client = client
     this.device_id = client.my_device_id
     client.engine.on('envelope', ({ received, how }) => {
-      const h = received.header
-      if (how !== 'ordered' || received.outcome !== 'applied' || !h.recipient || hex(h.recipient) !== this.device_id) return
-      if (!(client.engine.roles?.humans ?? []).some(d => same(d, h.sender))) return
-      const chat = h.kind === 'item' && h.timeline?.kind === 'chat'
-      const bound = h.kind === 'answer' || h.kind === 'verdict' || h.kind === 'takeBack'
-      if (!chat && !(bound && received.objectAfter && hex(received.objectAfter.owner) === this.device_id)) return
-      const envelope_hash = hex(h.envelopeHash)
-      if (this.acted.has(envelope_hash)) return
-      this.acted.add(envelope_hash)
-      const body = received.payload ? JSON.parse(new TextDecoder().decode(received.payload)) as Fields : null
-      const command: Command = {
-        kind: chat ? 'message' : h.kind as Command['kind'], envelope_hash, from: hex(h.sender),
-        object_id: h.object ? hex(h.object.objectId) : h.timeline?.scope === 'card' ? hex(h.timeline.ref) : null, body,
-        choices: received.bind?.kind === 'answer' ? received.bind.choices : [], allow: received.bind?.kind === 'verdict' ? received.bind.allow : null,
-      }
-      this.commands.push(command)
-      this.onCommand(command)
+      // the core says which envelopes its command gate is to be asked about, and the gate decides (9.0.9)
+      if (how !== 'ordered' || !received.command) return
+      const h = received.header, hash = received.envelopeHash
+      void (async () => {
+        const decision = await client.engine.do(d => d.command(hash, Date.now()))
+        if (decision.gate !== 'act') return
+        const body = received.payload ? JSON.parse(new TextDecoder().decode(received.payload)) as Fields : null
+        const command: Command = {
+          kind: decision.command === 'chat' ? 'message' : decision.command as Command['kind'], envelope_hash: hex(hash), from: hex(h.sender),
+          object_id: h.object ? hex(h.object.objectId) : h.timeline?.kind === 'cardChat' ? hex(h.timeline.id) : null, body,
+          choices: decision.choices, allow: decision.allow,
+        }
+        this.commands.push(command)
+        this.onCommand(command)
+        await client.engine.do(d => d.commandFinished(hash))
+      })().catch(() => {})
     })
   }
   /** Its main session: the one session group it is a leaf of. */
@@ -108,26 +102,23 @@ export class AgentStandIn {
     return hex(g.session.sessionId)
   }
   private get session(): Uint8Array { return unhex(this.session_id) }
-  private sealAgent(draft: AgentDraft, files: Uint8Array[] = []): Promise<string | null> {
-    return this.client.engine.do(async d => {
-      const sealed = await (d as StandInDevice).sealAgent(draft, files, Date.now())
-      const id = sealed.objectId ? hex(sealed.objectId) : null
-      return JSON.stringify([id, hex(sealed.envelopeHash)])
-    })
-  }
   private async first(kind: 'card' | 'artifact', fields: Fields, urgency: Urgency, push: boolean): Promise<string> {
-    const body = { ...fields, object_version: 1 }
-    const [id, hash] = JSON.parse((await this.sealAgent({ kind: 'objectFirst', session: this.session, objectType: kind, urgency, push, payload: encodeBodyBytes(kind, body) }, fileIdsOf(kind, body)))!) as [string, string]
-    this.objects.set(id, { version: 1, hash, kind, fields })
+    const body = { ...fields, object_version: 1, previous_version_hash: '0'.repeat(64) }, payload = encodeBodyBytes(kind, body)
+    const draft: Draft = kind === 'card' ? { kind: 'cardFirst', session: this.session, urgency, push, payload } : { kind: 'artifactFirst', session: this.session, payload }
+    const sealed = await this.client.engine.seal(draft, null, fileIdsOf(kind, body))
+    const id = hex(sealed.objectId!)
+    this.objects.set(id, { version: 1, hash: hex(sealed.envelopeHash), kind, fields })
     return id
   }
   private async next(object_id: string, fields: Fields, closed: boolean, urgency: Urgency = 'normal'): Promise<void> {
     const held = this.objects.get(object_id)
     if (!held) throw new Error('not an object of this agent')
     const merged = { ...held.fields, ...fields }
-    const body = { ...merged, object_version: held.version + 1, previous_version_hash: held.hash }
-    const [, hash] = JSON.parse((await this.sealAgent({ kind: 'objectVersion', session: this.session, objectId: unhex(object_id), closed, urgency, push: false, payload: encodeBodyBytes(held.kind, body) }, fileIdsOf(held.kind, body)))!) as [string, string]
-    this.objects.set(object_id, { ...held, version: held.version + 1, hash, fields: merged })
+    const body = { ...merged, object_version: held.version + 1, previous_version_hash: held.hash }, payload = encodeBodyBytes(held.kind, body)
+    const draft: Draft = held.kind === 'card' ? { kind: 'cardVersion', session: this.session, objectId: unhex(object_id), closed, urgency, push: false, payload }
+      : { kind: 'artifactVersion', session: this.session, objectId: unhex(object_id), closed, payload }
+    const sealed = await this.client.engine.seal(draft, null, fileIdsOf(held.kind, body))
+    this.objects.set(object_id, { ...held, version: held.version + 1, hash: hex(sealed.envelopeHash), fields: merged })
   }
 
   /** A decision or info card. Returns its object id. */
@@ -136,7 +127,8 @@ export class AgentStandIn {
   closeCard(object_id: string, fields: Fields = {}): Promise<void> { return this.next(object_id, fields, true) }
   /** A permission request. Returns its object id. */
   async askPermission(fields: { tool_name: string; description: string; input_preview: string }, expires_at = Date.now() + 600_000): Promise<string> {
-    const [id] = JSON.parse((await this.sealAgent({ kind: 'objectFirst', session: this.session, objectType: 'request', urgency: 'critical', push: true, expiresAt: expires_at, payload: encodeBodyBytes('request', fields) }))!) as [string, string]
+    const sealed = await this.client.engine.seal({ kind: 'permissionRequest', session: this.session, urgency: 'critical', push: true, expiresAt: expires_at, payload: encodeBodyBytes('request', fields) }, null, [])
+    const id = hex(sealed.objectId!)
     return id
   }
   /** An Artifact: version 1 publishes. Returns its object id. */

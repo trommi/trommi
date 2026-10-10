@@ -26,7 +26,7 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 
 /* forms and buttons */
 .room-form { display: grid; gap: 14px; margin: 18px 0; }
-.room-form label, .room-agent-form label, .room-handover label { display: grid; gap: 6px; font-size: 14px; font-weight: 500; }
+.room-form label, .room-agent-form label { display: grid; gap: 6px; font-size: 14px; font-weight: 500; }
 .room input:not([type="checkbox"], [type="radio"]), .room select { font: inherit; font-size: 16px; padding: 10px var(--s-3); border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--fg); min-width: 0; }
 .room input:focus-visible, .room select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .room button, .room .room-done { font: 600 15px/1 var(--font); padding: var(--s-3) var(--s-4); border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg); cursor: pointer; text-decoration: none; display: inline-block; }
@@ -71,12 +71,11 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .room-device-name em { font-style: normal; font-size: 12px; color: var(--accent); }
 .room-device-name small { color: var(--muted); font-size: 12px; }
 .room-remove summary { cursor: pointer; font-size: 13px; color: var(--deny); list-style: none; text-align: right; }
-.room-handover { margin-top: 10px; }
 .room-agent-form { display: grid; gap: 10px; }
 .room-remove details[open] { max-width: 260px; font-size: 13px; line-height: 1.45; }
 .room-remove details[open] p { margin: 6px 0 0; }
 .room-agent-form { margin-top: 14px; }
-.room-agent-form button, .room-handover button { justify-self: start; }
+.room-agent-form button { justify-self: start; }
 .room-history { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px var(--s-4); font-size: 14px; }
 .room-history legend { font-weight: 500; padding: 0; margin-bottom: var(--s-1); width: 100%; }
 .room-history label { display: flex !important; align-items: center; gap: 6px; font-weight: 400 !important; }

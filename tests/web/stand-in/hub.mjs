@@ -28,6 +28,7 @@
 //   envelope   { group, sender, seq, kind, timeline?: { kind, scope, ref }, object?: { object_id, object_type,
 //                object_state, urgency, answered_at }, register_id?, file_ids }      (names as core-api EnvelopeHeader)
 //   offer      { room_id, invite_id, expires_at }        reveal  { invite_id, request_hash }
+//   requestHash(request, mac)  optional: the hash a Reveal names its Request by (default: SHA-256 of both)
 //
 // Faults (`hub.faults`): rules matched against a request, each used `times` times (default once):
 //   hub.faults.add({ method?, path?: string | RegExp, when?: req => boolean, times?,
@@ -520,7 +521,8 @@ export async function startFakeHub(opts = {}) {
       const invite = openInvite(pathId(segs[1], 16))
       const [request, mac, signature] = [field(body, 'request'), field(body, 'mac'), field(body, 'signature')]
       if (invite.reveal) throw refuse('invite-used', 'the inviter accepted a Request')
-      const request_hash = b64(sha256(Buffer.concat([request, mac])))
+      // (how a Request is named in its Reveal: the real hash where a reader gives it, `readers.requestHash`)
+      const request_hash = readers.requestHash ? readers.requestHash(request, mac) : b64(sha256(Buffer.concat([request, mac])))
       if (!invite.requests.some(q => q.request_hash === request_hash)) {
         if (invite.requests.length >= 4) throw refuse('too-many', 'an invite takes four Requests')
         invite.requests.push({ request_hash, request: b64(request), mac: b64(mac), signature: b64(signature) })

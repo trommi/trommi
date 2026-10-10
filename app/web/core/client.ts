@@ -127,7 +127,7 @@ export interface ClientOptions {
   now?: () => number
 }
 /** An invite as this device keeps it beside what the model shows. */
-interface InviteKept { public: Invite; checked_at?: number; done?: boolean }
+interface InviteKept { public: Invite; checked_at?: number; done?: boolean; code?: number[]; request_hash?: string; committed?: boolean }
 
 export class Client {
   model: Model
@@ -153,9 +153,11 @@ export class Client {
   private readonly invites = new Map<string, InviteKept>()
   private inviteTimer: ReturnType<typeof setInterval> | null = null
   private readonly checking = new Set<string>()
-  private readonly finishing = new Set<string>()
+  /** Who waits for an invite that was confirmed to be through. */
+  private readonly finishing = new Map<string, { resolve(): void; reject(e: unknown): void }>()
   /** A note's newest version as THIS client sealed it (ahead of the model while versions are in flight). */
-  private readonly localHeads = new Map<string, { object_version: number; version_hash: string; content: Fields }>()
+  /** Notes with a version on its way to the hub and back: its hash and outbox entry, and the edit that waits behind it. */
+  private readonly noteBusy = new Map<string, { hash: string; outbox: number; next: { own: Fields; closed: boolean; local_id: string } | null }>()
   private lamport = 0
   private started = false
   private removed = false
@@ -256,7 +258,11 @@ export class Client {
   private listen(): void {
     const e = this.engine
     const on = <K extends keyof EngineEvents>(event: K, fn: (data: EngineEvents[K]) => void): void => { this.offs.push(e.on(event, fn)) }
-    on('envelope', ({ received }) => { M.applyEnvelope(this.model, received, this.change, { now: this.now() }) })
+    on('envelope', ({ received }) => {
+      M.applyEnvelope(this.model, received, this.change, { now: this.now() })
+      const o = received.header.object
+      if (o?.objectType === 'note' && this.noteBusy.get(hex(o.objectId))?.hash === hex(received.envelopeHash)) this.noteBack(hex(o.objectId))
+    })
     on('log', ({ item, done }) => {
       const room = item.group.length === 32
       if (done.commit) M.applyCommit(this.model, done.commit, this.change, { by_recovery: room && done.commit.external, removed_me: done.removed && room, now: this.now() })
@@ -285,6 +291,7 @@ export class Client {
     on('connection', connection => { if (this.removed) return; this.model.room.connection = connection; this.change.room = true })
     on('alert', a => { M.pushAlert(this.model, this.change, { code: a.code, message: a.message, envelope_number: a.change, at: this.now() }) })
     on('stream', event => this.onStream(event))
+    on('invites', ({ open }) => this.invitesDone(open))
     on('batch', () => this.publish())
     on('reopened', () => { void this.reconcile().catch(() => {}) })
     on('closed', ({ code }) => {
@@ -316,8 +323,8 @@ export class Client {
     if (refusal) {
       // the views see the item `failed` in the change that takes the echo back
       sent.item.outbox_state = 'failed'; sent.item.error = refusal
-      // a refused Note version is no basis for the next one
-      if (sent.item.envelope_kind?.startsWith('note') && sent.item.object_id) this.localHeads.delete(sent.item.object_id)
+      // a refused Note version: the edit that waited behind it is tried on what stands
+      for (const [id, busy] of this.noteBusy) if (busy.outbox === entry.id) this.noteBack(id)
       M.rollbackEcho(this.model, sent.local_id, ch)
       M.pushAlert(this.model, ch, { code: refusal, message: `the hub refused an envelope (${refusal})`, at: this.now() })
       ch.outbox = true
@@ -516,34 +523,57 @@ export class Client {
   setCrown(value: unknown): Promise<Sent> { return this.setRegisters({ crown: value ?? null }) }
   setDesk(desk_id: string, value: unknown): Promise<Sent> { return this.setRegisters({ [`desk/${desk_id}`]: value ?? null }) }
 
+  /** A note's version this device confirmed last (what came back from the hub), under any echo in front of it. */
   private noteHead(object_id: string): { object_version: number; version_hash: string | null; content: Fields } | null {
-    const local = this.localHeads.get(object_id)
     const m = this.model.notes.get(object_id)
     const base = m?.pending ? m._base : m
-    if (local && (!base || local.object_version >= base.object_version)) return local
     return base ? { object_version: base.object_version, version_hash: base.version_hash, content: noteFields(base) } : null
   }
+  /**
+   * A note's version. The core takes a later version only on one it holds, and it holds an own version once that
+   * came back from the hub. So while a version of a note is on its way, a further edit is shown at once and kept
+   * here; only the newest is kept, and it is sealed when the one before it is back. (An edit that waits like that
+   * is in memory only: it is lost if the app ends before the earlier version returned.)
+   */
   private async writeNote(object_id: string | null, fields: Fields, closed: boolean): Promise<string> {
     this.needHuman()
     if (object_id && this.model.notes.get(object_id)?.unsupported) fail('needs-update', UPDATE_MESSAGE)
-    const head = object_id ? this.noteHead(object_id) : null
-    if (object_id && !head) fail('not-found', 'no such note')
+    if (object_id && !this.model.notes.get(object_id)) fail('not-found', 'no such note')
     const { object_state: _state, ...own } = fields
+    const local_id = `local-${randomHex(8)}`
+    const busy = object_id ? this.noteBusy.get(object_id) : undefined
+    if (busy) {
+      this.tell(ch => { if (busy.next) M.rollbackEcho(this.model, busy.next.local_id, ch); M.echoNote(this.model, { local_id, object_id, fields: closed ? {} : own, closed }, ch) })
+      busy.next = { own: { ...(busy.next?.own ?? {}), ...own }, closed, local_id }
+      return object_id!
+    }
+    this.tell(ch => { M.echoNote(this.model, { local_id, object_id, fields: closed ? {} : own, closed }, ch) })
+    return this.sealNote(object_id, own, closed, local_id)
+  }
+  private async sealNote(object_id: string | null, own: Fields, closed: boolean, local_id: string): Promise<string> {
+    const head = object_id ? this.noteHead(object_id) : null
     // one above every lamport this device has seen on a note (9.3.2 chooses the current version by it)
     for (const n of this.model.notes.values()) this.lamport = Math.max(this.lamport, n.causal?.lamport ?? 0, n._base?.causal?.lamport ?? 0)
     const content: Fields = { ...(head?.content ?? {}), ...own, object_version: (head?.object_version ?? 0) + 1, lamport: ++this.lamport }
-    if (head?.version_hash) content['previous_version_hash'] = head.version_hash
+    // every version names the one before it; a first version names zeros (spec 9, `object_ref`)
+    content['previous_version_hash'] = head?.version_hash ?? '0'.repeat(64)
     for (const k of Object.keys(content)) if (content[k] === undefined) delete content[k]
     const payload = encodeBodyBytes('note', content)
-    const local_id = `local-${randomHex(8)}`
     let id = object_id
-    this.tell(ch => { M.echoNote(this.model, { local_id, object_id, fields: closed ? {} : own, closed }, ch) })
     const draft: Draft = object_id ? { kind: 'noteVersion', objectId: unhex(object_id), closed, payload } : { kind: 'noteFirst', payload }
     await this.send(local_id, [{ draft, files: fileIdsOf('note', content), item: { object_id, content } }], sealed => {
       id = sealed.objectId ? hex(sealed.objectId) : id
-      this.localHeads.set(id!, { object_version: content['object_version'] as number, version_hash: hex(sealed.envelopeHash), content: noteFields(content) })
+      this.noteBusy.set(id!, { hash: hex(sealed.envelopeHash), outbox: sealed.outboxId, next: null })
     })
     return id!
+  }
+  /** A note's version is back from the hub, or was refused: the edit that waited behind it is sealed now. */
+  private noteBack(object_id: string): void {
+    const busy = this.noteBusy.get(object_id)
+    if (!busy) return
+    this.noteBusy.delete(object_id)
+    const next = busy.next
+    if (next) void this.sealNote(object_id, next.own, next.closed, next.local_id).catch(() => {})
   }
   /** A new note or a new version of one: in model.notes at once (a new one first under its local id). Resolves to its object id. */
   saveNote({ object_id = null, ...fields }: { object_id?: string | null; [field: string]: unknown }): Promise<string> {
@@ -618,7 +648,7 @@ export class Client {
       t.window_open = true
       for (const r of page.received) M.applyEnvelope(into, r, ch, { now: this.now() })
       const merged = new Map<number, TimelineItem>(local.map(i => [i.envelope_number!, i]))
-      for (const r of page.received) { const item = t.items.get(r.header.change); if (item) merged.set(r.header.change, merged.get(r.header.change)?.content && !item.content ? merged.get(r.header.change)! : item) }
+      for (const r of page.received) { const item = t.items.get(r.change); if (item) merged.set(r.change, merged.get(r.change)?.content && !item.content ? merged.get(r.change)! : item) }
       return { items: [...merged.values()].sort((a, b) => b.envelope_number! - a.envelope_number!).slice(0, limit), more }
     } catch (e) {
       // offline: what the cache holds is what there is
@@ -659,8 +689,8 @@ export class Client {
         const page = await this.page(timeline_key, { after, limit: 500 })
         for (const r of page.received) {
           M.applyEnvelope(this.model, r, ch, { now: this.now() })
-          const item = t.items.get(r.header.change)
-          if (item && !(out.get(r.header.change)?.content && !item.content)) out.set(r.header.change, item)
+          const item = t.items.get(r.change)
+          if (item && !(out.get(r.change)?.content && !item.content)) out.set(r.change, item)
         }
         if (!page.more || page.last <= after) break
         after = page.last
@@ -762,8 +792,6 @@ export class Client {
       if (state === 'open' && this.now() > kept.public.expires_at) this.setInvite(id, { invite_state: 'expired', done: true })
       else if (state === 'confirm_code' && this.now() > (kept.checked_at ?? 0) + INVITE_CONFIRM_MS) this.setInvite(id, { invite_state: 'expired', error: 'invite-expired', done: true })
       else if (state === 'open') void this.checkInvite(id).catch(() => {})
-      // an invite that was confirmed and is not through (a restart, a hub that did not answer) is taken up again
-      else if (state === 'adding' && !this.finishing.has(id)) void this.finishInvite(id).catch(() => {})
     }
   }
   private async checkInvite(invite_id: string): Promise<void> {
@@ -780,127 +808,67 @@ export class Client {
         // a lost answer here is tried again at the next look: accepting the same Request again gives the same Reveal
         await this.hub.putReveal(id, accepted.reveal, accepted.signature)
         kept.checked_at = this.now()
-        this.setInvite(invite_id, { check_code: codeText(accepted.checkCode), newcomer: { device_id: hex(accepted.newDevice), device_name: '' }, invite_state: 'confirm_code' })
+        // what the person's confirmation names, kept so that it survives a restart (neither is a secret)
+        kept.code = [...accepted.code.numbers]; kept.request_hash = b64u(accepted.requestHash)
+        this.setInvite(invite_id, { check_code: codeText(kept.code), newcomer: { device_id: hex(accepted.newDevice), device_name: '' }, invite_state: 'confirm_code' })
         return
       }
     } finally { this.checking.delete(invite_id) }
   }
-  /** The human compared the six emoji: `true` adds the newcomer, `false` burns the invite. */
+  /** The human compared the six emoji: `true` adds the newcomer, `false` burns the invite. Resolves once the
+   *  newcomer is in and everything that follows is done (keys handed over, sessions joined or founded or taken over). */
   async confirmInvite(invite_id: string, matches: unknown): Promise<void> {
     if (typeof matches !== 'boolean') fail('bad-argument', 'confirmInvite takes true (the codes match) or false (they do not)')
     const kept = this.invites.get(invite_id)
-    if (!kept || kept.public.invite_state !== 'confirm_code') return fail('bad-invite', 'this invite waits for no code')
+    if (!kept || kept.public.invite_state !== 'confirm_code' || !kept.code || !kept.request_hash) return fail('bad-invite', 'this invite waits for no code')
+    const id = unhex(invite_id), code = Uint8Array.from(kept.code), request_hash = unb64u(kept.request_hash)
     if (!matches) {
-      await this.engine.do(d => d.inviteConfirm(unhex(invite_id), false, this.now())).catch(() => {})
+      await this.engine.do(d => d.inviteConfirm(id, code, request_hash, false, this.now())).catch(() => {})
       this.setInvite(invite_id, { invite_state: 'failed', error: 'code-mismatch', done: true })
-      void this.hub.deleteInvite(unhex(invite_id)).catch(() => {})
+      void this.hub.deleteInvite(id).catch(() => {})
       return fail('code-mismatch', 'the check codes do not match: nobody was added, the invite is spent')
     }
-    this.setInvite(invite_id, { invite_state: 'adding' })
-    await this.finishInvite(invite_id)
-  }
-  private async finishInvite(invite_id: string): Promise<void> {
-    const kept = this.invites.get(invite_id)!
-    const pub = kept.public, e = this.engine, id = unhex(invite_id)
-    if (this.finishing.has(invite_id)) return
-    this.finishing.add(invite_id)
+    // The core commits the newcomer in the write that finishes the invite: a confirmation is acted on once. What
+    // follows is the engine's, step by step as the core lists it (engine.ts `invited`), also after a restart.
     try {
-      const role = pub.device_role
-      const inside = (device: Uint8Array): boolean => ((role === 'human' ? e.roles?.humans : e.roles?.agents) ?? []).some(d => sameBytes(d, device))
-      // The Commit of the confirmed invite; built again when another Commit took its epoch.
-      let confirmed = null
-      for (let tries = 0; ; tries++) {
-        confirmed = await e.do(d => d.inviteConfirm(id, true, this.now()))
-        if (!confirmed) return fail('invite-burned', 'this invite was burned')
-        await e.idle()
-        if (inside(confirmed.newDevice)) break
-        await e.catchUp().catch(() => {})
-        if (inside(confirmed.newDevice)) break
-        if (tries >= 4) return fail('epoch-taken', 'the newcomer could not be added')
-      }
-      const { newDevice, keyPackage } = confirmed
-      if (role === 'human') {
-        // the keys of everything this device holds (7.1), the recovery key's tag where the core sends one (7.4),
-        // then the newcomer into every live session (5.2.7)
-        await e.land(d => d.sendHandover(this.core.roomGroupId(this.room_id), newDevice))
-        await e.land(d => d.sendRecoveryAuth(newDevice))
-        await e.healNow()
-      } else if (pub['takeover'] && pub['session_id']) {
-        await this.takeOver(pub['session_id'] as string, newDevice, keyPackage, pub['with_history'] !== false)
-      } else {
-        const has = e.groups.find(g => g.session && !g.archived && g.leaves.some(l => sameBytes(l, newDevice)))
-        const session_id = has?.session ? hex(has.session.sessionId) : await this.foundSession(newDevice, keyPackage)
-        pub['session_id'] = session_id
-        // the name the human chose when inviting, and the desk the invite was made on
-        const place = { ...(pub.label ? { name: pub.label } : {}), ...(pub['desk'] ? { desk: pub['desk'] } : {}) }
-        if (Object.keys(place).length) void this.setRegisters({ [`session/${session_id}`]: { ...(this.model.human.session_settings.get(session_id) ?? {}), ...place } }).catch(() => {})
+      if (kept.public['takeover'] && kept.public['with_history'] === false) await this.engine.withoutHistory(id)
+      await this.engine.do(d => d.inviteConfirm(id, code, request_hash, true, this.now()))
+    } catch (err) {
+      this.setInvite(invite_id, { invite_state: 'failed', error: String(this.core.errorCode(err) ?? 'failed'), done: true })
+      throw err
+    }
+    kept.committed = true
+    this.setInvite(invite_id, { invite_state: 'adding' })
+    this.engine.keepSoon(0)
+    await new Promise<void>((resolve, reject) => { this.finishing.set(invite_id, { resolve, reject }) })
+  }
+  /** After each look at the invites' steps: an invite that was committed, has nothing left to do and whose device
+   *  is in, is `joined`; one whose device is not in (it was removed again) has failed. */
+  private invitesDone(open: readonly string[]): void {
+    const e = this.engine
+    for (const [invite_id, kept] of this.invites) {
+      if (kept.done || kept.public.invite_state !== 'adding' || open.includes(invite_id)) continue
+      const device = kept.public.newcomer?.device_id, human = kept.public.device_role === 'human'
+      const inside = ((human ? e.roles?.humans : e.roles?.agents) ?? []).some(d => hex(d) === device)
+      const waiter = this.finishing.get(invite_id)
+      this.finishing.delete(invite_id)
+      if (!inside) { this.setInvite(invite_id, { invite_state: 'failed', error: 'removed-sender', done: true }); waiter?.reject(new ClientError('removed-sender', 'the newcomer is not in the room')); continue }
+      if (!human && !kept.public['takeover']) {
+        // the new agent's session: the name the human chose when inviting, and the desk the invite was made on
+        const session = e.groups.find(g => g.session && !g.archived && g.leaves.some(l => hex(l) === device))?.session
+        if (session) {
+          const session_id = kept.public['session_id'] = hex(session.sessionId)
+          const place = { ...(kept.public.label ? { name: kept.public.label } : {}), ...(kept.public['desk'] ? { desk: kept.public['desk'] } : {}) }
+          if (Object.keys(place).length) void this.setRegisters({ [`session/${session_id}`]: { ...(this.model.human.session_settings.get(session_id) ?? {}), ...place } }).catch(() => {})
+        }
       }
       this.setInvite(invite_id, { invite_state: 'joined', done: true })
-    } catch (err) {
-      // not reached, busy, stopped: the invite stays `adding` and is taken up again (watchInvites); every step
-      // above looks first at what is done already
-      const code = String((err as { code?: unknown }).code ?? 'failed')
-      const later = (err instanceof HubError && err.transient) || code === 'stopped' || code === 'busy' || code === 'offline'
-      if (!later) this.setInvite(invite_id, { invite_state: 'failed', error: code, done: true })
-      throw err
-    } finally { this.finishing.delete(invite_id) }
-  }
-
-  // ---- sessions, takeover, removal (5.2, 5.3)
-
-  /** Founds a main session for an enrolled agent device: one request with every other human device and the agent in it (5.2.5). */
-  private async foundSession(agent: Uint8Array, agentKeyPackage: Uint8Array | null): Promise<string> {
-    const e = this.engine
-    for (let tries = 0; ; tries++) {
-      const others = (e.roles?.humans ?? []).filter(d => !sameBytes(d, e.device_id))
-      const claim = agentKeyPackage ? others : [...others, agent]
-      const claimed = claim.length ? await this.hub.claimKeyPackages(claim) : []
-      const keyPackages = [...claimed.map(c => c.key_package), ...(agentKeyPackage ? [agentKeyPackage] : [])]
-      const session = await e.do(d => d.foundSession(agent, keyPackages, this.now()))
-      await e.idle()
-      const group = this.core.sessionGroupId(this.room_id, session)
-      if (e.groups.some(g => sameBytes(g.group, group) && !g.pending)) return hex(session)
-      // a founding fails whole (a KeyPackage that is used up, a room that moved on): fresh ones, again
-      await e.catchUp().catch(() => {})
-      agentKeyPackage = null
-      if (tries >= 3) return fail('incomplete', 'the session could not be founded')
+      waiter?.resolve()
     }
   }
-  /** Replaces a main session's agent device (5.3): the old one leaves `agents`, the new one takes its leaf in the
-   *  session and in the helper sessions it opened, and gets the history's keys. */
-  private async takeOver(session_id: string, agent: Uint8Array, keyPackage: Uint8Array | null, history: boolean): Promise<void> {
-    const e = this.engine, main = this.sessionGroup(session_id)
-    const mine = (parent: Uint8Array | undefined): boolean => !!parent && hex(parent) === session_id
-    // the main session first: a helper session's new opener must be the main session's agent leaf already (5.2.3)
-    const groups = (): Uint8Array[] => e.groups.filter(g => g.session && !g.archived && (sameBytes(g.group, main) || mine(g.session.parent))).map(g => g.group).sort((x, y) => Number(sameBytes(y, main)) - Number(sameBytes(x, main)))
-    // (helper sessions this device has a Welcome for and has not joined yet are taken first)
-    await e.joinNow(null)
-    if (!groups().some(g => sameBytes(g, main))) fail('not-found', `no session ${session_id}`)
-    for (const g of groups()) e.hold(g, true)
-    try {
-      const agents = e.roles?.agents ?? []
-      const old = (e.groups.find(g => sameBytes(g.group, main))?.leaves ?? []).filter(l => agents.some(a => sameBytes(a, l)) && !sameBytes(l, agent))
-      if (old.length) await e.land(d => d.changeAgents([], old, this.now()))
-      for (const g of groups()) {
-        const fresh = keyPackage ?? (await this.hub.claimKeyPackages([agent]))[0]!.key_package
-        keyPackage = null
-        await e.clean(g, { device: agent, keyPackage: fresh })
-        if (history) await e.land(d => d.sendHandover(g, agent))
-      }
-    } finally { for (const g of groups()) e.hold(g, false) }
-  }
-  /** A new main session for an agent device that is enrolled and has none. Returns its session id. */
-  async createSession({ agent_device_ids = [], agent_device_id = null }: { agent_device_ids?: string[]; agent_device_id?: string | null } = {}): Promise<string> {
-    this.needHuman()
-    const agent = agent_device_id ?? agent_device_ids[0] ?? fail('bad-argument', 'a session is founded for one agent device')
-    return this.foundSession(unhex(agent), null)
-  }
-  /** Hands an existing session to another enrolled agent device (a takeover; `with_history`: with the keys of its past). */
-  async assignSession({ session_id, agent_device_ids = null, agent_device_id = null, with_history = false }: { session_id: string; agent_device_ids?: string[] | null; agent_device_id?: string | null; with_history?: boolean }): Promise<void> {
-    this.needHuman()
-    const agent = agent_device_id ?? agent_device_ids?.[0] ?? fail('bad-argument', 'a session is handed to one agent device')
-    await this.takeOver(session_id, unhex(agent), null, with_history)
-  }
+
+  // ---- removal (5.2.8)
+
   /** Removes devices: human devices by one room Commit with their Cuts, agent devices from `agents`; then every
    *  session group that still holds one gets its Remove (5.2.8). Any human device finishes what a crash leaves. */
   async removeDevices(device_ids: string[]): Promise<{ key_epoch: number }> {
@@ -909,7 +877,7 @@ export class Client {
     const humans = device_ids.filter(id => this.model.members.get(id)?.device_role === 'human').map(unhex)
     const agents = device_ids.filter(id => (e.roles?.agents ?? []).some(a => hex(a) === id)).map(unhex)
     if (humans.length) await e.land(async d => { const cuts = []; for (const h of humans) cuts.push(await d.cutOf(room, h)); return d.removeHumanDevices(cuts, this.now()) })
-    if (agents.length) await e.land(d => d.changeAgents([], agents, this.now()))
+    if (agents.length) await e.land(d => d.removeAgents(agents, this.now()))
     await e.healNow()
     return { key_epoch: this.model.room.key_epoch }
   }

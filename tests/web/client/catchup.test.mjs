@@ -3,6 +3,7 @@
 // the fake hub checks no cryptography and neither does the stand-in.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { hubReaders } from '../stand-in/core.ts'
 import { memoryCache, modelsAgree, scene, shared, sleep, until } from './helpers.mjs'
 
 test('520 changes across groups, taken in pages, strictly in the hub\'s order', async t => {
@@ -19,7 +20,7 @@ test('520 changes across groups, taken in pages, strictly in the hub\'s order', 
   const again = await R.openRoom({ storage: b.stored_as })
   t.after(() => again.stop().catch(() => {}))
   const from = again.engine.position, taken = []
-  again.engine.on('envelope', ({ received, how }) => { if (how === 'ordered') taken.push(received.header.change) })
+  again.engine.on('envelope', ({ received, how }) => { if (how === 'ordered') taken.push(received.change) })
   again.engine.on('log', ({ item }) => taken.push(item.change))
   const requests = fake.requests.length
   await again.start({ stream: false })
@@ -54,7 +55,7 @@ test('a hub that serves a page out of order, or an old envelope again: nothing o
   assert.ok(again.model.alerts.some(x => x.code === 'bad-answer'), 'and the human is told')
   fake.faults.clear()
   // (2) an old envelope under a new change number: the core knows it by its chain and refuses it
-  const old = [...fake.state.rooms.values()][0].changes.find(c => c.kind === 'envelope' && JSON.parse(Buffer.from(c.envelope, 'base64url').toString()).object?.object_id === Buffer.from(first, 'hex').toString('base64url'))
+  const old = [...fake.state.rooms.values()][0].changes.find(c => c.kind === 'envelope' && hubReaders.envelope(Buffer.from(c.envelope, 'base64url')).object?.object_id === Buffer.from(first, 'hex').toString('base64url'))
   fake.faults.add({ method: 'GET', path: '/v2/changes', answer: json => ({ ...json, change: json.change + 1, items: [...json.items, { kind: 'envelope', change: json.change + 1, envelope: old.envelope, received_at: 1 }] }) })
   const outcomes = []
   again.engine.on('envelope', ({ received }) => outcomes.push([received.outcome, received.code]))
@@ -67,7 +68,7 @@ test('a hub that serves a page out of order, or an old envelope again: nothing o
 test('the stream drops and resumes: nothing is lost and nothing comes twice; an old event is not taken again', async t => {
   const { fake, a, b } = await scene(t, { second: true })
   const seen = []
-  a.engine.on('envelope', ({ received }) => seen.push(received.header.change))
+  a.engine.on('envelope', ({ received }) => seen.push(received.change))
   const room = [...fake.state.rooms.values()][0]
   for (let i = 0; i < 6; i++) {
     await b.saveNote({ text: `note ${i}` })
