@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trommi: your agents ask, you decide</title>
+<meta name="description" content="Steer your Claude Code sessions from your phone: answer their questions, chat with them, follow the work. Trommi is the end-to-end encrypted board between you and your agents.">
+<meta property="og:title" content="Trommi: your agents ask, you decide">
+<meta property="og:description" content="Steer your Claude Code sessions from your phone. End-to-end encrypted.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://trommi.com/">
+<meta name="theme-color" content="#f5f6f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1311" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="/icons/trommi.svg">
+<link rel="apple-touch-icon" href="/icons/trommi-180.png">
+<link rel="preload" href="/fonts/f1.woff2" as="font" type="font/woff2" crossorigin>
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="head">
+<div class="wrap head-in">
+  <!-- The logo: the counter bell of the app's icon (icons/trommi.svg), the same strokes. -->
+  <a class="brand" href="/" aria-label="Trommi, home">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" fill="#1b6a57"/><g transform="translate(12.3 11.5) scale(.8) translate(-13 -12.2)" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3.1 19Q12.3 18.6 16.7 19L21 19.3"/><path d="M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8"/><path d="M11.8 8.6L12.2 6.9"/><path d="M10 6.6Q11.8 6 12.8 6.4L13.8 6.8"/><path d="M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5"/><path d="M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5"/></g></svg>
+    <span>Trommi</span>
+  </a>
+  <nav aria-label="Site">
+    <a href="https://github.com/trommi/trommi">GitHub</a>
+  </nav>
+  <!-- The theme: one button that goes System, Light, Dark and round again. Shown once theme.js has set data-theme;
+       which mark it shows comes from that attribute. The marks are drawn with the app's pen. -->
+  <button type="button" class="theme-btn" aria-label="Theme" data-tip="Theme"><svg class="t-system" viewBox="0 0 24 24" aria-hidden="true"><path class="ink" d="M12.1 4.2Q15.8 4.2 18 6.5Q20.1 9 19.9 12.3Q19.6 15.7 17.2 17.9Q14.9 19.9 12 19.9Z"/><path d="M12.2 3.9Q15.8 4 18.1 6.4Q20.3 8.9 20.1 12.3Q19.8 15.8 17.3 18Q14.9 20.2 11.6 20Q8.1 19.7 5.9 17.2Q3.8 14.8 4 11.5Q4.3 8.1 6.7 5.9Q8.9 3.9 12.5 4"/></svg><svg class="t-light" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.1 7.7Q14.2 7.8 15.4 9.1Q16.5 10.5 16.3 12.3Q16 14.3 14.6 15.4Q13.2 16.4 11.5 16.2Q9.6 15.9 8.5 14.5Q7.6 13.1 7.9 11.3Q8.3 9.4 9.7 8.4Q10.8 7.7 12.4 7.8"/><path d="M12.1 2.6L12 4.5"/><path d="M12 19.5L12.2 21.4"/><path d="M2.7 12.2L4.6 12"/><path d="M19.4 11.9L21.4 12.1"/><path d="M5.3 5.5L6.7 6.8"/><path d="M17.4 17.3L18.8 18.6"/><path d="M18.7 5.3L17.3 6.8"/><path d="M6.6 17.4L5.3 18.8"/></svg><svg class="t-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.6 14.3Q18 15.2 15.9 15.1Q12.8 14.8 10.8 12.6Q8.9 10.3 9.1 7.4Q9.3 5.6 10.1 4.3Q7 5.2 5.3 7.9Q3.7 10.7 4.5 13.9Q5.4 17.1 8.2 18.8Q11 20.4 14.2 19.6Q17.9 18.5 19.7 14.4"/></svg></button>
+  <a class="btn to-app" href="https://app.trommi.com/">Open<span>&nbsp;Trommi</span></a>
+</div>
+</header>
+
+<main id="main">
+
+<!-- The opening: the bell, the name, its line, the way in. -->
+<div class="wrap open centre">
+  <div class="mark"><svg class="bell" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" fill="#1b6a57"/><g transform="translate(12.3 11.5) scale(.8) translate(-13 -12.2)" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3.1 19Q12.3 18.6 16.7 19L21 19.3"/><path d="M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8"/><path d="M11.8 8.6L12.2 6.9"/><path d="M10 6.6Q11.8 6 12.8 6.4L13.8 6.8"/><path d="M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5"/><path d="M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5"/></g></svg></div>
+  <h1>Trommi</h1>
+  <p class="tagline">Your agents ask. You <span class="under">decide.<svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><path d="M1.0 5.0 Q18.0 3.4 26.0 4.3 Q34.0 5.2 43.0 4.4 Q52.0 3.6 61.0 4.3 Q70.0 5.0 78.0 4.4 Q86.0 3.8 92.5 4.2 L99.0 4.6"/></svg></span></p>
+  <p class="lede"><strong>Steer your coding agents from your phone:</strong> answer their questions, chat with them, approve what they want to do. End-to-end encrypted.</p>
+  <p class="acts"><a class="btn" href="https://app.trommi.com/">Start with your agents now</a> <a class="btn quiet" href="https://github.com/trommi/trommi">View on GitHub</a></p>
+  <p class="open-note">Free for now. Register with an email address and a password or a passkey.</p>
+</div>
+
+<section id="what" class="wrap narrow" aria-labelledby="what-h">
+  <h2 id="what-h" class="hid">What it does</h2>
+  <ul class="facts">
+    <li><b>Mobile control.</b> Your agents keep working at the desk; you answer, chat and approve from wherever you are.</li>
+    <li><b>Agents ask, you decide.</b> A session files a card with its question and a few options; one tap answers.</li>
+    <li><b>A push when one needs you.</b> The blocking questions come first; the rest waits.</li>
+    <li><b>End-to-end encrypted.</b> The server delivers sealed envelopes and holds no key that opens them.</li>
+    <li><b>Open source.</b> App, connector and server are on GitHub.</li>
+  </ul>
+</section>
+
+<section id="apps" class="wrap narrow" aria-labelledby="apps-h">
+  <h2 id="apps-h">Where Trommi runs</h2>
+  <ul class="tiles">
+    <li><h3>Agents</h3><p>Claude Code and Codex, through the connector on Linux and macOS.</p><a href="#connect">Connect an agent</a></li>
+    <li><h3>Desktop</h3><p>The web app in any browser.</p><a href="https://app.trommi.com/">app.trommi.com</a></li>
+    <li><h3>Mobile</h3><p>The web app on any phone, added to the Home Screen; the iPhone app in TestFlight for now.</p><a href="https://app.trommi.com/">Open on your phone</a></li>
+  </ul>
+</section>
+
+<section id="connect" class="wrap narrow" aria-labelledby="connect-h">
+  <h2 id="connect-h">Connect an agent</h2>
+  <p class="intro">On a machine with Claude Code or Codex, on Linux or macOS. Once per machine, install the connector:</p>
+  <pre class="cmd" tabindex="0" aria-label="The install command">curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh</pre>
+  <p class="intro">Then in Claude Code, in a project folder, with the invite link from <b>Invite Agent…</b> in the app (in Codex, ask the agent to connect with the link):</p>
+  <pre class="cmd" tabindex="0" aria-label="The connect command">/trommi:connect '<i>the invite link</i>'</pre>
+  <p class="intro">Compare the six emoji in the terminal and in the app, confirm, and the session's next question lands on your Desk.</p>
+</section>
+
+</main>
+
+<footer class="foot">
+<div class="wrap foot-in">
+  <p class="foot-brand"><b>Trommi</b>Your agents ask. You decide.</p>
+  <ul class="foot-links">
+    <li><a href="https://app.trommi.com/">Open Trommi</a></li>
+    <li><a href="https://github.com/trommi/trommi">GitHub</a></li>
+    <li><a href="/imprint">Imprint</a></li>
+    <li><a href="/privacy">Privacy</a></li>
+  </ul>
+</div>
+</footer>
+</body>
+</html>

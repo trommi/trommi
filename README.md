@@ -120,6 +120,7 @@ are organised: [hub/deploy/README.md](hub/deploy/README.md).
 | `tests/` | every part's tests, one folder per part |
 | `spec/` | the protocol, the hub's API, the test vectors |
 | `release/` | the signed release: manifest, signature, public key |
+| `site/` | the website trommi.com |
 | `.github/` | the workflows and their scripts |
 
 Each part has its own README with the details.

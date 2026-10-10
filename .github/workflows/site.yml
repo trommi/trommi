@@ -1,0 +1,39 @@
+# The website trommi.com (site/), checked as files (tests/site/check.mjs) when site/ or its tests changed. It is
+# not a part of the release and has no place in build.yml: build.yml is an input of every part, and the site must
+# not make a release. Delivery: site/README.md.
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', 'tests/site/**', '.github/workflows/site.yml']
+  pull_request:
+    paths: ['site/**', 'tests/site/**', '.github/workflows/site.yml']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Site (test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            site
+            tests/site
+            .node-version
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: The site's checks
+        run: node tests/site/check.mjs
