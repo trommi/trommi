@@ -255,3 +255,7 @@ path = "hub/busy.rs"
 [[test]]
 name = "hub_admin"
 path = "hub/admin.rs"
+
+[[test]]
+name = "hub_removal"
+path = "hub/removal.rs"
