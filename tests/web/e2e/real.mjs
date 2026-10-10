@@ -100,6 +100,9 @@ async function firstDesk(P) {
   }
   await P.click('#menu-desk-rows a.menu-desk[data-desk=main]')
   await P.until("trommi.model().desk === 'main' && !trommi.model().all && document.querySelector('#inbox')", 'the first desk')
+  // a desk picked in the menu opens the menu again once the page is drawn (sidebar.mjs, trommi-menu-keep): waited
+  // for, so that the next press on the menu does not meet it opening and shut it
+  await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open again after the desk was picked', 5000)
 }
 
 export const steps = [
