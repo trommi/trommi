@@ -80,8 +80,8 @@ export const steps = [
     check(await A.js("return !!document.querySelector('#desk-invite-go') && !document.querySelector('.inbox-row')"), 'the empty Desk is drawn (behind the kit screen)')
   }],
 
-  // FAILS TODAY, kept failing: the kit screen closes on a human register (`kit`), which is stored content, and the
-  // binding seals none yet (auth.mjs kitGate: `client.setRegisters({ kit: … })` → core-missing).
+  // The kit screen closes on a human register (`kit`), which is stored content, and the binding seals none yet
+  // (`core-missing`): the gate then rests on this browser's mark alone (auth.mjs kitGate), and closes.
   ['"Open Trommi" closes the Emergency Kit screen: the empty Desk', async ctx => {
     const A = await ctx.profile('A')
     try { await ui.leaveKit(A) } catch (err) { ctx.kitStuck = true; await A.shot('real-02-kit-does-not-close'); throw err }
@@ -97,20 +97,20 @@ export const steps = [
     ctx.run.check(await A.js('return trommi.client.model.room.my_device_id') === device && await A.js("return !!document.querySelector('#inbox')"), 'the same device, the Desk drawn')
     await sleep(1000)
     const kit = await A.js("return document.querySelector('#kit-gate[open]')?.innerText.replace(/\\s*\\n\\s*/g, ' | ').slice(0, 120) ?? null")
-    if (kit) ctx.run.note(`the kit screen is back over the Desk: "${kit}"`)
+    if (!ctx.kitStuck) ctx.run.check(kit === null, 'the kit screen, once closed, does not come back', kit)
+    else if (kit) ctx.run.note(`the kit screen is back over the Desk: "${kit}"`)
   }],
 
-  ['(only while the kit screen does not close) the way out a person has: its own "Log out", then log in again → the Desk', async ctx => {
-    if (!ctx.kitStuck) throw skip('not needed: the kit screen closed')
+  ['log out (Settings → Account → Log Out; the kit screen\'s own "Log out" while that does not close), then log in again → the Desk', async ctx => {
     const { check, note } = ctx.run
     const A = await ctx.profile('A')
-    await ui.logOutFromKit(A)
+    if (ctx.kitStuck) await ui.logOutFromKit(A); else await ui.logOut(A)
     note(`the welcome screen says: "${await A.js("return document.getElementById('logged-out')?.textContent ?? ''")}"`)
     await ui.logIn(A, ctx.app.start(), ctx.email, ctx.password)
     ctx.devices += 1
     await ui.live(A, 'logged in again', 60000)
     await sleep(1000)
-    check(await A.js("return !document.querySelector('#kit-gate') && document.title === 'Desk · Trommi' && !!document.querySelector('#desk-invite-go')"), 'the empty Desk, no kit screen (this browser\'s mark went with the log out, and the register was never written)')
+    check(await A.js("return !document.querySelector('#kit-gate') && document.title === 'Desk · Trommi' && !!document.querySelector('#desk-invite-go')"), 'the empty Desk, no kit screen')
     await A.shot('real-03-desk-after-login')
   }],
 
@@ -172,7 +172,8 @@ export const steps = [
     // a device invite: Settings → Invite a Device → Show Code
     await ui.openSettings(A)
     await A.click('#settings-pair')
-    await A.until("document.querySelector('#set-device .room-error, #set-device[data-state=open], [role=alert]')", 'an answer to Show Code', 20000)
+    // (the refusal stands above the list, as a line of the page; another [role=alert] of the page is no answer to this)
+    await A.until("document.querySelector('main .room-error, #set-device[data-state=open]')", 'an answer to Show Code', 20000)
     const device = await A.js("return { state: document.querySelector('#set-device')?.dataset.state ?? null, said: [...document.querySelectorAll('#set-device .room-error, .room-error, #says-host .says:not([hidden])')].map(e => e.innerText.trim()).filter(Boolean) }")
     check(device.state !== 'open' && device.said.some(t => t.includes(CANNOT)), `Show Code says "${CANNOT}"`, device)
     await A.shot('real-07-device-invite-refused')
