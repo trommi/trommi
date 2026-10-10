@@ -4,9 +4,9 @@ The room every Trommi client shows as its demo (`?mock=1` on the web), and the l
 app's review page `/screens` walks through. **All of it is made up**: no real room, account, person or address is in
 here, and none may be added.
 
-Right now the room is an empty skeleton: one device, no agents, no cards, no pictures. The demo shows an empty Desk,
-and `/screens` lists the states that need no content (the account screens, the empty Desk, Settings, the Scribble
-Board).
+The room has two desks ("main" and "game"), six agent sessions with their conversations, eleven cards (five of them
+open on the Desk) and the seventeen pictures and pages they name. `/screens` lists the states of the account screens,
+the Desk, Settings and the Scribble Board.
 
 ```
 demo/
