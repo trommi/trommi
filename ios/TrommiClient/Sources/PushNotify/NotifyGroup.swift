@@ -1,4 +1,4 @@
-// NotifyGroup: where the context lives on the phone. It holds keys, so it is not a file: it is ONE Keychain item (a
+// NotifyGroup: where the context lives on the phone. It holds the push key, so it is not a file: it is ONE Keychain item (a
 // generic password) that the app writes and the Notification Service Extension reads. The item is
 // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly: readable after the first unlock since the phone started (a push
 // arrives while the phone is locked), never on another device. The system keeps it encrypted;
@@ -38,7 +38,7 @@ public struct NotifyStore {
   public func write(_ c: NotifyContext) throws { try storage.write(Array(try JSONEncoder().encode(c))) }
   /** nil when nothing is stored, or it is not a context of this version. */
   public func read() -> NotifyContext? {
-    guard let b = storage.read(), let c = try? JSONDecoder().decode(NotifyContext.self, from: Data(b)), c.version == 2 else { return nil }
+    guard let b = storage.read(), let c = try? JSONDecoder().decode(NotifyContext.self, from: Data(b)), c.version == NotifyContext.currentVersion else { return nil }
     return c
   }
   /** Signed out: nothing of the room stays for the extension. */

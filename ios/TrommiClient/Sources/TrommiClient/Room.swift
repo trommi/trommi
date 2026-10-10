@@ -542,8 +542,8 @@ public final class Room {
     for f in findings { board.pushAlert(&change, code: f.code, message: "a removal names another last item of a device than the one this device holds", sender: hex(f.sender)) }
     // The groups are read again from the core after a Commit and before the next item is shown: an envelope right
     // behind the Commit that founded its session must find that session on the board.
-    var groupsStale = false, groupsChanged = false
-    func freshGroups() async throws { if groupsStale { groupsStale = false; groupsChanged = true; try await refreshGroups(&change) } }
+    var groupsStale = false
+    func freshGroups() async throws { if groupsStale { groupsStale = false; try await refreshGroups(&change) } }
     var stopped: String? = nil
     for (i, o) in outcomes.enumerated() {
       if case .stopped(let code) = o { stopped = code; break }
@@ -575,7 +575,6 @@ public final class Room {
       }
     }
     try await freshGroups()
-    if groupsChanged { notifyKeysChanged?() }
     if let code = stopped { throw TrommiError(code, "the catch-up stopped before a change it could not take yet") }
   }
   /**
@@ -601,9 +600,6 @@ public final class Room {
   private func reportBadCommit(_ group: GroupId, _ n: UInt64) {
     Task { _ = try? await hub.request("POST", "/groups/\(b64u(group))/reject", body: ["n": n]) }
   }
-  /** Called when the groups or their epochs changed: the app hands the notification extension its new keys. */
-  public var notifyKeysChanged: (() -> Void)?
-
   /** An application message of a group: a step of a work trail, a piece of a stroke being drawn. */
   private func applyMessage(_ m: ReceivedMessage, group: GroupId, change n: UInt64, _ change: inout Change) {
     switch m {
@@ -925,12 +921,6 @@ public final class Room {
 
   /** The open cards (decisions and infos) in stack order. */
   public var openCards: [Card] { board.stack.compactMap { board.cards[$0] } }
-
-  /**
-   * What the notification extension may get of the sessions' content keys: nothing. A content key never leaves
-   * the core (the binding hands none out), so the extension opens no envelope.
-   */
-  public func notifyKeys() -> [(group: Bytes, session: Bytes, epoch: UInt64, key: Bytes, agents: [Bytes])] { [] }
 }
 
 /** Signs hub challenges as the room's device, on the queue the core is called from; gone once the room is closed. */
