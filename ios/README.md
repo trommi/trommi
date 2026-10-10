@@ -42,13 +42,13 @@ first use), Swift 6.4, and for anything that runs on a phone the toolchain of "O
 
 ```bash
 core/swift/build.sh                                 # the Rust core: lib/linux and lib/ios, UniFFI's Swift file and header
-(cd ios/TrommiClient && swift test)                 # the model, the store, and LiveCore against the Linux library
+(cd tests/ios && swift test)                              # the model, the store, and LiveCore against the Linux library
 (cd ios/TrommiApp && ulimit -n 65536 && xtool dev build --configuration release)   # xtool/TrommiApp.app
 ```
 
-The tests are in the repository's one tests folder, `tests/ios` (one folder per test target). SwiftPM takes no
-target outside its package, so `ios/TrommiClient/Tests` is a symlink to `tests/ios`; `swift test` is run in
-`ios/TrommiClient`. CI's Linux and Mac runners check symlinks out as symlinks, so nothing is set up for it there.
+The tests are a package of their own in the repository's one tests folder, `tests/ios` (one folder per tested
+target; SwiftPM takes no target outside its package, so `tests/ios/Package.swift` depends on `ios/TrommiClient` by
+path). `swift test` is run there.
 
 ### The Rust core
 
