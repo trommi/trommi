@@ -332,6 +332,8 @@ if [ "$STATE" = as-root ]; then
   # the updater before this one expects to be root: it is no fallback any more (the note above still names it)
   rm -f "${DEPLOY:?}/updater-previous"
   chown -hR trommi-updater:trommi-updater "$DEPLOY"
+  # the updater as root wrote some of this for everyone to change (state.json): only its owner may
+  chmod -R go-w "$DEPLOY"
   if [ -d "$ROOT/backups" ]; then chown -R trommi:trommi "$ROOT/backups"; fi
   ok "moved"
 fi
