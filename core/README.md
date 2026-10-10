@@ -96,6 +96,10 @@ its finish, and the device's state changes only when the hub accepted the finish
 Newest first. The interface grows by adding; these are the additions that an exhaustive `match` or a caller's
 assumptions have to take in.
 
+- A full room (spec section 16). `join_room_with_code` answers `too-many` for a room that already holds its
+  limit of human devices, before anything is built; `recover` one device later (8.7). A hub that took a join
+  past the limit all the same leaves a history that no later joiner takes (`bad-group`): the hub refuses such
+  a Commit with `too-many` (`Observer::check_posted_commit`), as every member does.
 - A key added to a session group again (spec 3.7, 9.0.10). `readmit_human(&group, &device, key_package,
   now_ms)`: a human device lets another one in again whose Welcome failed and who asked with a fresh
   KeyPackage (`POST /v2/requests`, kind `readmit`), by one Commit that removes its leaf with its Cut and adds

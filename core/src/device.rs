@@ -3871,6 +3871,8 @@ impl<S: Storage> Device<S> {
             .collect();
         let (posting, copy) = self.shadow(|this, batch| {
             this.take_checked(batch, keys, served.room, checked)?;
+            // Section 16: signing in makes no device beyond the room's limit; only a recovery does (8.7).
+            this.room_takes_one_more(MAX_HUMAN_DEVICES)?;
             this.join_built(batch, keys, served.group.current, &[], &walked, now_ms)
         })?;
         Ok(CodeJoin {
@@ -3878,6 +3880,15 @@ impl<S: Storage> Device<S> {
             missing_link,
             unverified,
         })
+    }
+
+    /// `too-many` when the room this device is about to join from outside holds `most` human devices or
+    /// more: the join would be refused by the hub and by every member, so it is not built.
+    fn room_takes_one_more(&self, most: usize) -> Result<(), Error> {
+        if self.history()?.newest().humans.len() >= most {
+            return Err(Error::TooMany);
+        }
+        Ok(())
     }
 
     /// Joins a live session group with the recovery code (8.4, 5.2.7), as a human device that joined the
@@ -4031,6 +4042,8 @@ impl<S: Storage> Device<S> {
         let room_group = GroupId::room(served.room);
         let (postings, copy) = self.shadow(|this, batch| {
             this.take_checked(batch, keys, served.room, checked)?;
+            // 8.7: while a recovery runs the room holds one human device more than its limit.
+            this.room_takes_one_more(profile::MAX_HUMAN_DEVICES_IN_RECOVERY)?;
             this.hold_mac(batch, replacement.keys.mac_key())?;
             let current = served.group.current;
             let mut postings = vec![this.join_built(batch, keys, current, &[], &walked, now_ms)?];
