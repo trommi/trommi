@@ -36,7 +36,8 @@ struct DeskScreen: View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 12) {
         Color.clear.frame(height: 0).id("desk-top")
-        if let v = v, let d = model.desk, !v.units.isEmpty || model.room?.cursor ?? 0 > 0 {
+        // (the demo has no hub and no catch-up to wait for: its room is all there from the start)
+        if let v = v, let d = model.desk, model.demo || !v.units.isEmpty || model.room?.cursor ?? 0 > 0 || model.room?.restored == true {
           let _ = StartClock.desk(cards: v.fresh.count, restored: model.room?.restored ?? false)
           VStack(alignment: .leading, spacing: 12) {
           head(v)
@@ -56,7 +57,7 @@ struct DeskScreen: View {
           .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
           OffList(view: v, full: false, chevron: tucked ? (revealed ? "chevron.down" : "chevron.up") : nil)
         } else {
-          ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
+          DeskWaiting().frame(maxWidth: .infinity).padding(.top, 80)
         }
       }
       // the last row scrolls clear of the floating tab bar
@@ -642,6 +643,36 @@ struct DeskTop: ViewModifier {
     } else {
       content.topPills { DeskWays(part: .duck); DeskWays(part: .blitz) }
     }
+  }
+}
+
+/**
+ * The Desk before the first catch-up: a spinner for a few seconds at most, then what keeps it (the last error, or
+ * that the hub has not answered) and a way to ask again. A spinner never turns forever.
+ */
+struct DeskWaiting: View {
+  @EnvironmentObject var model: BoardModel
+  @State private var late = false
+  static let bound: UInt64 = 12_000_000_000
+  var body: some View {
+    VStack(spacing: 14) {
+      if late || model.error != nil {
+        Sketch("desk", color: Ink.faint).frame(width: 64, height: 64)
+        Text("The Desk did not load.").font(Face.text(17, .semibold)).foregroundStyle(Ink.fg)
+        Text(model.error ?? (model.room == nil ? "There is no room on this device." : "Trommi has not answered yet."))
+          .font(Face.text(15)).foregroundStyle(Ink.muted).multilineTextAlignment(.center)
+        Button("Try Again") { late = false; Task { await model.refresh(); await wait() } }
+          .font(Face.text(16, .semibold)).buttonStyle(.bordered)
+      } else {
+        ProgressView()
+      }
+    }
+    .padding(.horizontal, 24)
+    .task { await wait() }
+  }
+  private func wait() async {
+    try? await Task.sleep(nanoseconds: Self.bound)
+    if !Task.isCancelled { late = true }
   }
 }
 
