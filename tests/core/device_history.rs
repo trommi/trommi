@@ -1462,3 +1462,134 @@ fn a_past_whose_places_contradict_the_devices_own_is_not_taken() {
     drop(new);
     assert!(reopen(store.reopened()).is_ok());
 }
+
+/// `served` with the Commit at the change number `real` served under `claimed` instead.
+fn moved(served: &FetchedGroup, real: u64, claimed: u64) -> FetchedGroup {
+    let mut served = served.clone();
+    let at = served
+        .commits
+        .iter()
+        .position(|(change, _, _)| *change == real)
+        .unwrap();
+    served.commits[at].0 = claimed;
+    served
+}
+
+/// A takeover in `w` whose three Commits (room, main session, helper session) leave a free change number
+/// between the room's and the main session's. Returns that number and the places of the main session's
+/// and the helper session's Commit.
+fn takeover_with_a_gap(w: &mut World) -> (u64, u64, u64) {
+    let (room, main, side) = (w.room, w.main, w.side);
+    let mut next = new_device();
+    w.old
+        .change_agents(&[next.id()], &[w.agent.id()], now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.old);
+    observe(&w.hub, &mut next);
+    let gone = std::mem::replace(&mut w.agent, next).id();
+    w.sync();
+    // Something else of the room takes the next number.
+    write(&mut w.hub, &mut w.old, &desk(&room, "between"));
+    let free = w.hub.change();
+    let mut places = Vec::new();
+    for group in [main, side] {
+        let cut = w.old.cut_of(&group, &gone).unwrap();
+        let package = w.agent.key_package(now()).unwrap();
+        let next = w.agent.id();
+        w.old
+            .clean_session(&group, &[cut], Some((&next, &package)), now())
+            .unwrap();
+        post_ok(&mut w.hub, &mut w.old);
+        places.push(w.hub.change());
+        w.sync();
+        w.old.send_handover(&group, &next).unwrap();
+        post_ok(&mut w.hub, &mut w.old);
+    }
+    w.sync();
+    (free, places[0], places[1])
+}
+
+#[test]
+fn a_helper_commit_is_judged_against_the_main_sessions_agent_leaf_at_its_place() {
+    use trommi_core::device::WelcomeExpectation;
+
+    let mut w = world(1);
+    let (room, main, side) = (w.room, w.main, w.side);
+    // A human device of the room and the main session, whose Welcome into the helper session waits.
+    let mut live = new_device();
+    add_human(&mut w.hub, &mut w.old, &mut live);
+    publish_some(&mut w.hub, &mut live, 4);
+    add_to_session(&mut w.hub, &mut w.old, &mut live, &main);
+    w.sync();
+    assert_eq!(settle_joining(&w.hub, &mut live).len(), 1);
+    add_to_session(&mut w.hub, &mut w.old, &mut live, &side);
+    let welcome_at = trommi_tests::added_at(&w.hub);
+    w.sync();
+
+    // The takeover. Within one room epoch the main session's agent leaf is the old device, then the new
+    // one; the helper session's Commit that makes the new device its opener stands behind that change.
+    let (free, main_at, side_at) = takeover_with_a_gap(&mut w);
+    assert!(free < main_at && main_at < side_at);
+
+    // A live member that is handed the helper session's Commits late: the Commit claims a place before
+    // the main session's change, where the main session's agent leaf was still the old device.
+    for item in w.hub.log_after(live.cursor()) {
+        let _ = trommi_tests::process(&mut live, &item);
+    }
+    let welcome = w
+        .hub
+        .welcomes
+        .iter()
+        .find(|welcome| welcome.change == welcome_at)
+        .unwrap();
+    let expected = WelcomeExpectation {
+        room: room.room_id(),
+        committer: None,
+    };
+    live.join_welcome(&welcome.bytes, &expected, now()).unwrap();
+    let log = w.hub.log_after(0);
+    let of_side = |change: u64| {
+        log.iter()
+            .find(|item| item.change == change && item.group == side)
+            .unwrap()
+            .clone()
+    };
+    trommi_tests::process(&mut live, &of_side(welcome_at)).unwrap();
+    let mut early = of_side(side_at);
+    early.change = free;
+    assert!(trommi_tests::process(&mut live, &early).is_err());
+    assert_eq!(
+        live.group(&side).unwrap().epoch,
+        w.hub.epoch(&side).unwrap() - 1
+    );
+    assert!(matches!(
+        trommi_tests::process(&mut live, &of_side(side_at)),
+        Ok(Processed::Commit { .. })
+    ));
+
+    // A device that learns the past.
+    let (mut late, _) = late_in_both(&mut w);
+    let real = fetch_group(&w.hub, &side);
+    assert_eq!(
+        learn_from(&mut late, &side, &moved(&real, side_at, free)),
+        Err(Error::BadGroup)
+    );
+    assert!(learn_from(&mut late, &side, &real).is_ok());
+
+    // A device that signs in with the code.
+    let keys = w.keys();
+    let mut signer = new_device();
+    trommi_tests::join_room(&w.hub, &mut signer, &keys).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    trommi_tests::join_session(&w.hub, &mut signer, &keys, &main).unwrap();
+    post_ok(&mut w.hub, &mut signer);
+    let real = fetch_group(&w.hub, &side);
+    let join = |device: &mut TestDevice, served: &FetchedGroup| {
+        served.served(|served| device.join_session_with_code(&keys, served, now()))
+    };
+    assert_eq!(
+        join(&mut signer, &moved(&real, side_at, free)).err(),
+        Some(Error::BadGroup)
+    );
+    assert!(join(&mut signer, &real).is_ok());
+}

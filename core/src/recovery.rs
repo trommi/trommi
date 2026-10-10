@@ -17,7 +17,7 @@ use crate::crypto::{self, Entropy, HpkeCiphertext, HpkeKeyPair, Secret, SigningK
 use crate::error::Error;
 use crate::ids::SessionId;
 use crate::ids::{DeviceId, GroupId, Hash32, RoomId};
-use crate::mls::observer::{Context, Observer};
+use crate::mls::observer::{Context, Observer, Place, RoomEpochAt};
 use crate::mls::profile::{Cut, TrommiRoom, MAX_HUMAN_DEVICES_IN_RECOVERY, RECOVERY_KEY_LEN};
 use crate::mls::rules::{
     self, CommitFacts, JoinClaim, Parent, RecoveryRules, RoomHistory, RoomState, SealedKeyClaim,
@@ -1308,6 +1308,9 @@ pub struct WalkedEpoch {
     /// The `room_epoch` of the Commit that began the epoch; for epoch 0 the founding Commit's, since a
     /// founding is one request.
     pub room_epoch: u64,
+    /// The change number of the Commit that began the epoch: its place in the hub's order. For epoch 0 the
+    /// founding Commit's.
+    pub change: u64,
     /// The Commit that ended it; none for the epoch the walk stands in.
     pub end: Option<WalkedEnd>,
 }
@@ -1328,28 +1331,28 @@ impl Walked {
             epochs: vec![WalkedEpoch {
                 leaves: observer.leaves()?.into_iter().collect(),
                 room_epoch: 0,
+                change: 0,
                 end: None,
             }],
         })
     }
 
-    /// Follows the next Commit with `observer` and records the epoch it ends and the one it begins. `at` is
-    /// the room epoch that was current at the Commit's place in the hub's order, for a holder whose record
-    /// of the room reaches beyond that place ([`Observer::process_commit_at`]); without it the room's
-    /// newest state is the one of the place. On a refusal nothing is recorded and the observer is unchanged.
+    /// Follows the next Commit with `observer`, at the place its change number names, and records the
+    /// epoch it ends and the one it begins. `at` is the room epoch a session Commit is judged against
+    /// ([`Observer::process_commit_at`]). On a refusal nothing is recorded and the observer is unchanged.
     pub fn follow(
         &mut self,
         observer: &mut Observer,
         commit: &ServedCommit<'_>,
         context: &Context<'_>,
-        at: Option<u64>,
+        at: RoomEpochAt,
     ) -> Result<CommitFacts, Error> {
-        let facts = match at {
-            Some(at) => {
-                observer.process_commit_at(commit.commit, commit.recovery_auth, context, at)?
-            }
-            None => observer.process_commit(commit.commit, commit.recovery_auth, context)?,
+        let place = Place {
+            change: commit.change,
+            room_epoch: at,
         };
+        let facts =
+            observer.process_commit_at(commit.commit, commit.recovery_auth, context, &place)?;
         let leaves = observer.leaves()?.into_iter().collect();
         let (room_epoch, time, cuts) = facts.note.as_ref().map_or((0, 0, Vec::new()), |note| {
             (note.room_epoch, note.time, note.cuts.clone())
@@ -1359,14 +1362,48 @@ impl Walked {
             ended.end = Some(WalkedEnd { time, cuts });
             if first {
                 ended.room_epoch = room_epoch;
+                ended.change = commit.change;
             }
         }
         self.epochs.push(WalkedEpoch {
             leaves,
             room_epoch,
+            change: commit.change,
             end: None,
         });
         Ok(facts)
+    }
+}
+
+/// What a verifier knows of the room's other sessions at each place of the hub's order: for one that judges
+/// Commits behind what it holds, where a helper session's opener is its main session's agent leaf at the
+/// place of the Commit judged, not the one of today (5.2.1, 5.2.3).
+pub trait SessionsAt {
+    /// The main session `session` at the place `change`.
+    fn main_session_at(&self, session: &SessionId, change: u64) -> Parent;
+
+    /// The live main session whose agent leaf `agent` is, if the verifier knows one.
+    fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId>;
+
+    /// How many live helper sessions hang under `parent`, as far as the verifier knows.
+    fn live_helpers(&self, parent: &SessionId) -> usize;
+}
+
+/// The sessions as they stand at one place of the hub's order, as the rules ask about them for a Commit
+/// that stands there.
+pub struct At<'a>(pub &'a dyn SessionsAt, pub u64);
+
+impl SessionFacts for At<'_> {
+    fn main_session(&self, session: &SessionId, _: u64) -> Parent {
+        self.0.main_session_at(session, self.1)
+    }
+
+    fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
+        self.0.main_session_of(agent)
+    }
+
+    fn live_helpers(&self, parent: &SessionId) -> usize {
+        self.0.live_helpers(parent)
     }
 }
 
@@ -1480,7 +1517,9 @@ impl Walk<'_> {
             recovery: &PublicRules,
             max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
         };
-        let facts = self.walked.follow(&mut observer, commit, &context, None)?;
+        let facts = self
+            .walked
+            .follow(&mut observer, commit, &context, RoomEpochAt::Newest)?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
         if self.begun.is_empty() {
             // The founding is one request: epoch 0 began under the room epoch its first Commit names.
@@ -1514,7 +1553,8 @@ impl Walk<'_> {
 /// the room states of `history` (`bad-group` when one does not verify or obey section 5, `room-behind` when
 /// `history` does not reach back to a room state one names), and requires the
 /// GroupInfo offered as current to agree with the state so reached (`wrong-recovery`). `sessions` answers for
-/// the room's other sessions: a helper session is verified after its main session. `room_epoch_at` gives the
+/// the room's other sessions at each Commit's place: a helper session is verified after its main session,
+/// against that session's agent leaf at the place of each Commit. `room_epoch_at` gives the
 /// room epoch that was current at a change number of the hub's order: each Commit is judged at its place
 /// (5.2.1) and must name that epoch, so a Commit that names a room state from before its place, as a removed
 /// device's would, is `bad-group`; `room-behind` when the verifier cannot tell the epoch at a place. The
@@ -1523,19 +1563,13 @@ pub fn check_session(
     served: &ServedGroup<'_>,
     room: &RoomId,
     history: &RoomHistory,
-    sessions: &dyn SessionFacts,
+    sessions: &dyn SessionsAt,
     room_epoch_at: &dyn Fn(u64) -> Result<u64, Error>,
 ) -> Result<CheckedSession, Error> {
     let mut observer = Observer::follow_founding(served.founding).map_err(|_| Error::BadGroup)?;
     if observer.group().room_id() != *room {
         return Err(Error::WrongRoom);
     }
-    let context = Context {
-        room: Some(history),
-        sessions,
-        recovery: &PublicRules,
-        max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
-    };
     let mut begun = Vec::new();
     let mut walked = Walked::begin(&observer)?;
     let mut last_committer = None;
@@ -1547,8 +1581,14 @@ pub fn check_session(
         }
         place = Some(served.change);
         let at = room_epoch_at(served.change).map_err(|_| Error::RoomBehind)?;
+        let context = Context {
+            room: Some(history),
+            sessions: &At(sessions, served.change),
+            recovery: &PublicRules,
+            max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+        };
         let facts = walked
-            .follow(&mut observer, served, &context, Some(at))
+            .follow(&mut observer, served, &context, RoomEpochAt::Epoch(at))
             .map_err(|error| match error {
                 // The verifier does not hold the room state a Commit names: it cannot tell.
                 Error::RoomBehind => Error::RoomBehind,
@@ -1658,7 +1698,7 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
                 max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
             };
             let facts = walked
-                .follow(&mut observer, commit, &context, None)
+                .follow(&mut observer, commit, &context, RoomEpochAt::Newest)
                 .map_err(|_| Error::BadGroup)?;
             places.push((observer.epoch()?, commit.change));
             last_committer = Some(facts.committer);

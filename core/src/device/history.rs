@@ -19,7 +19,8 @@
 //! its change number, which must lie in the room epoch the Commit's own note names (5.2.1), and records
 //! where each room epoch began. A wrong number can fail a walk; in a walk that is taken it changes nothing
 //! of what is recorded but those places. A helper session's Commit is judged against its main session's
-//! agent leaf at the room epoch its note names.
+//! agent leaf at the Commit's place: a main session can lose its agent leaf and gain another within one
+//! room epoch.
 //!
 //! **Order.** A session Commit names a room state, and a helper session's the agent leaf of its main
 //! session: the room group's past is learned first (`room-behind` otherwise), then a main session's, then
@@ -36,11 +37,13 @@ use crate::codec::{self, Decode, Encode, Reader, Writer};
 use crate::error::Error;
 use crate::ids::{DeviceId, GroupId, SessionId};
 use crate::mls::group;
-use crate::mls::observer::{self, Context, Observer};
+use crate::mls::observer::{self, Context, Observer, RoomEpochAt};
 use crate::mls::profile::{Cut, TrommiSession, MAX_HUMAN_DEVICES_IN_RECOVERY};
 use crate::mls::provider::{MlsEntries, Provider};
-use crate::mls::rules::{self, Parent, RoomHistory, SessionFacts};
-use crate::recovery::{PublicRules, ServedCommit, ServedGroup, Walked, WalkedEnd, WalkedEpoch};
+use crate::mls::rules::{self, Parent, RoomHistory};
+use crate::recovery::{
+    At, PublicRules, ServedCommit, ServedGroup, SessionsAt, Walked, WalkedEnd, WalkedEpoch,
+};
 use crate::store::{table, Batch, Storage};
 use openmls::group::{GroupContext, ProposalStore, PublicGroup};
 use openmls::prelude::{LeafNodeIndex, ProcessedMessageContent};
@@ -144,10 +147,10 @@ struct PastSessions {
     seats: BTreeMap<SessionId, Vec<(u64, Option<DeviceId>)>>,
 }
 
-impl SessionFacts for PastSessions {
-    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+impl SessionsAt for PastSessions {
+    fn main_session_at(&self, session: &SessionId, change: u64) -> Parent {
         match self.seats.get(session) {
-            Some(seats) => Parent::Seat(observer::seat_at(seats, room_epoch)),
+            Some(seats) => observer::parent_at(seats, change),
             None => Parent::Unknown,
         }
     }
@@ -493,12 +496,6 @@ impl<S: Storage> Device<S> {
         if let Some(history) = observer.history() {
             rules::check_room_founding(history.newest()).map_err(|_| Refusal::BadGroup)?;
         }
-        let context = Context {
-            room: room_history.as_ref(),
-            sessions: &sessions,
-            recovery: &PublicRules,
-            max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
-        };
         let mut walked = Walked::begin(&observer)?;
         let mut served = commits.iter();
         let mut places: Vec<(u64, u64)> = Vec::new();
@@ -512,10 +509,17 @@ impl<S: Storage> Device<S> {
             {
                 return Err(Refusal::BadGroup);
             }
-            // 5.2.1: a session Commit names the room epoch that was current at its place.
+            // 5.2.1: a session Commit names the room epoch that was current at its place, and a helper
+            // session's is judged against its main session's agent leaf there.
             let at = match session {
-                Some(_) => Some(self.room_epoch_at(commit.change)?),
-                None => None,
+                Some(_) => RoomEpochAt::Epoch(self.room_epoch_at(commit.change)?),
+                None => RoomEpochAt::Newest,
+            };
+            let context = Context {
+                room: room_history.as_ref(),
+                sessions: &At(&sessions, commit.change),
+                recovery: &PublicRules,
+                max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
             };
             match walked.follow(&mut observer, commit, &context, at) {
                 Ok(_) => places.push((observer.epoch()?, commit.change)),
@@ -632,7 +636,7 @@ impl<S: Storage> Device<S> {
             .zip(0u32..)
             .map(|(device, index)| (LeafNodeIndex::new(index), *device))
             .collect();
-        self.roles(group, &leaves, epoch.room_epoch)
+        self.roles(group, &leaves, epoch.room_epoch, Some(epoch.change))
     }
 
     /// Records the epochs `past` of `group`, all of which ended, as learned, and ends the chains their
