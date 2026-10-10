@@ -214,8 +214,39 @@ public final class HubClient: @unchecked Sendable {
   }
   /** What the Desk shows without history: open objects' newest envelopes, the registers, the groups. */
   public func desk() async throws -> JSON { try await request("GET", "/desk") }
-  public func groups() async throws -> [JSON] { try await requestList("GET", "/rooms/\(b64u(room))/groups") }
-  public func welcomes() async throws -> [JSON] { try await requestList("GET", "/welcomes") }
+  /**
+   * The groups this device may see, page by page (`?limit=1000&after=`, `{ items, more, after }`, spec/hub-api.md
+   * point 43). A hub that answers the bare list (an older one) is read as one page.
+   */
+  public func groups() async throws -> [JSON] {
+    var all = [JSON](), after: String? = nil
+    for _ in 0..<10_000 {
+      var q = ["limit": "1000"]
+      if let a = after { q["after"] = a }
+      let (data, _) = try await exchange("GET", "/rooms/\(b64u(room))/groups", query: q, body: nil, contentType: nil, auth: true, headers: [:])
+      let any = FastJSON.parse([UInt8](data))?.any
+      if let list = any as? [Any] { return all + list.compactMap { $0 as? JSON } }
+      guard let page = any as? JSON else { throw TrommiError("bad-format", "the hub's list of groups does not read") }
+      all += page["items"] as? [JSON] ?? []
+      let next = (page["after"] as? String) ?? Wire.uint(page["after"]).map { String($0) }
+      guard page["more"] as? Bool == true, let n = next, n != after else { return all }
+      after = n
+    }
+    throw TrommiError("bad-format", "the hub's list of groups does not end")
+  }
+  /** The Welcomes for this device, oldest first, page by page after the last id seen (at most 8 MiB a page). */
+  public func welcomes() async throws -> [JSON] {
+    var all = [JSON](), after: UInt64? = nil
+    for _ in 0..<10_000 {
+      let page = try await requestList("GET", "/welcomes", query: after.map { ["after": String($0)] } ?? [:])
+      all += page
+      // (a hub without ids answers everything at once)
+      guard let last = page.compactMap({ Wire.uint($0["id"]) }).max(), last != after else { return all }
+      if let a = after, last <= a { return all }
+      after = last
+    }
+    throw TrommiError("bad-format", "the hub's Welcomes do not end")
+  }
   public func groupInfo(_ group: GroupId, epoch: UInt64? = nil) async throws -> JSON {
     try await request("GET", "/groups/\(b64u(group))/info", query: epoch.map { ["epoch": String($0)] } ?? [:])
   }
