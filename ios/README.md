@@ -196,8 +196,11 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
 target `Trommi` that links the package's `TrommiApp` library, with the app icon, the production entitlements and the
 Info.plist keys xtool adds; one extension target each. Linux builds do not use it.
 
-**The Xcode path** (the repository's `.github/workflows/deploy_ios.yml` with `.github/scripts/ios_testflight.sh`: an
-archive with cloud-managed signing on a Mac runner, uploaded to TestFlight). What it needs from this folder:
+**The Xcode path** (the repository's `.github/workflows/deploy_ios.yml` with `.github/scripts/ios_testflight.sh` on a
+Mac runner, uploaded to TestFlight). The archive is signed ad hoc (`.github/scripts/ios_archive.sh`: identity "-", no
+profile, no key, so no certificate is made per run); only the export signs, with the cloud-managed Apple
+Distribution certificate through the App Store Connect key. The IPA's entitlements are then checked against the four
+`.entitlements` files (`ios_entitlements.py`). What it needs from this folder:
 
 - `core/swift/build.sh` on the runner before anything is built: `ios` for the archive (the package links
   `lib/ios/libtrommi_core_ffi.a` by a search path; a device archive needs no XCFramework), `host` for
