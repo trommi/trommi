@@ -22,7 +22,7 @@ paths() {
   esac
 }
 for part in web connector ios hub updater; do
-  # shellcheck disable=SC2046
+  # shellcheck disable=SC2046,SC2086
   sum=$(git ls-tree -r "$commit" -- $shared $(paths "$part") | LC_ALL=C sort -k4 | sha256sum | cut -d' ' -f1)
   echo "$part $sum"
 done
