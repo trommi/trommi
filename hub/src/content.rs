@@ -954,6 +954,8 @@ fn apply_index(
                  ON CONFLICT (group_id, writer, register_id) DO UPDATE SET head_change = excluded.head_change",
             )?
             .execute(params![&room[..], h.group_id, &h.sender[..], &register_id[..], change])?;
+            // 9.4.2: the same writer's earlier values of this register are no longer needed
+            crate::prune::superseded(c, room, h, now, fx)?;
         }
     }
     Ok(())

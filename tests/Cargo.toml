@@ -184,6 +184,10 @@ name = "hub_content"
 path = "hub/content.rs"
 
 [[test]]
+name = "hub_prune"
+path = "hub/prune.rs"
+
+[[test]]
 name = "hub_accounts"
 path = "hub/accounts.rs"
 

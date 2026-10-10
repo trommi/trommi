@@ -829,13 +829,32 @@ impl App {
             }
         }
         let messages = self.sweep_messages().unwrap_or(0);
-        if total > 0 || messages > 0 {
+        let bodies = self.sweep_superseded().unwrap_or(0);
+        if total > 0 || messages > 0 || bodies > 0 {
             crate::log::info(
                 "retention",
-                json!({ "objects_pruned": total, "messages_deleted": messages }),
+                json!({ "objects_pruned": total, "messages_deleted": messages, "bodies_pruned": bodies }),
             );
         }
         total
+    }
+
+    /// 9.4.2 for what was stored before it (and 10.9 again for every board): a writer's older values lose their
+    /// bodies, in batches of 200 writers' registers per transaction.
+    fn sweep_superseded(self: &Arc<Self>) -> Res<usize> {
+        let mut total = 0;
+        loop {
+            let mut fx = Effects::default();
+            let n = self
+                .db
+                .write(|c| crate::prune::sweep_superseded(c, util::now(), 200, &mut fx))?;
+            self.after(fx);
+            total += n;
+            if n == 0 {
+                break;
+            }
+        }
+        Ok(total)
     }
 
     /// Application messages (work trail, key handovers already read) are kept 30 days; Commits stay.

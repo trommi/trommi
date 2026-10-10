@@ -25,6 +25,7 @@ pub mod log;
 pub mod memo;
 pub mod metrics;
 pub mod observer;
+pub mod prune;
 pub mod prepare;
 pub mod push;
 pub mod quota;

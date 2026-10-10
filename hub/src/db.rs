@@ -14,7 +14,7 @@ use rusqlite::{Connection, OpenFlags};
 pub const SCHEMA_VERSION: i64 = 5;
 
 /// Added to schema 5 in place (Welcomes stored once, ids never given twice, an index for deleting by group, the
-/// Offer's MAC, an index for paging the groups), on every open (a fresh database and one that holds data alike): nothing is
+/// Offer's MAC, an index for paging the groups, an index of register values with bodies, the board frontiers), on every open (a fresh database and one that holds data alike): nothing is
 /// rewritten, rows written before keep working. A Welcome is stored once per group and epoch in
 /// `welcome_bytes`; a row of `welcomes` with `epoch` set points to it and keeps an empty `bytes`, a row without
 /// `epoch` (written before) holds its own. At 1000 human devices a founding's Welcome is some 0.3 MB, and it is
@@ -28,6 +28,22 @@ CREATE TABLE IF NOT EXISTS welcome_bytes (
 ) STRICT, WITHOUT ROWID;
 -- the next id of a `welcomes` row: never one given before, also when the newest row was deleted (a device reads
 -- its Welcomes on from the last id it saw)
+-- 9.4.2: the register values that still carry a body, found per writer and register for pruning
+CREATE INDEX IF NOT EXISTS envelopes_register_bodies ON envelopes(group_id, sender, register_id, seq)
+  WHERE register_id IS NOT NULL AND body IS NOT NULL;
+-- 10.9: the newest frontier post per human device and board; `counts` as last judged (a human leaf, within 30
+-- days of the board's newest post). `frontier`: per writer 32 bytes and the number as 8 bytes big-endian,
+-- ascending; `files`: 16-byte file ids one after another.
+CREATE TABLE IF NOT EXISTS board_frontiers (
+  room_id        BLOB NOT NULL,
+  board          BLOB NOT NULL CHECK (length(board) = 16),
+  device         BLOB NOT NULL CHECK (length(device) = 32),
+  frontier       BLOB NOT NULL,
+  files          BLOB NOT NULL,
+  at             INTEGER NOT NULL,
+  counts         INTEGER NOT NULL DEFAULT 1 CHECK (counts IN (0, 1)),
+  PRIMARY KEY (room_id, board, device)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS welcome_ids (
   one            INTEGER PRIMARY KEY CHECK (one = 1),
   last           INTEGER NOT NULL
@@ -464,7 +480,7 @@ CREATE TABLE artifacts (
 CREATE INDEX artifacts_desk ON artifacts(room_id, urgency DESC, first_change) WHERE state = 1;
 CREATE INDEX artifacts_due ON artifacts(settled_at) WHERE settled_at IS NOT NULL AND pruned_at IS NULL;
 
--- Notes: any human device writes a version; the hub keeps the newest by arrival and never prunes one.
+-- Notes: any human device writes a version; the hub keeps the newest by arrival and prunes as v1.md 9.4 says.
 CREATE TABLE notes (
   room_id        BLOB NOT NULL,
   object_id      BLOB NOT NULL,
