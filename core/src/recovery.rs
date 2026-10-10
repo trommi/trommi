@@ -1517,7 +1517,8 @@ impl Walk<'_> {
 /// the room's other sessions: a helper session is verified after its main session. `room_epoch_at` gives the
 /// room epoch that was current at a change number of the hub's order: each Commit is judged at its place
 /// (5.2.1) and must name that epoch, so a Commit that names a room state from before its place, as a removed
-/// device's would, is `bad-group`; `room-behind` when the verifier cannot tell the epoch at a place.
+/// device's would, is `bad-group`; `room-behind` when the verifier cannot tell the epoch at a place. The
+/// Commits' change numbers ascend (`bad-group` otherwise).
 pub fn check_session(
     served: &ServedGroup<'_>,
     room: &RoomId,
@@ -1538,7 +1539,13 @@ pub fn check_session(
     let mut begun = Vec::new();
     let mut walked = Walked::begin(&observer)?;
     let mut last_committer = None;
+    let mut place = None;
     for served in served.commits {
+        // 5.4.1: a group's Commits stand in the hub's order.
+        if place.is_some_and(|place| place >= served.change) {
+            return Err(Error::BadGroup);
+        }
+        place = Some(served.change);
         let at = room_epoch_at(served.change).map_err(|_| Error::RoomBehind)?;
         let facts = walked
             .follow(&mut observer, served, &context, Some(at))

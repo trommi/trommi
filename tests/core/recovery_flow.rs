@@ -1848,3 +1848,34 @@ fn a_founding_that_breaks_the_rules_is_no_room_to_join() {
     own.rows = vec![row];
     assert_eq!(check(&own).err(), Some(Error::BadGroup));
 }
+
+#[test]
+fn a_session_whose_commits_are_served_out_of_the_hubs_order_is_not_joined() {
+    let mut w = world(true);
+    let main = w.main;
+    // Two Commits of the main session within one room epoch.
+    for _ in 0..2 {
+        w.a.update(&main, true, now()).unwrap().unwrap();
+        post_ok(&mut w.hub, &mut w.a);
+        w.settle_all();
+    }
+    let keys = test_keys();
+    let mut new = new_device();
+    join_room(&w.hub, &mut new, &keys).unwrap();
+    post_ok(&mut w.hub, &mut new);
+    let honest = trommi_tests::fetch_group(&w.hub, &main);
+    let last = honest.commits.len() - 1;
+    let join = |device: &mut TestDevice, served: &trommi_tests::FetchedGroup| {
+        served.served(|served| device.join_session_with_code(&keys, served, now()))
+    };
+    // The same Commits under change numbers that do not ascend: one number twice, two exchanged.
+    let mut twice = honest.clone();
+    twice.commits[last].0 = twice.commits[last - 1].0;
+    let mut exchanged = honest.clone();
+    exchanged.commits[last].0 = honest.commits[last - 1].0;
+    exchanged.commits[last - 1].0 = honest.commits[last].0;
+    for served in [&twice, &exchanged] {
+        assert_eq!(join(&mut new, served).err(), Some(Error::BadGroup));
+    }
+    assert!(join(&mut new, &honest).is_ok());
+}
