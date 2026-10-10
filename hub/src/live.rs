@@ -176,7 +176,10 @@ impl Live {
         self.rooms.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// A new stream of a device, in its catch-up phase. `None`: the device has its limit of streams open.
+    /// A new stream of a device, in its catch-up phase. It ends the device's older streams at once (their
+    /// connections are cut and their places freed): a device holds one stream, and one whose old stream was never
+    /// closed by its client (a page reloaded under a service worker keeps it) is not locked out by them. `None`:
+    /// the device has its limit of streams open, which with that cannot happen.
     pub fn open(
         &self,
         auth: Auth,
@@ -187,6 +190,9 @@ impl Live {
     ) -> Option<(Arc<Stream>, mpsc::UnboundedReceiver<Msg>)> {
         let mut rooms = self.lock();
         let list = rooms.entry(auth.room).or_default();
+        for older in list.iter().filter(|s| s.auth.device == auth.device) {
+            older.cut_now();
+        }
         list.retain(|s| !s.is_closed());
         if list.iter().filter(|s| s.auth.device == auth.device).count() >= per_device {
             return None;
