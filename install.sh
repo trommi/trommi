@@ -22,7 +22,9 @@
 #        ~/.local/bin/trommi-connector -> the first
 #   6. says the version that was verified and the SHA-256 of its manifest.
 #
-# It refuses to run as root, asks for nothing and changes nothing outside the two folders named above, except:
+# It installs for the user who runs it, root as well (on a server Claude Code often runs as root, and then the
+# connector is root's). Started through sudo by another user it refuses: the connector would land in the wrong home
+# and belong to the wrong user. It asks for nothing and changes nothing outside the two folders named above, except:
 #   7. for claude and codex, where they are on the PATH, it runs `trommi-connector setup <program>` (Claude Code's
 #      plugin, Codex's MCP server; nothing that is someone else's is changed). Later: trommi-connector setup <program>.
 #
@@ -58,7 +60,12 @@ if [ -n "$tag" ]; then
   printf '%s' "$tag" | grep -Eq '^([a-z]+-)?v[1-9][0-9]{0,11}$' || fail "not a release tag: $tag"
 fi
 
-[ "$(id -u)" != 0 ] || fail "do not run this as root: the connector belongs to the user whose Claude Code or Codex starts it."
+# Through sudo by another user the connector would belong to the wrong one: it belongs to the user whose Claude
+# Code or Codex starts it. A plain root (a root login, no sudo) installs for root like any user.
+uid=$(id -u)
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] && [ "$SUDO_USER" != "$(id -un)" ]; then
+  fail "started through sudo by $SUDO_USER: run it as $SUDO_USER without sudo (the connector belongs to the user whose Claude Code or Codex starts it)."
+fi
 case ${HOME:-} in /*) ;; *) fail "HOME is not set to a folder" ;; esac
 [ -d "$HOME" ] || fail "HOME is not set to a folder"
 
@@ -223,12 +230,15 @@ mv -f "$link_dir/.trommi-connector.new" "$link_dir/trommi-connector"
 
 # ---- 6. what was installed -------------------------------------------------------------------------------------
 say "Installed: trommi-connector, release $version ($stated_tag), signature verified"
+[ "$uid" != 0 ] || say "Installed for root."
 say "  manifest.json SHA-256: $(sha256 "$bin/manifest.json")"
 say "  program: $bin/trommi-connector"
 say "  command: $link_dir/trommi-connector"
 case ":${PATH:-}:" in
   *":$link_dir:"*) ;;
-  *) say "  $link_dir is not on your PATH: add it, or call the program by its full path." ;;
+  *) say "  $link_dir is not on your PATH: add the line"
+     say "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+     say "  to ~/.profile (or the start file of your shell) and log in again, or call the program by its full path." ;;
 esac
 
 # ---- 7. the programs that start it -----------------------------------------------------------------------------
