@@ -196,8 +196,11 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
 target `Trommi` that links the package's `TrommiApp` library, with the app icon, the production entitlements and the
 Info.plist keys xtool adds; one extension target each. Linux builds do not use it.
 
-**The Xcode path** (the repository's `.github/workflows/deploy_ios.yml` with `.github/scripts/ios_testflight.sh`: an
-archive with cloud-managed signing on a Mac runner, uploaded to TestFlight). What it needs from this folder:
+**The Xcode path** (the repository's `.github/workflows/deploy_ios.yml` with `.github/scripts/ios_testflight.sh` on a
+Mac runner, uploaded to TestFlight). The archive is signed ad hoc (`.github/scripts/ios_archive.sh`: identity "-", no
+profile, no key, so no certificate is made per run); only the export signs, with the cloud-managed Apple
+Distribution certificate through the App Store Connect key. The IPA's entitlements are then checked against the four
+`.entitlements` files (`ios_entitlements.py`). What it needs from this folder:
 
 - `core/swift/build.sh` on the runner before anything is built: `ios` for the archive (the package links
   `lib/ios/libtrommi_core_ffi.a` by a search path; a device archive needs no XCFramework), `host` for
@@ -304,21 +307,26 @@ is in the room; the new password then logs in as on any new device, and Settings
 web app that opens its recovery screen with hub and id filled in. It is in the fragment, so it reaches no server,
 and it never holds the words. The app itself does not open such a link yet.
 
-### Passkeys: switched off
+### Passkeys: on when the domain names the app
 
-`Passkeys.available` is `false`. Switched on, Create account shows the e-mail as optional and "Create with passkey"
-first, and Log in shows "Log in with passkey" first, with no field. Before the switch is flipped:
+`Passkeys.available` is read from `https://app.trommi.com/.well-known/apple-app-site-association` at every start
+(`Passkeys.probe`): passkeys are on once its `webcredentials` names this app ("<team id>.<bundle id>"), and the last
+answer is kept for starts without a network. `Passkeys.forcedOn` is the one constant that switches them on whatever
+the file says. On, Create account shows "Create with passkey" first with the e-mail marked optional and the password
+as the second way, and Log in shows "Log in with passkey" first, with no field (the passkey names its account).
 
-1. The binding with `kit_keys_for` and `account_id_parse` is merged and bound in `LiveCore.swift` (an account
-   without an e-mail has its kit under the id).
-2. `https://app.trommi.com/.well-known/apple-app-site-association` lists the app under `webcredentials` (below).
-3. The entitlement `com.apple.developer.associated-domains` holds `webcredentials:app.trommi.com`. Both
-   `TrommiApp.entitlements` and `AppStore/TrommiApp.entitlements` have the line already; it does nothing while the
-   domain's file does not name the app.
-4. An account with passkeys only has no password, and three screens still ask for one: the kit's page after a
-   relaunch ("Enter your password to make it."), Settings → Account → "Make a New Kit", and "Add Passkey". They need
-   a way to open the code with a passkey first. `Room.setEmail` needs a screen.
-5. A passkey ceremony on a phone: none has ever run (`Passkeys.swift` compiles on a Mac only).
+- An account made with a passkey alone has no e-mail and no password. Its account id comes with the tokenless
+  `POST /v2/account/passkey/challenge` (`{ challenge, account, user_handle }`); the passkey's user id is the id's
+  16 bytes, its prf output is asked for at registration, and the Emergency Kit is made under the id
+  (`kitKeysFor(.id)`).
+- Such an account uses a passkey where another asks for the password: the kit's page after a relaunch, Settings →
+  Account → "Make with Passkey", "New Recovery Code…" and "Add Passkey" (`Passkeys.unlock`: one of the account's
+  passkeys, used once here for its prf output).
+- The entitlement `com.apple.developer.associated-domains` holds `webcredentials:app.trommi.com` in both
+  `TrommiApp.entitlements` and `AppStore/TrommiApp.entitlements`.
+- The hub takes `https://app.trommi.com` as a passkey origin (its default when `HUB_ORIGINS` is not set).
+- Only a real phone tests the passkey sheet, the prf output and the association; the flows around them are tested
+  on Linux with a stand-in authenticator (tests/ios AccountTests).
 
 ### For the website: the association file
 
@@ -536,7 +544,7 @@ chrome; the minimum is iOS 27.
   the real core on `PocketHub` behind the hub's routes (`RoomPastTests`, `RoomRecoveryTests`).
 - The Scribble Board still merges with the reducer of the Swift model (`Canvas.swift`); the core's reducer and its
   check of a loaded board (`boardReduce`, `boardLoad`) are bound, and nothing calls them yet.
-- Passkeys are built and switched off (`Passkeys.available`); "Account" says what switching them on needs.
+- Passkeys switch on by themselves once the web app's association file names the app; no passkey ceremony has run on a phone yet ("Account").
 - The first archive on the Mac runner ("TestFlight from CI") is unproven; licence notices for the Rust crates inside the app bundle
   (`THIRD-PARTY.md` lists them); the memory of the Notification Service Extension with the core linked, measured on
   a phone.
