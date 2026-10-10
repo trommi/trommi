@@ -198,6 +198,10 @@ path = "core/groups_reproducible.rs"
 name = "core_groups_hardening_content"
 path = "core/groups_hardening_content.rs"
 
+[[test]]
+name = "core_device_history"
+path = "core/device_history.rs"
+
 # ---- the hub's tests (tests/hub/…): the hub itself, and what its test clients need beside the above
 
 [[test]]

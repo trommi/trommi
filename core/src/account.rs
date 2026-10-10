@@ -1,16 +1,17 @@
 //! The account's sealed copies of the recovery code (section 8.8): under the password, the Emergency Kit words
 //! and each passkey.
 //!
-//! An account (an e-mail with a password, passkeys or both, and an Emergency Kit) is a way to the room's recovery
-//! code: each way opens one sealed copy of it, and a device that holds the code joins the room (section 8.4).
-//! The hub never sees the password, the kit's words, a passkey's output or the code.
+//! An account (passkeys, or an e-mail with a password, or both; and an Emergency Kit) is a way to the room's
+//! recovery code: each way opens one sealed copy of it, and a device that holds the code joins the room
+//! (section 8.4). The hub never sees the password, the kit's words, a passkey's output or the code.
 //!
-//! This is v1 section 16 byte for byte, with v1's labels and v1's primitives (HKDF-SHA-256 with a salt,
-//! AES-256-GCM, Argon2id), the one place where the protocol keeps them: the copies an account already holds
-//! stay readable. `spec/account-vectors.json` holds the known answers.
+//! For an account with an e-mail this is v1 section 16 byte for byte, with v1's labels and v1's primitives
+//! (HKDF-SHA-256 with a salt, AES-256-GCM, Argon2id), the one place where the protocol keeps them: the copies
+//! an account already holds stay readable. `spec/account-vectors.json` holds the known answers.
 //!
 //! ```text
-//! salt           = SHA-256("trommi/v1/account-salt" 0x00 ‖ email)
+//! salt           = SHA-256("trommi/v1/account-salt" 0x00 ‖ email)                 an account with an e-mail
+//!                = SHA-256("trommi/v2/account-salt/id" 0x00 ‖ account_id(16))     an account without one
 //! master         = Argon2id(password as NFC UTF-8, salt, m = 64 MiB, t = 3, p = 1, 32 bytes)
 //! K(ikm, label)  = HKDF-SHA-256(ikm, salt, info = label 0x00, 32 bytes)
 //! auth key       = K(master, "trommi/v1/account-auth")        wrap key     = K(master, "trommi/v1/account-wrap-key")
@@ -23,6 +24,18 @@
 //! `r` is the UTF-8 of the kit's twelve lowercase words joined by one space. The two auth keys go to the hub,
 //! which keeps a slow hash of each and hands out a sealed copy only to who presents one; the wrap keys never
 //! leave the device.
+//!
+//! Every account has an account id ([`AccountId`]): sixteen bytes the hub mints when the account is made, a
+//! public value. Its text is printed on every Emergency Kit. Which salt an account has follows from the account
+//! alone ([`AccountName`]): with an e-mail it is the e-mail's, and the id is then only a second way to name the
+//! account and enters nothing; without an e-mail it is the id's, over the id's sixteen bytes. The two salts are
+//! hashes under two labels, so the same words give unrelated keys for an e-mail and for an id. Everything behind
+//! the salt is the same for both. `spec/vectors/account.json` holds the known answers of the second form.
+//!
+//! The second form exists for the kit only ([`kit_keys_for`]). An account without an e-mail has no password: its
+//! ways in are its passkeys and its kit, so nothing here derives a master key from an id. A passkey's copy uses
+//! neither salt: its wrap key is salted with the room id and bound to the credential id, the same for every
+//! account.
 //!
 //! The codes of this module's own refusals are v1's and are not among section 16's: [`AccountError`] carries
 //! them.
@@ -39,6 +52,7 @@ use unicode_normalization::UnicodeNormalization;
 use zeroize::{Zeroize, Zeroizing};
 
 const LABEL_SALT: &str = "trommi/v1/account-salt";
+const LABEL_ID_SALT: &str = "trommi/v2/account-salt/id";
 const LABEL_AUTH: &str = "trommi/v1/account-auth";
 const LABEL_WRAP_KEY: &str = "trommi/v1/account-wrap-key";
 const LABEL_KIT_AUTH: &str = "trommi/v1/recovery-auth";
@@ -75,6 +89,15 @@ const KDF_MEMORY_KIB: u32 = 65536;
 const KDF_PASSES: u32 = 3;
 const KDF_LANES: u32 = 1;
 
+/// The length of an account id.
+pub const ACCOUNT_ID_LEN: usize = 16;
+/// The length of an account id's text.
+pub const ACCOUNT_ID_TEXT_LEN: usize = 36;
+/// The digits of an account id's text.
+const HEX: &[u8; 16] = b"0123456789abcdef";
+/// Where the four hyphens of an account id's text stand.
+const ACCOUNT_ID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
+
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 /// The characters of a recovery code: 256 bits, five to a character, the last one holding a single bit.
 const CODE_CHARS: usize = 52;
@@ -95,8 +118,8 @@ pub enum AccountError {
     BadRecoveryCode,
     /// `no-prf`: the passkey gave no key.
     NoPrf,
-    /// An error of the protocol: `bad-format` for a sealed copy of another form, `wrong-login` or
-    /// `wrong-recovery` for one that does not open, `entropy`, `internal`.
+    /// An error of the protocol: `bad-format` for a sealed copy of another form or an account id that is none,
+    /// `wrong-login` or `wrong-recovery` for a copy that does not open, `entropy`, `internal`.
     Core(Error),
 }
 
@@ -242,6 +265,109 @@ fn account_salt(normalised_email: &str) -> Result<[u8; 32], Error> {
     Ok(*crypto::sha256(&labelled(LABEL_SALT, &[normalised_email.as_bytes()]))?.as_bytes())
 }
 
+/// The id of an account: sixteen bytes the hub mints when the account is made. A public value, and for an
+/// account without an e-mail the input of its salt.
+///
+/// Its text is the one form printed on an Emergency Kit and typed from it: 36 characters, the bytes in order as
+/// lower-case hex with a hyphen after the fourth, sixth, eighth and tenth byte
+/// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`). Every id has exactly one text and every text one id; no bit of the
+/// sixteen bytes is given a meaning or checked.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccountId([u8; ACCOUNT_ID_LEN]);
+
+impl AccountId {
+    /// Takes these bytes as an account id.
+    pub const fn new(bytes: [u8; ACCOUNT_ID_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// Reads an account id from bytes; `bad-format` unless there are sixteen.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
+        bytes.try_into().map(Self).map_err(|_| Error::BadFormat)
+    }
+
+    /// The sixteen bytes.
+    pub const fn as_bytes(&self) -> &[u8; ACCOUNT_ID_LEN] {
+        &self.0
+    }
+
+    /// Reads an account id from its text, which must be exactly the form [`AccountId`] names: nothing is
+    /// trimmed, mapped or accepted in another spelling. Upper-case digits, braces, a missing or misplaced
+    /// hyphen, another length or any other character are `bad-format`.
+    pub fn parse(text: &str) -> Result<Self, AccountError> {
+        if text.len() != ACCOUNT_ID_TEXT_LEN {
+            return Err(Error::BadFormat.into());
+        }
+        let mut bytes = [0u8; ACCOUNT_ID_LEN];
+        let mut places = bytes.iter_mut();
+        let mut high = None;
+        for (at, character) in text.bytes().enumerate() {
+            if ACCOUNT_ID_HYPHENS.contains(&at) {
+                if character != b'-' {
+                    return Err(Error::BadFormat.into());
+                }
+                continue;
+            }
+            let digit = HEX
+                .iter()
+                .position(|known| *known == character)
+                .and_then(|digit| u8::try_from(digit).ok())
+                .ok_or(Error::BadFormat)?;
+            match high.take() {
+                None => high = Some(digit),
+                Some(high) => {
+                    let place = places.next().ok_or(Error::BadFormat)?;
+                    *place = high << 4 | digit;
+                }
+            }
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl fmt::Display for AccountId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use fmt::Write;
+        let digit = |value: u8| HEX.get(usize::from(value & 15)).copied().map(char::from);
+        for (at, byte) in self.0.iter().enumerate() {
+            if matches!(at, 4 | 6 | 8 | 10) {
+                f.write_char('-')?;
+            }
+            for half in [byte >> 4, *byte] {
+                f.write_char(digit(half).ok_or(fmt::Error)?)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for AccountId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AccountId({self})")
+    }
+}
+
+/// What names an account where its Emergency Kit's keys are derived, and with it which salt the account has. An
+/// account with an e-mail is always named by the e-mail here, although its kit shows its id as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountName<'a> {
+    /// An account with an e-mail, as typed.
+    Email(&'a str),
+    /// An account without an e-mail.
+    Id(&'a AccountId),
+}
+
+/// The salt of the account `name` names: the e-mail's for an account with one (`bad-email` for an address that
+/// is none), else `SHA-256("trommi/v2/account-salt/id" 0x00 ‖ account_id)`.
+fn salt_of(name: AccountName<'_>) -> Result<[u8; 32], AccountError> {
+    match name {
+        AccountName::Email(email) => Ok(account_salt(&normalise_email(email)?)?),
+        AccountName::Id(id) => {
+            Ok(*crypto::sha256(&labelled(LABEL_ID_SALT, &[id.as_bytes()]))?.as_bytes())
+        }
+    }
+}
+
 /// Argon2id version 1.3 with the pinned parameters. The 64 MiB it works in are wiped afterwards.
 fn argon2id(password: &[u8], salt: &[u8; 32]) -> Result<Secret<32>, Error> {
     let fault = |_| Error::Internal("argon2");
@@ -299,7 +425,7 @@ pub fn password_keys(
     keys_from_master(email, &master_key(email, password, kdf)?)
 }
 
-/// What follows from e-mail and the Emergency Kit's words.
+/// What follows from the account's name and the Emergency Kit's words.
 #[derive(Debug, PartialEq, Eq)]
 pub struct KitKeys {
     /// What the hub checks before it hands out the kit's copy; it keeps only a slow hash of it.
@@ -308,11 +434,17 @@ pub struct KitKeys {
     pub wrap_key: Secret<32>,
 }
 
-/// The two keys of the Emergency Kit's words, as typed, for the account of `email`. There is no slow step: twelve
-/// random words hold about 155 bits. `bad-email`; `bad-recovery-words` unless the text is twelve words of the
-/// list.
+/// The two keys of the Emergency Kit's words, as typed, for the account of `email`: [`kit_keys_for`] an account
+/// with an e-mail.
 pub fn kit_keys(email: &str, words: &str) -> Result<KitKeys, AccountError> {
-    let salt = account_salt(&normalise_email(email)?)?;
+    kit_keys_for(AccountName::Email(email), words)
+}
+
+/// The two keys of the Emergency Kit's words, as typed, for the account `name` names. There is no slow step:
+/// twelve random words hold about 155 bits. `bad-email` for an e-mail that is none; `bad-recovery-words` unless
+/// the text is twelve words of the list.
+pub fn kit_keys_for(name: AccountName<'_>, words: &str) -> Result<KitKeys, AccountError> {
+    let salt = salt_of(name)?;
     let words = parse_kit_words(words)?;
     Ok(KitKeys {
         auth_key: hkdf(words.expose(), &salt, &labelled(LABEL_KIT_AUTH, &[]))?,
@@ -1278,6 +1410,37 @@ mod tests {
             sealing_aad(&room(&v, "passkey"), way).expect("aad"),
             hex(text(&v, &["passkey", "aad"]))
         );
+    }
+
+    #[test]
+    fn vectors_salt_of_an_account_without_an_email() {
+        let v: Value = serde_json::from_str(include_str!("../../spec/vectors/account.json"))
+            .expect("the vectors");
+        assert_eq!(text(&v, &["label_salt"]), LABEL_ID_SALT);
+        let id = AccountId::from_slice(&hex(text(&v, &["account_id"]))).expect("an id");
+        assert_eq!(
+            labelled(LABEL_ID_SALT, &[id.as_bytes()]),
+            hex(text(&v, &["salt_input"]))
+        );
+        assert_eq!(
+            salt_of(AccountName::Id(&id)).expect("hashes").as_slice(),
+            hex(text(&v, &["salt"]))
+        );
+        assert_eq!(
+            sealing_aad(
+                &RoomId::from_slice(&hex(text(&v, &["room_id"]))).expect("a room id"),
+                Way::Kit
+            )
+            .expect("aad"),
+            hex(text(&v, &["aad"]))
+        );
+        // No e-mail has the id's salt: the two are hashes of texts that differ before either name begins.
+        let shared = LABEL_SALT
+            .bytes()
+            .zip(LABEL_ID_SALT.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        assert!(shared < LABEL_SALT.len() && shared < LABEL_ID_SALT.len());
     }
 
     #[test]
