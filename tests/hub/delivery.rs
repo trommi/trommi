@@ -2130,8 +2130,24 @@ fn what_the_second_review_found_stays_refused() {
     );
     w.ada.post_commit(&w.hub, &out, &key).ok();
     bea.join(out.welcome.as_ref().unwrap());
+    // 9.0.10: its chain goes on with envelopes of the epoch that added it or a later one only: one signed for
+    // an epoch before (it was a leaf then, before its removal) is refused, and takes no number
+    let (seq, prev) = bea.chain(&helper_group);
+    let now_epoch = bea.epoch(&helper_group);
+    let stale = bea
+        .build_envelope(
+            &helper_group,
+            now_epoch - 2,
+            seq + 1,
+            prev,
+            &register(&random(), "from before"),
+            &[9; 32],
+        )
+        .0;
+    bea.post_envelope(&w.hub, &stale).refused(403, "not-member");
     bea.send(&w.hub, &helper_group, &register(&random(), "back in"))
         .ok();
+    assert_eq!(bea.chain(&helper_group).0, seq + 1);
     // a wish is rate-limited per device
     let mut refused = 0;
     for _ in 0..14 {
