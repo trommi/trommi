@@ -256,6 +256,9 @@ export function roomsOn(env: RoomEnv): Rooms {
         }
       }
       await engine.load()
+      // what the room holds from before is read once the hub's order was taken: a recovery took the removed
+      // devices' chains already, and their envelopes are then read back
+      await engine.wantRescan()
       return { client: await clientOf(o, core, hub, engine, cache) }
     } catch (e) {
       if (device) await discard(o, device, engine)

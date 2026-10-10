@@ -272,18 +272,38 @@ export async function recoverWithKit(o: Opening & { email: string; words: string
  * it would leave an account no password logs in to). When it can, this becomes that one request.
  */
 export async function resetPassword(o: Opening & { email: string; words: string; new_password: string }): Promise<{ client: Client; kit: Kit }> {
-  const { new_password, ...kit_in_hand } = o
+  const { email: given, words, new_password, ...device } = o
   const core = await loadCore()
   core.checkPassword(new_password)
-  const { client } = await recoverWithKit(kit_in_hand)
+  const email = core.normaliseEmail(given)
+  const keys = core.kitKeys(email, words)
+  let password: AccountKeys | null = null
   try {
-    const { kit } = await setPassword(signedIn(client), { unlock: { words: o.words }, next: new_password })
-    if (!kit) throw new AccountError('internal', 'the replacement made no kit')
-    return { client, kit }
-  } catch (e) {
-    await stop(client)
-    throw e
-  }
+    const room = roomOf(await anonymous(device).recover(email, keys.authKey))
+    const code = open(core, kitWay(keys), room.room_id, room.sealed_copy)
+    try {
+      // ONE request of spec 8.7: the room's recovery, whose finish takes the new code's copies with it: a new kit
+      // and the password set anew. All or nothing at the hub: a failure before the finish leaves the account as
+      // it was, opened by the words in hand.
+      const next = password = core.passwordKeys(email, new_password)
+      const made: string[] = []
+      const copies = (new_code: Uint8Array): Record<string, unknown> => {
+        const kit = newKit(core, email)
+        try {
+          const account: AccountCopies = { kit: kitPart(core, kit.keys, room.room_id, new_code), password: passwordPart(core, next, room.room_id, new_code) }
+          made.push(kit.words)
+          return { ...account }
+        } finally { zeroKeys(kit.keys) }
+      }
+      const { client } = await joinWithCode({ ...device, room_id: hex(room.room_id), code, recover: true, account: copies })
+      const kit_words = made.at(-1)
+      if (kit_words === undefined) {
+        await stop(client)
+        throw new AccountError('internal', 'the recovery asked for no copies of the new code')
+      }
+      return { client, kit: { words: kit_words, email } }
+    } finally { zero(code) }
+  } finally { zeroKeys(keys, password) }
 }
 
 /**

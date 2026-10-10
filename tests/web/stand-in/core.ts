@@ -257,6 +257,8 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
   const me = async (): Promise<string> => b64(await raw.id())
   const forget = async (id: number): Promise<void> => { if (!(await raw.outbox()).some(e => e.id === id)) state.delete(`facts/${id}`) }
 
+  let removals: { group: string; devices: string[] }[] = []
+
   const device = {
     close: async (): Promise<void> => { await run(async () => {}).catch(() => {}); closed = true; await raw.close(); await state.close() },
     outbox: () => run(async (): Promise<OutboxEntry[]> => (await raw.outbox()).map(e => {
@@ -335,16 +337,19 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       note(id, { 0: { added: [await me()] } })
       return id
     }),
-    prepareRecovery: (code: Uint8Array, served: ServedRoom) => run(() => raw.prepareRecovery(code, bareRoom(served))),
-    recover: (code: Uint8Array, served: ServedRoom, chains: ServedEnvelope[], account: Uint8Array, nowMs: number) => run(async () => {
+    // (the plan's removals are kept for the facts of `recover`: preparing again would make another new code)
+    prepareRecovery: (code: Uint8Array, served: ServedRoom) => run(async () => {
       const plan = await raw.prepareRecovery(code, bareRoom(served))
+      removals = plan.removals.map(r => ({ group: b64(r.group), devices: r.devices.map(b64) }))
+      return plan
+    }),
+    recover: (code: Uint8Array, served: ServedRoom, chains: ServedEnvelope[], account: Uint8Array, nowMs: number) => run(async () => {
       const done = await raw.recover(code, bareRoom(served), chains, account, nowMs)
       const entries = await raw.outbox()
       for (const id of done.outbox) {
         const entry = entries.find(e => e.id === id)
         if (entry?.kind !== 'recoveryCommit' || !entry.group) continue
-        const gone = plan.removals.find(r => same(r.group, entry.group!))?.devices ?? []
-        note(id, { 0: { added: [await me()], removed: gone.map(b64) } })
+        note(id, { 0: { added: [await me()], removed: removals.find(r => r.group === b64(entry.group!))?.devices ?? [] } })
       }
       return done
     }),

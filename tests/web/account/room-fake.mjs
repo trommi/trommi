@@ -117,8 +117,11 @@ export async function joinWithCode(o) {
     call.new_code = hex(new_code)
     call.posted_before_copies = stage.fake.requests.filter(r => /\/recovery\/[^/]+\/(commits|finish)$/.test(r.path)).length
     call.account = o.account ? await o.account(new_code) : null
-    await outside.recoveryCommit(recovery_id, room_id, { epoch, commit: utf8({ added: [device], removed: others }), group_info: groupInfo(room_id, epoch + 1, [device], new_code), sealed_key: utf8('sealed'), recovery_auth: utf8('auth') })
-    await outside.finishRecovery(recovery_id, utf8('link'), call.account)
+    // (as room.ts: a recovery that fails is dropped at the hub, which gives the room back)
+    try {
+      await outside.recoveryCommit(recovery_id, room_id, { epoch, commit: utf8({ added: [device], removed: others }), group_info: groupInfo(room_id, epoch + 1, [device], new_code), sealed_key: utf8('sealed'), recovery_auth: utf8('auth') })
+      await outside.finishRecovery(recovery_id, utf8('link'), call.account)
+    } catch (e) { await outside.dropRecovery(recovery_id).catch(() => {}); throw e }
     rekey(room_id, new_code)
   } else {
     await outside.postCommit(room_id, { epoch, commit: utf8({ added: [device] }), group_info: groupInfo(room_id, epoch + 1, [...others, device], o.code), sealed_key: utf8('sealed'), recovery_auth: utf8('auth') })
