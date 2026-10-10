@@ -94,10 +94,13 @@ export function picture(width, height) {
 }
 /** The first desk ("Desk"), chosen in the menu: where the room's first note lies once there are two desks. */
 async function firstDesk(P) {
-  if (await P.js("return document.getElementById('brand-doors')?.hidden !== false")) {
+  // (a device that just caught up a long history draws the whole page once more when it is through, which closes a
+  //  menu opened in that moment: pressed again, at most three times)
+  for (let i = 0; i < 3 && await P.js("return document.getElementById('brand-doors')?.hidden !== false"); i++) {
     await P.click(await P.js("return document.querySelector('.desk-switch-open')?.getClientRects().length ? '.desk-switch-open' : '#brand-menu'"))
-    await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open')
+    await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open', 3000).catch(() => {})
   }
+  await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open', 1000)
   await P.click('#menu-desk-rows a.menu-desk[data-desk=main]')
   await P.until("trommi.model().desk === 'main' && !trommi.model().all && document.querySelector('#inbox')", 'the first desk')
 }
@@ -396,8 +399,8 @@ export const steps = [
     const A = await ctx.profile('A')
     await ui.openSettings(A)
     await A.click('#settings-invite-agent')
-    await arrives(A, "location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy code')", 'the agent invite page')
-    const command = await A.js("return document.querySelector('[data-state=open] .clip-copy code').textContent")
+    await arrives(A, "location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy[data-line=connect] code')", 'the agent invite page')
+    const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
     ctx.run.check(/'http\S+\/join#v2\.[^']+'/.test(command), 'the connect command carries a join link', command.replace(/#v2\.\S+/, '#v2.…'))
     await A.shot('real-14-agent-invite')
   }],

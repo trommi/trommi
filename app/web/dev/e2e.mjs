@@ -133,7 +133,7 @@ try {
   await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')", 'agent invite page')
   await A.shot('e2e-3-invite-agent.png')
   const link = await A.js("return [...trommi.client.model.invites.values()].at(-1).link")
-  check(await A.js("return [...document.querySelectorAll('.clip-copy')].some(i => /^curl -fsSL \\S+\\/connect \\| sh -s '\\S+\\/join#v1\\./.test(i.dataset.inviteClipTextParam))"), 'agent invite shows the connect command (curl …/connect | sh -s <link>)')
+  check(await A.js("return /^trommi-connector connect '\\S+\\/join#v\\d\\./.test(document.querySelector('.clip-copy[data-line=connect]')?.dataset.inviteClipTextParam ?? '')"), 'agent invite shows the connect command (trommi-connector connect <link>)')
   check(link.startsWith(`${APP}/join#v1.`) || link.includes('/join#v1.'), 'agent invite link with the secret after #')
   const j = joinRoom({ link, storage: memoryStorage(), device_name: 'night-agent', device_info: { device_name: 'night-agent', platform: 'node', folder: '~/git/test', host: 'e2e' }, poll_ms: 100 })
   // Every agent invite asks: the clipboard shows the six emoji the agent's terminal prints, and nothing is added before "They match".

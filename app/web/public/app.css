@@ -703,13 +703,12 @@ body > main#room:not(.room-paged) > .room-head .room-bell { display: none; }
 /* ---- One quiet button for every secondary action: white, a fine line, radius 10, the
    ink's words: Take back, Close (the keys sheet), Cancel, Back, Log out of this device, the
    invite clipboard's Copy. ---- */
-html body :is(.keys-close, .room-back, .room-logout-line a, .desk-duck-no, .clip-copy-word, .clip-copy.is-small .clip-copy-word) {
+html body :is(.keys-close, .room-back, .room-logout-line a, .desk-duck-no, .clip-copy-word) {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2); min-height: 36px; height: auto; padding: 0 14px;
   border: 0; border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg);
   font: 600 var(--t-sm)/1 var(--font); text-decoration: none; cursor: pointer;
 }
 html body :is(.keys-close, .room-back, .room-logout-line a, .desk-duck-no):hover, html body .clip-copy:hover .clip-copy-word { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
-html body .clip-copy.is-small .clip-copy-word { min-height: 30px; padding: 0 10px; }
 @media (pointer: coarse) { html body :is(.keys-close, .room-back, .room-logout-line a, .desk-duck-no) { min-height: 44px; } }
 
 /* ---- The agent's advice: one short, slightly wavy pen stroke at the foot of the advised
