@@ -110,6 +110,17 @@ key package (RFC 9420 allows the reuse, the draft defines the mark).
 - **Cost and risk.** A small ceremony with own messages; 36 bits, one try per invite.
 - **Recommendation.** As proposed.
 - **Covers:** joining by link (humans and agents). Joining by signing in (D1) does not need it.
+- **Change, approved 2026-10-10.** The Offer is bound to the link. Before, the new device checked that the Offer
+  it fetched named its room and invite, had not expired and was signed by the inviter the Offer itself named;
+  nothing it held pinned that key. A hub could therefore serve an Offer of its own (its own inviter key and
+  commitment) under the invite id it knows, sign the matching Reveal, and take the new device into a room of its
+  making; the six emoji then agreed between the new device and the hub's fake inviter, and the real inviter never
+  saw a Request. Now the inviter publishes a MAC over the Offer and its signature, under a key from the link's
+  secret, and the new device refuses an Offer without it before it does anything else. The link also carries
+  its deadline (10 minutes for a human device, 15 for an agent device), which enters every key the secret gives,
+  so a copied link is of no use after the deadline plus 2 minutes, by the joining device's clock. What remains:
+  within the deadline, whoever holds the whole link together with a hostile hub can still forge an Offer; the six
+  emoji compared with the real inviter's screen protect there (`v2.md` 12.1, 17).
 
 ## D5. Signing in to the hub, the wake-up push
 

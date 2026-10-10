@@ -363,14 +363,16 @@ public final class HubClient: @unchecked Sendable {
 
   // ---- invites (12.1), by invite id only -----------------------------------------------------------------
 
-  /** The signed Offer of an invite: { offer, signature }. */
+  /** The signed Offer of an invite: { offer, signature, mac }. */
   public func getInvite(_ invite: Bytes) async throws -> JSON { try await request("GET", "/invites/\(b64u(invite))", auth: false) }
   public func postInviteRequest(_ invite: Bytes, request r: Bytes, mac: Bytes, signature: Bytes) async throws {
     try await request("POST", "/invites/\(b64u(invite))/request", body: ["request": b64u(r), "mac": b64u(mac), "signature": b64u(signature)], auth: false)
   }
   /** The signed Reveal once the inviter published it: { reveal, signature }; `not-found` until then. */
   public func getInviteReveal(_ invite: Bytes) async throws -> JSON { try await request("GET", "/invites/\(b64u(invite))/reveal", auth: false) }
-  public func postInvite(offer: Bytes, signature: Bytes) async throws { try await request("POST", "/invites", body: ["offer": b64u(offer), "signature": b64u(signature)]) }
+  public func postInvite(offer: Bytes, signature: Bytes, mac: Bytes) async throws {
+    try await request("POST", "/invites", body: ["offer": b64u(offer), "signature": b64u(signature), "mac": b64u(mac)])
+  }
   /** The invite as its inviter sees it: with the Requests that came. */
   public func getInviteRequests(_ invite: Bytes) async throws -> JSON { try await request("GET", "/invites/\(b64u(invite))") }
   public func putInviteReveal(_ invite: Bytes, reveal: Bytes, signature: Bytes) async throws {

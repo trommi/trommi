@@ -75,6 +75,8 @@ extension Room {
     notePast { $0.passedOver = false; $0.closed = false }
     readingBack = true
     defer { readingBack = false }
+    // (a board shown is loaded anew from its snapshot by the core: what it holds now may lack what it showed)
+    boardsReset &+= 1
     try await readChanges(&report, &change)
     notePast { $0.readBack = false }
   }

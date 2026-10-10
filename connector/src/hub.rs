@@ -475,7 +475,8 @@ impl Hub {
         self.lease.store(0, Ordering::SeqCst);
     }
 
-    /// Opens the live stream after the change `after`: everything above it first, then what happens.
+    /// Opens the live stream after the change `after`: everything above it first, then what happens. It carries
+    /// `Trommi-Lease` like a write: a process that no longer holds the lease is answered `lease-lost`.
     pub async fn stream(&self, after: u64) -> Result<Stream> {
         let token = self.token().await?;
         let response = self
@@ -483,7 +484,8 @@ impl Hub {
                 self.http
                     .get(self.url(&format!("/v2/stream?after={after}"))),
                 &token,
-                false,
+                // the stream carries the lease: only its holder's stream replaces the device's older ones
+                true,
             )
             .header("accept", "text/event-stream");
         // The answer's head must come in time; the body then lives as long as the stream.
