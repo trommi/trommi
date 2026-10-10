@@ -3,7 +3,7 @@
 # that they read it). No inline script or style element but the hashed ones (index.html's theme script, the
 # help page's script and style); style attributes are allowed (style-src-attr: the views set --hue etc. per element).
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-USOmt2hbScOoML+lzkiY7PYTiXF9wtsUU16lwW3pbLs=' 'sha256-ybvuf1L5uav+6VcsUPoL5ireqy4OGv2k20ARdev3Y88='; style-src 'self' 'sha256-EcuDZUlqOtaNAcwG9eAtUJe5qwlPygYYVo1mHFmnNRo='; style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-USOmt2hbScOoML+lzkiY7PYTiXF9wtsUU16lwW3pbLs=' 'sha256-nW6qghZHBTql0Iku6/pV/uyk+1N10osfYwXWyQw5U/E='; style-src 'self' 'sha256-EcuDZUlqOtaNAcwG9eAtUJe5qwlPygYYVo1mHFmnNRo='; style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
   X-Content-Type-Options: nosniff
   X-Robots-Tag: noindex
   Referrer-Policy: no-referrer

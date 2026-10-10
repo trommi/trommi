@@ -21,7 +21,7 @@
 //
 // The bundle needs the repository's npm packages (esbuild). Cloudflare's build (WORKERS_CI=1) installs them first: npm
 // ci at the repository root. The dev server without --bundle needs none. The connector (a binary) is not built here:
-// its release is uploaded to the app's R2 bucket apart from the app (worker.js serves it). The build reads two of the
+// it is a signed GitHub release of its own (install.sh at the repository root installs it). The build reads two of the
 // connector's files, connector/tools.json and connector/prompt.md, for the help page's list of tools.
 // The Rust core is not compiled here either, as long as its output is there and current: the build takes
 // core/wasm/pkg/ (core/wasm/build.sh writes it, never committed) and runs that script only when the output is missing
