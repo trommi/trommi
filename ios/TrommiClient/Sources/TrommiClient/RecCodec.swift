@@ -57,7 +57,8 @@ enum RecCodec {
     }
     w.s(r.causal.senderDeviceId); w.u(r.causal.senderSequence); w.u(r.causal.sentAt); w.i(r.causal.lamport); w.bool(r.causal.noBody)
     w.u(r.senderSequence); w.i(r.epoch)
-    if let ok = r.objectIdOk { w.b.append(ok ? 2 : 1) } else { w.b.append(0) }
+    // (one byte: objectIdOk in the low bits, `winner` as 8)
+    w.b.append((r.objectIdOk.map { $0 ? 2 : 1 } ?? 0) | (r.winner ? 8 : 0))
     w.os(r.localId); w.bool(r.pending)
     return w.b
   }
@@ -141,7 +142,8 @@ enum RecCodec {
     var rec = Rec(envelopeNumber: n, envelopeHash: h, senderDeviceId: sender, senderRole: role, recipientDeviceId: recipient, sentAt: sentAt, kind: kind,
                   isHead: isHead, object: object, timelineKind: tk, timelineId: tid, sessionId: sid, attachmentIds: atts, content: content, contentState: cs,
                   bind: bind, causal: causal, senderSequence: seq, epoch: epoch)
-    rec.objectIdOk = okb == 0 ? nil : okb == 2
+    rec.objectIdOk = okb & 3 == 0 ? nil : okb & 3 == 2
+    rec.winner = okb & 8 != 0
     rec.localId = localId; rec.pending = pending
     return rec
   }
