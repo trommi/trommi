@@ -13,9 +13,6 @@
 // THE CODE (32 bytes) is held by the caller only while it founds, joins, recovers or replaces; nothing here keeps
 // it, except `RecoverySigner`, which lives as long as the hub client that signs in with it.
 //
-// Not here because the binding lacks what it needs: the Cut of a leaf that a whole recovery (8.7) removes is the
-// head of that device's chain of stored items, verified from number 1. The binding has no stored content yet, so
-// `recover` can be given a true Cut only for a device that never stored anything (0 and zeros).
 import Foundation
 import TrommiClient
 import TrommiCoreRust
@@ -130,12 +127,33 @@ extension LiveDevice {
 
   /// The whole recovery, as `prepareRecovery` prepared it: joins the room group and every session group from outside,
   /// removes every other human device together with the replacement of the code, then every leaf the new room state
-  /// does not allow. `cuts`: the Cut of every leaf to go (`incomplete` when one is missing). `account`: as for
-  /// `replaceCode`. The entries (kinds 11 `recoveryCommit` and, last, 12 `recoveryFinish`) are posted in order; the
-  /// device's state changes only when the hub accepted the last.
-  public func recover(_ code: Bytes, served room: LiveServedRoom, cuts: [(group: GroupId, cut: TrommiClient.Cut)], account: Bytes, nowMs: UInt64) throws -> LiveCodeJoin {
-    let theirs = cuts.map { GroupCut(group: $0.group.data, cut: TrommiCoreRust.Cut(device: $0.cut.device.data, seq: $0.cut.seq, hash: $0.cut.hash.data)) }
-    return codeJoin(try core { try device.recover(recoveryCode: code.data, served: served(room), cuts: theirs, account: account.data, nowMs: nowMs) })
+  /// does not allow. `chains`: the envelopes of the devices to go, as the hub's chain route serves them
+  /// (GET /v2/groups/{group}/chains/{sender}), in the hub's order; the core verifies each chain from number 1 and
+  /// takes the Cut from the head it verified (`gap`, `chain-break`, `equivocation` fail the recovery). A device of
+  /// which nothing is handed in is cut at nothing. `account`: as for `replaceCode`. The entries (kinds 11
+  /// `recoveryCommit` and, last, 12 `recoveryFinish`) are posted in order; the device's state changes only when
+  /// the hub accepted the last.
+  public func recover(_ code: Bytes, served room: LiveServedRoom, chains: [(bytes: Bytes, change: UInt64, voidCode: String?)], account: Bytes, nowMs: UInt64) throws -> LiveCodeJoin {
+    let theirs = try chains.map { e -> ServedEnvelope in
+      let void = try e.voidCode.map { text -> ErrorCode in
+        guard let code = errorCodeFromText(text: text) else { throw TrommiError("bad-format", "a void code this core does not know") }
+        return code
+      }
+      return ServedEnvelope(bytes: e.bytes.data, change: e.change, voidCode: void)
+    }
+    return codeJoin(try core { try device.recover(recoveryCode: code.data, served: served(room), chains: theirs, account: account.data, nowMs: nowMs) })
+  }
+
+  /// Learns the past of a group this device joined by link, from its public history: the founding GroupInfo and
+  /// every Commit from the first on, in order. The room group first, then main sessions, then helper sessions
+  /// (`room-behind`, `group-behind` otherwise); taken only if it arrives at this device's own state (`bad-group`).
+  /// Returns how many epochs were recorded. Envelopes of those epochs, refused with `group-behind` until then, are
+  /// handed to `receiveEnvelope` again afterwards.
+  public func learnHistory(group: GroupId, founding: Bytes, commits: [(change: UInt64, commit: Bytes, recoveryAuth: Bytes?)]) throws -> UInt64 {
+    try core {
+      try device.learnHistory(group: group.data, founding: founding.data,
+                              commits: commits.map { ServedCommit(change: $0.change, commit: $0.commit.data, recoveryAuth: $0.recoveryAuth?.data) })
+    }.epochs
   }
 
   /// Whether this device holds the key that authenticates the room's sealed keys under the code in force (8.3). A
