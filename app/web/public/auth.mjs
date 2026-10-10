@@ -72,7 +72,21 @@ const passkeyForget = id => { try { Promise.resolve(window.PublicKeyCredential?.
  * create: offer "Create with passkey" first (a platform authenticator with user verification, and no word that prf is
  * missing); get: a passkey may be used to log in (also one on a phone or a key); conditional: offer one in the email field.
  */
+/**
+ * Passkeys are switched off for the launch (the owner's call, 2026-10-10): no "Create with passkey", no "Log in with
+ * passkey" nor the field's passkey offer, no "Add passkey". All of it stays in the code and is switched on for a tab
+ * by `?passkeys=1` (kept for the tab session, as `?hub=`), which the tests use; PASSKEYS_ON turns it on for everyone.
+ */
+const PASSKEYS_ON = false
+const passkeysOn = () => {
+  try {
+    const asked = new URLSearchParams(location.search).get('passkeys')
+    if (asked !== null) { if (asked === '1') sessionStorage.setItem('trommi-passkeys', '1'); else sessionStorage.removeItem('trommi-passkeys') }
+    return PASSKEYS_ON || sessionStorage.getItem('trommi-passkeys') === '1'
+  } catch { return PASSKEYS_ON }
+}
 async function passkeyOffer() {
+  if (!passkeysOn()) return { create: false, get: false, conditional: false, off: true }
   if (typeof window.PublicKeyCredential !== 'function' || !navigator.credentials?.create) return { create: false, get: false, conditional: false }
   let caps = null
   try { caps = await PublicKeyCredential.getClientCapabilities?.() ?? null } catch {}
@@ -413,13 +427,13 @@ ${st.email ? '' : html`<details class="room-more" id="email-add"><summary>Add an
 ${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now.${first ? '' : ' The old kit no longer works.'}</p>${kitBox({ ...kit, account: kit.account ?? st.account }, kitLink(kit.account ?? st.account), true)}`
   : html`<p class="room-lead">${st.has_recovery ? 'Made.' : 'Not made yet.'} ${st.has_password === false ? 'It opens your account if you lose your passkey.' : 'With it you can set a new password if you forget yours.'}</p>
 <details class="room-more" id="kit-new"><summary>${st.has_recovery ? 'Make a new kit' : 'Make my Emergency Kit'}</summary>${form('/settings/kit', unlockField(st), 'Make the kit', 'kit-form')}</details>`}
-<h4 class="room-sub">Passkeys</h4>
+${passkeysOff && !(st.passkeys ?? []).length ? '' : html`<h4 class="room-sub">Passkeys</h4>
 ${(st.passkeys ?? []).length ? html`<ul class="room-devices room-passkeys" id="passkeys">${st.passkeys.map(p => html`<li class="room-device room-passkey" id="passkey-${p.credential_id.slice(0, 12)}">
 <span class="room-device-name"><b>Passkey</b><small>added ${day(p.created_at)} · ${p.last_used_at ? `used ${day(p.last_used_at)}` : 'not used yet'}</small></span>
 <form method="post" action="/settings/passkeys/remove" class="room-remove"><input type="hidden" name="id" value="${p.credential_id}"><details><summary>Remove</summary><p>Passkey no longer opens your account after this.</p><button type="submit" class="room-danger">Remove passkey</button></details></form></li>`)}</ul>`
   : html`<p class="room-lead" id="passkeys-none">None yet. A passkey logs you in without a password.</p>`}
 ${st.has_password !== false && (st.passkeys ?? []).length ? html`<p class="room-meta" id="password-still">Your password still opens this account.</p>` : ''}
-${canPasskey ? html`<details class="room-more" id="passkey-new"><summary>Add passkey</summary>${form('/settings/passkeys', unlockField(st), 'Add passkey', 'passkey-form')}</details>` : html`<p class="room-meta" id="passkey-cannot">This browser makes no passkeys.</p>`}
+${canPasskey ? html`<details class="room-more" id="passkey-new"><summary>Add passkey</summary>${form('/settings/passkeys', unlockField(st), 'Add passkey', 'passkey-form')}</details>` : passkeysOff ? '' : html`<p class="room-meta" id="passkey-cannot">This browser makes no passkeys.</p>`}`}
 <h4 class="room-sub">Password</h4>
 ${st.has_password === false
   ? html`<p class="room-lead" id="password-none">None. Your passkey opens this account.</p>
@@ -437,8 +451,8 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     account().then(A => { kitLink = id => { try { return A.kitAddress(location.origin, m().room.hub_url, id) } catch { return null } } }).catch(() => {})
     const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', 'passkey-added': 'Passkey added.', 'passkey-removed': 'Passkey removed.', 'password-added': 'Password added.' }
     // (whether this browser can make a passkey: asked once, the page refreshes when it is known)
-    let canPasskey = false
-    passkeyOffer().then(o => { canPasskey = o.get; if (canPasskey && m().room.account) client._setRoom?.({ account: { ...m().room.account } }) })
+    let canPasskey = false, passkeysOff = !passkeysOn()
+    passkeyOffer().then(o => { canPasskey = o.get; passkeysOff = Boolean(o.off); if (canPasskey && m().room.account) client._setRoom?.({ account: { ...m().room.account } }) })
     /** The way in for a change on this page: the form's password, or a passkey of the account (a prompt). */
     const unlockOf = async (f, st) => (st?.has_password === false ? { passkey: await passkeyUnlock(st) } : { password: String(f.get('password') ?? '') })
     // A kit just made is held here (memory only) for ten minutes, so that the page drawn again (a stream's refresh, a
@@ -974,7 +988,7 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
     const passkey = way === 'passkey'
     show(obShell('Create account', html`<form id="create-form" class="ob-form" novalidate>${note ? html`<p class="ob-said" role="status" id="passkey-note">${note}</p>` : ''}${obEmail(typedEmail(), passkey)}${passkey ? '' : obPassword({ fresh: true })}
 ${obError()}${obSubmit(passkey ? 'Create with passkey' : 'Create account')}</form>
-${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link" id="way-swap">${passkey ? 'Use a password instead' : 'Use a passkey instead'}</button></p>` : NO_PASSKEYS}
+${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link" id="way-swap">${passkey ? 'Use a password instead' : 'Use a passkey instead'}</button></p>` : offer.off ? '' : NO_PASSKEYS}
 <p class="ob-alt">Have an account? <button type="button" class="ob-link" id="alt-login">Log in</button></p>`, passkey ? { lead: 'No password to remember.' } : {}), note ? '#ob-pw' : passkey ? 'button.ob-go' : undefined)
     if (passkey && !demo) warmChallenge()
     on('#alt-login', 'click', () => loginFlow())
@@ -1042,7 +1056,7 @@ ${error && at === 'passkey' ? html`<p class="ob-error ob-key-error" role="alert"
 ${obError(at === 'form' ? error : '')}${pk ? html`<button type="submit" class="ob-second ob-wide" data-word="Log in with password">Log in with password</button>` : obSubmit('Log in')}</form>
 ${pk ? '' : html`<p class="ob-or"><span>or</span></p>`}
 <div class="ob-stack ob-ways"><button type="button" class="ob-second ob-wide" id="way-pair">${art('phone')}Scan a code</button></div>
-${pk ? '' : NO_PASSKEYS}
+${pk || offer.off ? '' : NO_PASSKEYS}
 <p class="ob-alt">New here? <button type="button" class="ob-link" id="alt-create">Create account</button></p>`), pk && !(error && at === 'form') ? '#way-passkey' : undefined)
     on('#alt-create', 'click', () => createFlow())
     on('#way-pair', 'click', () => scanFlow())
