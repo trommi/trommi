@@ -52,10 +52,9 @@ const TAG_OWN: u8 = b'w';
 
 /// How often an envelope the hub voided for its epoch is sealed again before the sender hears of it.
 const RESEALS: u8 = 3;
-/// Where a device the hub no longer takes reads the public Commits of its groups up to the one that removed it
-/// (the owner's decision of 10 October 2026: the hub serves them for a bounded time). The hub's route is not
-/// named yet: until it is, nothing is fetched, and a `not-member` only stops the connector.
-const REMOVAL_ROUTE: Option<&str> = None;
+/// Where a device the hub no longer takes reads the public Commits of one of its groups, up to and including
+/// the one that removed it (spec/hub-api.md; for thirty days): `GET /v2/groups/{group}/removal?after=<n>`.
+const REMOVAL_ROUTE: &str = "removal";
 /// After this many rounds in a row in which what answered was no hub of this protocol, the client stops.
 const NO_HUB_ROUNDS: u32 = 3;
 /// A stream that lived at least this long was a working connection: the pause before the next starts small.
@@ -441,6 +440,8 @@ pub struct Client {
     removed: AtomicBool,
     /// Whether the rollback guard ran in this process: before it has, nothing is signed.
     guarded: AtomicBool,
+    /// Set while served Commits are checked for this device's removal: what is found is told once, at the end.
+    verifying: AtomicBool,
     /// Whether the removal was verified: this device processed the Commit that removed it.
     removal_verified: AtomicBool,
     online: AtomicBool,
@@ -569,6 +570,7 @@ impl Client {
             stop_signal: tokio::sync::watch::channel(false).0,
             removed: AtomicBool::new(false),
             guarded: AtomicBool::new(false),
+            verifying: AtomicBool::new(false),
             removal_verified: AtomicBool::new(false),
             online: AtomicBool::new(false),
             wake: tokio::sync::Notify::new(),
@@ -771,30 +773,67 @@ impl Client {
 
     /// Notes that this device is out, for a caller that holds the core.
     fn set_removed_in(&self, core: &mut Core, replaced: bool, verified: bool) {
-        // A removal that was only claimed and is verified afterwards is told again, as verified.
+        // A removal that was only claimed and is verified afterwards is told again, as verified; so is one
+        // that turns out to be a takeover.
         let newly_verified = verified && !self.removal_verified.swap(true, Ordering::SeqCst);
-        if self.removed.swap(true, Ordering::SeqCst) && !newly_verified {
+        let newly_replaced = replaced && !core.model.room.replaced;
+        core.model.room.replaced |= replaced;
+        if self.removed.swap(true, Ordering::SeqCst) && !newly_verified && !newly_replaced {
             return;
         }
         let _ = self.stop_signal.send(true);
         core.model.room.connection = "removed".into();
-        core.model.room.replaced = replaced;
-        self.emit(ClientEvent::Removed { replaced, verified });
+        if !self.verifying.load(Ordering::SeqCst) {
+            self.emit(ClientEvent::Removed {
+                replaced: core.model.room.replaced,
+                verified: self.removal_verified.load(Ordering::SeqCst),
+            });
+        }
     }
 
-    /// What the hub still serves a device it no longer takes: the Commits of its groups above its cursor, in
-    /// the shape of the items of `/v2/changes`. Empty while the route is not named.
+    /// What the hub still serves a device it no longer takes: per group (the room group, and every session
+    /// group this device was a leaf of) the Commits up to and including the one that removed it. Merged into
+    /// the hub's one order by change number.
     async fn removal_items(&self) -> Result<Vec<Value>> {
-        let Some(route) = REMOVAL_ROUTE else {
-            return Ok(Vec::new());
-        };
-        let cursor = self.core.lock().await.cursor;
-        let answer = self.hub.get(&format!("{route}?after={cursor}")).await?;
-        Ok(answer
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default())
+        let mut groups = vec![GroupId::room(self.room)];
+        groups.extend(self.core.lock().await.groups.values().copied());
+        let mut items: Vec<Value> = Vec::new();
+        for group in groups {
+            let mut after = 0u64;
+            // (at most 200 per answer; a group's log up to one Commit is not longer than this)
+            for _ in 0..500 {
+                let page = match self
+                    .hub
+                    .get(&format!(
+                        "/v2/groups/{}/{REMOVAL_ROUTE}?after={after}",
+                        b64(group.as_bytes())
+                    ))
+                    .await
+                {
+                    Ok(page) => page,
+                    // This device was not removed from that group, or the hub knows no such route.
+                    Err(fault) if fault.code == "not-found" || fault.code == "not-member" => break,
+                    Err(fault) => return Err(fault),
+                };
+                let served = page
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let last = served
+                    .iter()
+                    .filter_map(|item| item.get("n").and_then(Value::as_u64))
+                    .max();
+                items.extend(served);
+                match last {
+                    Some(n) if n > after && page.get("more") == Some(&Value::Bool(true)) => {
+                        after = n
+                    }
+                    _ => break,
+                }
+            }
+        }
+        Ok(items)
     }
 
     /// Hands the device Commits the hub served after it stopped taking this device, in the hub's order. The
@@ -809,24 +848,56 @@ impl Client {
             .collect();
         commits.sort_by_key(|(change, _)| *change);
         let mut core = self.core.lock().await;
+        let before = (
+            self.removal_verified.load(Ordering::SeqCst),
+            core.model.room.replaced,
+        );
+        self.verifying.store(true, Ordering::SeqCst);
+        let mut failed = None;
         for (change, item) in commits {
             if change <= core.cursor {
                 continue;
             }
             match self.take_log(&mut core, item, change, true).await {
-                Ok(_) => core.commit()?,
+                Ok(_) => {
+                    if let Err(fault) = core.commit() {
+                        failed = Some(fault);
+                        break;
+                    }
+                }
                 Err(fault) => {
                     if core.journal.is_dirty() {
                         core.journal.poison();
                     }
-                    return Err(fault);
+                    failed = Some(fault);
+                    break;
                 }
             }
-            if self.removal_verified.load(Ordering::SeqCst) {
-                return Ok(true);
-            }
         }
-        Ok(false)
+        self.verifying.store(false, Ordering::SeqCst);
+        let verified = self.removal_verified.load(Ordering::SeqCst);
+        if (verified, core.model.room.replaced) != before {
+            // Told once, with everything the Commits said: taken out of the room, or its session taken over.
+            self.emit(ClientEvent::Removed {
+                replaced: core.model.room.replaced,
+                verified,
+            });
+        }
+        match failed {
+            Some(fault) if !verified => Err(fault),
+            _ => Ok(verified),
+        }
+    }
+
+    /// Whether this device is out, and how: `(replaced, verified)`.
+    pub async fn removal(&self) -> Option<(bool, bool)> {
+        let core = self.core.lock().await;
+        self.removed.load(Ordering::SeqCst).then(|| {
+            (
+                core.model.room.replaced,
+                self.removal_verified.load(Ordering::SeqCst),
+            )
+        })
     }
 
     /// Whether this client may still sign, post and hand out: not stopped (its lease was lost, or its owner

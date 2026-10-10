@@ -889,7 +889,10 @@ impl Member {
                     if e.code == "not-member" || e.code == "removed-sender" {
                         // The hub no longer knows this device: it was removed, or another connector took its
                         // session over while this one was away.
-                        let replaced = client.core.lock().await.model.room.replaced;
+                        // (whether the device verified its removal itself decides about its state)
+                        let (replaced, verified) = client.removal().await.unwrap_or((false, false));
+                        self.verified
+                            .store(verified, std::sync::atomic::Ordering::SeqCst);
                         e.code = "removed".into();
                         e.extra.insert("replaced".into(), json!(replaced));
                     }
@@ -941,6 +944,15 @@ impl Member {
             }
             client.stop().await;
             me.host().on_dropped().await;
+            // What the client knows by now decides: whether it verified the removal, and what kind it was.
+            let replaced = match client.removal().await {
+                Some((replaced, verified)) => {
+                    me.verified
+                        .store(verified, std::sync::atomic::Ordering::SeqCst);
+                    replaced
+                }
+                None => replaced,
+            };
             if !me.put_out(replaced) {
                 {
                     let mut m = me.me.lock().unwrap();
