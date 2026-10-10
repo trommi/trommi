@@ -45,6 +45,8 @@ pub struct Forger {
     pub identity: Vec<u8>,
     /// An extension type its leaves state beside the profile's, if a test sets one.
     pub extra_extension: Option<u16>,
+    /// How many seconds its KeyPackages are valid for from now, if a test sets it; else OpenMLS's own span.
+    pub lifetime_s: Option<u64>,
 }
 
 impl Default for Forger {
@@ -72,6 +74,7 @@ impl Forger {
             signer,
             key,
             extra_extension: None,
+            lifetime_s: None,
         }
     }
 
@@ -114,8 +117,11 @@ impl Forger {
 
     /// One KeyPackage of it, as it travels.
     pub fn key_package(&self) -> Vec<u8> {
-        let bundle = KeyPackage::builder()
-            .leaf_node_capabilities(self.capabilities())
+        let mut builder = KeyPackage::builder().leaf_node_capabilities(self.capabilities());
+        if let Some(seconds) = self.lifetime_s {
+            builder = builder.key_package_lifetime(openmls::prelude::Lifetime::new(seconds));
+        }
+        let bundle = builder
             .build(SUITE, &self.provider, &self.signer, self.credential())
             .expect("a key package");
         MlsMessageOut::from(bundle.key_package().clone())
@@ -318,6 +324,32 @@ impl Forger {
             parts: vec![self.message(group, plaintext)],
         };
         hub.post(&self.id(), &entry).expect("the hub stores it")
+    }
+
+    /// Posts the founding of a session group of this forger to a hub that checks nothing: the GroupInfo of
+    /// epoch 0 and the first Commit.
+    pub fn post_founding(
+        &self,
+        hub: &mut Hub,
+        group: &GroupId,
+        group_info_0: &[u8],
+        first: &Forged,
+    ) -> Result<Accepted, Error> {
+        let entry = OutboxEntry {
+            id: 0,
+            kind: OutboxKind::GroupFounding,
+            group: Some(*group),
+            epoch: 0,
+            parts: vec![
+                group_info_0.to_vec(),
+                b"no sealed key".to_vec(),
+                first.commit.clone(),
+                first.group_info.clone(),
+                first.welcome.clone().unwrap_or_default(),
+                b"no sealed key".to_vec(),
+            ],
+        };
+        hub.post(&self.id(), &entry)
     }
 
     /// Posts a Commit of this forger to a hub that checks nothing.

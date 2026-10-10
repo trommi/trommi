@@ -184,8 +184,28 @@ impl Observer {
             .ok_or_else(damaged)
     }
 
-    /// Starts from a GroupInfo with its tree: OpenMLS verifies the tree, every leaf and the GroupInfo's
-    /// signature (`bad-signature`), and every leaf must be the profile's (`bad-group`).
+    /// Starts from a GroupInfo with its tree.
+    ///
+    /// OpenMLS (`PublicGroup::from_external`) verifies, and any failure is `bad-signature`: the suite is one
+    /// it supports; the signature of every leaf, with the group id for a leaf from a Commit or an Update;
+    /// the parent hashes of the tree; that no two leaves share a signature key and no two nodes an
+    /// encryption key; that every unmerged leaf is a blank-free descendant listed all the way up; that each
+    /// leaf's extensions are valid in a leaf and covered by its own capabilities, that its capabilities
+    /// cover its credential type and what the group context requires, and that every leaf supports every
+    /// other leaf's credential type; that the lifetime of a leaf from a KeyPackage holds the present time;
+    /// the GroupInfo's signature under the key of the leaf it names as its signer; that the tree hashes to
+    /// the group context's tree hash; that the version is `mls10`. It does not check the confirmation tag
+    /// (an observer holds no key), nor that the GroupInfo is the newest.
+    ///
+    /// The core adds what OpenMLS leaves open, since it takes any credential, any capabilities above the
+    /// required ones and any group context: the GroupInfo carries the tree and `external_pub`
+    /// (`bad-format`); every leaf of the tree is the profile's, a basic credential that is the leaf's
+    /// signature key, exactly the profile's capabilities and no leaf extension (`bad-group`); the epoch is
+    /// one a group reaches by Commits (`bad-group`); and the group context is the profile's: `mls10`, the
+    /// suite, and the extension list of a room or of a session group with its `required_capabilities`
+    /// (`bad-format`). A leaf's lifetime is not readable outside OpenMLS: that it spans no more than the
+    /// profile's ten years is checked where a KeyPackage is verified, before it is stored or added and
+    /// where a Commit adds it, not for a leaf already in a tree.
     fn start(group_info: &[u8]) -> Result<(Provider, PublicGroup, GroupId, GroupKind), Error> {
         let verifiable = parse_group_info(group_info)?;
         let tree = verifiable
@@ -502,6 +522,50 @@ impl Observer {
         Ok(self.public()?.group_context().epoch().as_u64())
     }
 
+    /// The group's GroupContext as it stands, in its TLS encoding. It carries the confirmed transcript hash,
+    /// which chains every Commit since the founding.
+    pub fn group_context(&self) -> Result<Vec<u8>, Error> {
+        self.public()?
+            .group_context()
+            .tls_serialize_detached()
+            .map_err(|_| Error::Internal("group context encoding"))
+    }
+
+    /// Puts what a walk from the group's founding verified before the state this observer started from in
+    /// front of its own record: the room's roles of the earlier epochs, or a main session's agent leaf over
+    /// that time. The caller has checked that the walk arrives at the state this observer started from.
+    pub(crate) fn prepend(
+        &mut self,
+        earlier_room: Option<&RoomHistory>,
+        earlier_seats: &[(u64, Option<DeviceId>)],
+    ) -> Result<(), Error> {
+        match &mut self.followed {
+            Followed::Room(history) => {
+                let earlier = earlier_room.ok_or(Error::Internal("room observer"))?;
+                let mut whole = earlier.clone();
+                for state in history
+                    .states()
+                    .filter(|state| state.epoch > earlier.newest().epoch)
+                {
+                    whole.record(state.clone())?;
+                }
+                *history = whole;
+                self.untaken_from = 0;
+            }
+            Followed::Session(record) => {
+                let mut seats = earlier_seats.to_vec();
+                for change in record.seats.iter().skip(1) {
+                    if seats.last().map(|(_, seat)| *seat) != Some(change.1) {
+                        seats.push(*change);
+                    }
+                }
+                record.seats = seats;
+                self.record_changed = true;
+            }
+        }
+        Ok(())
+    }
+
     /// The devices of the group's leaves.
     pub fn leaves(&self) -> Result<BTreeSet<DeviceId>, Error> {
         let leaves = rules::leaves_of(self.public()?.members())?;
@@ -602,6 +666,7 @@ impl Observer {
                 posted.recovery_auth,
                 context,
                 Some(base.as_ref()),
+                None,
             )?;
             // 8.4: the hub holds the GroupInfo a join from outside builds on, and the join names it.
             if facts.external && base.is_none() {
@@ -626,8 +691,11 @@ impl Observer {
         })
     }
 
-    /// Follows a Commit read from the hub's log: it verifies against the public state and obeys sections 3 to
-    /// 5, judged against the room state it names. On a refusal the observer is unchanged.
+    /// Follows a Commit read from the hub's log, in the hub's order: it verifies against the public state and
+    /// obeys sections 3 to 5. A session Commit must name the room epoch `context.room` stands in, which at
+    /// its place in that order is the one that was current at the hub: one that names a newer epoch came too
+    /// early (`room-behind`), one that names an older epoch is never taken (`bad-group`). On a refusal the
+    /// observer is unchanged.
     pub fn process_commit(
         &mut self,
         commit: &[u8],
@@ -636,7 +704,25 @@ impl Observer {
     ) -> Result<CommitFacts, Error> {
         self.guarded(|observer| {
             observer
-                .follow(commit, recovery_auth, context, None)
+                .follow(commit, recovery_auth, context, None, None)
+                .map(|(facts, _)| facts)
+        })
+    }
+
+    /// As [`Observer::process_commit`], for a holder whose record of the room reaches beyond the Commit's
+    /// place: one that replays a session's log, or is handed the log of a group it joined late. `room_epoch`
+    /// is the room epoch that was current at the Commit's place in the hub's order, which a session Commit
+    /// must name (5.2.1).
+    pub fn process_commit_at(
+        &mut self,
+        commit: &[u8],
+        recovery_auth: Option<&[u8]>,
+        context: &Context<'_>,
+        room_epoch: u64,
+    ) -> Result<CommitFacts, Error> {
+        self.guarded(|observer| {
+            observer
+                .follow(commit, recovery_auth, context, None, Some(room_epoch))
                 .map(|(facts, _)| facts)
         })
     }
@@ -665,6 +751,7 @@ impl Observer {
         recovery_auth: Option<&[u8]>,
         context: &Context<'_>,
         posted: Option<Option<&Hash32>>,
+        at: Option<u64>,
     ) -> Result<(CommitFacts, Vec<Vec<u8>>), Error> {
         let posting = posted.is_some();
         let message = rules::parse_commit(commit)?;
@@ -710,25 +797,33 @@ impl Observer {
                     sessions: context.sessions,
                     recovery: context.recovery,
                     max_human_devices: context.max_human_devices,
-                    posting,
+                    room_epoch: history.newest().epoch,
                 },
                 &judged,
             )?,
-            Followed::Session(record) => rules::check_session_commit(
-                &Verifier {
-                    history: context.room.ok_or(Error::RoomBehind)?,
+            Followed::Session(record) => {
+                // 5.2.1: the room epoch at the Commit's place is the one the room's history stands in:
+                // the hub takes a post against its newest state, and a log is followed in the hub's order.
+                // A holder whose history reaches further names the epoch itself.
+                let history = context.room.ok_or(Error::RoomBehind)?;
+                let verifier = Verifier {
+                    history,
                     sessions: context.sessions,
                     recovery: context.recovery,
                     max_human_devices: context.max_human_devices,
-                    posting,
-                },
-                &SessionBefore {
+                    room_epoch: at.unwrap_or(history.newest().epoch),
+                };
+                let before = SessionBefore {
                     session: record.session,
                     leaves: leaves.iter().map(|(_, device)| *device).collect(),
                     previous_room_epoch: record.previous_room_epoch,
-                },
-                &judged,
-            )?,
+                };
+                if posting {
+                    rules::check_session_commit(&verifier, &before, &judged)?;
+                } else {
+                    rules::check_stored_session_commit(&verifier, &before, &judged)?;
+                }
+            }
         }
         let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
             return Err(Error::BadCommit);
@@ -798,7 +893,7 @@ impl Observer {
     }
 
     /// The device that signed `group_info`, if it is a GroupInfo of the observer's present state
-    /// ([`signer_of`]); `incomplete` otherwise.
+    /// (`signer_of`); `incomplete` otherwise.
     pub fn group_info_signer(&self, group_info: &[u8]) -> Result<DeviceId, Error> {
         signer_of(&self.public()?, group_info)
     }
@@ -841,6 +936,45 @@ pub(crate) fn signer_of(public: &PublicGroup, group_info: &[u8]) -> Result<Devic
     } else {
         Err(Error::Incomplete)
     }
+}
+
+/// Reads a Commit against a group's public state without following it: OpenMLS verifies it there as it does
+/// for any observer, and the result is described as for every verifier. `public` are the entries of
+/// [`provider::public_entries`]. For a device that judges its own Commit, from the bytes it will post, by the
+/// rules a receiver applies. Returns the facts, the group's leaves before the Commit, and the group context
+/// the Commit leads to, as a follower of the public state computes it: a member that merges its own staged
+/// copy of the Commit must arrive at the same.
+pub(crate) fn read_commit(
+    public: MlsEntries,
+    group: &GroupId,
+    commit: &[u8],
+) -> Result<(CommitFacts, BTreeSet<DeviceId>, Vec<u8>), Error> {
+    provider::validate_entries(&public)?;
+    let provider = Provider::without_entropy(public)?;
+    let id = openmls::prelude::GroupId::from_slice(group.as_bytes());
+    let mut held = PublicGroup::load(provider.storage(), &id)
+        .map_err(mls_fault)?
+        .ok_or_else(damaged)?;
+    let message = rules::parse_commit(commit)?;
+    let leaves = rules::leaves_of(held.members())?;
+    let processed = held
+        .process_message(provider.crypto(), message)
+        .map_err(|_| Error::BadCommit)?;
+    let ProcessedMessageContent::StagedCommitMessage(staged) = processed.content() else {
+        return Err(Error::BadCommit);
+    };
+    let facts = rules::commit_facts(group, &leaves, &processed, staged)?;
+    let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
+        return Err(Error::BadCommit);
+    };
+    held.merge_commit(provider.storage(), *staged)
+        .map_err(mls_fault)?;
+    let after = held
+        .group_context()
+        .tls_serialize_detached()
+        .map_err(|_| Error::Internal("group context encoding"))?;
+    let leaves = leaves.into_iter().map(|(_, device)| device).collect();
+    Ok((facts, leaves, after))
 }
 
 /// A main session's agent leaf under `room`: its leaf that is not a human device. A group with several has no
@@ -905,7 +1039,8 @@ fn check_welcome(welcome: Option<&[u8]>, added: &[Vec<u8>]) -> Result<(), Error>
     }
 }
 
-/// An answer to [`SessionFacts`] for a verifier that follows no other session.
+/// An answer to [`SessionFacts`] for a verifier that follows no other session. It knows no main session, and
+/// so judges no Commit of a helper session (`room-behind`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoSessions;
 

@@ -62,52 +62,6 @@ fn world(checks: bool) -> World {
     }
 }
 
-/// Each device processes the log; the last entry is refused with `code`, as the finding `bad-group`.
-fn refuse(hub: &Hub, devices: &mut [&mut TestDevice], code: &Error) {
-    for device in devices {
-        let results = sync(hub, device);
-        let error = results.last().unwrap().as_ref().unwrap_err();
-        assert_eq!(error, code);
-        assert_eq!(log_finding(error), LogFinding::BadGroup);
-    }
-}
-
-/// Runs `build` on a hub that checks and on one that does not. `build` leaves one Commit in the outbox of the
-/// device it returns (by its place in `[a, b, agent, other]`). The checking hub refuses it with `code`; stored
-/// by the other hub, it is refused with `code` by every other device that judges the group.
-fn refused_by_hub_and_devices(build: fn(&mut World) -> usize, judges: &[usize], code: Error) {
-    for checks in [true, false] {
-        let mut world = world(checks);
-        let committer = build(&mut world);
-        let World {
-            hub,
-            a,
-            b,
-            agent,
-            other,
-            ..
-        } = &mut world;
-        let devices = [a, b, agent, other];
-        if checks {
-            assert_eq!(
-                post_refused(hub, devices[committer]),
-                std::slice::from_ref(&code)
-            );
-            assert!(devices[committer].outbox().is_empty());
-        } else {
-            post_ok(hub, devices[committer]);
-            for judge in judges {
-                refuse(hub, &mut [&mut *devices[*judge]], &code);
-            }
-        }
-    }
-}
-
-const A: usize = 0;
-const B: usize = 1;
-const AGENT: usize = 2;
-const OTHER: usize = 3;
-
 #[test]
 fn an_agent_device_committing_in_the_room_group() {
     // No operation of an agent device builds a Commit of the room group's leaves: it is no leaf.
@@ -194,35 +148,31 @@ fn a_founding_commit_missing_a_human_device() {
 
 #[test]
 fn a_main_session_with_two_agent_leaves() {
-    refused_by_hub_and_devices(
-        |w| {
-            let package = w.other.key_package(now()).unwrap();
-            w.a.add_to_session(&w.main, &w.other.id(), &package, now())
-                .unwrap();
-            A
-        },
-        &[B, AGENT],
-        Error::BadCommit,
+    // No device builds it. (The rule on the wire: `rules.rs`, main_session_commits_follow_5_2.)
+    let mut w = world(true);
+    let package = w.other.key_package(now()).unwrap();
+    assert_eq!(
+        w.a.add_to_session(&w.main, &w.other.id(), &package, now()),
+        Err(Error::BadCommit)
     );
+    assert!(w.a.outbox().is_empty() && !w.a.group(&w.main).unwrap().pending);
     // Founded with two: the second agent device is one KeyPackage too many, added like a helper device.
-    refused_by_hub_and_devices(
-        |w| {
-            let mut third = new_device();
-            w.a.change_agents(&[third.id()], &[], now()).unwrap();
-            post_ok(&mut w.hub, &mut w.a);
-            for device in [&mut w.b, &mut w.agent, &mut w.other] {
-                settle(&w.hub, device);
-            }
-            observe(&w.hub, &mut third);
-            publish_some(&mut w.hub, &mut w.other, 1);
-            let mut packages = w.hub.claim(&[w.b.id(), w.other.id()]).unwrap();
-            packages.push(third.key_package(now()).unwrap());
-            w.a.found_session(&w.other.id(), &packages, now()).unwrap();
-            A
-        },
-        &[],
-        Error::BadCommit,
+    let mut third = new_device();
+    w.a.change_agents(&[third.id()], &[], now()).unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    for device in [&mut w.b, &mut w.agent, &mut w.other] {
+        settle(&w.hub, device);
+    }
+    observe(&w.hub, &mut third);
+    publish_some(&mut w.hub, &mut w.other, 1);
+    let mut packages = w.hub.claim(&[w.b.id(), w.other.id()]).unwrap();
+    packages.push(third.key_package(now()).unwrap());
+    assert_eq!(
+        w.a.found_session(&w.other.id(), &packages, now()),
+        Err(Error::BadCommit)
     );
+    assert!(w.a.outbox().is_empty());
+    assert_eq!(w.a.groups().unwrap().len(), 2);
 }
 
 #[test]
@@ -249,30 +199,23 @@ fn a_returning_key() {
             a.add_human_device(&b.id(), &package, now()),
             Err(Error::BadCommit)
         );
-        a.add_to_session(&main, &b.id(), &package, now()).unwrap();
-        if checks {
-            assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
-            assert_eq!(hub.epoch(&main), Some(2));
-        } else {
-            post_ok(&mut hub, &mut a);
-            refuse(&hub, &mut [&mut agent], &Error::BadCommit);
-            assert_eq!(agent.group(&main).unwrap().epoch, 2);
-        }
+        // Nor its return to a session group.
+        assert_eq!(
+            a.add_to_session(&main, &b.id(), &package, now()),
+            Err(Error::BadCommit)
+        );
+        assert_eq!(hub.epoch(&main), Some(2));
+        assert_eq!(agent.group(&main).unwrap().epoch, 2);
     }
     // A replaced agent device is enrolled again.
-    refused_by_hub_and_devices(
-        |w| {
-            w.a.change_agents(&[], &[w.other.id()], now()).unwrap();
-            post_ok(&mut w.hub, &mut w.a);
-            for device in [&mut w.b, &mut w.agent, &mut w.other] {
-                settle(&w.hub, device);
-            }
-            w.a.change_agents(&[w.other.id()], &[], now()).unwrap();
-            A
-        },
-        &[B, AGENT, OTHER],
-        Error::BadCommit,
+    let mut w = world(true);
+    w.a.change_agents(&[], &[w.other.id()], now()).unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    assert_eq!(
+        w.a.change_agents(&[w.other.id()], &[], now()),
+        Err(Error::BadCommit)
     );
+    assert!(w.a.outbox().is_empty());
 }
 
 #[test]

@@ -200,9 +200,42 @@ pub trait ChainRecords {
 pub struct Chains {
     heads: BTreeMap<DeviceId, Head>,
     counts: BTreeMap<u64, u64>,
+    /// The chains that began at a board snapshot's frontier (section 10.3) and whose envelopes up to it
+    /// are not all verified yet.
+    starts: BTreeMap<DeviceId, Start>,
     /// How many changes this state has taken. An envelope is checked against one revision and its step fits
     /// only that one.
     revision: u64,
+}
+
+/// A chain that began at a frontier instead of number 1: the frontier, and how far the envelopes below it
+/// were verified from number 1 since.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Start {
+    frontier: Head,
+    verified: Head,
+}
+
+struct StartEntry(DeviceId, Start);
+
+impl Encode for StartEntry {
+    fn write(&self, writer: &mut Writer) -> Result<(), Error> {
+        writer.fixed(self.0.as_bytes());
+        writer.value(&self.1.frontier)?;
+        writer.value(&self.1.verified)
+    }
+}
+
+impl Decode for StartEntry {
+    fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
+        Ok(Self(
+            reader.value()?,
+            Start {
+                frontier: reader.value()?,
+                verified: reader.value()?,
+            },
+        ))
+    }
 }
 
 struct HeadEntry(DeviceId, Head);
@@ -251,10 +284,45 @@ impl Chains {
     /// the one shortcut around verifying a chain from its first envelope. It stands for the board's items only:
     /// the state of the group's objects is still replayed from all of their envelopes.
     pub fn from_frontier(frontier: &[(DeviceId, Head)]) -> Self {
-        Self {
-            heads: frontier.iter().copied().collect(),
-            ..Self::new()
+        let mut chains = Self::new();
+        for (sender, head) in frontier.iter().filter(|(_, head)| head.seq > 0) {
+            chains.heads.insert(*sender, *head);
+            chains.starts.insert(
+                *sender,
+                Start {
+                    frontier: *head,
+                    verified: Head::START,
+                },
+            );
         }
+        chains
+    }
+
+    /// Starts the chain of `sender`, of which nothing is held, at `frontier` (section 10.3): the envelope
+    /// after it is the next one taken. The envelopes up to the frontier can be read from number 1 at any
+    /// time later; they must then lead to the frontier's envelope (`equivocation` otherwise), and until they
+    /// did, [`Chains::started_at`] names the frontier. `Error::Internal` for a chain that holds an envelope
+    /// or for a frontier before the first envelope.
+    pub fn start_at(&mut self, sender: DeviceId, frontier: Head) -> Result<(), Error> {
+        if self.head(&sender) != Head::START || frontier.seq == 0 {
+            return Err(Error::Internal("a chain started twice"));
+        }
+        self.heads.insert(sender, frontier);
+        self.starts.insert(
+            sender,
+            Start {
+                frontier,
+                verified: Head::START,
+            },
+        );
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// The frontier the chain of `sender` began at, while the envelopes up to it are not all verified from
+    /// number 1; none for a chain that is whole.
+    pub fn started_at(&self, sender: &DeviceId) -> Option<Head> {
+        self.starts.get(sender).map(|start| start.frontier)
     }
 
     /// The last accepted envelope of `sender`; [`Head::START`] if none.
@@ -280,11 +348,34 @@ impl Chains {
     /// longer stands where the envelope was checked: a step is applied once, before the next envelope of the
     /// group is checked.
     pub fn apply(&mut self, advance: &Advance) -> Result<(), Error> {
-        if self.revision != advance.revision || self.head(&advance.sender) != advance.prev {
+        if self.revision != advance.revision {
             return Err(Error::Internal("a chain step applied out of turn"));
         }
+        // A step below the frontier a chain began at verifies one more envelope from number 1.
+        let below = self
+            .starts
+            .get(&advance.sender)
+            .filter(|start| advance.head.seq <= start.frontier.seq)
+            .copied();
+        match below {
+            Some(start) => {
+                if start.verified != advance.prev {
+                    return Err(Error::Internal("a chain step applied out of turn"));
+                }
+                if advance.head.seq == start.frontier.seq {
+                    self.starts.remove(&advance.sender);
+                } else if let Some(start) = self.starts.get_mut(&advance.sender) {
+                    start.verified = advance.head;
+                }
+            }
+            None => {
+                if self.head(&advance.sender) != advance.prev {
+                    return Err(Error::Internal("a chain step applied out of turn"));
+                }
+                self.heads.insert(advance.sender, advance.head);
+            }
+        }
         self.revision = self.revision.saturating_add(1);
-        self.heads.insert(advance.sender, advance.head);
         let count = self.counts.entry(advance.epoch).or_insert(0);
         *count = count.saturating_add(1);
         Ok(())
@@ -294,6 +385,18 @@ impl Chains {
     pub fn apply_cut(&mut self, effect: &CutEffect) {
         if let Some(head) = effect.head {
             self.heads.insert(effect.sender, head);
+            // A chain that began at a frontier beyond the Cut ends at the Cut: what is still to be verified
+            // from number 1 leads there.
+            let whole = match self.starts.get_mut(&effect.sender) {
+                Some(start) if head.seq < start.frontier.seq => {
+                    start.frontier = head;
+                    start.verified.seq >= head.seq
+                }
+                _ => false,
+            };
+            if whole {
+                self.starts.remove(&effect.sender);
+            }
         }
         self.revision = self.revision.saturating_add(1);
     }
@@ -306,10 +409,16 @@ impl Chains {
             .iter()
             .map(|(e, n)| CountEntry(*e, *n))
             .collect();
+        let starts: Vec<StartEntry> = self
+            .starts
+            .iter()
+            .map(|(sender, start)| StartEntry(*sender, *start))
+            .collect();
         let mut writer = Writer::new();
         writer.u64(self.revision);
         writer.vector(&heads)?;
         writer.vector(&counts)?;
+        writer.vector(&starts)?;
         Ok(writer.into_bytes())
     }
 
@@ -322,6 +431,7 @@ impl Chains {
         let revision = reader.u64().map_err(corrupt)?;
         let heads: Vec<HeadEntry> = reader.vector().map_err(corrupt)?;
         let counts: Vec<CountEntry> = reader.vector().map_err(corrupt)?;
+        let starts: Vec<StartEntry> = reader.vector().map_err(corrupt)?;
         reader.finish().map_err(corrupt)?;
         let mut chains = Self {
             revision,
@@ -334,6 +444,16 @@ impl Chains {
         }
         for CountEntry(epoch, count) in counts {
             if chains.counts.insert(epoch, count).is_some() {
+                return Err(corrupt(Error::BadFormat));
+            }
+        }
+        for StartEntry(sender, start) in starts {
+            // A start is kept only while envelopes below its frontier are unverified, and the chain it
+            // belongs to stands at the frontier or beyond.
+            let fits = start.verified.seq < start.frontier.seq
+                && (start.verified.seq == 0) == start.verified.hash.is_zero()
+                && chains.head(&sender).seq >= start.frontier.seq;
+            if !fits || chains.starts.insert(sender, start).is_some() {
                 return Err(corrupt(Error::BadFormat));
             }
         }
@@ -417,7 +537,7 @@ pub struct Outgoing {
 /// Refuses, before anything is signed, what the hub would refuse: `group-behind` for a group the device does
 /// not know, `not-member` when it is no leaf, `removed-sender` when a Cut ended its chain, `stale-session`, `epoch-full`, `forbidden` when 9.2 does not let
 /// this device write the item against the object state it has, `no-key` without the epoch's content key; and
-/// what [`envelope::seal`] refuses. A refusal uses up no number and leaves `own` as it was.
+/// what `envelope::seal` refuses. A refusal uses up no number and leaves `own` as it was.
 ///
 /// On success `own` has moved on: the number is used up, and a second call signs the next one. The caller
 /// stores `own` in the same write as the envelope's outbox entry, before the envelope leaves (section 13.2); a
@@ -630,7 +750,8 @@ fn first_five(facts: &dyn GroupFacts, envelope: Envelope) -> Result<Verified, Er
     })
 }
 
-/// Check 6: the envelope is the next of its sender's chain. `replay` for an envelope already accepted,
+/// Check 6: the envelope is the next of its sender's chain; the step is returned as the place before it and
+/// its own. `replay` for an envelope already accepted,
 /// `equivocation` for another one under an accepted number, `gap` for a number beyond the next, `chain-break`
 /// for the next number with a `prev` that is not the last accepted hash.
 fn link(
@@ -638,8 +759,30 @@ fn link(
     chains: &Chains,
     header: &Header,
     hash: &Hash32,
-) -> Result<Head, Error> {
+) -> Result<(Head, Head), Error> {
     let last = chains.head(&header.sender);
+    // A chain that began at a frontier takes the envelopes up to it from number 1, each the next of those
+    // verified so far, and the one at the frontier's number must be the frontier's.
+    let below = chains
+        .starts
+        .get(&header.sender)
+        .filter(|start| header.seq > start.verified.seq && header.seq <= start.frontier.seq);
+    if let Some(start) = below {
+        if start.verified.seq.checked_add(1) != Some(header.seq) {
+            return Err(Error::Gap);
+        }
+        if header.prev != start.verified.hash {
+            return Err(Error::ChainBreak);
+        }
+        if header.seq == start.frontier.seq && *hash != start.frontier.hash {
+            return Err(Error::Equivocation);
+        }
+        let head = Head {
+            seq: header.seq,
+            hash: *hash,
+        };
+        return Ok((start.verified, head));
+    }
     if header.seq <= last.seq {
         let accepted = if header.seq == last.seq {
             Some(last.hash)
@@ -658,10 +801,11 @@ fn link(
     if header.prev != last.hash {
         return Err(Error::ChainBreak);
     }
-    Ok(Head {
+    let head = Head {
         seq: header.seq,
         hash: *hash,
-    })
+    };
+    Ok((last, head))
 }
 
 /// Check 8: an envelope of the newest processed epoch is fresh; one of an older epoch is `wrong-epoch` unless
@@ -769,10 +913,10 @@ fn take(
     now_ms: u64,
 ) -> Result<Receipt, Error> {
     let header = &verified.envelope.header;
-    let head = link(records, chains, header, &verified.hash)?;
+    let (prev, head) = link(records, chains, header, &verified.hash)?;
     let advance = Advance {
         sender: header.sender,
-        prev: chains.head(&header.sender),
+        prev,
         head,
         epoch: header.epoch,
         revision: chains.revision,
