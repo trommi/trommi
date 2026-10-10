@@ -1189,19 +1189,13 @@ pub fn removed_lately(c: &Connection, room: &Room, device: &Device, now: u64) ->
     if removal_at(c, room, device, &room[..], now)?.is_some() {
         return Ok(true);
     }
-    let mut s = c.prepare_cached(
-        "SELECT m.group_id FROM group_members m JOIN groups g ON g.group_id = m.group_id
-         WHERE m.device = ?1 AND g.room_id = ?2 AND m.removed_epoch IS NOT NULL LIMIT 64",
-    )?;
-    let groups = s
-        .query_map(params![&device[..], &room[..]], |r| r.get::<_, Vec<u8>>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    for group in groups {
-        if removal_at(c, room, device, &group, now)?.is_some() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    // any group of the room it was removed from within the time (each removing Commit by the index of Commits)
+    Ok(c.prepare_cached(
+        "SELECT 1 FROM group_members m JOIN groups g ON g.group_id = m.group_id
+           JOIN group_log l INDEXED BY group_log_one_commit ON l.group_id = m.group_id AND l.epoch = m.removed_epoch - 1 AND l.kind = 'commit'
+         WHERE m.device = ?1 AND g.room_id = ?2 AND m.removed_epoch IS NOT NULL AND l.at + ?3 > ?4 LIMIT 1",
+    )?
+    .exists(params![&device[..], &room[..], REMOVAL_KEPT_MS as i64, now as i64])?)
 }
 
 /// `GET /v2/groups/{group}/removal?after=`: for a device that was removed, the Commits of that group after
@@ -1219,11 +1213,20 @@ pub fn removal(
     let Some(last) = removal_at(c, room, device, group_id, now)? else {
         return Err(refuse("not-found", "no removal to show"));
     };
+    // The Commits are read by their own index, by epoch: what lies between two Commits in the log (messages,
+    // however many) is not walked. The epoch of the entry at the cursor says where to begin.
+    let from: i64 = c
+        .prepare_cached(
+            "SELECT epoch FROM group_log WHERE group_id = ?1 AND n <= ?2 ORDER BY n DESC LIMIT 1",
+        )?
+        .query_row(params![group_id, after], |r| r.get(0))
+        .optional()?
+        .unwrap_or(0);
     let mut s = c.prepare_cached(
-        "SELECT n, change, epoch, at, kind, bytes, recovery_auth, sender FROM group_log
-         WHERE group_id = ?1 AND n > ?2 AND n <= ?3 AND kind = 'commit' ORDER BY n LIMIT ?4",
+        "SELECT n, change, epoch, at, kind, bytes, recovery_auth, sender FROM group_log INDEXED BY group_log_one_commit
+         WHERE group_id = ?1 AND kind = 'commit' AND epoch >= ?5 AND n > ?2 AND n <= ?3 ORDER BY epoch LIMIT ?4",
     )?;
-    let mut rows = s.query(params![group_id, after, last, REMOVAL_PAGE + 1])?;
+    let mut rows = s.query(params![group_id, after, last, REMOVAL_PAGE + 1, from])?;
     let (mut items, mut bytes, mut more) = (Vec::new(), 0usize, false);
     while let Some(r) = rows.next()? {
         let item = log_item(group_id, r)?;
