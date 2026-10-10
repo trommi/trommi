@@ -1563,10 +1563,9 @@ impl Client {
         commands: &mut Vec<Command>,
     ) -> Result<bool> {
         let bytes = unb64(item, "envelope")?;
-        let void_code = item
-            .get("void_code")
-            .and_then(Value::as_str)
-            .map(|code| trommi_core::Error::from_code(code).unwrap_or(trommi_core::Error::BadFormat));
+        let void_code = item.get("void_code").and_then(Value::as_str).map(|code| {
+            trommi_core::Error::from_code(code).unwrap_or(trommi_core::Error::BadFormat)
+        });
         // The header says which group; nothing of it is trusted before the device's checks.
         let Ok(envelope) = Envelope::decode(&bytes) else {
             // 13.4: what the hub hands out here is no envelope. The cursor stays: nothing is passed over
@@ -1589,7 +1588,9 @@ impl Client {
             }
             if !matches!(code, "group-behind" | "replay" | "not-found") {
                 // Checks 1 to 6: the envelope takes no place. Never swallowed: named, with its place.
-                eprintln!("[trommi] finding: {code} (an envelope at change {change} was not taken)");
+                eprintln!(
+                    "[trommi] finding: {code} (an envelope at change {change} was not taken)"
+                );
                 if code == "gap" {
                     core.ask_reread(group);
                 }
@@ -1843,9 +1844,12 @@ impl Client {
         for (change, bytes, void_code) in fetched {
             // Along its sender's chain first: the next envelope of a chain is new, any other was taken
             // before (`replay`). What the chain holds and did not open then is asked for out of order,
-            // which shows its body once the key is there.
+            // which shows its body once the key is there (applied when the chain holds that very
+            // envelope, provisional otherwise).
             let voided = void_code.is_some();
-            let mut took = self.hand(bytes.clone(), change, true, void_code, false).await?;
+            let mut took = self
+                .hand(bytes.clone(), change, true, void_code, false)
+                .await?;
             let unopened = took.received.body.is_none()
                 && !voided
                 && matches!(
@@ -1855,8 +1859,10 @@ impl Client {
             if unopened {
                 let chained = took.received.outcome == EnvelopeOutcome::Chained;
                 let again = self.hand(bytes, change, false, None, false).await?;
-                if again.received.outcome == EnvelopeOutcome::Provisional
-                    && again.received.body.is_some()
+                if matches!(
+                    again.received.outcome,
+                    EnvelopeOutcome::Applied | EnvelopeOutcome::Provisional
+                ) && again.received.body.is_some()
                 {
                     took = again;
                 } else if !chained && took.received.header.subject.object().is_some() {

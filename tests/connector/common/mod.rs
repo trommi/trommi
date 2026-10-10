@@ -199,7 +199,8 @@ impl Human {
             .call(|v: &mut Vault| {
                 // The recovery code a human's app shows once; the stand-in forgets it.
                 let (_code, keys) =
-                    trommi_core::recovery::RecoveryKeys::generate(&mut SystemEntropy).expect("a code");
+                    trommi_core::recovery::RecoveryKeys::generate(&mut SystemEntropy)
+                        .expect("a code");
                 let room = v
                     .device
                     .found_room(&keys, now_ms())
@@ -308,7 +309,11 @@ impl Human {
                     .post("/v2/envelopes", &json!({ "envelope": part(0) }))
                     .await
             }
-            OutboxKind::SealedKey => self.hub.put("/v2/sealed-keys", &json!({ "sealed_key": part(0) })).await,
+            OutboxKind::SealedKey => {
+                self.hub
+                    .put("/v2/sealed-keys", &json!({ "sealed_key": part(0) }))
+                    .await
+            }
             other => panic!("the stand-in posts no {other:?}"),
         }
     }
@@ -496,7 +501,12 @@ impl Human {
                         };
                         self.v(move |v| {
                             v.device
-                                .clean_session(&group, &cuts, Some((&agent, &key_package)), now_ms())
+                                .clean_session(
+                                    &group,
+                                    &cuts,
+                                    Some((&agent, &key_package)),
+                                    now_ms(),
+                                )
                                 .expect("the takeover is built");
                         })
                         .await;
@@ -664,7 +674,9 @@ impl Human {
                     // The Commit again: it gives the join its place.
                     let _ = self.v(hand).await;
                 }
-                Ok(offending) => self.findings.push(format!("welcome: {offending} offending")),
+                Ok(offending) => self
+                    .findings
+                    .push(format!("welcome: {offending} offending")),
                 Err(error) => self.findings.push(format!("welcome: {}", error.code())),
             }
         }
