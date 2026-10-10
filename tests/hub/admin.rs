@@ -186,16 +186,57 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
     let other = session_of(&sign_in(admin, "correct horse battery"));
     assert_ne!(other, session);
 
-    // the page: version and health, the room with its counts and its account, the tables classified
+    // three pages behind the session: the overview, the accounts, the tables; each names the others
     let page = get(admin, &session);
     assert_eq!(page.status, 200);
     let html = text(&page);
-    assert!(html.contains("version <code>dev</code>"));
+    assert!(html.contains("<h1>Overview</h1>") && html.contains("version <code>dev</code>"));
+    for nav in [
+        "href=\"/\" class=\"on\"",
+        "href=\"/accounts\"",
+        "href=\"/tables\"",
+    ] {
+        assert!(html.contains(nav), "{nav}");
+    }
+    // the server's health and the hub's counts
+    for tile in [
+        "CPU",
+        "Memory",
+        "Disk",
+        "Uptime",
+        "Hub memory",
+        "Database",
+        "Sessions",
+        "Streams",
+        "Push",
+    ] {
+        assert!(
+            html.contains(&format!("<div class=\"k\">{tile}</div>")),
+            "{tile}"
+        );
+    }
     assert!(html.contains("<div class=\"k\">Rooms</div><div class=\"v\">1</div>"));
     assert!(html.contains("<div class=\"k\">Accounts</div><div class=\"v\">1</div>"));
-    assert!(html.contains(&short(&w.room)) && html.contains("ada@example.org"));
+    assert!(html.contains("<div class=\"k\">Sessions</div><div class=\"v\">1<small>live</small>"));
+    assert!(html.contains("<a href=\"/tables?t=envelopes\">"));
+
+    let accounts = request(admin, "GET", "/accounts", &session, b"");
+    assert_eq!(accounts.status, 200);
+    let accounts = text(&accounts);
+    assert!(
+        accounts.contains("<h1>Accounts</h1>")
+            && accounts.contains("href=\"/accounts\" class=\"on\"")
+    );
+    // the e-mail address masked to its first character and its ending, never in full
+    assert!(accounts.contains("a•••@•••.org"));
+    assert_eq!(
+        trommi_hub::admin_view::mask_email("someone@example.com"),
+        "s•••@•••.com"
+    );
+    assert_eq!(trommi_hub::admin_view::mask_email("no-at-sign"), "•••");
     // two human devices, one agent device, one live session, one envelope
-    let row = html
+    assert!(accounts.contains(&short(&w.room)));
+    let row = accounts
         .split("<tr>")
         .find(|row| row.contains(&short(&w.room)))
         .unwrap();
@@ -206,29 +247,134 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
         .collect();
     assert_eq!(&numbers[..5], ["2", "1", "0", "1", "0"], "{row}");
     assert_eq!(numbers[6], "1", "one envelope: {row}");
-    for table in [
-        "accounts",
-        "envelopes",
-        "group_log",
-        "sealed_keys",
-        "files",
-        "live_activities",
-    ] {
-        assert!(html.contains(&format!("<code>{table}</code>")), "{table}");
+
+    let tables = request(admin, "GET", "/tables", &session, b"");
+    assert_eq!(tables.status, 200);
+    let tables = text(&tables);
+    assert!(tables.contains("href=\"/tables\" class=\"on\""));
+    // the side list: every table, each opened for its columns
+    for (_, table, _, _) in trommi_hub::admin_view::TABLES {
+        assert!(
+            tables.contains(&format!(
+                "<a href=\"/tables?t={table}\"><code>{table}</code></a>"
+            )),
+            "{table}"
+        );
+        assert!(
+            tables.contains(&format!("{table}</span><span class=\"count\">")),
+            "{table} in the side list"
+        );
     }
+    assert_eq!(
+        tables.matches("<details").count(),
+        trommi_hub::admin_view::TABLES.len()
+    );
     assert!(
-        !html.contains("Not classified yet"),
+        !tables.contains("Not classified yet"),
         "every table of the schema is in the page's list"
     );
-    // nothing of what was written, no key, no hash: the page has only counts and what the hub reads anyway
-    assert!(!html.contains("nobody but the room"));
-    assert!(!html.contains(&b64(&w.ada.id())) && !html.contains("argon2id$"));
-    // the one form is the sign-out; nothing else is taken
-    assert_eq!(html.matches("<form").count(), 1);
-    assert!(html.contains("<form method=\"post\" action=\"/logout\">"));
+    // one table: its columns, and rows only where nothing is sealed and nothing of signing in or pushing
+    let devices = text(&request(admin, "GET", "/tables?t=devices", &session, b""));
+    assert!(
+        devices.contains("<details open class=\"on\">")
+            && devices.contains("<code class=\"big\">devices</code>")
+    );
+    assert!(devices.contains("<td>human</td>") && devices.contains("<td>agent</td>"));
+    for sealed in [
+        "envelopes",
+        "accounts",
+        "passkeys",
+        "group_log",
+        "welcomes",
+        "welcome_bytes",
+        "sealed_keys",
+        "recovery_links",
+    ] {
+        let one = text(&request(
+            admin,
+            "GET",
+            &format!("/tables?t={sealed}"),
+            &session,
+            b"",
+        ));
+        assert!(
+            one.contains("Not shown: this table holds sealed content"),
+            "{sealed}"
+        );
+    }
+    for private in [
+        "push_subscriptions",
+        "live_activities",
+        "account_sources",
+        "login_sources",
+        "shares",
+    ] {
+        let one = text(&request(
+            admin,
+            "GET",
+            &format!("/tables?t={private}"),
+            &session,
+            b"",
+        ));
+        assert!(
+            one.contains("Not shown: this table holds who signs in"),
+            "{private}"
+        );
+    }
+    // a name not on the list is no table, and never reaches the database
+    for bad in ["sqlite_master", "rooms;DROP", "", "x"] {
+        let path = format!("/tables?t={bad}");
+        assert_eq!(
+            request(admin, "GET", &path, &session, b"").status,
+            404,
+            "{path}"
+        );
+    }
+    // without a session the pages are the sign-in
+    for path in ["/accounts", "/tables", "/tables?t=rooms"] {
+        let bare = request(admin, "GET", path, &[], b"");
+        assert_eq!(bare.status, 303, "{path}");
+        assert_eq!(bare.header("location"), Some("/"));
+        assert_eq!(bare.header("set-cookie"), None);
+        assert!(!text(&bare).contains("Sign out"));
+    }
+
+    // nothing of what was written, no key, no hash, no address in full on any page, nor in any table's rows
+    let mut pages = vec![html.clone(), accounts.clone(), tables.clone()];
+    for (_, table, _, _) in trommi_hub::admin_view::TABLES {
+        pages.push(text(&request(
+            admin,
+            "GET",
+            &format!("/tables?t={table}"),
+            &session,
+            b"",
+        )));
+    }
+    for page in &pages {
+        assert!(!page.contains("nobody but the room"));
+        assert!(!page.contains("ada@example.org") && !page.contains("example.org"));
+        assert!(!page.contains(&b64(&w.ada.id())) && !page.contains("argon2id$"));
+        assert!(!page.contains(&trommi_hub::util::hex(&w.ada.id())));
+        assert!(!page.contains(&trommi_hub::util::hex(&w.room)));
+        // the one form is the sign-out; nothing else is taken
+        assert_eq!(page.matches("<form").count(), 1);
+        assert!(page.contains("<form method=\"post\" action=\"/logout\">"));
+    }
+    if let Ok(dir) = std::env::var("TROMMI_ADMIN_PAGES") {
+        // (the pages as files, for screenshots)
+        for (name, page) in [
+            ("overview", &html),
+            ("accounts", &accounts),
+            ("tables", &tables),
+            ("tables-devices", &devices),
+        ] {
+            std::fs::write(format!("{dir}/{name}.html"), page).unwrap();
+        }
+    }
     for (method, path) in [
         ("POST", "/"),
         ("DELETE", "/"),
+        ("POST", "/tables"),
         ("GET", "/login"),
         ("GET", "/rooms"),
         ("GET", "/logout"),
@@ -267,7 +413,7 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
     hub.clock(5001);
     let later = get(admin, &session);
     assert_eq!(later.status, 200);
-    assert!(text(&later).contains("ada@example.org"));
+    assert!(text(&later).contains("<h1>Overview</h1>"));
 
     // signing out: only from the page itself; then the session is gone, the other stays
     let mut cross = session.clone();
