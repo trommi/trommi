@@ -7,7 +7,10 @@ import Foundation
 import Compression
 #endif
 
-public func gunzip(_ b: [UInt8]) -> [UInt8]? {
+/** The most a gzip'd file is unpacked to (a snapshot of a board is far smaller): more is refused, not allocated. */
+public let GUNZIP_MAX = 64 << 20
+
+public func gunzip(_ b: [UInt8], maxBytes: Int = GUNZIP_MAX) -> [UInt8]? {
   guard b.count > 18, b[0] == 0x1f, b[1] == 0x8b, b[2] == 8 else { return nil }
   let flags = b[3]
   var o = 10
@@ -18,6 +21,9 @@ public func gunzip(_ b: [UInt8]) -> [UInt8]? {
   guard o < b.count - 8 else { return nil }
   let crc = UInt32(b[b.count - 8]) | UInt32(b[b.count - 7]) << 8 | UInt32(b[b.count - 6]) << 16 | UInt32(b[b.count - 5]) << 24
   let size = Int(b[b.count - 4]) | Int(b[b.count - 3]) << 8 | Int(b[b.count - 2]) << 16 | Int(b[b.count - 1]) << 24
+  // (the trailer's length is the sender's word: what is allocated is bounded by maxBytes, and the unpacked bytes
+  // must come to exactly that length)
+  guard size <= maxBytes else { return nil }
   let src = Array(b[o..<(b.count - 8)])
   var out: [UInt8]?
   #if canImport(Compression)
@@ -26,7 +32,7 @@ public func gunzip(_ b: [UInt8]) -> [UInt8]? {
   let n = buf.withUnsafeMutableBufferPointer { dst in src.withUnsafeBufferPointer { s in compression_decode_buffer(dst.baseAddress!, cap, s.baseAddress!, s.count, nil, COMPRESSION_ZLIB) } }
   out = n > 0 ? Array(buf[0..<n]) : nil
   #else
-  out = Inflate.inflate(src, sizeHint: size)
+  out = Inflate.inflate(src, sizeHint: size, maxBytes: maxBytes)
   #endif
   guard let r = out, r.count & 0xffff_ffff == size, crc32(r) == crc else { return nil }
   return r
@@ -90,10 +96,10 @@ enum Inflate {
   static let DEXT = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
   static let ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
 
-  static func inflate(_ src: [UInt8], sizeHint: Int = 0) -> [UInt8]? {
+  static func inflate(_ src: [UInt8], sizeHint: Int = 0, maxBytes: Int = GUNZIP_MAX) -> [UInt8]? {
     var r = Bits(b: src)
     var out = [UInt8]()
-    out.reserveCapacity(max(sizeHint, src.count * 3))
+    out.reserveCapacity(min(maxBytes, max(sizeHint, src.count * 3)))
     let fixedL = Huff((0..<288).map { $0 < 144 ? 8 : $0 < 256 ? 9 : $0 < 280 ? 7 : 8 })!
     let fixedD = Huff([Int](repeating: 5, count: 30))!
     while true {
@@ -105,6 +111,7 @@ enum Inflate {
         let len = Int(src[r.at]) | Int(src[r.at + 1]) << 8, nlen = Int(src[r.at + 2]) | Int(src[r.at + 3]) << 8
         guard len == ~nlen & 0xffff, r.at + 4 + len <= src.count else { return nil }
         out += src[(r.at + 4)..<(r.at + 4 + len)]
+        if out.count > maxBytes { return nil }
         r.at += 4 + len
       case 1, 2:
         var lit = fixedL, dist = fixedD
@@ -127,7 +134,7 @@ enum Inflate {
         }
         while true {
           guard let sym = lit.decode(&r) else { return nil }
-          if sym < 256 { out.append(UInt8(sym)); continue }
+          if sym < 256 { out.append(UInt8(sym)); if out.count > maxBytes { return nil }; continue }
           if sym == 256 { break }
           let li = sym - 257
           guard li < 29, let le = r.get(LEXT[li]), let ds = dist.decode(&r), ds < 30, let de = r.get(DEXT[ds]) else { return nil }
@@ -135,6 +142,7 @@ enum Inflate {
           guard back <= out.count else { return nil }
           let start = out.count - back
           for k in 0..<len { out.append(out[start + k]) }
+          if out.count > maxBytes { return nil }
         }
       default: return nil
       }

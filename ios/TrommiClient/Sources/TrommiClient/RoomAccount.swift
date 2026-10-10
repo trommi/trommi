@@ -148,20 +148,89 @@ extension Room {
     let tools = Core.tools
     let hubURL = try tools.canonicalHub(hubURL)
     let room = try unhex(roomId)
+    // A device an earlier sign-in left unsure is settled first: resumed when the hub took its join, never made twice.
+    if let resumed = try await resumeUnsureJoin(base: base, hubURL: hubURL, roomId: roomId, code: code) { return resumed }
     let made = try newDevice(base: base, roomId: roomId)
-    let hub: HubClient, joined: Room
+    let hub: HubClient
+    do { hub = try HubClient(hubURL: hubURL, room: room, signer: try tools.recoverySigner(code: code)) } catch { abandon(made); throw error }
     do {
-      hub = try HubClient(hubURL: hubURL, room: room, signer: try tools.recoverySigner(code: code))
       _ = try await hub.signIn(challenge: challenge)
       // The core reads the room from the hub under the recovery key's token, checks it, and posts the join.
       _ = try await tools.joinRoomWithRecoveryCode(device: made.device, code: code, hub: hub, nowMs: nowMs())
+    } catch {
+      // No answer to a join that was posted: the hub may have taken it. The device is asked about under its own key;
+      // what cannot be told yet is kept and settled by the next sign-in (`resumeUnsureJoin`).
+      let posted = made.device.outbox().contains { $0.kind == .externalCommit && $0.group == room }
+      guard posted, Self.unsure(error) else { abandon(made); throw error }
+      switch await Self.memberAtHub(made.device, hubURL: hubURL, room: room) {
+      case true?: break
+      case false?: abandon(made); throw error
+      case nil:
+        try? LocalKey.write(joinCodeItem(made.store.dir), code, dir: made.store.dir)
+        made.store.markUnsureJoin(roomId)
+        Store.lifecycle.withLock { made.state.close() }
+        throw TrommiError("pending", "the hub did not answer the sign-in: signing in again finishes it")
+      }
+    }
+    return try await settleCodeJoin(made, hubURL: hubURL, roomId: roomId, code: code, recoveryHub: hub)
+  }
+
+  /** The device is in the room: the record at once, then the session groups (`finishCodeJoin`). */
+  private static func settleCodeJoin(_ made: (store: Store, state: DeviceStore, device: CoreDevice), hubURL: String, roomId: String, code: Bytes, recoveryHub: HubClient) async throws -> Room {
+    let joined: Room
+    do {
       try? LocalKey.write(joinCodeItem(made.store.dir), code, dir: made.store.dir)
       let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false, codeJoin: true)
       try made.store.save(record)
+      made.store.markUnsureJoin(nil)
       joined = try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
     } catch { abandon(made); throw error }
-    await joined.finishCodeJoin(as: hub)
+    await joined.finishCodeJoin(as: recoveryHub)
     return joined
+  }
+
+  /** An error after which nothing is known of what the hub did: no answer, or one it could not give. */
+  static func unsure(_ error: Error) -> Bool {
+    guard let h = error as? HubError else { return error is CancellationError }
+    return h.isOffline || h.status >= 500
+  }
+
+  /**
+   * Whether the hub holds this device as a member of the room, asked under the device's own key: true (a token
+   * for a member), false (`not-member` / `unauthorised`: its join was not taken), nil (no answer).
+   */
+  static func memberAtHub(_ device: CoreDevice, hubURL: String, room: RoomId) async -> Bool? {
+    guard let client = try? HubClient(hubURL: hubURL, room: room, signer: device) else { return nil }
+    defer { client.shutdown() }
+    do { return ["human", "agent", "helper"].contains(try await client.signIn()) }
+    catch let e as HubError where !unsure(e) { return false }
+    catch { return nil }
+  }
+
+  /**
+   * A folder an earlier sign-in to this room left unsure (`joinWithRecoveryCode`): its device is asked about at the
+   * hub. In the room: it is resumed as the room's device. Not taken: the folder goes and a new device signs in. No
+   * answer: `pending` again, and the folder stays.
+   */
+  private static func resumeUnsureJoin(base: URL, hubURL: String, roomId: String, code: Bytes) async throws -> Room? {
+    let room = try unhex(roomId)
+    let left: Store? = Store.lifecycle.withLock { Store.folders(base).map { Store(dir: $0) }.first { !$0.hasRecord && $0.unsureJoin == roomId } }
+    guard let store = left else { return nil }
+    let state: DeviceStore, device: CoreDevice
+    do {
+      state = try Store.lifecycle.withLock { try store.openState() }
+      do { device = try Core.tools.openDevice(store: state) } catch { state.close(); throw error }
+    } catch { Store.lifecycle.withLock { store.wipe() }; return nil }
+    let made = (store: store, state: state, device: device)
+    switch await memberAtHub(device, hubURL: hubURL, room: room) {
+    case true?:
+      return try await settleCodeJoin(made, hubURL: hubURL, roomId: roomId, code: code, recoveryHub: try HubClient(hubURL: hubURL, room: room, signer: try Core.tools.recoverySigner(code: code)))
+    case false?:
+      abandon(made); return nil
+    case nil:
+      Store.lifecycle.withLock { state.close() }
+      throw TrommiError("pending", "the hub did not answer the sign-in: signing in again finishes it")
+    }
   }
 
   /**

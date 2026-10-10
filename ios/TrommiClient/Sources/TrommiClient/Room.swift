@@ -32,6 +32,8 @@ public struct RoomRecord: Codable {
   public var past: PastWork? = nil
   /** A sign-in with the recovery code has session groups left to join (RoomAccount.swift `finishCodeJoin`); nil: none. */
   public var codeJoin: Bool? = nil
+  /** When this device's core confirmed that it was removed from the room (ms); nil: it is in (Room.removedAt). */
+  public var removedAt: UInt64? = nil
 }
 
 /** `beforeJoining`: envelopes of an epoch before this device came into their group, which it cannot take until it learned that group's past (RoomPast.swift): passed over. */
@@ -83,6 +85,17 @@ public struct Store {
     #endif
     try JSONEncoder().encode(r).write(to: dir.appendingPathComponent("room.json"), options: .atomic)
   }
+  /**
+   * A sign-in with the recovery code whose room join the hub may have taken without its answer arriving: the room
+   * (hex) it was for. Such a folder is kept (never swept) until the next sign-in to that room settles it.
+   */
+  var unsureJoin: String? {
+    (try? Data(contentsOf: dir.appendingPathComponent("join-unsure"))).map { String(decoding: $0, as: UTF8.self) }
+  }
+  func markUnsureJoin(_ roomId: String?) {
+    let file = dir.appendingPathComponent("join-unsure")
+    if let id = roomId { try? Data(id.utf8).write(to: file, options: .atomic) } else { try? FileManager.default.removeItem(at: file) }
+  }
   public func load() throws -> RoomRecord { try JSONDecoder().decode(RoomRecord.self, from: Data(contentsOf: dir.appendingPathComponent("room.json"))) }
   /**
    * The device's state under its lock; throws `StoreError.failed("busy")` when it is open already. The lock is
@@ -106,7 +119,7 @@ public struct Store {
   static func sweep(base: URL) {
     for d in folders(base) {
       let s = Store(dir: d)
-      guard !s.hasRecord, let state = try? DeviceStore(directory: s.stateDir, key: Bytes(repeating: 0, count: 32)) else { continue }
+      guard !s.hasRecord, s.unsureJoin == nil, let state = try? DeviceStore(directory: s.stateDir, key: Bytes(repeating: 0, count: 32)) else { continue }
       state.close()
       s.wipe()
     }
@@ -128,6 +141,12 @@ public final class Room {
   public var onChange: ((Change) -> Void)?
   /** Live: the stream is open. */
   public internal(set) var live = false
+  /**
+   * When this device learned that it was removed from the room (ms); nil: it is in. Set only on the word of the
+   * room group's own Commits, which the device checked itself (`checkRemoval`), never on the hub's word alone. The
+   * room then sends and reads nothing more; forgetting what is stored here is the app's act, after it said so.
+   */
+  public internal(set) var removedAt: UInt64?
   /** Whether the board came from the cache (shown before the first catch-up). */
   public internal(set) var restored = false
 
@@ -202,6 +221,7 @@ public final class Room {
     hub = try HubClient(hubURL: record.hubURL, room: room)
     hub.signer = QueueSigner(id: device.id) { [coreQueue] room, hub, challenge in try coreQueue.sync { try device.signHubAuth(room: room, hub: hub, challenge: challenge) } }
     board.roomId = record.roomId; board.hubURL = record.hubURL; board.myDeviceId = record.myDeviceId; board.myRole = record.role
+    removedAt = record.removedAt
     var ch = Change()
     try applyGroups(try device.groups(), &ch)
   }
@@ -350,12 +370,22 @@ public final class Room {
     // the cache is read while the hub is asked
     let restoring: Task<Bool, Never>? = cursor == 0 ? Task { @MainActor in await self.restore() } : nil
     var report = SyncReport()
-    do { _ = try await noted { try await hub.signIn() } } catch { _ = await restoring?.value; throw error }
+    if removedAt != nil { _ = await restoring?.value; throw TrommiError("removed", "this device was removed from the room") }
+    // A token is not membership: the hub names the role it gave it for. A removed device gets one that reads the
+    // proof of its removal and nothing else (spec/hub-api.md point 42).
+    let role: String
+    do { role = try await noted { try await hub.signIn() } } catch { _ = await restoring?.value; throw error }
     _ = await restoring?.value
+    if role == "removed" {
+      try await checkRemoval()
+      throw TrommiError("removed", "this device was removed from the room")
+    }
     var change = Change()
     try await takeWelcomes(&change)
     await finishCodeJoin()
     try await readChanges(&report, &change)
+    // (the log said that this device was removed: nothing more is written or read)
+    if removedAt != nil { emit(change); throw TrommiError("removed", "this device was removed from the room") }
     // (what was written before this device came is upkeep too: what is left of it is noted and goes on next time)
     try? await tendPast(&report, &change)
     // (stocking KeyPackages and writing `heads` are upkeep: a failure there does not keep the board from showing;
@@ -389,6 +419,60 @@ public final class Room {
       catch { board.pushAlert(&change, code: "welcome", message: "a Welcome was refused: \(Self.codeOf(error))") }
     }
     try await refreshGroups(&change)
+  }
+
+  /**
+   * The hub says this device was removed. It is believed only with the proof: the room group's Commits up to the
+   * removing one (GET /v2/groups/{group}/removal), handed to the core in order from this device's place on. When
+   * the core itself says that a Commit removed this device, the room is marked as removed: nothing more is sent
+   * or read, and the alert says so. Commits that do not check, or that end without removing this device, prove
+   * nothing: everything is kept, a finding is shown, `not-member` is thrown and the next sync asks again. (Such
+   * Commits are still the room group's own, so the core keeps the ones it took.)
+   */
+  func checkRemoval() async throws {
+    let room = roomId
+    // (the core may have taken the removing Commit already, from the changes, before the hub cut this device off)
+    var confirmed = try await onCore { device in try device.groups().first { $0.group == room }.map { !$0.leaves.contains(device.id) } ?? false }
+    var after: UInt64 = 0
+    reading: while !confirmed {
+      let page = try await noted { try await hub.request("GET", "/groups/\(b64u(room))/removal", query: ["after": String(after)]) }
+      let items = page["items"] as? [JSON] ?? []
+      var entries = [LogEntry]()
+      for item in items {
+        guard let n = Wire.uint(item["n"]), n > after, let change = Wire.uint(item["change"]), let bytes = (item["bytes"] as? String).flatMap({ try? unb64u($0) }) else {
+          throw finding("bad-format", "the hub's proof of a removal does not read")
+        }
+        after = n
+        entries.append(LogEntry(change: change, group: room, kind: .commit(bytes: bytes, recoveryAuth: (item["recovery_auth"] as? String).flatMap { try? unb64u($0) })))
+      }
+      // true: removed. false: a Commit did not check, so nothing after it can. nil: read on.
+      let word: Bool? = try await onCore { device in
+        for entry in entries where entry.change > device.cursor {
+          guard let done = try? device.processLogEntry(entry) else { return false }
+          if case .commit(let group, _, _, true) = done, group == room { return true }
+        }
+        return nil
+      }
+      coreCursor = try await onCore { $0.cursor }
+      if word == true { confirmed = true }
+      if word != nil || page["more"] as? Bool != true || items.isEmpty { break reading }
+    }
+    guard confirmed else { throw finding("not-member", "the hub says this device was removed and showed no Commit that says so: nothing was forgotten") }
+    var change = Change()
+    markRemoved(&change)
+    emit(change)
+  }
+  /** The core said that a Commit of the room group removed this device: nothing more is sent or read. */
+  func markRemoved(_ change: inout Change) {
+    guard removedAt == nil else { return }
+    removedAt = nowMs()
+    // (kept: an app that ends before it forgot the room knows at its next start, without asking the hub again)
+    record.removedAt = removedAt
+    try? store.save(record)
+    live = false; board.connection = "offline"
+    goalsTask?.cancel(); cacheTask?.cancel()
+    board.pushAlert(&change, code: "removed", message: "this device was removed from the room")
+    change.room = true
   }
 
   /**
@@ -571,9 +655,10 @@ public final class Room {
       switch o {
       case .processed(let p):
         switch p {
-        case .commit(_, _, _, let removed):
+        case .commit(let group, _, _, let removed):
           groupsStale = true
-          if removed { board.pushAlert(&change, code: "removed", message: "this device was removed from a group") }
+          if removed && group == roomId { markRemoved(&change) }
+          else if removed { board.pushAlert(&change, code: "removed", message: "this device was removed from a group") }
         case .ownCommit, .observed, .joinSuperseded: groupsStale = true
         case .message(let m):
           try await freshGroups()
@@ -773,9 +858,9 @@ public final class Room {
    */
   public func runLive() async {
     var pause: UInt64 = 300_000_000
-    while !Task.isCancelled {
+    while !Task.isCancelled && removedAt == nil {
       let reader = SSEReader()
-      var unauthorised = false
+      var unauthorised = false, refused = false
       do {
         if !synced { _ = try await sync() }
         let req = try await hub.streamRequest(after: cursor)
@@ -785,7 +870,7 @@ public final class Room {
           case .status(let status):
             if status == 426 { upgrade = UpgradeNotice(minimumVersion: nil, message: "Please update Trommi."); var ch = Change(); ch.room = true; emit(ch); reader.stop(); return }
             if status == 401 { unauthorised = true; reader.stop(); break }
-            if status != 200 { reader.stop(); break }
+            if status != 200 { refused = true; reader.stop(); break }
             live = true; board.connection = "live"
             var ch = Change(); ch.room = true; emit(ch)
           case .event(let name, let data):
@@ -797,6 +882,8 @@ public final class Room {
       reader.stop()
       if Task.isCancelled { break }
       if unauthorised { hub.forgetToken(); pause = max(pause, 2_000_000_000) }
+      // (a stream the hub refused: the next round signs in again and reads the role it is given, `catchUp`)
+      if unauthorised || refused { synced = false }
       live = false; board.connection = "offline"
       var ch = Change(); ch.room = true; emit(ch)
       if upgrade != nil { return }
@@ -829,17 +916,17 @@ public final class Room {
    *
    * An ENVELOPE is different (9.0.1, 9.0.8): this device signed its number and gives it to no other envelope. It
    * leaves the outbox when the hub took it, when the hub kept its number as a void record (`voided`), or when this
-   * device is out of the group (`not-member`, `removed-sender`). After any other refusal the same bytes are sent
-   * again, and an alert says that something waits.
+   * device is out of the group (`not-member`, `removed-sender`) by the group state its own core holds. After any
+   * other refusal the same bytes are sent again, and an alert says that something waits.
    */
   func pumpOutbox() {
-    if pumping { return }
+    if pumping || removedAt != nil { return }
     pumping = true
     Task { @MainActor in
       defer { pumping = false }
       var backoff: UInt64 = 300_000_000, unknown = 0, stuck: UInt64? = nil
       func pause() async { try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 30_000_000_000) }
-      while !Task.isCancelled && !closed {
+      while !Task.isCancelled && !closed && removedAt == nil {
         guard let entry = try? await onCore({ $0.outbox().first }) else { return }
         do {
           let r = try await noted { try await hub.post(entry) }
@@ -856,7 +943,7 @@ public final class Room {
           if entry.kind != .envelope && entry.kind != .message && entry.kind != .relayMessage { var ch = Change(); try? await refreshGroups(&ch); emit(ch) }
         } catch let e as HubError {
           // TROMMI_DEBUG: which kind of entry met which status and code (never its bytes).
-          if ProcessInfo.processInfo.environment["TROMMI_DEBUG"] != nil { FileHandle.standardError.write(Data("[outbox] \(entry.kind) -> \(e.status) \(e.code)\n".utf8)) }
+          if ProcessInfo.processInfo.environment["TROMMI_DEBUG"] != nil { FileHandle.standardError.write(Data("[outbox] \(entry.kind) -> \(loggable(e))\n".utf8)) }
           if e.status == 426 { return }
           if e.status == 401 { hub.forgetToken() }
           // Not the hub's last word: no answer, it could not answer, it asks to sign in again, or it names a code
@@ -870,7 +957,13 @@ public final class Room {
             await pause(); continue
           }
           let voided = e.extra["voided"] as? Bool == true
-          let gone = entry.kind == .envelope && (voided || e.code == "not-member" || e.code == "removed-sender")
+          // "Out of the group" is the core's word, not the hub's: an envelope is given up only when the group as
+          // this device holds it has no leaf of it any more. Otherwise it waits, and the next sync signs in again
+          // and reads the role the hub names (a removed device proves its removal itself: `checkRemoval`).
+          let out = entry.kind == .envelope && (e.code == "not-member" || e.code == "removed-sender")
+          let outHere = out ? await outOfGroup(entry.group) : false
+          if out && !outHere && !voided { synced = false; await pause(); continue }
+          let gone = entry.kind == .envelope && (voided || outHere)
           do {
             try await onCore { device in
               if entry.kind != .envelope { try device.outboxRefused(entry.id, code: e.code) }
@@ -895,6 +988,12 @@ public final class Room {
         } catch { return }   // the store failed or this device is no longer the owner: nothing more is sent
       }
     }
+  }
+  /** Whether this device's core holds no leaf of its own in that group (it was removed, or the group is gone). */
+  func outOfGroup(_ group: GroupId?) async -> Bool {
+    guard let group = group, let list = try? await onCore({ try $0.groups() }) else { return false }
+    guard let held = list.first(where: { $0.group == group }) else { return true }
+    return !held.leaves.contains(device.id)
   }
   /** Whether an entry of that kind carries a Commit of this device, which the core merges only from the hub's log. */
   static func carriesCommit(_ kind: OutboxKind) -> Bool { [.commit, .groupFounding, .externalCommit, .recoveryCode].contains(kind) }
