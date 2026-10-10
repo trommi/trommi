@@ -269,9 +269,10 @@ ${raw(L.gone)}
     const copyLine = (text, word, line) => html`<button type="button" class="clip-copy" data-line="${line}" data-action="invite-clip#copy" data-invite-clip-text-param="${text}" title="Copy"><code>${text.split(/(?<=[^/:]\/)/).map((part, i) => html`${i ? raw('<wbr>') : ''}${part}`)}</code><span class="clip-copy-word" data-word="${word}">${word}</span></button>`
     const step = (state, inner) => html`<li class="clip-step${state ? ` is-${state}` : ''}">${TICKBOX}<div class="clip-step-body">${inner}</div></li>`
     /** What is left of a link's time, in words: never "0 more min". */
-    /** The three commands of an agent invite (connector/README.md, Install), the last one with the invite's link. */
+    /** The two lines of an agent invite (as the iOS agentConnectSteps): the installer once per machine (it sets up
+     *  Claude Code and Codex where installed), then the slash command inside claude with the invite's link. */
     const INSTALL = 'curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh'
-    const connectCommand = link => `trommi-connector connect '${link}'`
+    const connectCommand = link => `/trommi:connect '${link}'`
     const leftWords = until => { const ms = until - Date.now(); return ms > 90_000 ? `${Math.round(ms / 60000)} more min.` : ms > 0 ? 'less than a minute.' : 'no time left.' }
     const clipboard = (inv, error = '') => {
       // (an unused link whose time is up has run out; once a connector has answered it (check code, adding) the page stays
@@ -301,7 +302,7 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
         : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>`
         : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
         : dead ? html`<b>${state === 'expired' ? 'This link has run out' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
-        : html`<b>Compare the six emoji</b><small>The connect command prints six emoji, each with a word, and they show here too. Nobody is added before you tap "They match".</small>`
+        : html`<b>Compare the six emoji Claude shows with the ones here</b><small>Nobody is added before you tap "They match".</small>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
         : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent">${keep}<button type="submit">New link</button></form>`
         : coming ? html`<p class="clip-note">The link is in use: this page stays until the agent is in.</p>`
@@ -311,11 +312,9 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
 ${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link for this session: the connector that joins with it goes on as ${contName}. On a Linux or macOS computer with Claude Code or Codex.</p>`
         : html`<h2>Invite an agent</h2><p class="clip-sub">On a Linux or macOS computer with Claude Code or Codex.</p>`}
 <ol class="clip-list">
-${step(done, html`<b>Once per machine: install the connector</b>${open ? copyLine(INSTALL, 'Copy', 'install') : ''}`)}
-${step(done, html`<b>Once per program: set it up for Claude Code</b>${open ? html`${copyLine('trommi-connector setup claude', 'Copy', 'setup')}<small>For Codex: <code>trommi-connector setup codex</code></small>` : ''}`)}
-${step(done, html`<b>Once per folder: connect your project</b>${open ? html`<small>In a terminal in your project folder:</small>${copyLine(connectCommand(inv.link), 'Copy', 'connect')}` : ''}`)}
+${step(done, html`<b>Once per machine: install</b>${open ? html`${copyLine(INSTALL, 'Copy', 'install')}<small>Sets up Claude Code and Codex if installed.</small>` : ''}`)}
+${step(done, html`<b>In your project folder, start claude (or codex) and paste:</b>${open ? html`${copyLine(connectCommand(inv.link), 'Copy', 'connect')}<small>In Codex: ask it to connect with this link.</small>` : ''}`)}
 ${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : open ? '' : 'wait', last)}
-${step(joined ? 'done' : dead ? 'dead' : '', html`<b>Start Claude Code there</b>${dead ? '' : html`<small>Run <code>claude</code> in that folder (or <code>codex</code>).</small>`}`)}
 </ol>${foot}</section></div></main>`
     }
     const inviteMain = (inv, error = '') => {
