@@ -33,7 +33,8 @@ One Rust core does the cryptography for the web app, the iOS app and the connect
    Claude Code asks once whether to use the trommi MCP server: choose "Use this MCP server". Six emoji appear in
    the terminal and in the app; tap "They match". In Codex, ask the agent to connect with the link.
 
-Updates: `trommi-connector update`.
+Updates come by themselves: a running connector installs a new signed release and swaps it in, no restart and no
+/mcp → Reconnect. By hand: `trommi-connector update`.
 
 ## How it works
 
@@ -237,6 +238,39 @@ gh attestation verify index.html --repo trommi/trommi
 ```
 
 The whole way, what goes wrong and what runs as root: [hub/deploy/README.md](hub/deploy/README.md).
+
+</details>
+
+<details>
+<summary><b>Connector updates</b> · swapped in, no reconnect</summary>
+
+What Claude Code or Codex starts is a small **launcher** ([`connector/src/launch.rs`](connector/src/launch.rs)). It
+owns the session's stdin and stdout and runs the real connector as its child, passing every JSON-RPC line through.
+
+- **Found:** the connector looks for a newer release every hour, and at once when the hub refuses it as too old.
+- **Checked:** only a release signed with the release key is put in place, as `trommi-connector update` does.
+- **Swapped:** the launcher holds the client's new messages back, lets the old child answer every request it took,
+  stops it, starts the new one, replays the session's handshake to it, then sends the held messages and
+  `notifications/tools/list_changed`. The client keeps the same process and pipe, so it never sees a restart.
+
+```mermaid
+sequenceDiagram
+  participant C as Claude Code
+  participant L as Launcher
+  participant O as Old connector
+  participant N as New connector
+  O->>L: new signed binary in place: swap
+  C->>L: new requests (held back, in order)
+  O-->>C: answers to its open requests
+  L->>O: stop (hands its key back, exits)
+  L->>N: start, replayed initialize
+  L->>N: held requests
+  L->>C: notifications/tools/list_changed
+```
+
+- Sessions started before the launcher existed need **one** /mcp → trommi → Reconnect; after that, never again.
+- The launcher almost never changes. If an update needs a new one, the app shows the update card with that one
+  reconnect instead.
 
 </details>
 
