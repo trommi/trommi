@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the Trommi connector (trommi-connector) from a signed release of github.com/trommi/trommi.
 #
-#   curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh
 #
 #   install.sh                  the newest release that has a connector for this machine
 #   install.sh --tag <tag>      that release (a release older than the one installed is refused all the same)
