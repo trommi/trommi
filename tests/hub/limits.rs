@@ -45,17 +45,47 @@ fn world(env: &[(&str, &str)]) -> World {
     World::on(TestHub::start_with(env))
 }
 
+/// An agent device's processes overlap while one restarts: only the lease holder's stream replaces the others;
+/// a stale holder is told `lease-lost` and cuts nothing; a stream without `Trommi-Lease` takes its place beside.
+#[test]
+fn only_the_lease_holder_replaces_an_agent_devices_stream() {
+    let mut w = world(&[]);
+    let mut agent = w.enrol_agent();
+    let hub = &w.hub;
+    let old_generation = agent.lease;
+    let mut first = agent.events(hub, None);
+    assert_eq!(first.status, 200);
+    // a new process takes the lease and opens its stream: the old process's stream ends
+    agent.link(hub).ok();
+    let mut second = agent.events(hub, None);
+    assert_eq!(second.status, 200);
+    assert!(first.ended(), "the old process's stream was ended");
+    // the old process, which no longer holds the lease, opens again: refused, and nothing is cut
+    agent.lease = old_generation;
+    assert_eq!(agent.events(hub, None).status, 409);
+    // a client that sends no lease: taken beside the holder's stream
+    agent.lease = None;
+    assert_eq!(agent.events(hub, None).status, 200);
+    assert!(!second.ended(), "the holder's stream stays open");
+}
+
 #[test]
 fn counts_per_device() {
-    let w = world(&[]);
+    let mut w = world(&[]);
     let hub = &w.hub;
-    // 16: streams per device 8
+    // 16: streams per device 8. A new stream ends the device's older ones, so a client that never closes its
+    // old stream (a page reloaded under a service worker) is not locked out: ten in a row are all taken, the
+    // newest alone stays open
     let mut streams = vec![];
-    for i in 0..9 {
+    for i in 0..10 {
         let s = w.ada.events(hub, None);
-        assert_eq!(s.status, if i < 8 { 200 } else { 429 }, "stream {}", i + 1);
+        assert_eq!(s.status, 200, "stream {}", i + 1);
         streams.push(s);
     }
+    w.ada.send(hub, &w.room, &register(&random(), "x")).ok();
+    assert_eq!(streams[9].until("envelope").name, "envelope");
+    assert!(streams[0].ended(), "the oldest stream was ended");
+    assert!(streams[8].ended(), "the one before the newest was ended");
     drop(streams);
     // 16: KeyPackages per device 100 single-use (five are there from the start)
     let more: Vec<String> = (0..95).map(|_| b64(&w.ada.key_package(false))).collect();
