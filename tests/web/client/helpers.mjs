@@ -38,6 +38,12 @@ export class MemoryStore {
   }
   close() { if (this.#state) this.#state.owned = false; this.#state = null; this.#loaded = null }
 }
+/** A store whose every write takes `ms` longer: a slow disk (in a browser each write is one strict transaction). */
+class SlowStore extends MemoryStore {
+  #ms
+  constructor(name, ms) { super(name); this.#ms = ms }
+  async apply(write) { await sleep(this.#ms); return super.apply(write) }
+}
 const failing = new Map()
 /** The `nth` write from now to the store `name` fails, writing nothing (1: the next one). */
 export const failWrite = (name, nth = 1) => failing.set(name, nth)
@@ -74,12 +80,13 @@ export async function core() {
 /** Waits short enough for a test (the product's are seconds to minutes). */
 export const TIMING = { heal_delay: 40, backoff_first: 30, backoff_max: 300, blocked_retry: 300, halted_retry: 200 }
 /** room.ts on the stand-in core, memory stores and a memory cache: `foundRoom`, `openRoom`, `joinRoom`, `joinWithCode`.
- *  `agent`: with the hub client an agent device needs on the fake hub (stand-in/agent.ts `AgentHub`). */
-export async function rooms({ agent = false, timing = {} } = {}) {
+ *  `agent`: with the hub client an agent device needs on the fake hub (stand-in/agent.ts `AgentHub`). `slow_store_ms`:
+ *  every write of a device's store takes so much longer. */
+export async function rooms({ agent = false, timing = {}, slow_store_ms = 0 } = {}) {
   const c = await core()
   return roomsOn({
     core: async () => c,
-    store: name => new MemoryStore(name),
+    store: name => (slow_store_ms ? new SlowStore(name, slow_store_ms) : new MemoryStore(name)),
     cache: async name => memoryCache(name),
     destroy: async name => { wipe(name); caches.delete(name) },
     timing: { ...TIMING, ...timing },
