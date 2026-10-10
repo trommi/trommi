@@ -322,8 +322,16 @@ export class Client {
         this.removed = true
         ;(this.model.room as { connection: string }).connection = 'removed'
         this.change.room = true
-        // said once, however this device learned it (its removal in the log, or the hub's `not-member`)
+        // said once, however this device processed the Commit that removed it (in the room's log, or served by the
+        // hub's removal route after a `not-member`): never on the hub's word alone
         if (!this.model.alerts.some(x => x.code === 'removed')) M.pushAlert(this.model, this.change, { code: 'removed', message: 'this device was removed from the room', at: this.now() })
+        this.publish()
+      }
+      // the hub no longer takes this device and the device did not confirm it: nothing is wiped, nothing more is
+      // asked of the hub on this page; the app says so neutrally (a reload tries again)
+      else if (code === 'unreachable') {
+        ;(this.model.room as { connection: string }).connection = 'unreachable'
+        this.change.room = true
         this.publish()
       }
       // tabs.ts drops this client and stands in line for the device's lock again
@@ -920,7 +928,11 @@ export class Client {
       await this.settle({ timeout_ms: 3000 }).catch(() => {})
       const humans_left = [...this.model.members.values()].filter(m => m.is_active && m.device_role === 'human' && m.device_id !== this.my_device_id).length
       return { key_epoch: this.model.room.key_epoch, humans_left, removed: false }
-    } finally { await this.stop().catch(() => {}) }
+    } finally {
+      await this.stop().catch(() => {})
+      // the token ends at the hub now, not when it runs out (spec/hub-api.md "Signing out")
+      await this.hub.signOut().catch(() => {})
+    }
   }
 
   /** Each live main session on a desk carries that desk's goals for its agent (9.3.4): written when they differ. */

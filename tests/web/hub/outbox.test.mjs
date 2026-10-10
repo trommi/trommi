@@ -150,10 +150,10 @@ test('recoveryCode: POST /v2/rooms/{room}/recovery-code; the account\'s new copi
   assert.equal(fake.state.rooms.get(txt(room_id)).links.length, 1)
 
   const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }
-  await hub.createAccount({ email: 'a@example.com', kit, password: { ...kit, kdf: { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 } } })
+  await hub.createAccount({ email: 'a@example.com', kit, password: { auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf: { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 } } })
   const copies = { kit, password: { sealed_copy: copy() } }
   await hub.postOutbox(entry('recoveryCode', room_id, 1, [part('commit-2'), part('info-2'), part('sealed-2'), part('link-2'), accountCopiesBytes(copies)]))
-  assert.deepEqual(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body.account, { kit: { auth_key: b64u(kit.auth_key), sealed_copy: b64u(kit.sealed_copy) }, password: { sealed_copy: b64u(copies.password.sealed_copy) } })
+  assert.deepEqual(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body.account, { kit: { auth_key: b64u(kit.auth_key), sealed_copy: b64u(kit.sealed_copy)}, password: { sealed_copy: b64u(copies.password.sealed_copy) } })
   const passkey = { kit, passkey: { credential_id: new Uint8Array(20), sealed_copy: copy() } }
   const refused = await hub.postOutbox(entry('recoveryCode', room_id, 2, [part('c3x'), part('i3'), part('s3'), part('l3'), accountCopiesBytes(passkey)])).catch(e => e)
   assert.equal(refused.code, 'incomplete', 'the hub read the passkey copy and has no such passkey')
@@ -166,7 +166,7 @@ test('recoveryCode: POST /v2/rooms/{room}/recovery-code; the account\'s new copi
   const outside = client(fake, null)
   assert.equal((await outside.login('a@example.com', anew.password.auth_key)).rooms.length, 1, 'the new password is the way in')
   await assert.rejects(outside.login('a@example.com', kit.auth_key), e => e.code === 'wrong-login')
-  const registration = { attestation_object: new Uint8Array(randomBytes(90)), client_data_json: utf8({ type: 'webauthn.create', challenge: b64u(await outside.passkeyChallenge()), origin: 'https://app.trommi.com' }), sealed_copy: copy(), transports: ['internal', 'hybrid'] }
+  const registration = { attestation_object: new Uint8Array(randomBytes(90)), client_data_json: utf8({ type: 'webauthn.create', challenge: b64u((await hub.accountPasskeyChallenge()).challenge), origin: 'https://app.trommi.com' }), sealed_copy: copy(), transports: ['internal', 'hybrid'] }
   await hub.postOutbox(entry('recoveryCode', room_id, 3, [part('c4'), part('i4'), part('s4'), part('l4'), accountCopiesBytes({ kit, passkey: registration })]))
   assert.deepEqual(Object.keys(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body.account.passkey).sort(), ['attestation_object', 'client_data_json', 'sealed_copy', 'transports'])
   const view = await hub.account()
@@ -179,7 +179,7 @@ test('recoveryCode: POST /v2/rooms/{room}/recovery-code; the account\'s new copi
 
   // bytes that are not what accountCopiesBytes writes never become a request
   const before = fake.requests.length
-  const k = { auth_key: b64u(kit.auth_key), sealed_copy: b64u(kit.sealed_copy) }, c61 = b64u(copy())
+  const k = { auth_key: b64u(kit.auth_key), sealed_copy: b64u(kit.sealed_copy)}, c61 = b64u(copy())
   const strict = [
     { kit: k, password: { sealed_copy: c61 }, passkey: { credential_id: 'AAAA', sealed_copy: c61 } },                       // two ways in
     { kit: k, password: { auth_key: k.auth_key, sealed_copy: c61 } },                                                         // a new password without its kdf
@@ -189,7 +189,7 @@ test('recoveryCode: POST /v2/rooms/{room}/recovery-code; the account\'s new copi
     { kit: k, passkey: { attestation_object: 'AAAA', sealed_copy: c61 } },
     { kit: k, passkey: { attestation_object: 'AAAA', client_data_json: 'AAAA', sealed_copy: c61, credential_id: 'AAAA' } },
   ].map(utf8)
-  for (const account of [...strict, utf8('{"kit":{"auth_key":"AAAA","sealed_copy":"AAAA"}}'), utf8('[]'), utf8('not json'), utf8({ kit: { auth_key: b64u(kit.auth_key), sealed_copy: b64u(kit.sealed_copy) }, email: 'x@example.com' }), new Uint8Array([0xff])]) {
+  for (const account of [...strict, utf8('{"kit":{"auth_key":"AAAA","sealed_copy":"AAAA"}}'), utf8('[]'), utf8('not json'), utf8({ kit: k, email: 'x@example.com' }), utf8({ kit: { ...k, form: 'email' }, password: { sealed_copy: c61 } }), new Uint8Array([0xff])]) {
     await assert.rejects(hub.postOutbox(entry('recoveryCode', room_id, 4, [part('c'), part('i'), part('s'), part('l'), account])), { code: 'bad-argument' })
   }
   assert.equal(fake.requests.length, before)
@@ -226,8 +226,8 @@ test('what the hub would do twice is never sent twice: a relayed message, a clai
     ['POST', '/v2/requests', () => hub.postRequest({ kind: 'session' })],
     ['POST', `/v2/groups/${txt(room_id)}/reject`, () => hub.rejectCommit(room_id, 1)],
     ['POST', `/v2/rooms/${txt(room_id)}/recovery`, () => hub.openRecovery()],
-    ['POST', '/v2/account', () => hub.createAccount({ email: 'a@example.com', kit, password: { ...kit, kdf } })],
-    ['PUT', '/v2/account/password', () => hub.putPassword({ ...kit, kdf, revision: 1 })],
+    ['POST', '/v2/account', () => hub.createAccount({ email: 'a@example.com', kit, password: { auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf } })],
+    ['PUT', '/v2/account/password', () => hub.putPassword({ auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf, revision: 1 })],
     ['PUT', '/v2/account/kit', () => hub.putKit({ ...kit, revision: 1 })],
     ['POST', '/v2/account/passkey/login', () => hub.passkeyLogin({ credential_id: new Uint8Array(16), authenticator_data: new Uint8Array(37), client_data_json: part('{}'), signature: new Uint8Array(64) })],
     ['DELETE', `/v2/files/${txt(id(16))}`, null],

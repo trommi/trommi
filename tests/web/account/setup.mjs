@@ -4,7 +4,7 @@
 // build names) and room.ts (the engine, which needs a browser's store, and whose joining with the code the core's
 // binding does not have yet). A resolve hook puts core-node.mjs (the REAL binding, loaded from core/wasm/pkg) and
 // room-fake.mjs (a fake of exactly room.ts's contract) in their places, for account.ts and nothing else. hub.ts,
-// ids.ts, passwords.ts and passkey.ts are the app's own files, unchanged.
+// ids.ts, account-name.ts, passwords.ts and passkey.ts are the app's own files, unchanged.
 import { registerHooks } from 'node:module'
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'

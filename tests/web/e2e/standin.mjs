@@ -100,7 +100,7 @@ export const steps = [
     const since = ctx.mark()
     ctx.password = await ui.signUp(A, ctx.app.start(), ctx.email)
     check(await A.js("return document.querySelector('#kit-done').disabled && [...document.querySelectorAll('#kit-words li')].every(l => !l.textContent.trim())"), 'the kit is hidden and Open Trommi waits until it was shown')
-    check(await A.js("return document.querySelector('#kit-gate').textContent.includes('nobody can recover your account')"), 'the kit screen says what it is for')
+    check(await A.js("return document.querySelector('#kit-gate').textContent.includes('your account is lost. Nobody can recover it')"), 'the kit screen says what it is for')
     await A.shot('standin-01-kit-hidden')
     ctx.words = await ui.takeKit(A)
     check(ctx.words.split(' ').length === 12, 'twelve words', ctx.words.split(' ').length)
@@ -697,7 +697,7 @@ export const steps = [
     await E.until("document.querySelector('#way-forgot')", 'the login screen')
     await E.click('#way-forgot')
     await E.until("document.querySelector('#forgot-form')", 'the forgot password screen')
-    await E.type('#forgot-form input[name=email]', ctx.email)
+    await E.type('#forgot-form input[name=account]', ctx.email)
     await E.type('#forgot-form textarea[name=words]', ctx.words)
     await E.type('#forgot-form input[name=password]', newPassword)
     await E.shot('standin-24-forgot')
@@ -720,6 +720,12 @@ export const steps = [
       if (!P) continue
       const out = await P.until("trommi.client.model.room.connection === 'removed'", `${name} learns it was removed`, 30000).then(() => true, () => false)
       check(out, `${name} is removed`, await P.js('return trommi.client.model.room.connection').catch(() => '?'))
+      if (true && out) {
+        // only after the device processed its removal: the notice, and nothing of the app left in this profile
+        const screen = await P.until("document.querySelector('#removed-said')", `${name}'s removed screen`, 15000).then(() => true, () => false)
+        const left = await ui.storedCount(P).catch(() => null)
+        ctx.run.check(screen && left?.records === 0 && left?.local === 0, `${name} shows the removed screen and keeps nothing`, left)
+      }
       ctx.run.note(`${name} (removed) shows: ${await P.js("return document.body.innerText.replace(/\\s*\\n\\s*/g, ' | ').slice(0, 160)").catch(() => '?')}; notices: ${JSON.stringify(await P.js("return [...document.querySelectorAll('.room-notice, [role=alert]')].map(n => n.innerText.trim()).filter(Boolean)").catch(() => []))}`)
     }
     // (Not asked here: logging in with the new password afterwards. The fake hub does not replace the room's
@@ -741,7 +747,7 @@ export const steps = [
       await G.click('#way-login')
       await sleep(2000)
       const asked = since().filter(r => r.path === '/v2/account/passkey/challenge').length
-      const usable = await G.js("const f = document.querySelector('#login-form input[name=email]'); return !!f && f.getClientRects().length > 0")
+      const usable = await G.js("const f = document.querySelector('#login-form input[name=account]'); return !!f && f.getClientRects().length > 0")
       await G.go('about:blank')
       ctx.run.check(asked <= 2, 'at most two passkey challenges were asked of the hub in two seconds', asked)
       ctx.run.check(usable, 'the login form stands still, to type into')
