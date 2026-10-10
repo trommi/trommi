@@ -1046,6 +1046,9 @@ impl<S: Storage> Device<S> {
     /// [`board::Snapshot::items_after_change`] on. The device has read the writers' chains up to their heads
     /// before (9.0.6, 9.0.7).
     ///
+    /// `served` may be in any order: each item is looked up in its writer's chain, and the result names
+    /// the items by their place in `served`. An item given twice is `bad-format`.
+    ///
     /// On success the snapshot's frontier is the one applied from now on, and the result says which served
     /// items the snapshot covers and which are to be added to it ([`board_reduce`]). The refusals are those
     /// of [`board::verify_load`]: `withheld`, `hash-mismatch`, `equivocation`, `replay`, `removed-sender`,
@@ -1211,6 +1214,11 @@ impl<S: Storage> Device<S> {
     /// page of a Chat, an object) and is at most provisional; the chain is not touched.
     ///
     /// `void_code`: the hub served it as a void record with this code.
+    ///
+    /// The order is the caller's: this call takes one envelope and cannot put it in its place. Ordered
+    /// envelopes are handed in the hub's one order, ascending by change number across senders and groups
+    /// (an envelope is judged against what the others wrote before it: a Note version builds on another
+    /// device's), never sender after sender.
     ///
     /// The result says what became of it. [`EnvelopeOutcome::Refused`] consumed nothing; with `group-behind`
     /// for a group this device is a leaf of, whose log it has not processed up to the envelope's epoch, the
