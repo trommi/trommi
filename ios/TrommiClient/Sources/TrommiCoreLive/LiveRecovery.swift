@@ -286,7 +286,7 @@ extension LiveCore {
       guard let change = Wire.uint(answer["change"]) else { throw TrommiError("bad-format", "the hub's answer to a join names no change number") }
       try device.outboxAccepted(id, change: change)
     } catch let refused as HubError where !refused.isOffline && isFinalRefusal(refused.code) {
-      try? device.outboxRefused(id, code: refused.code, voided: false)
+      try? device.outboxRefused(id, code: refused.code)
       throw refused
     }
   }
