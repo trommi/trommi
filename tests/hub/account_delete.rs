@@ -201,7 +201,12 @@ fn deleting_the_account_removes_every_row_and_file_of_its_room_and_nothing_else(
     bea.send(&w.hub, &room_group, &object(wire::KIND_VERSION, note_id, wire::TYPE_NOTE, wire::STATE_OPEN, 0, ZERO32, ZERO32))
         .ok();
     bea.send(&w.hub, &group, &register(&random(), "v")).ok();
-    bea.send(&w.hub, &room_group, &board_item(&random())).ok();
+    let board: [u8; 16] = random();
+    bea.send(&w.hub, &room_group, &board_item(&board)).ok();
+    // a board snapshot's frontier posts (10.9): a declaration and the post bound to its register value
+    let head = bea.chain(&room_group);
+    let bea_id = bea.id();
+    write_snapshot(&w.hub, &mut bea, &room_group, &board, &random(), &[(&bea_id, head)], &[]);
     let (epoch, message) = (bea.epoch(&group), bea.application_message(&group, b"a step"));
     bea.post(&w.hub, &format!("/v1/groups/{}/messages", b64(&group)), &json!({ "epoch": epoch, "message": b64(&message) }))
         .ok();

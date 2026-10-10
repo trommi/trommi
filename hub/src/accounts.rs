@@ -1038,6 +1038,7 @@ fn delete_room(c: &Connection, room: &Room) -> Res<()> {
         "recovery_keys_held",
         "recoveries",
         "envelopes",
+        "board_frontiers",
         "cards",
         "permission_requests",
         "artifacts",
