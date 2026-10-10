@@ -956,9 +956,20 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
         Err(Error::BadGroup)
     );
     drop(late);
-    let late = reopen(handle.reopened()).unwrap();
+    let mut late = reopen(handle.reopened()).unwrap();
     assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
     assert_eq!(late.findings().unwrap().len(), 1);
+    // The group's leaves all belong by now, and another device's update changes nothing about its past:
+    // the session stays closed.
+    b.update(&group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut b);
+    settle(&hub, &mut late);
+    let epoch = late.group(&group).unwrap().epoch;
+    assert_eq!(epoch, hub.epoch(&group).unwrap());
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
+    drop(late);
+    let late = reopen(handle.reopened()).unwrap();
+    assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
 }
 
 fn erase() -> Draft {
