@@ -30,12 +30,5 @@
       "name": "Fernly Website"
     },
     "en": "Send to Fernly Website"
-  },
-  "line": {
-    "key": "note.line.to",
-    "args": {
-      "name": "Fernly Website"
-    },
-    "en": "Write a note to Fernly Website…"
   }
 }

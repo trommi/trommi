@@ -1,28 +1,19 @@
-// The Desk: every open question as a row, in the app core's order (vm.desk, views.d.ts DeskView), and under them one
-// quiet line ("2 running · 10 done ›", "14 artifacts ›"); the page /stacks/off (vm.off) in its groups. The markup is the one app.css and desk.css
+// The Desk: every open question as a row, in the app core's order (vm.desk, views.d.ts DeskView), and under them the
+// calm tiles (DeskView.tiles: Working / Done, Artifacts, Scribble Board, Knowledge); the page /stacks/off (vm.off) in
+// its groups. The markup is the one app.css and desk.css
 // style. A row never unfolds: its text is a link to the card's own page, its tiles are forms that answer with one tap
 // (the card's routes, card.mjs). Nothing here decides what stands where: the core does; the page draws and acts.
-import { flipOut } from './app.mjs'
-import { Controller, PLUS, WORDS, agoSpan, avatar, controller, deskRow, html, lastUndo, linkSlip, mq, raw, ringSvg, runSection, sideWays, sk, starMark, undoLast, whoOf } from './ui.mjs'
+import { flipOut, viewModule } from './app.mjs'
+import { Controller, PLUS, WORDS, agoSpan, avatar, controller, deskRow, fileSrc, html, lastUndo, linkSlip, mq, raw, ringSvg, runSection, sideWays, sk, starMark, undoLast, whoOf } from './ui.mjs'
 
 // ---- the head: the big line, the goals, Blitz and the duck ----
 function deskHead(d, base) {
   if (d.mode === 'invite') return deskInvite()
   const words = (d.hello?.en ?? '').split(' '), last = words.pop()
-  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${d.waiting}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${d.reading ? html`<p class="desk-reading" role="status">${d.reading.en}</p>` : ''}${deskGoals(d.goals)}${deskKnowledge(d.knowledge, base)}${noteLine(deskVm?.()?.notes, base)}${d.blitz ? html`<div class="desk-tools" id="desk-tools">${duckAll(d, base)}${nextPlease(d, base)}</div>` : ''}</header>`
+  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${d.waiting}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${d.reading ? html`<p class="desk-reading" role="status">${d.reading.en}</p>` : ''}${deskGoals(d.goals)}${d.blitz ? html`<div class="desk-tools" id="desk-tools">${duckAll(d, base)}${nextPlease(d, base)}</div>` : ''}</header>`
 }
 
-/** The note as a line under the goals (NotesView: the corner's note, its line, whom it goes to): what is typed is
- *  kept in that note, Enter sends it (controller "note-line": Action::KeepNote, send), Shift+Enter is a new line of
- *  it. Beside it the way to the team's Scribble Board. On a wide window it takes the corner note's place on the Desk. */
 const CHEV = raw('<svg class="desk-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>')
-function noteLine(n, base) {
-  if (!n) return ''
-  const note = (n.rows ?? []).find(x => x.id === n.corner) ?? null
-  return html`<div class="desk-note" id="desk-note" data-controller="note-line" data-note-line-id-value="${note?.id ?? ''}" data-note-line-text-value="${note?.text ?? ''}"><label class="desk-note-field">${n.to ? avatar(whoOf(n.to), { crown: false }) : sk('page')}<textarea id="desk-note-field" rows="1" placeholder="${n.line?.en ?? ''}" aria-label="${n.line?.en ?? 'Your note'}" data-action="input->note-line#typed keydown->note-line#key blur->note-line#keep"></textarea><kbd aria-hidden="true">↵</kbd></label><a class="desk-scribble" id="desk-scribble" data-nav href="${base}/scribble-board">${sk('pen')}<span>Scribble Board</span>${CHEV}</a></div>`
-}
-/** The team's knowledge (KnowledgeChipView): a quiet chip under the goals that opens its page, with how many entries. */
-const deskKnowledge = (k, base) => k ? html`<a class="desk-know" id="desk-know" data-nav href="${base}/knowledge" title="Team knowledge" aria-label="${k.says.en}">${sk('book')}<span>${k.label.en}</span><b>${k.count}</b></a>` : ''
 /** The team's goals (GoalsView): a checklist of his own under the greeting; a click on the words writes in place
  *  (controller "goals": Action::SetGoal). One toggle folds them to the first line (Action::FoldGoals: GoalsView.folded);
  *  folded is this device's: the teams are kept in localStorage and sent to the core again at the start. */
@@ -100,14 +91,34 @@ function deskList(d, base) {
   return html`${linkSlip(d.slip ?? [], base)}${out.map(x => (x.first.from ? run(x.first, x.rows, x.rows.length) : x.rows))}
 ${d.empty ? html`<div class="inbox-empty${d.mode === 'reading' ? ' is-reading' : ''}" id="desk-empty"${d.mode === 'reading' ? raw(' role="status"') : ''}>${sk('desk')}<p>${d.empty.en}</p></div>` : ''}
 <section id="desk-ip" class="tail" hidden></section>
-${offLine(d, base)}`
+${deskTiles(d, base)}`
 }
 
-/** Under the questions, one quiet line as on the iPhone: Off your mind counted (OffHintView.line, it opens the page
- *  /stacks/off) and the artifacts counted (DeskView.artifacts_line, it opens the gallery). */
-const offLine = (d, base) => d.off || d.artifacts_line
-  ? html`<nav class="desk-end" id="desk-end" aria-label="Off your mind">${d.off ? html`<a id="desk-off" data-nav href="${base}/stacks/off">${d.off.line.en}${CHEV}</a>` : ''}${d.artifacts_line ? html`<a id="desk-artifacts" data-nav href="${base}/artifacts">${d.artifacts_line.en}${CHEV}</a>` : ''}</nav>`
-  : html`<nav class="desk-end" id="desk-end" hidden></nav>`
+/** Under the questions, the calm tiles (DeskView.tiles, in the core's order), each a link to its page: what runs and is
+ *  done with the running cards (DeskTileView.items: ids of DeskView.off.running), the newest artifacts small (items:
+ *  ids of vm.artifacts), the team's Scribble Board small (ViewModel.thumbs, painted by whiteboard.mjs's controller
+ *  "thumbs"), the team's Knowledge. */
+const TILE = { work: ['/stacks/off', 'tick'], artifacts: ['/artifacts', 'picture'], board: ['/scribble-board', 'pen'], knowledge: ['/knowledge', 'book'] }
+function deskTiles(d, base) {
+  const tiles = d.tiles ?? []
+  if (!tiles.length) return html`<nav class="desk-tiles" id="desk-end" hidden></nav>`
+  const vm = deskVm?.() ?? {}
+  const running = new Map((d.off?.running ?? []).map(r => [r.id, r])), arts = new Map((vm.artifacts ?? []).map(a => [a.id, a]))
+  const runRow = r => { const who = whoOf(r.from); return html`<span class="dt-run" style="--hue:${who.hue}">${avatar(who, { crown: false, working: r.running })}<span>${r.title}</span></span>` }
+  const page = a => {
+    const id = a.files?.[0], f = id ? vm.files?.[id] : null, type = f?.media_type ?? ''
+    if (type.startsWith('image/')) return html`<span class="dt-page is-picture"><img src="${fileSrc(id)}" alt="" loading="lazy" decoding="async"></span>`
+    return html`<span class="dt-page"><b>${a.title}</b><i></i><i></i><i></i></span>`
+  }
+  const inside = t => {
+    if (t.key === 'work') return html`<span class="dt-runs">${t.items.map(id => running.get(id)).filter(Boolean).map(runRow)}</span>`
+    if (t.key === 'artifacts') return t.items.length ? html`<span class="dt-pages">${t.items.map(id => arts.get(id)).filter(Boolean).map(page)}</span>` : ''
+    if (t.key === 'board' && t.team_id) return html`<span class="dt-board"><canvas width="520" height="260" data-thumb="${t.team_id}" aria-hidden="true"></canvas></span>`
+    return ''
+  }
+  if (tiles.some(t => t.key === 'board' && t.team_id)) viewModule('whiteboard').catch(() => {})   // (its controller paints the board small)
+  return html`<nav class="desk-tiles" id="desk-end" aria-label="${tiles.map(t => t.title.en).join(', ')}">${tiles.map(t => html`<a class="desk-tile" id="tile-${t.key}" data-tile="${t.key}" data-nav href="${base}${TILE[t.key]?.[0] ?? '/'}"${t.key === 'board' ? raw(' data-controller="thumbs"') : ''} aria-label="${t.title.en}: ${t.line.en}"><span class="dt-head">${sk(TILE[t.key]?.[1] ?? 'page')}<b>${t.title.en}</b>${t.count != null && t.key !== 'work' ? html`<i>${t.count}</i>` : ''}${CHEV}</span><span class="dt-line">${t.line.en}</span>${inside(t)}</a>`)}</nav>`
+}
 
 let deskVm = null, deskAct = null
 
@@ -137,38 +148,6 @@ function offMain(o, base) {
 <div class="inbox-groups" id="off-list"><div class="off-groups" id="off-end">${(o?.groups ?? []).map(group)}${o?.none ? html`<p class="end-none">${o.none.en}</p>` : ''}
 ${o?.more ? html`<form class="end-more" method="post" action="${base}/stacks/off/more"><input type="hidden" name="q" value="${q}"><button type="submit" class="end-more-go">${o.more.says.en}</button></form>` : ''}${o?.loading ? html`<p class="end-none" role="status">Loading…</p>` : ''}</div></div></main>`
 }
-
-// ---- controller "note-line" ----
-// The note line on the Desk. What is typed is kept in the corner's note a moment after the last key and when the
-// field is left (POST /notes/line: Action::KeepNote, which also makes the note); Enter sends it to the crowned session
-// (the same action with send: the core sends it, also one it makes right then, and toasts its Undo); Shift+Enter is a
-// new line. The core's words come in while the field is not being written in. "N" (trommi:note) writes here.
-const LINE_KEEP_MS = 700
-controller('note-line', class extends Controller {
-  static values = { id: String, text: String }
-  get field() { return this.element.querySelector('textarea') }
-  connect() {
-    this.field.value = this.textValue; this.fit()
-    this.write = () => { if (getComputedStyle(this.element).display !== 'none') this.field.focus() }
-    document.addEventListener('trommi:note', this.write)
-  }
-  disconnect() { document.removeEventListener('trommi:note', this.write); clearTimeout(this.timer) }
-  textValueChanged(v) { const f = this.field; if (!f || document.activeElement === f || f.value === v) return; f.value = v; this.fit() }
-  fit() { const f = this.field; f.style.height = 'auto'; f.style.height = `${f.scrollHeight}px` }
-  typed() { this.fit(); clearTimeout(this.timer); this.timer = setTimeout(() => this.keep(), LINE_KEEP_MS) }
-  key(e) {
-    if (e.key === 'Escape') { e.preventDefault(); this.field.blur() }
-    else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send() }
-  }
-  post(send) {
-    const text = this.field.value
-    if (send ? !text.trim() : text === this.textValue) return
-    clearTimeout(this.timer)
-    fetch('/notes/line', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note_id: this.idValue || null, text, send }) }).catch(err => console.warn('note line', err))
-  }
-  keep() { this.post(false) }
-  send() { this.post(true); this.field.value = ''; this.fit() }
-})
 
 // ---- controller "goals" ----
 // The goals under the greeting. One toggle: folded, the first line; open, all of them; kept per team on this device.

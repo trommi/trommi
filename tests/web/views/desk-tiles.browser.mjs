@@ -1,11 +1,11 @@
-// desk-line.browser.mjs: the Desk is calm (demo room, ?mock=1). Under the questions stands one quiet line, as on the
-// iPhone: Off your mind counted (OffHintView.line) and the artifacts counted (DeskView.artifacts_line), each a link to
-// its page; no rows of Off your mind on the Desk, no turned corner, nothing fixed over the rows but the selection bar
-// and the knock strips. On a wide window the note is a line under the goals (NotesView.line, the corner's sticky
-// steps aside); a phone keeps its Note tab. The page /stacks/off shows the core's groups (OffListView.groups) in order,
-// each with its count and its rows.
+// desk-tiles.browser.mjs: the Desk is calm (demo room, ?mock=1). Under the questions stand the core's tiles
+// (DeskView.tiles: Working / Done, Artifacts, Scribble Board, Knowledge), in its order, each with its name, its line and
+// its count as the core says, each a link to its page; the board tile shows the team's board small (ViewModel.thumbs,
+// painted). The note is the corner's sticky again; the Desk has no turned corner, nothing fixed over the rows but the
+// selection bar and the knock strips. On a wide window Undo is a row at the sidebar's foot, the words in sight. The page
+// /stacks/off shows the core's groups (OffListView.groups) in order, each with its count and its rows.
 // As a 1440 px window and as a phone.
-//   node tests/web/views/desk-line.browser.mjs      (needs Chromium; serves the app from its sources itself)
+//   node tests/web/views/desk-tiles.browser.mjs      (needs Chromium; serves the app from its sources itself)
 import net from 'node:net'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -21,13 +21,21 @@ const SIZES = [{ name: '1440 wide', width: 1440, height: 900, mobile: false }, {
 const DESK = `(() => {
   const seen = el => { if (!el) return false; const r = el.getBoundingClientRect(), c = getComputedStyle(el); return c.display !== 'none' && c.visibility !== 'hidden' && r.width > 0 && r.height > 0 }
   const vm = trommi.vm(), d = vm.desk, list = document.querySelector('#desk-list'), end = document.querySelector('#desk-end')
-  const link = s => { const a = document.querySelector(s); return a ? { text: a.textContent.trim(), href: new URL(a.href).pathname, inList: list.contains(a) } : null }
+  const want = (d.tiles ?? []).map(t => ({ key: t.key, title: t.title.en, line: t.line.en, count: t.key === 'work' || t.count == null ? '' : String(t.count) }))
+  const shown = [...document.querySelectorAll('#desk-end .desk-tile')].map(a => ({ key: a.dataset.tile, title: a.querySelector('.dt-head b')?.textContent ?? '', line: a.querySelector('.dt-line')?.textContent ?? '', count: a.querySelector('.dt-head i')?.textContent ?? '', href: new URL(a.href).pathname }))
   const fixed = [...document.querySelectorAll('#desk-layer *, #inbox *')].filter(el => seen(el) && ['fixed', 'sticky'].includes(getComputedStyle(el).position)).map(el => el.id || el.className)
-  const field = document.querySelector('#desk-note-field')
-  return { vw: innerWidth, line: d.off?.line?.en ?? null, arts: d.artifacts_line?.en ?? null, off: link('#desk-off'), art: link('#desk-artifacts'), last: list.lastElementChild === end,
-    rows: document.querySelectorAll('#desk-end .inbox-row, .oym-run, .oym-hint, .df-card').length, curl: seen(document.querySelector('.curl')), fixed,
-    noteLine: vm.notes.line.en, note: seen(document.querySelector('#desk-note')), placeholder: field?.placeholder ?? null, scribble: link('#desk-scribble'),
-    corner: seen(document.querySelector('.corner-note-box')), page: document.scrollingElement.scrollWidth - innerWidth }
+  return { vw: innerWidth, want, shown: shown.map(({ href, ...t }) => t), hrefs: shown.map(t => t.href), last: list.lastElementChild === end,
+    painted: document.querySelector('#tile-board canvas')?.dataset.painted ?? null, curl: seen(document.querySelector('.curl')), fixed,
+    noteLine: Boolean(document.querySelector('#desk-note, #desk-know')), corner: seen(document.querySelector('.corner-note-head')), page: document.scrollingElement.scrollWidth - innerWidth }
+})()`
+/** Where Undo stands after an answer (run in the page). */
+const UNDO = `(async () => {
+  document.querySelector('#desk-list .inbox-row .inbox-answer.is-thumb.is-lead:not(.is-ack)')?.click()
+  for (let i = 0; i < 30 && !document.querySelector('#says-host .says:not([hidden]) form'); i++) await new Promise(r => setTimeout(r, 100))
+  const s = document.querySelector('#says-host .says:not([hidden])'), side = document.querySelector('#agents')?.getBoundingClientRect()
+  if (!s) return null
+  const r = s.getBoundingClientRect(), w = s.querySelector('.says-words span')?.getBoundingClientRect()
+  return { left: r.left, right: r.right, sideRight: side?.right ?? 0, words: (w?.width ?? 0) > 20 }
 })()`
 /** What the page Off your mind shows against the core's groups (run in the page). */
 const OFF = `(() => {
@@ -57,22 +65,22 @@ try {
     for (let i = 0; i < 100; i++) { if (await ev("document.readyState === 'complete' && document.documentElement.hasAttribute('data-ready') && Boolean(document.querySelector('#desk-list'))").catch(() => false)) break; await sleep(100) }
     await sleep(700)
     const bad = []
+    for (let i = 0; i < 40 && !(await ev("Boolean(document.querySelector('#tile-board canvas')?.dataset.painted)")); i++) await sleep(100)
     const p = await ev(DESK)
-    if (!p.line || !p.arts) bad.push(`the demo room should have both lines (${p.line} / ${p.arts})`)
-    if (p.off?.text !== p.line || p.off?.href !== '/stacks/off' || !p.off?.inList) bad.push(`Off your mind's line: ${JSON.stringify(p.off)}, the core says ${p.line}`)
-    if (p.art?.text !== p.arts || p.art?.href !== '/artifacts') bad.push(`the artifacts' line: ${JSON.stringify(p.art)}, the core says ${p.arts}`)
-    if (!p.last) bad.push('the line is not the last thing under the questions')
-    if (p.rows) bad.push(`${p.rows} rows of Off your mind or Artifacts still on the Desk`)
-    if (p.curl) bad.push('the Desk still has its turned corner')
+    if (p.want.length !== 4) bad.push(`the demo room's team should have four tiles, the core gives ${p.want.length}`)
+    if (JSON.stringify(p.want) !== JSON.stringify(p.shown)) bad.push(`the tiles: the core says ${JSON.stringify(p.want)}, the Desk shows ${JSON.stringify(p.shown)}`)
+    if (p.hrefs.join(' ') !== '/stacks/off /artifacts /scribble-board /knowledge') bad.push(`where the tiles lead: ${p.hrefs.join(' ')}`)
+    if (!p.last) bad.push('the tiles are not the last thing under the questions')
+    if (!p.painted?.startsWith('ready:')) bad.push(`the board tile's picture: ${p.painted}`)
+    if (p.curl) bad.push('the Desk has a turned corner')
+    if (p.noteLine) bad.push('the note line or the Knowledge chip is still there')
     if (p.fixed.length) bad.push(`fixed over the Desk: ${p.fixed.join(', ')}`)
-    if (size.mobile) {
-      if (p.note) bad.push('a phone shows the note line (it has its Note tab)')
-    } else {
-      if (!p.note || p.placeholder !== p.noteLine) bad.push(`the note line: shown ${p.note}, says ${p.placeholder}, the core ${p.noteLine}`)
-      if (p.scribble?.href !== '/scribble-board') bad.push(`the Scribble Board beside it: ${JSON.stringify(p.scribble)}`)
-      if (p.corner) bad.push('the corner note still stands on the Desk')
-    }
+    if (!size.mobile && !p.corner) bad.push('the corner note is not there')
     if (p.page > 0) bad.push(`the Desk scrolls ${p.page}px sideways`)
+    if (!size.mobile) {
+      const u = await ev(UNDO)
+      if (!u || u.right > u.sideRight + 1 || !u.words) bad.push(`Undo is not a row in the sidebar with its words: ${JSON.stringify(u)}`)
+    }
     await page.send('Page.navigate', { url: `${APP}/stacks/off?mock=1` })
     for (let i = 0; i < 100; i++) { if (await ev("document.documentElement.hasAttribute('data-ready') && Boolean(document.querySelector('#off-end .off-group'))").catch(() => false)) break; await sleep(100) }
     await sleep(400)
@@ -80,7 +88,7 @@ try {
     if (!o.want.length) bad.push('the core names no group')
     if (JSON.stringify(o.want) !== JSON.stringify(o.shown)) bad.push(`the groups: the core says ${JSON.stringify(o.want)}, the page shows ${JSON.stringify(o.shown)}`)
     if (o.page > 0) bad.push(`the page Off your mind scrolls ${o.page}px sideways`)
-    console.log(`${bad.length ? 'FAIL' : 'ok  '} ${size.name}: "${p.line}" and "${p.arts}" under the questions, ${o.shown.length} groups on the page${bad.length ? `; ${bad.join('; ')}` : ''}`)
+    console.log(`${bad.length ? 'FAIL' : 'ok  '} ${size.name}: ${p.shown.map(t => t.title).join(', ')} under the questions, ${o.shown.length} groups on the page${bad.length ? `; ${bad.join('; ')}` : ''}`)
     if (bad.length) failed.push(size.name)
   }
 } finally {

@@ -257,5 +257,8 @@ fn settings_show_every_desks_board_small() {
     assert_eq!((thumbs[1].state.as_str(), thumbs[1].count), ("ready", 0));
     assert_eq!(sim.view.settings.team_counts.iter().find(|c| c.team_id == "main").and_then(|c| c.board), Some(1), "counted once read");
     look(&mut sim, None);
-    assert_eq!(sim.view.thumbs, None, "left");
+    let left = sim.view.thumbs.clone().expect("the Desk keeps its own team's board small, for its tile");
+    assert_eq!(left.iter().map(|t| (t.team_id.as_str(), t.count)).collect::<Vec<_>>(), [("main", 1)], "left Settings: only the Desk's team");
+    sim.send(Event::Focus { focus: Focus { screen: Screen::Off { query: String::new() }, ..Default::default() } });
+    assert_eq!(sim.view.thumbs, None, "a page without them");
 }

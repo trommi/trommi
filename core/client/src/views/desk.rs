@@ -225,13 +225,77 @@ fn duck_all(rows: &[DeskRowView]) -> Option<super::DuckAllView> {
     Some(super::DuckAllView { card_ids, tip, short, what, ask, yes, no: say("desk.duck.no", "Cancel", &[]) })
 }
 
-/// What the agents published, counted for the Desk's quiet line ("14 artifacts", "1 artifact"); none without any.
-pub fn artifacts_line(all: &[super::ArtifactView]) -> Option<Text> {
+/// The tiles under the Desk's questions (`DeskView.tiles`): what runs and is done (from `desk.off`), what the agents
+/// published (`all`, the newest first), the team's Scribble Board (`team`: none on All teams), and the team's
+/// Knowledge (from `desk.knowledge`; not on All teams). The board's
+/// line and count come with its small picture ([`board_tile`]).
+pub fn desk_tiles(desk: &DeskView, all: &[super::ArtifactView], team: Option<&str>) -> Vec<super::DeskTileView> {
+    let none = || say("desk.tile.none", "Nothing yet", &[]);
+    let work = super::DeskTileView {
+        key: "work".into(),
+        title: say("desk.tile.work", "Working / Done", &[]),
+        line: desk.off.as_ref().map(|o| o.line.clone()).filter(|l| !l.en.is_empty()).unwrap_or_else(none),
+        count: None,
+        opens: super::Screen::Off { query: String::new() },
+        items: desk.off.as_ref().map(|o| o.running.iter().map(|r| r.id.clone()).collect()).unwrap_or_default(),
+        team_id: None,
+    };
     let n = all.len();
-    (n > 0).then(|| {
-        let s = n.to_string();
-        if n == 1 { say("desk.artifacts_line.one", "1 artifact", &[]) } else { say("desk.artifacts_line", format!("{s} artifacts"), &[("n", &s)]) }
-    })
+    let artifacts = super::DeskTileView {
+        key: "artifacts".into(),
+        title: say("desk.tile.artifacts", "Artifacts", &[]),
+        line: match n {
+            0 => none(),
+            1 => say("desk.tile.artifacts.one", "1 artifact", &[]),
+            _ => { let s = n.to_string(); say("desk.tile.artifacts.many", format!("{s} artifacts"), &[("n", &s)]) }
+        },
+        count: Some(n as u32),
+        opens: super::Screen::Artifacts { kind: String::new() },
+        items: all.iter().take(4).map(|a| a.id.clone()).collect(),
+        team_id: None,
+    };
+    let board = super::DeskTileView {
+        key: "board".into(),
+        title: say("desk.tile.board", "Scribble Board", &[]),
+        line: say("desk.tile.board.open", "Draw and think together", &[]),
+        count: None,
+        opens: super::Screen::Scribble { board_id: team.map(crate::scribble::team_board).unwrap_or_default() },
+        items: Vec::new(),
+        team_id: team.map(String::from),
+    };
+    let knowledge = desk.knowledge.as_ref().map(|k| {
+        let n = k.count;
+        super::DeskTileView {
+            key: "knowledge".into(),
+            title: k.label.clone(),
+            line: match n {
+                0 => none(),
+                1 => say("desk.tile.knowledge.one", "1 entry", &[]),
+                _ => { let s = n.to_string(); say("desk.tile.knowledge.many", format!("{s} entries"), &[("n", &s)]) }
+            },
+            count: Some(n),
+            opens: super::Screen::Knowledge { query: String::new(), filter: String::new() },
+            items: Vec::new(),
+            team_id: Some(k.team_id.clone()),
+        }
+    });
+    [Some(work), Some(artifacts), Some(board), knowledge].into_iter().flatten().collect()
+}
+
+/// The board tile once the team's board is read small (`ViewModel.thumbs`): how many elements it holds.
+pub fn board_tile(desk: &mut DeskView, thumbs: Option<&[super::ThumbView]>) {
+    let Some(tile) = desk.tiles.iter_mut().find(|t| t.key == "board") else { return };
+    let Some(thumb) = thumbs.unwrap_or_default().iter().find(|t| Some(&t.team_id) == tile.team_id.as_ref()) else { return };
+    if thumb.state == "loading" {
+        return;
+    }
+    let n = thumb.count;
+    tile.count = Some(n as u32);
+    tile.line = match n {
+        0 => say("desk.tile.board.empty", "Empty", &[]),
+        1 => say("desk.tile.board.one", "1 element", &[]),
+        _ => { let s = n.to_string(); say("desk.tile.board.many", format!("{s} elements"), &[("n", &s)]) }
+    };
 }
 
 /// One of the greetings, the same for a whole run of the app; a calm one when no question waits.
@@ -604,13 +668,33 @@ pub fn tiles(options: &[Opt], advised: &[String], multiple: bool, request: bool)
 #[cfg(test)]
 mod tests {
     #[test]
-    fn the_artifacts_beside_the_quiet_line_are_counted() {
-        use super::artifacts_line;
-        use crate::views::ArtifactView;
-        assert_eq!(artifacts_line(&[]), None, "none without any");
-        assert_eq!(artifacts_line(&[ArtifactView::default()]).unwrap().en, "1 artifact");
-        let line = artifacts_line(&vec![ArtifactView::default(); 14]).unwrap();
-        assert_eq!((line.en.as_str(), line.key.as_str()), ("14 artifacts", "desk.artifacts_line"));
+    fn three_tiles_under_the_questions() {
+        use super::{board_tile, desk_tiles as tiles};
+        use crate::views::{ArtifactView, DeskView, OffHintView, Screen, ThumbView};
+        let mut desk = DeskView::default();
+        let t = tiles(&desk, &[], None);
+        assert_eq!(t.iter().map(|t| (t.key.as_str(), t.title.en.as_str(), t.line.en.as_str())).collect::<Vec<_>>(), [
+            ("work", "Working / Done", "Nothing yet"),
+            ("artifacts", "Artifacts", "Nothing yet"),
+            ("board", "Scribble Board", "Draw and think together"),
+        ]);
+        assert_eq!((t[0].opens.clone(), t[1].opens.clone()), (Screen::Off { query: String::new() }, Screen::Artifacts { kind: String::new() }));
+        desk.off = Some(OffHintView { line: crate::views::words::say("x", "2 running \u{b7} 10 done", &[]), ..Default::default() });
+        let all: Vec<ArtifactView> = (0..6).map(|i| ArtifactView { id: format!("a{i}"), ..Default::default() }).collect();
+        desk.tiles = tiles(&desk, &all, Some("main"));
+        assert_eq!(desk.tiles[0].line.en, "2 running \u{b7} 10 done");
+        assert_eq!((desk.tiles[1].line.en.as_str(), desk.tiles[1].count, desk.tiles[1].items.len()), ("6 artifacts", Some(6), 4), "the newest four shown");
+        assert_eq!((desk.tiles[2].team_id.as_deref(), &desk.tiles[2].opens), (Some("main"), &Screen::Scribble { board_id: crate::scribble::team_board("main") }));
+        // the board's count once it is read small; another team's picture changes nothing
+        board_tile(&mut desk, Some(&[ThumbView { team_id: "lab".into(), state: "ready".into(), count: 3, ..Default::default() }]));
+        assert_eq!(desk.tiles[2].count, None);
+        board_tile(&mut desk, Some(&[ThumbView { team_id: "main".into(), state: "ready".into(), count: 27, ..Default::default() }]));
+        assert_eq!((desk.tiles[2].line.en.as_str(), desk.tiles[2].count), ("27 elements", Some(27)));
+        // a team's Knowledge is the fourth, counted
+        desk.knowledge = Some(crate::views::KnowledgeChipView { team_id: "main".into(), label: crate::views::words::say("knowledge.chip", "Knowledge", &[]), count: 7, ..Default::default() });
+        let t = tiles(&desk, &all, Some("main"));
+        assert_eq!((t.len(), t[3].key.as_str(), t[3].title.en.as_str(), t[3].line.en.as_str(), t[3].count), (4, "knowledge", "Knowledge", "7 entries", Some(7)));
+        assert_eq!(t[3].opens, Screen::Knowledge { query: String::new(), filter: String::new() });
     }
 
     use super::*;

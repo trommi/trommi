@@ -1334,11 +1334,13 @@ public enum CoreView {
     public var duck: DuckAllView?
     /// The sessions that are cut off, above the questions: one line each, with the step in its terminal.
     public var slip: [SlipView]
-    /// Beside Off your mind's one line under the questions: what the agents published, counted ("14 artifacts");
-    /// it opens the gallery (`Screen::Artifacts`). None while there is none, or while the Desk is not in view.
-    public var artifactsLine: Text?
+    /// Under the questions, calm tiles, in this order: "work" (Working / Done: what runs and what is done, it opens
+    /// Off your mind), "artifacts" (what the agents published), "board" (the team's Scribble Board), "knowledge"
+    /// (the team's Knowledge; not on All teams).
+    /// Empty while the Desk is not in view.
+    public var tiles: [DeskTileView]
 
-    public init(stack: [String] = [], offYourMind: [String] = [], later: [String] = [], done: [String] = [], starred: DockView? = nil, running: DockView? = nil, off: OffHintView? = nil, empty: Text? = nil, mode: String = "", hello: Text? = nil, reading: Text? = nil, goals: GoalsView? = nil, knowledge: KnowledgeChipView? = nil, rows: [DeskRowView] = [], waiting: UInt32 = 0, blitz: Text? = nil, duck: DuckAllView? = nil, slip: [SlipView] = [], artifactsLine: Text? = nil) {
+    public init(stack: [String] = [], offYourMind: [String] = [], later: [String] = [], done: [String] = [], starred: DockView? = nil, running: DockView? = nil, off: OffHintView? = nil, empty: Text? = nil, mode: String = "", hello: Text? = nil, reading: Text? = nil, goals: GoalsView? = nil, knowledge: KnowledgeChipView? = nil, rows: [DeskRowView] = [], waiting: UInt32 = 0, blitz: Text? = nil, duck: DuckAllView? = nil, slip: [SlipView] = [], tiles: [DeskTileView] = []) {
       self.stack = stack
       self.offYourMind = offYourMind
       self.later = later
@@ -1357,7 +1359,7 @@ public enum CoreView {
       self.blitz = blitz
       self.duck = duck
       self.slip = slip
-      self.artifactsLine = artifactsLine
+      self.tiles = tiles
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1379,7 +1381,7 @@ public enum CoreView {
       case blitz = "blitz"
       case duck = "duck"
       case slip = "slip"
-      case artifactsLine = "artifacts_line"
+      case tiles = "tiles"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1402,7 +1404,7 @@ public enum CoreView {
       self.blitz = try c.decodeIfPresent(Text.self, forKey: .blitz)
       self.duck = try c.decodeIfPresent(DuckAllView.self, forKey: .duck)
       self.slip = try c.decodeIfPresent([SlipView].self, forKey: .slip) ?? []
-      self.artifactsLine = try c.decodeIfPresent(Text.self, forKey: .artifactsLine)
+      self.tiles = try c.decodeIfPresent([DeskTileView].self, forKey: .tiles) ?? []
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -1425,7 +1427,69 @@ public enum CoreView {
       try c.encodeIfPresent(blitz, forKey: .blitz)
       try c.encodeIfPresent(duck, forKey: .duck)
       if !slip.isEmpty { try c.encode(slip, forKey: .slip) }
-      try c.encodeIfPresent(artifactsLine, forKey: .artifactsLine)
+      if !tiles.isEmpty { try c.encode(tiles, forKey: .tiles) }
+    }
+  }
+
+  /// One tile under the Desk's questions.
+  public struct DeskTileView: Codable, Hashable, Sendable {
+    /// "work", "artifacts", "board" or "knowledge".
+    public var key: String
+    /// Its name: "Working / Done", "Artifacts", "Scribble Board", "Knowledge".
+    public var title: Text
+    /// What it holds in a few words: "2 running · 10 done", "14 artifacts", "27 elements", "7 entries"; "Nothing
+    /// yet" when empty.
+    public var line: Text
+    /// How many (artifacts, elements on the board, entries); none where the line says it ("work").
+    public var count: UInt32?
+    /// Where a click goes: `Screen::Off`, `Screen::Artifacts`, `Screen::Scribble`.
+    public var opens: Screen
+    /// What it shows small, in order: the running cards (ids of `DeskView.off.running`) for "work", the newest
+    /// artifacts (ids of `ViewModel.artifacts`, at most four) for "artifacts"; empty for "board".
+    public var items: [String]
+    /// "board": the team whose board it shows small (a `ThumbView.team_id`); "knowledge": its team. None on All teams.
+    public var teamId: String?
+
+    public init(key: String = "", title: Text = Text(), line: Text = Text(), count: UInt32? = nil, opens: Screen = .desk, items: [String] = [], teamId: String? = nil) {
+      self.key = key
+      self.title = title
+      self.line = line
+      self.count = count
+      self.opens = opens
+      self.items = items
+      self.teamId = teamId
+    }
+
+    enum CodingKeys: String, CodingKey {
+      case key = "key"
+      case title = "title"
+      case line = "line"
+      case count = "count"
+      case opens = "opens"
+      case items = "items"
+      case teamId = "team_id"
+    }
+
+    public init(from decoder: any Decoder) throws {
+      let c = try decoder.container(keyedBy: CodingKeys.self)
+      self.key = try c.decode(String.self, forKey: .key)
+      self.title = try c.decode(Text.self, forKey: .title)
+      self.line = try c.decode(Text.self, forKey: .line)
+      self.count = try c.decodeIfPresent(UInt32.self, forKey: .count)
+      self.opens = try c.decode(Screen.self, forKey: .opens)
+      self.items = try c.decodeIfPresent([String].self, forKey: .items) ?? []
+      self.teamId = try c.decodeIfPresent(String.self, forKey: .teamId)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+      var c = encoder.container(keyedBy: CodingKeys.self)
+      try c.encode(key, forKey: .key)
+      try c.encode(title, forKey: .title)
+      try c.encode(line, forKey: .line)
+      try c.encodeIfPresent(count, forKey: .count)
+      try c.encode(opens, forKey: .opens)
+      if !items.isEmpty { try c.encode(items, forKey: .items) }
+      try c.encodeIfPresent(teamId, forKey: .teamId)
     }
   }
 
@@ -4522,10 +4586,8 @@ public enum CoreView {
     public var sendSays: Text?
     /// In the send's place without a crown: "Give a session the crown to send" (opens Settings · Agents).
     public var noCrown: Text?
-    /// The empty note line on the Desk: "Write a note to Fernly Website…", without a crown "Write a note…".
-    public var line: Text
 
-    public init(notes: [String] = [], rows: [NoteView] = [], corner: String? = nil, written: Bool = false, says: Text = Text(), to: NoteToView? = nil, sendSays: Text? = nil, noCrown: Text? = nil, line: Text = Text()) {
+    public init(notes: [String] = [], rows: [NoteView] = [], corner: String? = nil, written: Bool = false, says: Text = Text(), to: NoteToView? = nil, sendSays: Text? = nil, noCrown: Text? = nil) {
       self.notes = notes
       self.rows = rows
       self.corner = corner
@@ -4534,7 +4596,6 @@ public enum CoreView {
       self.to = to
       self.sendSays = sendSays
       self.noCrown = noCrown
-      self.line = line
     }
 
     enum CodingKeys: String, CodingKey {
@@ -4546,7 +4607,6 @@ public enum CoreView {
       case to = "to"
       case sendSays = "send_says"
       case noCrown = "no_crown"
-      case line = "line"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -4559,7 +4619,6 @@ public enum CoreView {
       self.to = try c.decodeIfPresent(NoteToView.self, forKey: .to)
       self.sendSays = try c.decodeIfPresent(Text.self, forKey: .sendSays)
       self.noCrown = try c.decodeIfPresent(Text.self, forKey: .noCrown)
-      self.line = try c.decodeIfPresent(Text.self, forKey: .line) ?? Text()
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -4572,7 +4631,6 @@ public enum CoreView {
       try c.encodeIfPresent(to, forKey: .to)
       try c.encodeIfPresent(sendSays, forKey: .sendSays)
       try c.encodeIfPresent(noCrown, forKey: .noCrown)
-      try c.encode(line, forKey: .line)
     }
   }
 

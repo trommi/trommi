@@ -8,18 +8,11 @@
 //   POST /notes/<id>/bin           DeleteNote
 //   POST /notes/<id>/send          { to? }           SendNote (none: the crown's); the core holds it and toasts its Undo
 //   POST /notes/<id>/unsend        UnsendNote
-//   POST /notes/line               { note_id?, text, send? }  the Desk's note line (KeepNote: kept, made if none, sent)
 // `files`: the local ids of files attached on this page (t.attach), comma-separated.
 
 const field = (form, json, k) => (json ? json[k] : form?.get(k)) ?? null
 
 export function register(t) {
-  t.post(/^\/notes\/line$/, ({ res, json }) => {
-    if (typeof json?.text !== 'string') return t.json(res, { error: 'nothing to do' }, 400)
-    const note_id = typeof json.note_id === 'string' && /^[\w-]+$/.test(json.note_id) ? json.note_id : null
-    t.act({ do: 'keep_note', ...(note_id ? { note_id } : {}), text: json.text, attachments: [], send: json.send === true })
-    t.json(res, { ok: true })
-  })
   t.post(/^\/notes(?:\/([\w-]+)\/(keep|bin|send|unsend))?$/, ({ res, match, form, json }) => {
     const note_id = match[1] ?? null, what = match[2] ?? 'create'
     const text = String(field(form, json, 'text') ?? ''), files = String(field(form, json, 'files') ?? '').split(',').filter(Boolean)

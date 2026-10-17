@@ -91,7 +91,11 @@ fn the_demo_shows_its_scribble_boards_folds_goals_and_adds_a_team_with_undo() {
     let now = sim.view.board.clone().unwrap();
     assert_eq!(now.shapes.len(), board.shapes.len() - 1);
     assert!(!now.shapes.iter().any(|s| s.id == first));
-    assert_eq!(sim.view.thumbs, None, "no page shows the boards small");
+    // the Desk shows its own team's board small, for its board tile, counted
+    let thumbs = sim.view.thumbs.clone().expect("the Desk's board small");
+    assert_eq!(thumbs.iter().map(|t| (t.team_id.as_str(), t.count as usize)).collect::<Vec<_>>(), [("main", now.shapes.len())]);
+    let tile = sim.view.desk.tiles.iter().find(|t| t.key == "board").expect("the board tile");
+    assert_eq!((tile.count, tile.line.en.clone()), (Some(now.shapes.len() as u32), format!("{} elements", now.shapes.len())));
 
     // Settings: every team's board small, counted, without what only drawing it large needs
     sim.send(Event::Focus { focus: Focus { screen: Screen::Settings { page: String::new() }, team: Some("main".into()), ..Default::default() } });

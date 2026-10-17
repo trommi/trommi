@@ -392,9 +392,31 @@ export interface DeskView {
   duck?: DuckAllView
   /** The sessions that are cut off, above the questions: one line each, with the step in its terminal. */
   slip?: SlipView[]
-  /** Beside Off your mind's one line under the questions: what the agents published, counted ("14 artifacts");
-   *  it opens the gallery (`Screen::Artifacts`). None while there is none, or while the Desk is not in view. */
-  artifacts_line?: Text
+  /** Under the questions, calm tiles, in this order: "work" (Working / Done: what runs and what is done, it opens
+   *  Off your mind), "artifacts" (what the agents published), "board" (the team's Scribble Board), "knowledge"
+   *  (the team's Knowledge; not on All teams).
+   *  Empty while the Desk is not in view. */
+  tiles?: DeskTileView[]
+}
+
+/** One tile under the Desk's questions. */
+export interface DeskTileView {
+  /** "work", "artifacts", "board" or "knowledge". */
+  key: string
+  /** Its name: "Working / Done", "Artifacts", "Scribble Board", "Knowledge". */
+  title: Text
+  /** What it holds in a few words: "2 running · 10 done", "14 artifacts", "27 elements", "7 entries"; "Nothing
+   *  yet" when empty. */
+  line: Text
+  /** How many (artifacts, elements on the board, entries); none where the line says it ("work"). */
+  count?: number
+  /** Where a click goes: `Screen::Off`, `Screen::Artifacts`, `Screen::Scribble`. */
+  opens: Screen
+  /** What it shows small, in order: the running cards (ids of `DeskView.off.running`) for "work", the newest
+   *  artifacts (ids of `ViewModel.artifacts`, at most four) for "artifacts"; empty for "board". */
+  items?: string[]
+  /** "board": the team whose board it shows small (a `ThumbView.team_id`); "knowledge": its team. None on All teams. */
+  team_id?: string
 }
 
 /** The duck for all: the cards it clears (`Action::Batch` with way "sweep") and its words (the web's `duckAll`). */
@@ -1304,8 +1326,6 @@ export interface NotesView {
   send_says?: Text
   /** In the send's place without a crown: "Give a session the crown to send" (opens Settings · Agents). */
   no_crown?: Text
-  /** The empty note line on the Desk: "Write a note to Fernly Website…", without a crown "Write a note…". */
-  line: Text
 }
 
 /** One note. */

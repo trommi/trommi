@@ -758,6 +758,18 @@ html body .inbox-answer.is-take.is-advised { padding-bottom: var(--s-3); }
 .says-n[hidden] { display: none; }
 #says-host .says:not(:has(form)) .says-ring { display: none; }
 @media (prefers-reduced-motion: reduce) { .says-ring .ring-run { animation: none; } }
+/* ---- a wide window with the sidebar open: Undo is a quiet row at the sidebar's foot, above the account row, as wide
+   as the sidebar: what happened and to what on the left, the ring with "Undo" on the right; it goes when its time
+   runs out (the owner's pick of 17 October 2026). Folded to a rail, and on a phone, the pill stays. ---- */
+@media (min-width: 861px) {
+  :root:not([data-rail="folded"]) #says-host { left: 12px; width: calc(var(--side, 272px) - 24px); bottom: calc(68px + env(safe-area-inset-bottom, 0px)); align-items: stretch; }
+  :root:not([data-rail="folded"]) #says-host .says, :root:not([data-rail="folded"]) #says-host .says:has(form) { display: flex; align-items: center; gap: 8px; width: 100%; max-width: none; min-width: 0; height: auto; min-height: 50px; padding: 6px 4px 6px 12px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--fg) 7%, var(--surface)); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 8%, transparent); }
+  :root:not([data-rail="folded"]) #says-host .says .says-words, :root:not([data-rail="folded"]) #says-host .says:has(form) .says-words { position: static; display: grid !important; flex: 1; gap: 1px; width: auto; height: auto; min-width: 0; overflow: hidden; clip-path: none; }
+  :root:not([data-rail="folded"]) #says-host .says-words b { font: 600 var(--t-xs)/1.2 var(--font); color: var(--muted); }
+  :root:not([data-rail="folded"]) #says-host .says-words span { padding: 0; font: 500 var(--t-sm)/1.25 var(--font); color: var(--fg); }
+  :root:not([data-rail="folded"]) #says-host .says:has(form) .says-back { padding: 0 8px 0 2px; color: var(--accent); }
+  :root:not([data-rail="folded"]) #says-host .says .back-line { display: none; }
+}
 @media (max-width: 860px) {
   #says-host:has(.says form) { top: calc(env(safe-area-inset-top, 0px) + 50px); bottom: auto; left: auto; right: max(12px, env(safe-area-inset-right, 0px)); padding: 0; align-items: flex-end; }
   :root.is-demo #says-host:has(.says form) { top: calc(env(safe-area-inset-top, 0px) + 72px); }

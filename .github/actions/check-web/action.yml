@@ -65,7 +65,7 @@ runs:
       shell: bash
       run: |
         status=0
-        for t in store/run.mjs views/ownership.browser.mjs proof/proof.mjs views/overflow.browser.mjs views/att-gone.browser.mjs views/file-memory.browser.mjs views/side-foot.browser.mjs views/fit.browser.mjs views/side-width.browser.mjs views/desk-line.browser.mjs views/knowledge.browser.mjs views/security.browser.mjs views/news.browser.mjs views/tips.browser.mjs views/deep-link.browser.mjs; do
+        for t in store/run.mjs views/ownership.browser.mjs proof/proof.mjs views/overflow.browser.mjs views/att-gone.browser.mjs views/file-memory.browser.mjs views/side-foot.browser.mjs views/fit.browser.mjs views/side-width.browser.mjs views/desk-tiles.browser.mjs views/knowledge.browser.mjs views/security.browser.mjs views/news.browser.mjs views/tips.browser.mjs views/deep-link.browser.mjs; do
           echo "== $t"
           node "tests/web/$t" || { echo "::error::tests/web/$t failed"; status=1; }
         done
