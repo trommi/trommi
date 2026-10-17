@@ -647,10 +647,36 @@ pub struct DeskView {
     /// The sessions that are cut off, above the questions: one line each, with the step in its terminal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slip: Vec<SlipView>,
-    /// Beside Off your mind's one line under the questions: what the agents published, counted ("14 artifacts");
-    /// it opens the gallery (`Screen::Artifacts`). None while there is none, or while the Desk is not in view.
+    /// Under the questions, calm tiles, in this order: "work" (Working / Done: what runs and what is done, it opens
+    /// Off your mind), "artifacts" (what the agents published), "board" (the team's Scribble Board), "knowledge"
+    /// (the team's Knowledge; not on All teams).
+    /// Empty while the Desk is not in view.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tiles: Vec<DeskTileView>,
+}
+
+/// One tile under the Desk's questions.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeskTileView {
+    /// "work", "artifacts", "board" or "knowledge".
+    pub key: String,
+    /// Its name: "Working / Done", "Artifacts", "Scribble Board", "Knowledge".
+    pub title: Text,
+    /// What it holds in a few words: "2 running · 10 done", "14 artifacts", "27 elements", "7 entries"; "Nothing
+    /// yet" when empty.
+    pub line: Text,
+    /// How many (artifacts, elements on the board, entries); none where the line says it ("work").
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifacts_line: Option<Text>,
+    pub count: Option<u32>,
+    /// Where a click goes: `Screen::Off`, `Screen::Artifacts`, `Screen::Scribble`.
+    pub opens: Screen,
+    /// What it shows small, in order: the running cards (ids of `DeskView.off.running`) for "work", the newest
+    /// artifacts (ids of `ViewModel.artifacts`, at most four) for "artifacts"; empty for "board".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<String>,
+    /// "board": the team whose board it shows small (a `ThumbView.team_id`); "knowledge": its team. None on All teams.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
 }
 
 /// The duck for all: the cards it clears (`Action::Batch` with way "sweep") and its words (the web's `duckAll`).
@@ -1819,9 +1845,6 @@ pub struct NotesView {
     /// In the send's place without a crown: "Give a session the crown to send" (opens Settings · Agents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_crown: Option<Text>,
-    /// The empty note line on the Desk: "Write a note to Fernly Website…", without a crown "Write a note…".
-    #[serde(default)]
-    pub line: Text,
 }
 
 /// One note.

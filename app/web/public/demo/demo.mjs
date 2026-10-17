@@ -218,7 +218,7 @@ export async function demoState(name, { now = false } = {}) {
     rail: () => { document.documentElement.dataset.rail = 'folded'; dispatchEvent(new Event('resize')) },
     'phone-note': () => click('.tab[data-tab="note"]'),
     keys: () => document.dispatchEvent(new Event('trommi:keys')),
-    note: () => { const f = $('#desk-note-field'); if (f?.offsetParent) { f.focus(); return true } return click('.corner-note-head') },   // (a wide Desk: its note line)
+    note: () => click('.corner-note-head'),
     inside: () => { const l = $('.tc-card > .tc-left'); if (l) l.scrollTop = 900 },
     strip: () => { const m = $('#cardpage'); if (m) m.scrollTop = 2600 },
     more: () => click('.tc-more-open'),

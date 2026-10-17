@@ -51,6 +51,8 @@ pub struct Lens {
     pub artifacts: bool,
     /// A page shows every team's board small (Settings, the boards of All teams): they are read, `ViewModel.thumbs`.
     pub thumbs: bool,
+    /// Only the board of the team in view small (the Desk's board tile); else every team's (Settings).
+    pub thumbs_desk: bool,
     /// The teams whose goals are folded to their first line on this device (web localStorage
     /// `trommi-goals-folded`, iOS @AppStorage of the same name). The shell keeps it until the cache does (W3/W5).
     pub goals_folded: Vec<String>,
@@ -568,7 +570,7 @@ fn render_units(model: &Model, lens: &Lens, now: u64, view: &mut super::ViewMode
     view.desk = super::desk::desk_with(&b, &off);
     view.off = lens.off.as_deref().map(|q| super::off::off_list(&b, &off, q));
     view.artifacts = lens.artifacts.then(|| super::session::artifacts(&b));
-    view.desk.artifacts_line = super::desk::artifacts_line(view.artifacts.as_deref().unwrap_or_default());
+    view.desk.tiles = if lens.artifacts && view.desk.mode != "invite" { super::desk::desk_tiles(&view.desk, view.artifacts.as_deref().unwrap_or_default(), b.team.as_deref().filter(|_| !lens.desk_all)) } else { Vec::new() };
     view.gallery = None;
     // (the gallery filters what it lists; the Desk's foot keeps every one)
     if let Some(kind) = lens.gallery.as_deref() {

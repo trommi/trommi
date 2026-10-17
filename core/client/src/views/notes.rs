@@ -97,10 +97,6 @@ pub fn notes(b: &Board) -> NotesView {
         says: if written { say("note.open", "Your note: open it", &[]) } else { say("note.new", "New note", &[]) },
         send_says: to.as_ref().map(|t| say("note.send_to", format!("Send to {}", t.name), &[("name", &t.name)])),
         no_crown: to.is_none().then(|| say("note.no_crown", "Give a session the crown to send", &[])),
-        line: match &to {
-            Some(t) => say("note.line.to", format!("Write a note to {}\u{2026}", t.name), &[("name", &t.name)]),
-            None => say("note.line", "Write a note\u{2026}", &[]),
-        },
         to,
         rows,
     }
@@ -122,17 +118,6 @@ mod tests {
     }
     fn lens(team: Option<&str>) -> Lens {
         Lens { team: team.map(String::from), ..Default::default() }
-    }
-
-    #[test]
-    fn the_note_line_names_the_crowned_session() {
-        let mut r = Room::default();
-        assert_eq!(view(&r, &lens(None)).line.en, "Write a note\u{2026}");
-        r.session("a", None, true);
-        r.crown = json!({ "agent_device_id": dev("a") });
-        let v = view(&r, &lens(None));
-        let name = v.to.as_ref().map(|t| t.name.clone()).unwrap();
-        assert_eq!((v.line.en, v.line.key.as_str()), (format!("Write a note to {name}\u{2026}"), "note.line.to"));
     }
 
     #[test]

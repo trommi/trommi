@@ -1008,33 +1008,35 @@ body > main#inbox { contain: strict; }
 }
 
 
-/* ---- under the questions: one quiet line, as on the iPhone (desk.mjs offLine): Off your mind and the artifacts,
-   counted, each a link to its page ---- */
+/* ---- under the questions: the calm tiles (desk.mjs deskTiles), two by two; a phone one under the other ---- */
 .desk-chev { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.inbox-groups > .desk-end { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 24px; margin: var(--s-6) 0 72px; }
-.inbox-groups > .desk-end[hidden] { display: none; }
-.desk-end a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: 999px; color: var(--muted); font: 500 var(--t-md)/1 var(--font); text-decoration: none; }
-@media (any-hover: hover) { .desk-end a:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); } }
-.desk-end a:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-@media (max-width: 860px) { .inbox-groups > .desk-end { margin: var(--s-5) 0 48px; } }
-
-/* ---- the note line under the goals (desk.mjs noteLine), the Scribble Board beside it ---- */
-#inbox .desk-top > .desk-note { grid-column: 1 / -1; }
-.desk-note { display: flex; gap: 12px; margin-top: var(--s-5); }
-.desk-note-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 14px 6px 12px; box-sizing: border-box; border-radius: 14px; background: color-mix(in srgb, var(--fg) 4%, var(--surface)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent); cursor: text; }
-.desk-note-field:focus-within { box-shadow: 0 0 0 2px var(--focus-ring); }
-.desk-note-field .agent-avatar { flex: none; width: 26px; height: 26px; }
-.desk-note-field > .sketch { flex: none; width: 22px; height: 22px; color: var(--muted); }
-.desk-note-field textarea { flex: 1; min-width: 0; max-height: 40vh; padding: 6px 0; border: 0; background: none; color: var(--fg); font: 500 var(--t-md)/1.4 var(--font); resize: none; outline: none; overflow-y: auto; }
-.desk-note-field textarea::placeholder { color: var(--muted); }
-.desk-note-field kbd { flex: none; color: var(--faint); font: 500 var(--t-sm)/1 var(--font); }
-.desk-scribble { flex: none; display: inline-flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 16px; box-sizing: border-box; border-radius: 14px; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-decoration: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent); }
-.desk-scribble .sketch { width: 20px; height: 20px; }
-.desk-scribble .desk-chev { color: var(--muted); }
-@media (any-hover: hover) { .desk-scribble:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); } }
-@media (max-width: 860px) { .desk-scribble span { display: none; } .desk-scribble { padding: 0 14px; } .desk-scribble .desk-chev { display: none; } }
-/* (on a wide window the line is the Desk's note: the corner's sticky steps aside there) */
-@media (min-width: 861px) { body[data-t-view="desk"] .corner-note-box { display: none; } }
+.inbox-groups > .desk-tiles { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: var(--s-8) 0 96px; text-align: left; }
+.inbox-groups > .desk-tiles[hidden] { display: none; }
+.desk-tile { text-align: left; align-items: stretch; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 132px; padding: 14px 16px 16px; box-sizing: border-box; border-radius: 16px; background: color-mix(in srgb, var(--fg) 4%, var(--surface)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); text-decoration: none; overflow: hidden; }
+@media (any-hover: hover) { .desk-tile:hover { box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 24%, transparent); } }
+.desk-tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.dt-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dt-head .sketch { flex: none; width: 20px; height: 20px; }
+.dt-head b { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 var(--t-md)/1.2 var(--font); }
+.dt-head i { font: 500 var(--t-sm)/1 var(--font); font-style: normal; color: var(--faint); font-variant-numeric: tabular-nums; }
+.dt-head .desk-chev { margin-left: auto; color: var(--muted); }
+.dt-line { color: var(--muted); font: 500 var(--t-sm)/1.3 var(--font); }
+.dt-runs { display: grid; gap: 6px; margin-top: 2px; }
+.dt-run { display: flex; align-items: center; gap: 8px; min-width: 0; font: 500 var(--t-sm)/1.3 var(--font); }
+.dt-run .agent-avatar { flex: none; width: 20px; height: 20px; }
+.dt-run span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dt-pages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 2px; }
+.dt-page { display: grid; align-content: start; gap: 4px; aspect-ratio: 4 / 3; padding: 7px; box-sizing: border-box; overflow: hidden; border-radius: 6px; background: #fffdf6; box-shadow: 0 0 0 1px var(--line-strong); }
+.dt-page b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 700 10px/1.2 var(--font); color: #222; }
+.dt-page i { height: 3px; border-radius: 2px; background: #ddd8c8; }
+.dt-page.is-picture { padding: 0; background: var(--sunken); }
+.dt-page img { width: 100%; height: 100%; object-fit: cover; object-position: top left; display: block; }
+.dt-board { display: block; margin-top: 2px; border-radius: 8px; overflow: hidden; background: var(--sunken); }
+.dt-board canvas { display: block; width: 100%; height: auto; aspect-ratio: 2 / 1; }
+@media (max-width: 860px) {
+  .inbox-groups > .desk-tiles { grid-template-columns: minmax(0, 1fr); gap: 10px; margin: var(--s-6) 0 72px; }
+  .desk-tile { min-height: 0; }
+}
 
 /* ---- the page /stacks/off (desk.mjs offMain): its groups, one line per card ---- */
 .off-groups { grid-column: 1 / -1; display: grid; gap: var(--s-8); margin-top: var(--s-4); text-align: left; }
@@ -1058,4 +1060,3 @@ body > main#inbox { contain: strict; }
 .off-row.is-rest b { color: var(--muted); font-weight: 450; }
 .off-row[data-shredded] b { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--fg) 35%, transparent); }
 @media (max-width: 860px) { .off-row small { display: none; } .off-groups { gap: var(--s-6); } }
-@media (max-width: 860px) { #inbox .desk-top > .desk-note { display: none; } }

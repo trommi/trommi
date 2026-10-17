@@ -1,5 +1,5 @@
-// knowledge.browser.mjs: the team's knowledge in the web app (demo room, ?mock=1). The team's Desk has the chip that
-// opens the page Knowledge; the page lists what the core lists (KnowledgeView.rows, in its order), the search filters
+// knowledge.browser.mjs: the team's knowledge in the web app (demo room, ?mock=1). The team's Desk has the tile that
+// opens the page Knowledge (DeskView.tiles, key knowledge); the page lists what the core lists (KnowledgeView.rows, in its order), the search filters
 // as one types and the field keeps the keyboard, the filter Pinned shows the pinned ones; an entry is added with the
 // editor, pinned, edited in place and deleted, each through the core (Action::KnowledgeSave, KnowledgePin,
 // KnowledgeDelete), and the page shows what the core then holds. As a 1440 px window and as a phone.
@@ -46,12 +46,12 @@ try {
     await page.send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height, deviceScaleFactor: 1, mobile: size.mobile })
     await page.send('Page.navigate', { url: 'about:blank' })
     await page.send('Page.navigate', { url: `${APP}/team/main?mock=1` })
-    await until("document.readyState === 'complete' && document.documentElement.hasAttribute('data-ready') && Boolean(document.querySelector('#desk-know'))", 10000)
-    // the Desk's chip says how many entries and opens the page
-    const chip = await ev(`(() => { const a = document.querySelector('#desk-know'); return a ? { n: a.querySelector('b')?.textContent, vm: trommi.vm().desk.knowledge?.count } : null })()`)
-    if (!chip || String(chip.vm) !== chip.n || !(chip.vm > 0)) bad.push(`the Desk's chip: ${JSON.stringify(chip)}`)
-    await ev("document.querySelector('#desk-know').click()")
-    if (!(await until("Boolean(document.querySelector('#knowledge .kn-list')) && location.pathname === '/knowledge'"))) bad.push('the chip does not open the page')
+    await until("document.readyState === 'complete' && document.documentElement.hasAttribute('data-ready') && Boolean(document.querySelector('#tile-knowledge'))", 10000)
+    // the Desk's tile says how many entries and opens the page
+    const chip = await ev(`(() => { const a = document.querySelector('#tile-knowledge'), t = trommi.vm().desk.tiles?.find(x => x.key === 'knowledge'); return a ? { n: a.querySelector('.dt-head i')?.textContent, line: a.querySelector('.dt-line')?.textContent, vm: trommi.vm().desk.knowledge?.count, tile: t?.count, says: t?.line?.en } : null })()`)
+    if (!chip || String(chip.vm) !== chip.n || chip.tile !== chip.vm || chip.line !== chip.says || !(chip.vm > 0)) bad.push(`the Desk's tile: ${JSON.stringify(chip)}`)
+    await ev("document.querySelector('#tile-knowledge').click()")
+    if (!(await until("Boolean(document.querySelector('#knowledge .kn-list')) && location.pathname === '/knowledge'"))) bad.push('the tile does not open the page')
     let p = await ev(PROBE)
     if (!p.vm || !same(p.shown, p.vm.rows) || p.total !== `(${p.vm.count})`) bad.push(`the list is not the core's: ${JSON.stringify(p)}`)
     if (p.pinned.length < 1 || !same(p.shown.slice(0, p.pinned.length), p.pinned)) bad.push(`the pinned do not come first: ${JSON.stringify(p.pinned)}`)

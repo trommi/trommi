@@ -75,10 +75,6 @@ body[data-page="knowledge"] #knowledge {
 .kn-none { margin: 0; padding: var(--s-6) var(--s-4); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); color: var(--muted); text-align: center; }
 
 /* the chip on a team's Desk, under its goals */
-.desk-know { grid-column: 1; justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 4px 10px 4px 8px; border: 1px solid var(--line); border-radius: var(--r-pill); color: var(--muted); font: 600 var(--t-xs)/1 var(--font); text-decoration: none; }
-.desk-know:hover { border-color: var(--line-strong); color: var(--fg); background: var(--sunken); }
-.desk-know .sketch { width: 15px; height: 15px; }
-.desk-know b { color: var(--fg); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 860px) {
   body[data-page="knowledge"] #knowledge { grid-column: 1; grid-row: 2; padding: var(--s-4) var(--gutter) var(--s-8); }
